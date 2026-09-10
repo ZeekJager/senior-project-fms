@@ -1,0 +1,22 @@
+Issue Type,Summary,Description,Priority,Epic Name,Epic Link
+Epic,Foundation & Scaffolding,"Establish the project infrastructure, database schemas, and core access control.",Highest,Foundation,
+Task,Project Initialization,"Set up Git repository, Node.js/Express backend, React/Tailwind frontend, and configure Docker.",High,,Foundation
+Task,Database Architecture & Soft Deletes,"Design and provision the MySQL database. Create base tables: Users, Vehicles, Drivers, Depots, Roles. Implement Soft Deletes and Audit Logs.",High,,Foundation
+Story,Authentication & RBAC,"As a System Administrator, I want to create role-based accounts so that users only see data relevant to their role.",High,,Foundation
+Epic,Core Entities Management,Build the CRUD interfaces for the system's foundational entities.,High,Core Entities,
+Story,Driver & Vehicle Profiles,"As an Admin, I want to register new vehicles and depots, so that the fleet database stays current. Includes document upload and tracking.",High,,Core Entities
+Story,HR & Attendance Module,"As a Depot Administrator, I want to record daily driver attendance digitally, so that I don't need a paper sign-in sheet.",Medium,,Core Entities
+Story,Maintenance & Workshop Basics,"As a Maintenance Technician, I want to log completed repairs and parts consumed, so that the vehicle's health score updates.",High,,Core Entities
+Epic,Operations & Tracking,"Enable real-time dispatching, route tracking, and field reporting.",High,Operations,
+Story,Trip & Route Management,"As a Dispatcher, I want to see each driver's current duty status before assigning a trip, to avoid overlapping assignments.",High,,Operations
+Story,Driver Mobile Interface (PWA),"As a Driver, I want to submit a DVIR or incident report from my phone, even offline, so I don't have to wait until I return to the depot.",High,,Operations
+Story,Fuel Logging & Reconciliation,"As a Fuel/Finance Clerk, I want fuel entries automatically reconciled against mileage, so I don't have to calculate consumption by hand.",High,,Operations
+Epic,Advanced Features & AI,"Bring the system to life with live maps, automated alerts, and predictive analytics.",Medium,Advanced AI,
+Story,Fleet Command Center (Live Map),"As a Dispatcher, I want to see a live map of active vehicles using HTML5 Geolocation, so I can respond quickly to delays.",Medium,,Advanced AI
+Story,Centralized Alerts Engine,"As a Maintenance Technician, I want to see which vehicles are flagged and receive automated alerts for maintenance due.",Medium,,Advanced AI
+Story,Analytics Dashboard,"As a Fleet Owner, I want a single dashboard showing utilization, downtime, and cost trends across the whole fleet.",Medium,,Advanced AI
+Story,AI Predictive Maintenance Service,"As a Fleet Manager, I want the system to predict vehicle failure risk using a trained AI model based on historical telemetry.",Low,,Advanced AI
+Epic,Polishing & Testing,"Ensure the system is robust, secure, and ready for production.",High,Testing,
+Task,Performance & Load Testing,Optimize queries to load dashboard in <3 seconds. Stress test Socket.io with 500 concurrent connections.,High,,Testing
+Task,Security & Edge Cases,Audit RBAC on all API endpoints. Test conflict resolution (last-write-wins).,High,,Testing
+Task,User Acceptance & E2E Testing,Run end-to-end workflows (Fault -> Tech -> Repair -> Dispatch) and finalize the User Guide.,Medium,,Testing

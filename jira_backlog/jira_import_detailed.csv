@@ -1,0 +1,58 @@
+Issue Type,Summary,Description,Priority,Epic Name,Epic Link
+Epic,Wave 0: Foundation & Infrastructure,"Set up core infrastructure, database, and authentication.",Highest,Wave 0,
+Task,Setup Git Repository & Branch Protection,"Initialize git flow, create main/dev branches, set up branch protection rules.",High,,Wave 0
+Task,Initialize Node.js & Express Backend,"Set up Express, middleware, CORS, body-parser, and environment variables.",High,,Wave 0
+Task,Initialize React & Tailwind Frontend,"Set up Vite, React, Tailwind CSS, and ESLint/Prettier configuration.",High,,Wave 0
+Task,Configure Docker Development Environment,"Create docker-compose.yml for Node.js, React, and MySQL local environments.",High,,Wave 0
+Task,Database Schema: Users & RBAC Tables,"Create migrations for Users, Roles, and Permissions tables.",Highest,,Wave 0
+Task,Database Schema: Core Fleet Entities,"Create migrations for Vehicles, Depots, and Drivers tables.",Highest,,Wave 0
+Task,Database Schema: Operations & Maintenance,"Create migrations for Trips, FuelLogs, MaintenanceRecords, and Inventory.",Highest,,Wave 0
+Task,API: Implement JWT Authentication,"Build POST /api/auth/login, /register, and JWT token validation middleware.",High,,Wave 0
+Task,API: Implement RBAC Middleware,"Build middleware to restrict endpoints based on user roles (Admin, Dispatcher, etc.).",High,,Wave 0
+Task,API: Global Error Handler & Logging,Integrate Winston/Morgan for request logging and uniform error responses.,Medium,,Wave 0
+Task,UI: Setup React Router & Base Layouts,"Implement Topbar, Sidebar navigation, and authenticated route guards.",High,,Wave 0
+Task,UI: Login Screen,Build the authentication UI and integrate with auth context.,High,,Wave 0
+Epic,Wave 1: Core Entities (CRUD),"Build interfaces for Vehicles, Drivers, and Maintenance.",High,Wave 1,
+Story,API: Vehicle CRUD Endpoints,"As a dev, build GET/POST/PUT/DELETE for /api/vehicles.",High,,Wave 1
+Story,API: Driver CRUD Endpoints,"As a dev, build GET/POST/PUT/DELETE for /api/drivers.",High,,Wave 1
+Story,API: Document Upload Service,"As a dev, implement multer/file storage for license/registration uploads.",Medium,,Wave 1
+Story,UI: Vehicle Management Dashboard,"As a Fleet Manager, view list of vehicles, add new, and edit details.",High,,Wave 1
+Story,UI: Driver Management Dashboard,"As a Depot Admin, view list of drivers, upload documents, and set expiry dates.",High,,Wave 1
+Story,API: Driver Attendance Logic,"As a dev, build endpoints to log and retrieve daily driver attendance.",Medium,,Wave 1
+Story,UI: Depot Admin Attendance Tracker,"As a Depot Admin, log daily attendance for all active drivers.",Medium,,Wave 1
+Story,API: Maintenance & Inventory Endpoints,"As a dev, build CRUD for repairs, part consumption, and stock levels.",High,,Wave 1
+Story,UI: Maintenance Technician Log Form,"As a Technician, log repairs performed, hours worked, and spare parts used.",High,,Wave 1
+Story,UI: Spare Parts Inventory Console,"As a Depot Admin, track spare parts stock in/out and view current levels.",Medium,,Wave 1
+Epic,Wave 2: Operations & Tracking,"Enable dispatching, driver reporting, and fuel tracking.",High,Wave 2,
+Story,API: Trip Management Endpoints,"As a dev, build CRUD for /api/trips and assignment logic.",High,,Wave 2
+Task,API: Enforce Trip Business Rules,Implement BR-1 (no overlapping driver trips) and BR-2 (no broken vehicles).,Highest,,Wave 2
+Story,UI: Dispatcher Trip Console,"As a Dispatcher, view unassigned routes and assign available drivers/vehicles.",High,,Wave 2
+Story,UI: Driver Mobile Home View,"As a Driver, view my assigned trip for the day and toggle status (En Route, Arrived).",High,,Wave 2
+Story,API: DVIR & Incident Reporting,"As a dev, build endpoints to accept inspection logs and incident reports.",High,,Wave 2
+Story,UI: Driver Mobile DVIR Form,"As a Driver, fill out a pre-trip/post-trip vehicle inspection checklist.",High,,Wave 2
+Story,API: Fuel Logging Endpoints,"As a dev, build POST /api/fuel to accept fuel receipts and calculate cost-per-km.",High,,Wave 2
+Story,UI: Driver Mobile Fuel Entry,"As a Driver, log fuel amount, cost, and odometer reading from my phone.",High,,Wave 2
+Story,UI: Finance Fuel Reconciliation Screen,"As a Finance Clerk, view monthly fuel logs and reconcile against distance traveled.",Medium,,Wave 2
+Epic,Wave 3: Advanced Features & AI,"Live maps, alerts, analytics, and predictive maintenance.",Medium,Wave 3,
+Task,API: Setup Socket.io for Telemetry,Initialize WebSocket server to receive and broadcast live vehicle coordinates.,High,,Wave 3
+Story,UI: Integrate Leaflet.js Map,"As a dev, embed OpenStreetMap via Leaflet to render active vehicles.",High,,Wave 3
+Story,UI: Fleet Command Center,"As a Dispatcher, view the live map with a sidebar showing active trip statuses.",High,,Wave 3
+Task,API: Cron Jobs for Expiry Alerts,Write scheduled jobs to check for upcoming document/license expiries.,Medium,,Wave 3
+Task,API: Telemetry Rules Engine,Process Socket.io streams to flag speeding or excessive idling events.,Medium,,Wave 3
+Story,UI: Global Alert Notifications,"As a user, see a dropdown inbox with relevant system alerts (maintenance, expiry).",Medium,,Wave 3
+Task,API: Analytics Aggregation Queries,"Write SQL/endpoints to aggregate utilization rates, cost trends, and driver ranks.",Medium,,Wave 3
+Story,UI: Fleet Analytics Dashboard,"As an Owner, view charts (Chart.js) for costs, utilization, and downtime.",Medium,,Wave 3
+Task,AI: Generate Training Dataset,"Create synthetic historical CSV data for mileage, engine hours, and failure events.",Low,,Wave 3
+Task,AI: Train Predictive Model,Train a scikit-learn regression model to output a Vehicle Health Score (0-100).,Low,,Wave 3
+Task,API: Python Microservice,Wrap the trained model in a Flask/FastAPI service and integrate with Node.js.,Low,,Wave 3
+Story,UI: Predictive Maintenance View,"As a Fleet Manager, view AI-generated health scores and predicted failure dates.",Low,,Wave 3
+Epic,"Wave 4: Polishing, Security, & Testing","Enterprise hardening, PWAs, and QA.",High,Wave 4,
+Task,Database: Implement Soft Deletes,Update all CRUD queries to respect is_active flags instead of hard DELETEs.,High,,Wave 4
+Task,Database: Global Audit Log,Implement DB triggers or middleware to log all state changes by User ID.,High,,Wave 4
+Task,UI: Driver App PWA Conversion,Add manifest.json and Service Workers to make the Driver UI installable.,Medium,,Wave 4
+Task,UI: Offline Support (IndexedDB),"Cache DVIR and Fuel form submissions when offline, sync when online.",High,,Wave 4
+Task,UI: HTML5 Geolocation Tracking,Use browser geolocation API in Driver App to stream real coordinates to Socket.io.,Medium,,Wave 4
+Task,QA: Unit Tests for Trip Logic,Write Jest tests validating BR-1 and BR-2 assignment constraints.,Medium,,Wave 4
+Task,QA: API Load Testing,Stress test Node API and Socket.io with 500 simulated connections.,Low,,Wave 4
+Task,QA: E2E Workflow Test,Manually validate: Driver logs fault -> Tech gets alert -> Fix logged -> Dispatch.,High,,Wave 4
+Task,Documentation: User Guide & API Docs,Compile final Senior Project documentation and API Postman collections.,High,,Wave 4
