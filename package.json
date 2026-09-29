@@ -1,0 +1,16 @@
+{
+  "name": "senior-project-fms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fleet Management System (FMS) Monorepo",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker-compose up --build",
+    "dev:down": "docker-compose down",
+    "dev:clean": "docker-compose down -v --remove-orphans",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

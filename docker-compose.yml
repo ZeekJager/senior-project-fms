@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # 1. MySQL Database (Persisted)
+  mysql:
+    image: mysql:8.0
+    container_name: fms_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: fms_db
+      MYSQL_USER: fms_app
+      MYSQL_PASSWORD: apppassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 2. Node.js Backend API
+  backend:
+    build:
+      context: ./packages/backend
+      dockerfile: Dockerfile.dev
+    container_name: fms_backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./packages/backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DB_HOST=mysql
+      - DB_USER=fms_app
+      - DB_PASS=apppassword
+      - DB_NAME=fms_db
+      - JWT_SECRET=development_secret_do_not_use_in_prod
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # 3. React Frontend (Vite)
+  frontend:
+    build:
+      context: ./packages/frontend
+      dockerfile: Dockerfile.dev
+    container_name: fms_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./packages/frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:3000/api/v1
+    depends_on:
+      - backend
+
+  # 4. Python AI Service
+  ai-service:
+    build:
+      context: ./packages/ai-service
+      dockerfile: Dockerfile.dev
+    container_name: fms_ai_service
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./packages/ai-service:/app
+    environment:
+      - FLASK_ENV=development
+      - INTERNAL_TOKEN=ai_internal_secret
+
+volumes:
+  mysql_data:
