@@ -19,10 +19,10 @@ jobs:
         uses: docker/setup-buildx-action@v2
 
       - name: Verify Docker Compose Build
-        run: docker-compose build
+        run: docker compose build
 
       - name: Start Services (Dry Run)
-        run: docker-compose up -d
+        run: docker compose up -d
 
       - name: Check Container Health
         run: |
@@ -32,4 +32,4 @@ jobs:
           
       - name: Tear Down
         if: always()
-        run: docker-compose down -v --remove-orphans
+        run: docker compose down -v --remove-orphans
