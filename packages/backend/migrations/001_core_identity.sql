@@ -4,13 +4,11 @@
 -- Target:    packages/backend/migrations/001_core_identity.sql
 -- Tables:    roles, depots, users
 --
--- Dialect: PostgreSQL. The ticket text itself uses MySQL-flavored
--- types (TINYINT(1)) — translated below to PostgreSQL equivalents:
+-- Spec:    docs/schema-fms.sql (MySQL), translated to PostgreSQL
+--          (the docker stack runs postgres:16):
 --   TINYINT(1)      -> BOOLEAN
 --   JSON            -> JSONB
 --   AUTO_INCREMENT  -> SERIAL
--- If this project has since moved to MySQL, say so and I'll redo this
--- file with the literal MySQL types instead.
 --
 -- Up/Down split marker below follows the sql-migrate convention
 -- ("-- +migrate Up" / "-- +migrate Down"). If your migration runner
@@ -35,6 +33,9 @@ $$ LANGUAGE plpgsql;
 -- Fixed, code-defined role set. Never created via API — rows only ever
 -- come from the seed INSERT below. `permissions` is a JSONB blob per
 -- the MVP decision (no permissions-as-rows table).
+-- Deliberate deviation from docs/schema-fms.sql: roles also carries
+-- is_active and updated_at, because the FMS-01 card requires them on
+-- ALL tables. (The spec's roles has only created_at.)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS roles (
     id          SERIAL       PRIMARY KEY,
@@ -52,14 +53,14 @@ CREATE TRIGGER trg_roles_updated_at
 
 -- ---------------------------------------------------------------------
 -- depots
--- Minimal core-identity columns only. Depot attributes beyond `name`
--- (address, timezone, contact info, etc.) aren't specified by this
--- ticket — assumed to belong to a later migration. Add them there
--- instead of here unless that's wrong.
+-- Matches docs/schema-fms.sql: `location` is NOT NULL (POST /depots
+-- accepts name + location per api-contract.md). Other depot attributes
+-- (timezone, contact info, etc.) aren't specified — later migration.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS depots (
     id          SERIAL       PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
+    location    VARCHAR(255) NOT NULL,
     is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -72,12 +73,11 @@ CREATE TRIGGER trg_depots_updated_at
 
 -- ---------------------------------------------------------------------
 -- users
--- depot_id is nullable: admins are not depot-scoped. role_id isn't
--- called out explicitly in the ticket body, but is added here as
--- NOT NULL — every user needs exactly one of the 9 seeded roles, which
--- is the whole reason roles exists. Flag it if that's not intended.
--- password_hash is VARCHAR(255): do not shorten — bcrypt output must
--- not be truncated.
+-- Matches docs/schema-fms.sql. depot_id is nullable: admins are not
+-- depot-scoped. role_id is NOT NULL — every user has exactly one of
+-- the 9 seeded roles. password_hash is VARCHAR(255): do not shorten —
+-- bcrypt output must not be truncated. (An earlier draft added a
+-- full_name column; it is not in the spec or API contract, so removed.)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
     id            SERIAL       PRIMARY KEY,
@@ -87,7 +87,6 @@ CREATE TABLE IF NOT EXISTS users (
                                 ON DELETE RESTRICT ON UPDATE CASCADE,
     email         VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    full_name     VARCHAR(255) NOT NULL,
     is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
