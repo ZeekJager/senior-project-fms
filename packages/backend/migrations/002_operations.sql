@@ -2,21 +2,32 @@
 -- Migration: 002_operations
 -- Ticket:    FMS-02 — DB Migrations: Operations Tables
 -- Target:    packages/backend/migrations/002_operations.sql
--- Tables:    vehicles, drivers, trips, fuel_logs, maintenance_records,
---            maintenance_parts, inventory_parts, gps_pings,
---            driver_attendance, audit_logs
--- Deps:      001_core_identity.sql (roles, depots, users,
---            set_updated_at() trigger function — reused below)
+-- Spec:      docs/schema-fms.sql (MySQL) — translated to PostgreSQL here
+-- Deps:      001_core_identity.sql (roles, depots, users, and the
+--            set_updated_at() trigger function reused below)
 --
--- Dialect: PostgreSQL (confirmed via 001's dialect and this ticket's
--- resolution).
+-- Tables (everything in schema-fms.sql that 001 does not create):
+--   vehicles, drivers, routes, trips, driver_attendance,
+--   dvir_reports, maintenance_records, inventory_parts,
+--   maintenance_parts, incident_reports, gps_pings, fuel_logs,
+--   telemetry_flags, notifications, analytics_cache, audit_logs
 --
--- No schema-fms.sql exists for this ticket — greenfield project, so
--- this migration *is* the schema. Anything beyond what FMS-02's
--- ticket text explicitly requires (the ENUM values, the integer
--- money/volume columns, the UNIQUE/CHECK constraints, the audit_logs
--- privilege split) is a judgment call made here, flagged inline.
--- Flag anything you want changed before this lands.
+-- MySQL -> PostgreSQL translation:
+--   TINYINT(1)          -> BOOLEAN
+--   JSON                -> JSONB
+--   AUTO_INCREMENT      -> SERIAL / BIGSERIAL
+--   ENUM(...)           -> CREATE TYPE ... AS ENUM (idempotent below)
+--   SMALLINT UNSIGNED   -> SMALLINT + CHECK (>= 0)
+--   TIMESTAMP / DATETIME-> TIMESTAMPTZ (matches 001)
+--   ON UPDATE CURRENT_TIMESTAMP -> set_updated_at() trigger (from 001)
+--
+-- Rules honoured (CFG-1 Definition of Done / FMS-02 "Don't"):
+--   * No float/double anywhere in fuel or money paths: fuel_ml,
+--     cost_cents, unit_cost_cents, total_cost_cents are all INTEGER.
+--   * Plain foreign keys (no ON DELETE CASCADE / SET NULL): core
+--     entities are soft-deleted via is_active, never DELETEd.
+--   * No indexes beyond primary and unique keys — query-specific
+--     indexes are added in Wave 4 after profiling.
 --
 -- Up/Down split marker follows 001's convention.
 -- =====================================================================
@@ -24,40 +35,53 @@
 -- +migrate Up
 
 -- ---------------------------------------------------------------------
--- trip_status
--- Postgres has no "CREATE TYPE IF NOT EXISTS" — this DO block is the
--- standard idempotency workaround (catch duplicate_object), needed
--- because FMS-01's "running up twice is idempotent" bar applies here
--- too.
+-- ENUM types
+-- Postgres has no CREATE TYPE IF NOT EXISTS; each DO block catches
+-- duplicate_object so running Up twice stays idempotent (FMS-01 bar).
 -- ---------------------------------------------------------------------
 DO $$ BEGIN
     CREATE TYPE trip_status AS ENUM
         ('scheduled', 'assigned', 'en_route', 'completed', 'cancelled');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE attendance_status AS ENUM ('present', 'absent', 'on_leave');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE dvir_type AS ENUM ('pre_trip', 'post_trip');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE incident_severity AS ENUM ('minor', 'major', 'critical');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE telemetry_flag_type AS ENUM
+        ('speeding', 'idling', 'fuel_variance');
+EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- ---------------------------------------------------------------------
--- vehicles
--- depot_id is NOT NULL (every vehicle has a home depot) — unlike
--- users.depot_id, which is nullable for depot-unscoped admins. Flag
--- if vehicles should be allowed to exist depot-less mid-onboarding.
--- odometer_km is INTEGER, extending FMS-02's integer-only convention
--- (set for fuel/money) to mileage as well — no fractional km needed.
+-- vehicles                                               (track-dispatch)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS vehicles (
-    id                   SERIAL       PRIMARY KEY,
-    depot_id             INTEGER      NOT NULL REFERENCES depots(id)
-                                       ON DELETE RESTRICT ON UPDATE CASCADE,
-    registration_number  VARCHAR(50)  NOT NULL UNIQUE,
-    vin                  VARCHAR(50)  UNIQUE,
-    make                 VARCHAR(100) NOT NULL,
-    model                VARCHAR(100) NOT NULL,
-    year                 SMALLINT,
-    odometer_km          INTEGER      NOT NULL DEFAULT 0,
-    is_active            BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at           TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                         SERIAL       PRIMARY KEY,
+    plate_number               VARCHAR(50)  NOT NULL UNIQUE,
+    type                       VARCHAR(50)  NOT NULL,
+    capacity                   INTEGER      NOT NULL,
+    depot_id                   INTEGER      NOT NULL REFERENCES depots(id),
+    maintenance_flag           BOOLEAN      NOT NULL DEFAULT FALSE,
+    fuel_efficiency_ml_per_km  INTEGER      NOT NULL,
+    health_score               INTEGER,
+    health_score_updated_at    TIMESTAMPTZ,
+    is_active                  BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                 TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 DROP TRIGGER IF EXISTS trg_vehicles_updated_at ON vehicles;
@@ -66,23 +90,17 @@ CREATE TRIGGER trg_vehicles_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ---------------------------------------------------------------------
--- drivers
--- Modeled as a 1:1 profile extension of users (role_id = 'driver' on
--- the users side), not a standalone identity — avoids duplicating
--- email/password/name. license_expiry is NOT NULL since it's the
--- field document-expiry alerts would key off; flag if that's
--- premature for this ticket's scope.
+-- drivers                                                (track-dispatch)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS drivers (
-    id              SERIAL       PRIMARY KEY,
-    user_id         INTEGER      NOT NULL UNIQUE REFERENCES users(id)
-                                  ON DELETE RESTRICT ON UPDATE CASCADE,
-    license_number  VARCHAR(50)  NOT NULL UNIQUE,
-    license_expiry  DATE         NOT NULL,
-    hire_date       DATE,
-    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id              SERIAL        PRIMARY KEY,
+    user_id         INTEGER       NOT NULL UNIQUE REFERENCES users(id),
+    license_number  VARCHAR(100)  NOT NULL UNIQUE,
+    license_expiry  DATE          NOT NULL,
+    depot_id        INTEGER       NOT NULL REFERENCES depots(id),
+    is_active       BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 DROP TRIGGER IF EXISTS trg_drivers_updated_at ON drivers;
@@ -91,49 +109,33 @@ CREATE TRIGGER trg_drivers_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ---------------------------------------------------------------------
--- inventory_parts
--- Created ahead of maintenance_parts, which references it. depot_id
--- is nullable — a part may sit in a shared/central store rather than
--- one depot's stockroom.
+-- routes                                                 (track-dispatch)
 -- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS inventory_parts (
-    id                 SERIAL       PRIMARY KEY,
-    depot_id           INTEGER      REFERENCES depots(id)
-                                     ON DELETE SET NULL ON UPDATE CASCADE,
-    part_number        VARCHAR(100) NOT NULL UNIQUE,
-    name               VARCHAR(255) NOT NULL,
-    description        TEXT,
-    unit_cost_cents    INTEGER,
-    stock_quantity     INTEGER      NOT NULL DEFAULT 0
-                                     CHECK (stock_quantity >= 0),
-    reorder_threshold  INTEGER      NOT NULL DEFAULT 0,
-    is_active          BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS routes (
+    id           SERIAL        PRIMARY KEY,
+    name         VARCHAR(255)  NOT NULL,
+    origin       VARCHAR(255)  NOT NULL,
+    destination  VARCHAR(255)  NOT NULL,
+    distance_km  INTEGER       NOT NULL,
+    depot_id     INTEGER       NOT NULL REFERENCES depots(id)
 );
 
-DROP TRIGGER IF EXISTS trg_inventory_parts_updated_at ON inventory_parts;
-CREATE TRIGGER trg_inventory_parts_updated_at
-    BEFORE UPDATE ON inventory_parts
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
 -- ---------------------------------------------------------------------
--- trips
+-- trips                                                  (track-dispatch)
+-- status is a real ENUM: 'parked' (or any free text) is rejected.
+-- version is the optimistic-locking counter.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS trips (
     id               SERIAL       PRIMARY KEY,
-    vehicle_id       INTEGER      NOT NULL REFERENCES vehicles(id)
-                                   ON DELETE RESTRICT ON UPDATE CASCADE,
-    driver_id        INTEGER      NOT NULL REFERENCES drivers(id)
-                                   ON DELETE RESTRICT ON UPDATE CASCADE,
+    driver_id        INTEGER      NOT NULL REFERENCES drivers(id),
+    vehicle_id       INTEGER      NOT NULL REFERENCES vehicles(id),
+    route_id         INTEGER      NOT NULL REFERENCES routes(id),
     status           trip_status  NOT NULL DEFAULT 'scheduled',
-    origin           VARCHAR(255),
-    destination      VARCHAR(255),
-    scheduled_start  TIMESTAMPTZ,
-    scheduled_end    TIMESTAMPTZ,
+    scheduled_start  TIMESTAMPTZ  NOT NULL,
+    scheduled_end    TIMESTAMPTZ  NOT NULL,
     actual_start     TIMESTAMPTZ,
     actual_end       TIMESTAMPTZ,
-    distance_km      INTEGER,
+    version          INTEGER      NOT NULL DEFAULT 0,
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -144,174 +146,215 @@ CREATE TRIGGER trg_trips_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ---------------------------------------------------------------------
--- fuel_logs
--- fuel_ml / cost_cents are INTEGER per the ticket — no DECIMAL/FLOAT.
--- driver_id is nullable: a fill-up may be a depot-level bulk purchase
--- with no single driver attached.
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS fuel_logs (
-    id           SERIAL       PRIMARY KEY,
-    vehicle_id   INTEGER      NOT NULL REFERENCES vehicles(id)
-                               ON DELETE RESTRICT ON UPDATE CASCADE,
-    driver_id    INTEGER      REFERENCES drivers(id)
-                               ON DELETE SET NULL ON UPDATE CASCADE,
-    fuel_ml      INTEGER      NOT NULL,
-    cost_cents   INTEGER      NOT NULL,
-    odometer_km  INTEGER,
-    created_at   TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-DROP TRIGGER IF EXISTS trg_fuel_logs_updated_at ON fuel_logs;
-CREATE TRIGGER trg_fuel_logs_updated_at
-    BEFORE UPDATE ON fuel_logs
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
--- ---------------------------------------------------------------------
--- maintenance_records
--- technician_id references users(id) directly rather than a separate
--- "technicians" table — FMS-02's table list didn't call for one, and
--- role_id = 'technician' on users already identifies who qualifies.
--- status is free-text, not an ENUM: the ticket gave fixed values for
--- trips.status but not this one, so no closed set was invented here.
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS maintenance_records (
-    id                SERIAL       PRIMARY KEY,
-    vehicle_id        INTEGER      NOT NULL REFERENCES vehicles(id)
-                                    ON DELETE RESTRICT ON UPDATE CASCADE,
-    technician_id     INTEGER      REFERENCES users(id)
-                                    ON DELETE SET NULL ON UPDATE CASCADE,
-    description       TEXT,
-    status            VARCHAR(20)  NOT NULL DEFAULT 'open',
-    scheduled_date    DATE,
-    completed_date    DATE,
-    labor_hours       NUMERIC(6,2),
-    total_cost_cents  INTEGER      NOT NULL,
-    created_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-DROP TRIGGER IF EXISTS trg_maintenance_records_updated_at ON maintenance_records;
-CREATE TRIGGER trg_maintenance_records_updated_at
-    BEFORE UPDATE ON maintenance_records
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
--- ---------------------------------------------------------------------
--- maintenance_parts
--- Line items under a maintenance_record. CASCADEs from the record
--- (delete a work order, its line items go too) but RESTRICTs on the
--- part (a part referenced in cost history can't just disappear).
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS maintenance_parts (
-    id                      SERIAL       PRIMARY KEY,
-    maintenance_record_id   INTEGER      NOT NULL REFERENCES maintenance_records(id)
-                                          ON DELETE CASCADE ON UPDATE CASCADE,
-    inventory_part_id       INTEGER      NOT NULL REFERENCES inventory_parts(id)
-                                          ON DELETE RESTRICT ON UPDATE CASCADE,
-    quantity                INTEGER      NOT NULL DEFAULT 1 CHECK (quantity > 0),
-    unit_cost_cents         INTEGER      NOT NULL,
-    created_at              TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-DROP TRIGGER IF EXISTS trg_maintenance_parts_updated_at ON maintenance_parts;
-CREATE TRIGGER trg_maintenance_parts_updated_at
-    BEFORE UPDATE ON maintenance_parts
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
--- ---------------------------------------------------------------------
--- gps_pings
--- BIGSERIAL, not SERIAL: this table grows far faster than any other
--- here (every vehicle, every few seconds) and can plausibly exceed
--- 2^31 rows over the system's life. No updated_at/trigger — pings are
--- append-only and never corrected after the fact.
--- vehicle_id CASCADEs on delete (the only core-entity FK in this file
--- that does) so decommissioning a vehicle isn't blocked by its own
--- telemetry history; trip_id is nullable since a ping can occur
--- outside an active trip.
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS gps_pings (
-    id           BIGSERIAL     PRIMARY KEY,
-    vehicle_id   INTEGER       NOT NULL REFERENCES vehicles(id)
-                                ON DELETE CASCADE ON UPDATE CASCADE,
-    trip_id      INTEGER       REFERENCES trips(id)
-                                ON DELETE SET NULL ON UPDATE CASCADE,
-    latitude     NUMERIC(9,6)  NOT NULL CHECK (latitude BETWEEN -90 AND 90),
-    longitude    NUMERIC(9,6)  NOT NULL CHECK (longitude BETWEEN -180 AND 180),
-    speed_kmh    SMALLINT      NOT NULL CHECK (speed_kmh >= 0),
-    recorded_at  TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- ---------------------------------------------------------------------
--- driver_attendance
--- status is free-text, same rationale as maintenance_records.status.
+-- driver_attendance                                      (track-dispatch)
+-- UNIQUE(driver_id, date) prevents double-logging a driver's day.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS driver_attendance (
-    id          SERIAL       PRIMARY KEY,
-    driver_id   INTEGER      NOT NULL REFERENCES drivers(id)
-                              ON DELETE RESTRICT ON UPDATE CASCADE,
-    date        DATE         NOT NULL,
-    status      VARCHAR(20)  NOT NULL DEFAULT 'present',
-    notes       TEXT,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id          SERIAL             PRIMARY KEY,
+    driver_id   INTEGER            NOT NULL REFERENCES drivers(id),
+    date        DATE               NOT NULL,
+    status      attendance_status  NOT NULL,
+    logged_by   INTEGER            NOT NULL REFERENCES users(id),
+    created_at  TIMESTAMPTZ        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (driver_id, date)
 );
 
-DROP TRIGGER IF EXISTS trg_driver_attendance_updated_at ON driver_attendance;
-CREATE TRIGGER trg_driver_attendance_updated_at
-    BEFORE UPDATE ON driver_attendance
+-- ---------------------------------------------------------------------
+-- dvir_reports                                        (track-maintenance)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dvir_reports (
+    id            SERIAL       PRIMARY KEY,
+    vehicle_id    INTEGER      NOT NULL REFERENCES vehicles(id),
+    driver_id     INTEGER      NOT NULL REFERENCES drivers(id),
+    trip_id       INTEGER      NOT NULL REFERENCES trips(id),
+    type          dvir_type    NOT NULL,
+    items         JSONB        NOT NULL,
+    issues_found  BOOLEAN      NOT NULL DEFAULT FALSE,
+    submitted_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- maintenance_records                                 (track-maintenance)
+-- total_cost_cents is INTEGER Ethiopian cents — no float.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS maintenance_records (
+    id                SERIAL       PRIMARY KEY,
+    vehicle_id        INTEGER      NOT NULL REFERENCES vehicles(id),
+    technician_id     INTEGER      NOT NULL REFERENCES users(id),
+    description       TEXT         NOT NULL,
+    labour_hours      INTEGER      NOT NULL,
+    total_cost_cents  INTEGER      NOT NULL,
+    completed_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- inventory_parts                                     (track-maintenance)
+-- CHECK(stock_quantity >= 0) prevents negative stock at the DB level.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_parts (
+    id              SERIAL        PRIMARY KEY,
+    name            VARCHAR(255)  NOT NULL,
+    stock_quantity  INTEGER       NOT NULL,
+    reorder_level   INTEGER       NOT NULL,
+    depot_id        INTEGER       NOT NULL REFERENCES depots(id),
+    CHECK (stock_quantity >= 0)
+);
+
+-- ---------------------------------------------------------------------
+-- maintenance_parts                                   (track-maintenance)
+-- unit_cost_cents is INTEGER Ethiopian cents — no float.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS maintenance_parts (
+    id                     SERIAL   PRIMARY KEY,
+    maintenance_record_id  INTEGER  NOT NULL REFERENCES maintenance_records(id),
+    part_id                INTEGER  NOT NULL REFERENCES inventory_parts(id),
+    quantity               INTEGER  NOT NULL,
+    unit_cost_cents        INTEGER  NOT NULL
+);
+
+-- ---------------------------------------------------------------------
+-- incident_reports                                    (track-maintenance)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS incident_reports (
+    id            SERIAL             PRIMARY KEY,
+    driver_id     INTEGER            NOT NULL REFERENCES drivers(id),
+    vehicle_id    INTEGER            NOT NULL REFERENCES vehicles(id),
+    trip_id       INTEGER            NOT NULL REFERENCES trips(id),
+    description   TEXT               NOT NULL,
+    severity      incident_severity  NOT NULL,
+    submitted_at  TIMESTAMPTZ        NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- gps_pings                                             (track-telemetry)
+-- BIGSERIAL: highest-volume table in the schema.
+-- Postgres has no SMALLINT UNSIGNED, so non-negativity is a CHECK.
+-- lat/lng are fixed-point NUMERIC, not float.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS gps_pings (
+    id           BIGSERIAL      PRIMARY KEY,
+    vehicle_id   INTEGER        NOT NULL REFERENCES vehicles(id),
+    trip_id      INTEGER        NOT NULL REFERENCES trips(id),
+    lat          NUMERIC(10,8)  NOT NULL,
+    lng          NUMERIC(11,8)  NOT NULL,
+    speed_kmh    SMALLINT       NOT NULL CHECK (speed_kmh >= 0),
+    bearing      SMALLINT       CHECK (bearing >= 0),
+    accuracy_m   INTEGER,
+    recorded_at  TIMESTAMPTZ    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- fuel_logs                                             (track-telemetry)
+-- fuel_ml (integer millilitres) and cost_cents (integer Ethiopian
+-- cents) are INTEGER NOT NULL — no DECIMAL, no FLOAT.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fuel_logs (
+    id            SERIAL       PRIMARY KEY,
+    driver_id     INTEGER      NOT NULL REFERENCES drivers(id),
+    vehicle_id    INTEGER      NOT NULL REFERENCES vehicles(id),
+    trip_id       INTEGER      NOT NULL REFERENCES trips(id),
+    fuel_ml       INTEGER      NOT NULL,
+    cost_cents    INTEGER      NOT NULL,
+    odometer_km   INTEGER      NOT NULL,
+    submitted_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- telemetry_flags                                       (track-telemetry)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS telemetry_flags (
+    id           SERIAL               PRIMARY KEY,
+    vehicle_id   INTEGER              NOT NULL REFERENCES vehicles(id),
+    trip_id      INTEGER              REFERENCES trips(id),
+    flag_type    telemetry_flag_type  NOT NULL,
+    started_at   TIMESTAMPTZ          NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at  TIMESTAMPTZ
+);
+
+-- ---------------------------------------------------------------------
+-- notifications                                         (track-telemetry)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notifications (
+    id          SERIAL       PRIMARY KEY,
+    user_id     INTEGER      NOT NULL REFERENCES users(id),
+    type        VARCHAR(50)  NOT NULL,
+    message     TEXT         NOT NULL,
+    read_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- analytics_cache                                       (track-telemetry)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS analytics_cache (
+    id                        SERIAL       PRIMARY KEY,
+    vehicle_id                INTEGER      NOT NULL REFERENCES vehicles(id),
+    period                    VARCHAR(20)  NOT NULL,
+    utilisation_pct           INTEGER      NOT NULL,
+    cost_per_km_cents_per_km  INTEGER      NOT NULL,
+    driver_on_time_pct        INTEGER      NOT NULL,
+    updated_at                TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DROP TRIGGER IF EXISTS trg_analytics_cache_updated_at ON analytics_cache;
+CREATE TRIGGER trg_analytics_cache_updated_at
+    BEFORE UPDATE ON analytics_cache
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ---------------------------------------------------------------------
--- audit_logs
--- BIGSERIAL for the same volume reason as gps_pings. No updated_at —
--- rows are append-only by design, which the GRANT below is meant to
--- enforce. entity_id is NOT a foreign key: it points at rows across
--- many different tables, which Postgres can't express as one real FK.
+-- audit_logs                                                (track-core)
+-- Append-only. correlation_id ties a row to the request that caused it.
 --
--- IMPORTANT — two open items:
--- 1. Ownership gotcha: in Postgres the table owner always bypasses
---    GRANT/REVOKE. The REVOKE/GRANT pair below only produces the
---    "UPDATE fails with a permissions error" behaviour the ticket
---    tests for if THIS MIGRATION runs as a role other than fms_app —
---    otherwise fms_app owns the table it just created and the REVOKE
---    is a no-op against its own access. (The docker stack runs
---    migrations as fms_admin; see docker/postgres/init.)
--- 2. fms_app is the app DB role (created in docker/postgres/init).
---    The ticket says "INSERT only," so SELECT is deliberately left
---    ungranted below; if an audit-log viewer feature needs to read
---    these rows, that's a separate grant (or a separate read-only
---    role) to add once that's confirmed.
+-- Privileges: the app role (fms_app) may INSERT and SELECT but is
+-- never granted UPDATE or DELETE. SELECT is kept because the Audit
+-- Log UI (S-10) is a read-only view of this table; the card's
+-- requirement is no UPDATE/DELETE.
+--
+-- Ownership gotcha: a Postgres table owner bypasses GRANT/REVOKE, so
+-- this only bites if migrations run as a role OTHER than fms_app
+-- (the docker stack runs them as fms_admin; fms_app is created in
+-- docker/postgres/init and is a non-owner).
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_logs (
-    id           BIGSERIAL     PRIMARY KEY,
-    user_id      INTEGER       REFERENCES users(id)
-                                ON DELETE SET NULL ON UPDATE CASCADE,
-    action       VARCHAR(100)  NOT NULL,
-    entity_type  VARCHAR(100),
-    entity_id    INTEGER,
-    details      JSONB,
-    created_at   TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id              BIGSERIAL     PRIMARY KEY,
+    table_name      VARCHAR(100)  NOT NULL,
+    record_id       INTEGER       NOT NULL,
+    action          VARCHAR(20)   NOT NULL,
+    old_state       JSONB,
+    new_state       JSONB,
+    user_id         INTEGER       REFERENCES users(id),
+    correlation_id  CHAR(36)      NOT NULL,
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 REVOKE ALL ON audit_logs FROM PUBLIC;
 REVOKE ALL ON audit_logs FROM fms_app;
-GRANT INSERT ON audit_logs TO fms_app;
+GRANT SELECT, INSERT ON audit_logs TO fms_app;
 
 
 -- +migrate Down
 
--- Drop in reverse FK order: leaf/dependent tables first, then the
--- tables they reference, then the enum type.
+-- Drop in reverse FK order: dependents first, then what they reference,
+-- then the enum types (which no table uses once the tables are gone).
 DROP TABLE IF EXISTS audit_logs;
-DROP TABLE IF EXISTS driver_attendance;
-DROP TABLE IF EXISTS gps_pings;
-DROP TABLE IF EXISTS maintenance_parts;
-DROP TABLE IF EXISTS maintenance_records;
+DROP TABLE IF EXISTS analytics_cache;
+DROP TABLE IF EXISTS notifications;
+DROP TABLE IF EXISTS telemetry_flags;
 DROP TABLE IF EXISTS fuel_logs;
-DROP TABLE IF EXISTS trips;
+DROP TABLE IF EXISTS gps_pings;
+DROP TABLE IF EXISTS incident_reports;
+DROP TABLE IF EXISTS maintenance_parts;
 DROP TABLE IF EXISTS inventory_parts;
+DROP TABLE IF EXISTS maintenance_records;
+DROP TABLE IF EXISTS dvir_reports;
+DROP TABLE IF EXISTS driver_attendance;
+DROP TABLE IF EXISTS trips;
+DROP TABLE IF EXISTS routes;
 DROP TABLE IF EXISTS drivers;
 DROP TABLE IF EXISTS vehicles;
+DROP TYPE IF EXISTS telemetry_flag_type;
+DROP TYPE IF EXISTS incident_severity;
+DROP TYPE IF EXISTS dvir_type;
+DROP TYPE IF EXISTS attendance_status;
 DROP TYPE IF EXISTS trip_status;
