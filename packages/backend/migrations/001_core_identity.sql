@@ -73,11 +73,11 @@ CREATE TRIGGER trg_depots_updated_at
 
 -- ---------------------------------------------------------------------
 -- users
--- Matches docs/schema-fms.sql. depot_id is nullable: admins are not
--- depot-scoped. role_id is NOT NULL — every user has exactly one of
--- the 9 seeded roles. password_hash is VARCHAR(255): do not shorten —
--- bcrypt output must not be truncated. (An earlier draft added a
--- full_name column; it is not in the spec or API contract, so removed.)
+-- depot_id is nullable: admins are not depot-scoped. role_id is NOT
+-- NULL — every user has exactly one of the 9 seeded roles.
+-- password_hash is VARCHAR(255): do not shorten — bcrypt output must
+-- not be truncated. full_name is a deliberate addition beyond
+-- docs/schema-fms.sql.
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
     id            SERIAL       PRIMARY KEY,
@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS users (
                                 ON DELETE RESTRICT ON UPDATE CASCADE,
     email         VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
+    full_name     VARCHAR(255) NOT NULL,
     is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
