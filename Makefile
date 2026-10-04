@@ -22,9 +22,9 @@ logs:
 
 # --- HELPER SHELLS ---
 
-# Open a MySQL terminal inside the database container
+# Open a psql terminal inside the database container
 db-shell:
-	docker exec -it fms_mysql mysql -u fms_app -papppassword fms_db
+	docker exec -it fms_postgres psql -U fms_app -d fms_db
 
 # Open a shell inside the Node.js backend
 backend-shell:

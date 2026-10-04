@@ -22,7 +22,7 @@ Once the boot finishes, the following services will be available:
 - **Frontend (React/Vite):** [http://localhost:5173](http://localhost:5173)
 - **Backend (Node.js):** [http://localhost:3000](http://localhost:3000)
 - **AI Service (Python):** [http://localhost:5000](http://localhost:5000)
-- **Database (MySQL):** `localhost:3306`
+- **Database (PostgreSQL):** `localhost:5432`
 
 ## 🛠 Useful Commands (Makefile)
 
@@ -32,7 +32,7 @@ We have wrapped the complex Docker commands into simple `make` commands:
 - `make dev-bg` - Boot the stack in the background.
 - `make down` - Stop all services safely.
 - `make clean` - Stop all services **and wipe the database**.
-- `make db-shell` - Open an interactive MySQL terminal inside the database container.
+- `make db-shell` - Open an interactive psql terminal inside the database container.
 - `make backend-shell` - Open a terminal inside the Node.js backend.
 
 ## 📚 Project Documentation

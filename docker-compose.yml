@@ -1,21 +1,25 @@
 version: '3.8'
 
 services:
-  # 1. MySQL Database (Persisted)
-  mysql:
-    image: mysql:8.0
-    container_name: fms_mysql
+  # 1. PostgreSQL Database (Persisted)
+  # fms_admin owns the schema and runs migrations. The backend connects as
+  # fms_app (created by docker/postgres/init), a non-owner role, so table
+  # level REVOKEs like audit_logs INSERT-only actually apply to it.
+  postgres:
+    image: postgres:16
+    container_name: fms_postgres
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: fms_db
-      MYSQL_USER: fms_app
-      MYSQL_PASSWORD: apppassword
+      POSTGRES_USER: fms_admin
+      POSTGRES_PASSWORD: adminpassword
+      POSTGRES_DB: fms_db
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      # -h localhost forces TCP, which only answers once init scripts finish
+      test: ["CMD-SHELL", "pg_isready -h localhost -U fms_admin -d fms_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -34,13 +38,14 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3000
-      - DB_HOST=mysql
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - DB_USER=fms_app
       - DB_PASS=apppassword
       - DB_NAME=fms_db
       - JWT_SECRET=development_secret_do_not_use_in_prod
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
 
   # 3. React Frontend (Vite)
@@ -75,4 +80,4 @@ services:
       - INTERNAL_TOKEN=ai_internal_secret
 
 volumes:
-  mysql_data:
+  postgres_data:
