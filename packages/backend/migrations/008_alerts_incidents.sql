@@ -66,14 +66,22 @@ CREATE TABLE IF NOT EXISTS alert.alert_acknowledgements (
         CHECK (action IN ('acknowledge', 'resolve', 'dismiss', 'comment'))
 );
 
+-- One row per recipient per channel. Doubles as the in-app inbox (S-17):
+-- an 'in_app' row is the inbox entry and read_at marks it read. Not every
+-- notification comes from an alert (e.g. "trip assigned"), so alert_id
+-- is optional and the content lives on the row itself.
 CREATE TABLE IF NOT EXISTS alert.notifications (
     id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    alert_id             BIGINT NOT NULL REFERENCES alert.alerts(id)
+    alert_id             BIGINT REFERENCES alert.alerts(id)
                          ON DELETE CASCADE ON UPDATE CASCADE,
     recipient_user_id    BIGINT NOT NULL REFERENCES auth.users(id)
                          ON DELETE RESTRICT ON UPDATE CASCADE,
     provider_id          BIGINT REFERENCES integration.external_providers(id)
                          ON DELETE SET NULL ON UPDATE CASCADE,
+    notification_type    VARCHAR(50) NOT NULL,
+    title                VARCHAR(255) NOT NULL,
+    message              TEXT NOT NULL,
+    read_at              TIMESTAMPTZ,
     channel              alert.notification_channel NOT NULL,
     status               alert.notification_status NOT NULL DEFAULT 'queued',
     provider_message_id  VARCHAR(255),
@@ -83,7 +91,9 @@ CREATE TABLE IF NOT EXISTS alert.notifications (
     delivered_at         TIMESTAMPTZ,
     failed_at            TIMESTAMPTZ,
     failure_reason       TEXT,
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_notification_read_in_app
+        CHECK (read_at IS NULL OR channel = 'in_app')
 );
 
 CREATE TABLE IF NOT EXISTS alert.incident_reports (

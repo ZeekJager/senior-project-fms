@@ -1,14 +1,39 @@
 -- =====================================================================
 -- 011_indexes_and_analytics.sql
--- Cross-module performance indexes + analytics read views.
--- These objects are read-only projections; operational tables remain the
--- system of record.
+-- Cross-module performance indexes + analytics read views + the
+-- analytics cache. All analytics objects are derived data; operational
+-- tables remain the system of record.
 -- =====================================================================
 
 -- +migrate Up
 
 CREATE SCHEMA IF NOT EXISTS analytics;
 REVOKE CREATE ON SCHEMA analytics FROM PUBLIC;
+
+-- Precomputed per-vehicle KPIs for the analytics dashboard (S-18,
+-- GET /analytics/utilisation). Written by a scheduled job as an UPSERT
+-- on (vehicle_id, period_type, period_start); safe to truncate and
+-- rebuild. Integer percentages and integer cents (no float).
+CREATE TABLE IF NOT EXISTS analytics.analytics_cache (
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vehicle_id          BIGINT NOT NULL REFERENCES fleet.vehicles(id)
+                        ON DELETE RESTRICT ON UPDATE CASCADE,
+    period_type         VARCHAR(10) NOT NULL,
+    period_start        DATE NOT NULL,
+    utilisation_pct     SMALLINT NOT NULL CHECK (utilisation_pct BETWEEN 0 AND 100),
+    cost_per_km_cents   INTEGER NOT NULL CHECK (cost_per_km_cents >= 0),
+    driver_on_time_pct  SMALLINT CHECK (driver_on_time_pct IS NULL OR driver_on_time_pct BETWEEN 0 AND 100),
+    computed_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_analytics_period_type
+        CHECK (period_type IN ('day', 'week', 'month')),
+    CONSTRAINT uq_analytics_cache_period
+        UNIQUE (vehicle_id, period_type, period_start)
+);
+
+CREATE OR REPLACE TRIGGER trg_analytics_cache_updated_at
+    BEFORE UPDATE ON analytics.analytics_cache
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
 -- ----------------------------
 -- Auth / RBAC
@@ -23,11 +48,20 @@ CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_active
     ON auth.refresh_sessions(user_id, expires_at)
     WHERE revoked_at IS NULL;
 
+-- Depot scoping; also serves GET /drivers?depotId= via the user join.
+CREATE INDEX IF NOT EXISTS idx_auth_users_depot
+    ON auth.users(depot_id);
+
 -- ----------------------------
 -- Fleet
 -- ----------------------------
 CREATE INDEX IF NOT EXISTS idx_fleet_vehicles_depot_status
     ON fleet.vehicles(depot_id, status);
+
+-- GET /vehicles?maintenanceFlag=true
+CREATE INDEX IF NOT EXISTS idx_fleet_vehicles_flagged
+    ON fleet.vehicles(depot_id)
+    WHERE maintenance_flag;
 
 CREATE INDEX IF NOT EXISTS idx_fleet_drivers_active
     ON fleet.drivers(is_active);
@@ -148,6 +182,11 @@ CREATE INDEX IF NOT EXISTS idx_alert_notifications_pending
 CREATE INDEX IF NOT EXISTS idx_alert_notifications_recipient
     ON alert.notifications(recipient_user_id, queued_at DESC);
 
+-- Notification inbox badge / unread list (S-17).
+CREATE INDEX IF NOT EXISTS idx_alert_notifications_unread
+    ON alert.notifications(recipient_user_id, queued_at DESC)
+    WHERE channel = 'in_app' AND read_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_incidents_vehicle_time
     ON alert.incident_reports(vehicle_id, occurred_at DESC);
 
@@ -175,18 +214,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_user_time
 CREATE INDEX IF NOT EXISTS idx_audit_entity_time
     ON audit.audit_logs(entity_type, entity_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_audit_request
-    ON audit.audit_logs(request_id);
-
--- Cross-module FK added here because `trip.trip` is created after `fleet.*`.
-DO $$ BEGIN
-    ALTER TABLE fleet.dvir_reports
-        ADD CONSTRAINT fk_dvir_trip
-        FOREIGN KEY (trip_id) REFERENCES trip.trips(id)
-        ON DELETE SET NULL ON UPDATE CASCADE;
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_audit_correlation
+    ON audit.audit_logs(correlation_id);
 
 -- =====================================================================
 -- Analytics views
@@ -199,6 +228,8 @@ SELECT
     v.make,
     v.model,
     v.status AS vehicle_status,
+    v.maintenance_flag,
+    v.health_score,
     d.name AS depot_name,
     vcl.latitude,
     vcl.longitude,
@@ -262,16 +293,14 @@ GROUP BY a.severity;
 
 -- +migrate Down
 
--- fk_dvir_trip was added in Up; it must go first or 003 Down cannot drop trip.trips.
-ALTER TABLE IF EXISTS fleet.dvir_reports DROP CONSTRAINT IF EXISTS fk_dvir_trip;
-
 DROP VIEW IF EXISTS analytics.open_alert_summary;
 DROP VIEW IF EXISTS analytics.maintenance_risk_summary;
 DROP VIEW IF EXISTS analytics.fuel_efficiency_summary;
 DROP VIEW IF EXISTS analytics.vehicle_current_status;
+DROP TABLE IF EXISTS analytics.analytics_cache;
 DROP SCHEMA IF EXISTS analytics;
 
-DROP INDEX IF EXISTS audit.idx_audit_request;
+DROP INDEX IF EXISTS audit.idx_audit_correlation;
 DROP INDEX IF EXISTS audit.idx_audit_entity_time;
 DROP INDEX IF EXISTS audit.idx_audit_user_time;
 DROP INDEX IF EXISTS ev.idx_ev_stations_location;
@@ -279,6 +308,7 @@ DROP INDEX IF EXISTS ev.idx_ev_sessions_vehicle_time;
 DROP INDEX IF EXISTS ev.idx_ev_battery_vehicle_time;
 DROP INDEX IF EXISTS alert.idx_incidents_status;
 DROP INDEX IF EXISTS alert.idx_incidents_vehicle_time;
+DROP INDEX IF EXISTS alert.idx_alert_notifications_unread;
 DROP INDEX IF EXISTS alert.idx_alert_notifications_recipient;
 DROP INDEX IF EXISTS alert.idx_alert_notifications_pending;
 DROP INDEX IF EXISTS alert.idx_alerts_open_severity;
@@ -311,7 +341,9 @@ DROP INDEX IF EXISTS fleet.idx_fleet_attendance_date;
 DROP INDEX IF EXISTS fleet.idx_fleet_assignments_vehicle_dates;
 DROP INDEX IF EXISTS fleet.idx_fleet_assignments_driver_dates;
 DROP INDEX IF EXISTS fleet.idx_fleet_drivers_active;
+DROP INDEX IF EXISTS fleet.idx_fleet_vehicles_flagged;
 DROP INDEX IF EXISTS fleet.idx_fleet_vehicles_depot_status;
+DROP INDEX IF EXISTS auth.idx_auth_users_depot;
 DROP INDEX IF EXISTS auth.idx_auth_refresh_sessions_active;
 DROP INDEX IF EXISTS auth.idx_auth_refresh_sessions_user;
 DROP INDEX IF EXISTS auth.idx_auth_user_roles_role;

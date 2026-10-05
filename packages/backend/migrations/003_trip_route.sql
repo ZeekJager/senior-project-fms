@@ -16,6 +16,8 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS trip.routes (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name                VARCHAR(255) NOT NULL,
+    depot_id           BIGINT NOT NULL REFERENCES fleet.depots(id)
+                       ON DELETE RESTRICT ON UPDATE CASCADE,
     origin_name        VARCHAR(255),
     destination_name   VARCHAR(255),
     origin_latitude    NUMERIC(9,6) CHECK (origin_latitude BETWEEN -90 AND 90),
@@ -25,6 +27,7 @@ CREATE TABLE IF NOT EXISTS trip.routes (
     distance_km        NUMERIC(12,3) CHECK (distance_km IS NULL OR distance_km >= 0),
     estimated_duration_seconds INTEGER CHECK (estimated_duration_seconds IS NULL OR estimated_duration_seconds >= 0),
     geometry           JSONB,
+    is_active          BOOLEAN NOT NULL DEFAULT TRUE,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_route_geometry CHECK (
@@ -32,11 +35,14 @@ CREATE TABLE IF NOT EXISTS trip.routes (
     )
 );
 
+-- A trip is created first (POST /trips: route + schedule) and gets its
+-- driver and vehicle later (POST /trips/:id/assign), so both are NULL
+-- until the trip reaches 'assigned'; chk_trip_assignment enforces that.
 CREATE TABLE IF NOT EXISTS trip.trips (
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    vehicle_id         BIGINT NOT NULL REFERENCES fleet.vehicles(id)
+    vehicle_id         BIGINT REFERENCES fleet.vehicles(id)
                        ON DELETE RESTRICT ON UPDATE CASCADE,
-    driver_id          BIGINT NOT NULL REFERENCES fleet.drivers(id)
+    driver_id          BIGINT REFERENCES fleet.drivers(id)
                        ON DELETE RESTRICT ON UPDATE CASCADE,
     route_id           BIGINT REFERENCES trip.routes(id)
                        ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -51,6 +57,8 @@ CREATE TABLE IF NOT EXISTS trip.trips (
     actual_distance_km  NUMERIC(12,3) CHECK (actual_distance_km IS NULL OR actual_distance_km >= 0),
     planned_duration_seconds INTEGER CHECK (planned_duration_seconds IS NULL OR planned_duration_seconds >= 0),
     actual_duration_seconds  INTEGER CHECK (actual_duration_seconds IS NULL OR actual_duration_seconds >= 0),
+    -- Optimistic-locking counter, bumped by trg_trip_trips_version.
+    version            INTEGER NOT NULL DEFAULT 0,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_trip_schedule CHECK (
@@ -58,6 +66,14 @@ CREATE TABLE IF NOT EXISTS trip.trips (
     ),
     CONSTRAINT chk_trip_actual CHECK (
         actual_end IS NULL OR actual_start IS NULL OR actual_end >= actual_start
+    ),
+    CONSTRAINT chk_trip_schedule_required CHECK (
+        status IN ('draft', 'cancelled')
+        OR (scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL)
+    ),
+    CONSTRAINT chk_trip_assignment CHECK (
+        status IN ('draft', 'scheduled', 'cancelled')
+        OR (driver_id IS NOT NULL AND vehicle_id IS NOT NULL)
     )
 );
 
@@ -89,12 +105,27 @@ CREATE OR REPLACE TRIGGER trg_trip_trips_updated_at
     BEFORE UPDATE ON trip.trips
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
+CREATE OR REPLACE TRIGGER trg_trip_trips_version
+    BEFORE UPDATE ON trip.trips
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
 CREATE OR REPLACE TRIGGER trg_trip_stops_updated_at
     BEFORE UPDATE ON trip.trip_stops
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
+-- fleet.dvir_reports.trip_id is created in 002, before trip.trips exists.
+DO $$ BEGIN
+    ALTER TABLE fleet.dvir_reports
+        ADD CONSTRAINT fk_dvir_trip
+        FOREIGN KEY (trip_id) REFERENCES trip.trips(id)
+        ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 -- +migrate Down
 
+ALTER TABLE IF EXISTS fleet.dvir_reports DROP CONSTRAINT IF EXISTS fk_dvir_trip;
 DROP TABLE IF EXISTS trip.trip_stops;
 DROP TABLE IF EXISTS trip.trips;
 DROP TABLE IF EXISTS trip.routes;

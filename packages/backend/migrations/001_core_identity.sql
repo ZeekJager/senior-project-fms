@@ -28,6 +28,20 @@ BEGIN
 END;
 $$;
 
+-- Optimistic locking: every UPDATE bumps `version`, so a writer that
+-- issues `UPDATE ... WHERE id = $1 AND version = $2` and gets 0 rows
+-- knows someone else changed the row first. The app cannot forget to
+-- increment it.
+CREATE OR REPLACE FUNCTION shared.bump_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.version = OLD.version + 1;
+    RETURN NEW;
+END;
+$$;
+
 DO $$ BEGIN
     CREATE TYPE shared.vehicle_status AS ENUM
         ('active', 'inactive', 'maintenance', 'retired', 'decommissioned');
@@ -77,7 +91,14 @@ CREATE TABLE IF NOT EXISTS auth.users (
     password_hash VARCHAR(255) NOT NULL,
     full_name     VARCHAR(255) NOT NULL,
     phone         VARCHAR(50),
+    -- Home depot. NULL for depot-unscoped users (admin, fleet_owner).
+    -- FK to fleet.depots is added in 002, once that table exists.
+    -- Also the driver's depot: fleet.drivers deliberately has no copy.
+    depot_id      BIGINT,
     status        shared.user_status NOT NULL DEFAULT 'active',
+    -- Soft-delete flag (DoD #6) derived from status, so the two can
+    -- never disagree. Deactivate a user by changing status.
+    is_active     BOOLEAN GENERATED ALWAYS AS (status = 'active') STORED,
     last_login_at TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -265,6 +286,7 @@ DROP TYPE IF EXISTS shared.fuel_type;
 DROP TYPE IF EXISTS shared.vehicle_type;
 DROP TYPE IF EXISTS shared.vehicle_status;
 
+DROP FUNCTION IF EXISTS shared.bump_version();
 DROP FUNCTION IF EXISTS shared.set_updated_at();
 DROP SCHEMA IF EXISTS auth;
 DROP SCHEMA IF EXISTS shared;

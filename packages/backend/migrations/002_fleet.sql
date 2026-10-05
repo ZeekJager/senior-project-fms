@@ -11,6 +11,9 @@ REVOKE CREATE ON SCHEMA fleet FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS fleet.depots (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
+    -- Display location (POST /depots accepts name + location). The
+    -- structured address fields below are optional refinements.
+    location    VARCHAR(255) NOT NULL,
     code        VARCHAR(50) UNIQUE,
     address     TEXT,
     city        VARCHAR(120),
@@ -38,11 +41,28 @@ CREATE TABLE IF NOT EXISTS fleet.vehicles (
     odometer_km          NUMERIC(12,1) NOT NULL DEFAULT 0 CHECK (odometer_km >= 0),
     payload_capacity_kg  NUMERIC(12,2) CHECK (payload_capacity_kg IS NULL OR payload_capacity_kg >= 0),
     status               shared.vehicle_status NOT NULL DEFAULT 'active',
+    -- "Needs maintenance, do not dispatch" (set by POST /maintenance,
+    -- cleared on completion; assignment fails CONFLICT_VEHICLE_FLAGGED).
+    -- Distinct from status = 'maintenance', which means in the workshop.
+    maintenance_flag     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Expected consumption, integer ml/km (no float in fuel paths). Basis
+    -- for fuel reconciliation and fuel_variance flags. Not meaningful for
+    -- EVs, so required for every other fuel type.
+    fuel_efficiency_ml_per_km INTEGER
+                         CHECK (fuel_efficiency_ml_per_km IS NULL OR fuel_efficiency_ml_per_km > 0),
+    -- Latest AI health score snapshot (0-100) for list/dashboard reads;
+    -- history lives in maintenance.maintenance_predictions.
+    health_score         SMALLINT CHECK (health_score IS NULL OR health_score BETWEEN 0 AND 100),
+    health_score_updated_at TIMESTAMPTZ,
     is_active            BOOLEAN NOT NULL DEFAULT TRUE,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_fleet_vehicle_registration UNIQUE (registration_number),
-    CONSTRAINT uq_fleet_vehicle_vin UNIQUE (vin)
+    CONSTRAINT uq_fleet_vehicle_vin UNIQUE (vin),
+    CONSTRAINT chk_vehicle_fuel_efficiency
+        CHECK (fuel_type = 'electric' OR fuel_efficiency_ml_per_km IS NOT NULL),
+    CONSTRAINT chk_vehicle_health_score_time
+        CHECK ((health_score IS NULL) = (health_score_updated_at IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS fleet.drivers (
@@ -84,12 +104,14 @@ CREATE TABLE IF NOT EXISTS fleet.driver_attendance (
                 ON DELETE RESTRICT ON UPDATE CASCADE,
     attendance_date DATE NOT NULL,
     status      VARCHAR(20) NOT NULL DEFAULT 'present',
+    logged_by   BIGINT NOT NULL REFERENCES auth.users(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE,
     notes       TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (driver_id, attendance_date),
     CONSTRAINT chk_attendance_status
-        CHECK (status IN ('present', 'absent', 'late', 'leave', 'sick', 'other'))
+        CHECK (status IN ('present', 'absent', 'on_leave', 'late', 'sick', 'other'))
 );
 
 CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
@@ -98,11 +120,14 @@ CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
                     ON DELETE RESTRICT ON UPDATE CASCADE,
     driver_id       BIGINT NOT NULL REFERENCES fleet.drivers(id)
                     ON DELETE RESTRICT ON UPDATE CASCADE,
-    trip_id         BIGINT,
+    trip_id         BIGINT,  -- FK fk_dvir_trip added in 003, once trip.trips exists
     inspection_type VARCHAR(30) NOT NULL,
     status          VARCHAR(20) NOT NULL DEFAULT 'submitted',
     checklist       JSONB NOT NULL DEFAULT '{}'::JSONB,
     defects         JSONB NOT NULL DEFAULT '[]'::JSONB,
+    -- Driver's own "issues found" answer (POST /dvir issuesFound). May be
+    -- TRUE with no structured defects, but listed defects force TRUE.
+    issues_found    BOOLEAN NOT NULL DEFAULT FALSE,
     submitted_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     reviewed_at     TIMESTAMPTZ,
     reviewed_by     BIGINT REFERENCES auth.users(id)
@@ -114,7 +139,9 @@ CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
     CONSTRAINT chk_dvir_status CHECK (status IN ('submitted', 'reviewed', 'requires_action', 'closed')),
     CONSTRAINT chk_dvir_json CHECK (
         jsonb_typeof(checklist) = 'object' AND jsonb_typeof(defects) = 'array'
-    )
+    ),
+    CONSTRAINT chk_dvir_issues_found
+        CHECK (issues_found OR jsonb_array_length(defects) = 0)
 );
 
 CREATE OR REPLACE TRIGGER trg_fleet_depots_updated_at
@@ -151,8 +178,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_fleet_active_vehicle_primary
     ON fleet.driver_vehicle_assignments(vehicle_id)
     WHERE status = 'active' AND assignment_type = 'primary' AND assigned_until IS NULL;
 
+-- auth.users.depot_id is created in 001, before fleet.depots exists.
+DO $$ BEGIN
+    ALTER TABLE auth.users
+        ADD CONSTRAINT fk_users_depot
+        FOREIGN KEY (depot_id) REFERENCES fleet.depots(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 -- +migrate Down
 
+ALTER TABLE IF EXISTS auth.users DROP CONSTRAINT IF EXISTS fk_users_depot;
 DROP TABLE IF EXISTS fleet.dvir_reports;
 DROP TABLE IF EXISTS fleet.driver_attendance;
 DROP TABLE IF EXISTS fleet.driver_vehicle_assignments;

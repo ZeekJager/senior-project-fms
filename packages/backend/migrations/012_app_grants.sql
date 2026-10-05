@@ -10,7 +10,8 @@
 -- Policy:
 --   * CRUD on every table in the module schemas (new tables created by
 --     later migrations inherit it via default privileges).
---   * analytics.* is read-only (views).
+--   * analytics.* is read-only (views), except analytics_cache, which
+--     the scheduled KPI job upserts into.
 --   * audit.audit_logs is INSERT + SELECT only. The append-only trigger
 --     from 010 blocks UPDATE/DELETE for everyone; withholding the
 --     privilege as well means the app role is refused before the
@@ -46,6 +47,8 @@ BEGIN
     GRANT USAGE ON SCHEMA analytics TO fms_app;
     GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO fms_app;
     ALTER DEFAULT PRIVILEGES IN SCHEMA analytics GRANT SELECT ON TABLES TO fms_app;
+    GRANT INSERT, UPDATE, DELETE ON analytics.analytics_cache TO fms_app;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA analytics TO fms_app;
 
     -- Append-only audit trail: no defaults, explicit table grants only.
     GRANT USAGE ON SCHEMA audit TO fms_app;

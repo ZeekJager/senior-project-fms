@@ -35,6 +35,18 @@ Do **not** run these migrations on top of the old `public.*` tables without firs
 - Read scaling: PostgreSQL streaming/read replica (deployment concern, outside this SQL migration set)
 - ORM: Prisma or Sequelize
 
+## Design notes
+
+- **Depot scoping.** `auth.users.depot_id` is the single source of a user's home depot (NULL = depot-unscoped, e.g. admin). A driver's depot is their user's depot; `fleet.drivers` keeps no copy, so the two cannot drift. `GET /drivers?depotId=` joins through `auth.users`.
+- **Cross-module foreign keys** are added by the migration that creates the *referenced* table and dropped first in its Down: `fk_users_depot` in 002, `fk_dvir_trip` in 003.
+- **Trip lifecycle.** A trip is created with route + schedule and assigned a driver and vehicle later. `chk_trip_assignment` requires both from `assigned` onward; `chk_trip_schedule_required` requires times outside `draft`/`cancelled`.
+- **Optimistic locking.** `trip.trips.version` is bumped by a trigger on every UPDATE. Write with `UPDATE ... WHERE id = $1 AND version = $2`; 0 rows updated means a concurrent edit.
+- **Soft delete.** `auth.users.is_active` is generated from `status` (deactivate by setting `status`). Other core tables keep a plain `is_active`.
+- **Integer-only fuel/money/speed.** ml, cents, ml/km and km/h are integers. Note that Postgres rounds a numeric *literal* into an integer column; a value sent as a query parameter (`'1.5'`) is rejected. The API must still reject floats itself (`VALIDATION_FLOAT_IN_MONEY_PATH`).
+- **Audit.** `audit.audit_logs` rejects UPDATE/DELETE/TRUNCATE for every role (triggers) and the app role only has INSERT/SELECT (012). `correlation_id` is the uuid returned as `correlationId` in API errors.
+- **Notifications.** `alert.notifications` doubles as the in-app inbox: an `in_app` row is the inbox entry and `read_at` marks it read. `alert_id` is optional for non-alert notifications.
+- **Analytics cache.** `analytics.analytics_cache` is derived data, upserted on `(vehicle_id, period_type, period_start)` by a scheduled job.
+
 ## Module boundaries
 
 The PostgreSQL schemas are aligned with the modular-monolith boundaries:

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS tracking.vehicle_current_location (
                      ON DELETE RESTRICT ON UPDATE CASCADE,
     latitude         NUMERIC(9,6) NOT NULL CHECK (latitude BETWEEN -90 AND 90),
     longitude        NUMERIC(9,6) NOT NULL CHECK (longitude BETWEEN -180 AND 180),
-    speed_kmh        NUMERIC(8,2) CHECK (speed_kmh IS NULL OR speed_kmh >= 0),
+    speed_kmh        SMALLINT NOT NULL CHECK (speed_kmh >= 0),
     heading_degrees  NUMERIC(6,2) CHECK (heading_degrees IS NULL OR heading_degrees BETWEEN 0 AND 360),
     accuracy_m       NUMERIC(8,2) CHECK (accuracy_m IS NULL OR accuracy_m >= 0),
     ignition_on      BOOLEAN,
@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS tracking.gps_pings (
                      ON DELETE SET NULL ON UPDATE CASCADE,
     latitude         NUMERIC(9,6) NOT NULL CHECK (latitude BETWEEN -90 AND 90),
     longitude        NUMERIC(9,6) NOT NULL CHECK (longitude BETWEEN -180 AND 180),
-    speed_kmh        NUMERIC(8,2) CHECK (speed_kmh IS NULL OR speed_kmh >= 0),
+    -- Integer km/h (FMS-02 card): speeding is "> 80 km/h", so decimals
+    -- add nothing but rounding ambiguity.
+    speed_kmh        SMALLINT NOT NULL CHECK (speed_kmh >= 0),
     heading_degrees  NUMERIC(6,2) CHECK (heading_degrees IS NULL OR heading_degrees BETWEEN 0 AND 360),
     altitude_m       NUMERIC(10,2),
     accuracy_m       NUMERIC(8,2) CHECK (accuracy_m IS NULL OR accuracy_m >= 0),
@@ -69,6 +71,9 @@ CREATE TABLE IF NOT EXISTS tracking.telemetry_flags (
     flag_type          tracking.telemetry_flag_type NOT NULL,
     severity           VARCHAR(20) NOT NULL DEFAULT 'medium',
     observed_at        TIMESTAMPTZ NOT NULL,
+    -- When the condition itself ended (vehicle back under the limit,
+    -- idling stopped). NULL while ongoing. Separate from review status.
+    resolved_at        TIMESTAMPTZ,
     details            JSONB NOT NULL DEFAULT '{}'::JSONB,
     status             tracking.telemetry_flag_status NOT NULL DEFAULT 'open',
     reviewed_by        BIGINT REFERENCES auth.users(id)
@@ -79,7 +84,9 @@ CREATE TABLE IF NOT EXISTS tracking.telemetry_flags (
     CONSTRAINT chk_telemetry_severity
         CHECK (severity IN ('low', 'medium', 'high', 'critical')),
     CONSTRAINT chk_telemetry_details
-        CHECK (jsonb_typeof(details) = 'object')
+        CHECK (jsonb_typeof(details) = 'object'),
+    CONSTRAINT chk_telemetry_resolved_time
+        CHECK (resolved_at IS NULL OR resolved_at >= observed_at)
 );
 
 CREATE OR REPLACE FUNCTION tracking.update_current_location_from_ping()

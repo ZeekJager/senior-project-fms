@@ -15,6 +15,20 @@ BEGIN
 END;
 $$;
 
+-- Optimistic locking: every UPDATE bumps `version`, so a writer that
+-- issues `UPDATE ... WHERE id = $1 AND version = $2` and gets 0 rows
+-- knows someone else changed the row first. The app cannot forget to
+-- increment it.
+CREATE OR REPLACE FUNCTION shared.bump_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.version = OLD.version + 1;
+    RETURN NEW;
+END;
+$$;
+
 DO $$ BEGIN
     CREATE TYPE shared.vehicle_status AS ENUM
         ('active', 'inactive', 'maintenance', 'retired', 'decommissioned');
@@ -64,7 +78,14 @@ CREATE TABLE IF NOT EXISTS auth.users (
     password_hash VARCHAR(255) NOT NULL,
     full_name     VARCHAR(255) NOT NULL,
     phone         VARCHAR(50),
+    -- Home depot. NULL for depot-unscoped users (admin, fleet_owner).
+    -- FK to fleet.depots is added in 002, once that table exists.
+    -- Also the driver's depot: fleet.drivers deliberately has no copy.
+    depot_id      BIGINT,
     status        shared.user_status NOT NULL DEFAULT 'active',
+    -- Soft-delete flag (DoD #6) derived from status, so the two can
+    -- never disagree. Deactivate a user by changing status.
+    is_active     BOOLEAN GENERATED ALWAYS AS (status = 'active') STORED,
     last_login_at TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -245,6 +266,9 @@ REVOKE CREATE ON SCHEMA fleet FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS fleet.depots (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
+    -- Display location (POST /depots accepts name + location). The
+    -- structured address fields below are optional refinements.
+    location    VARCHAR(255) NOT NULL,
     code        VARCHAR(50) UNIQUE,
     address     TEXT,
     city        VARCHAR(120),
@@ -272,11 +296,28 @@ CREATE TABLE IF NOT EXISTS fleet.vehicles (
     odometer_km          NUMERIC(12,1) NOT NULL DEFAULT 0 CHECK (odometer_km >= 0),
     payload_capacity_kg  NUMERIC(12,2) CHECK (payload_capacity_kg IS NULL OR payload_capacity_kg >= 0),
     status               shared.vehicle_status NOT NULL DEFAULT 'active',
+    -- "Needs maintenance, do not dispatch" (set by POST /maintenance,
+    -- cleared on completion; assignment fails CONFLICT_VEHICLE_FLAGGED).
+    -- Distinct from status = 'maintenance', which means in the workshop.
+    maintenance_flag     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Expected consumption, integer ml/km (no float in fuel paths). Basis
+    -- for fuel reconciliation and fuel_variance flags. Not meaningful for
+    -- EVs, so required for every other fuel type.
+    fuel_efficiency_ml_per_km INTEGER
+                         CHECK (fuel_efficiency_ml_per_km IS NULL OR fuel_efficiency_ml_per_km > 0),
+    -- Latest AI health score snapshot (0-100) for list/dashboard reads;
+    -- history lives in maintenance.maintenance_predictions.
+    health_score         SMALLINT CHECK (health_score IS NULL OR health_score BETWEEN 0 AND 100),
+    health_score_updated_at TIMESTAMPTZ,
     is_active            BOOLEAN NOT NULL DEFAULT TRUE,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_fleet_vehicle_registration UNIQUE (registration_number),
-    CONSTRAINT uq_fleet_vehicle_vin UNIQUE (vin)
+    CONSTRAINT uq_fleet_vehicle_vin UNIQUE (vin),
+    CONSTRAINT chk_vehicle_fuel_efficiency
+        CHECK (fuel_type = 'electric' OR fuel_efficiency_ml_per_km IS NOT NULL),
+    CONSTRAINT chk_vehicle_health_score_time
+        CHECK ((health_score IS NULL) = (health_score_updated_at IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS fleet.drivers (
@@ -318,12 +359,14 @@ CREATE TABLE IF NOT EXISTS fleet.driver_attendance (
                 ON DELETE RESTRICT ON UPDATE CASCADE,
     attendance_date DATE NOT NULL,
     status      VARCHAR(20) NOT NULL DEFAULT 'present',
+    logged_by   BIGINT NOT NULL REFERENCES auth.users(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE,
     notes       TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (driver_id, attendance_date),
     CONSTRAINT chk_attendance_status
-        CHECK (status IN ('present', 'absent', 'late', 'leave', 'sick', 'other'))
+        CHECK (status IN ('present', 'absent', 'on_leave', 'late', 'sick', 'other'))
 );
 
 CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
@@ -332,11 +375,14 @@ CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
                     ON DELETE RESTRICT ON UPDATE CASCADE,
     driver_id       BIGINT NOT NULL REFERENCES fleet.drivers(id)
                     ON DELETE RESTRICT ON UPDATE CASCADE,
-    trip_id         BIGINT,
+    trip_id         BIGINT,  -- FK fk_dvir_trip added in 003, once trip.trips exists
     inspection_type VARCHAR(30) NOT NULL,
     status          VARCHAR(20) NOT NULL DEFAULT 'submitted',
     checklist       JSONB NOT NULL DEFAULT '{}'::JSONB,
     defects         JSONB NOT NULL DEFAULT '[]'::JSONB,
+    -- Driver's own "issues found" answer (POST /dvir issuesFound). May be
+    -- TRUE with no structured defects, but listed defects force TRUE.
+    issues_found    BOOLEAN NOT NULL DEFAULT FALSE,
     submitted_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     reviewed_at     TIMESTAMPTZ,
     reviewed_by     BIGINT REFERENCES auth.users(id)
@@ -348,7 +394,9 @@ CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
     CONSTRAINT chk_dvir_status CHECK (status IN ('submitted', 'reviewed', 'requires_action', 'closed')),
     CONSTRAINT chk_dvir_json CHECK (
         jsonb_typeof(checklist) = 'object' AND jsonb_typeof(defects) = 'array'
-    )
+    ),
+    CONSTRAINT chk_dvir_issues_found
+        CHECK (issues_found OR jsonb_array_length(defects) = 0)
 );
 
 CREATE OR REPLACE TRIGGER trg_fleet_depots_updated_at
@@ -385,6 +433,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_fleet_active_vehicle_primary
     ON fleet.driver_vehicle_assignments(vehicle_id)
     WHERE status = 'active' AND assignment_type = 'primary' AND assigned_until IS NULL;
 
+-- auth.users.depot_id is created in 001, before fleet.depots exists.
+DO $$ BEGIN
+    ALTER TABLE auth.users
+        ADD CONSTRAINT fk_users_depot
+        FOREIGN KEY (depot_id) REFERENCES fleet.depots(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 -- ===== 003_trip_route.sql =====
 CREATE SCHEMA IF NOT EXISTS trip;
 REVOKE CREATE ON SCHEMA trip FROM PUBLIC;
@@ -397,6 +455,8 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS trip.routes (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name                VARCHAR(255) NOT NULL,
+    depot_id           BIGINT NOT NULL REFERENCES fleet.depots(id)
+                       ON DELETE RESTRICT ON UPDATE CASCADE,
     origin_name        VARCHAR(255),
     destination_name   VARCHAR(255),
     origin_latitude    NUMERIC(9,6) CHECK (origin_latitude BETWEEN -90 AND 90),
@@ -406,6 +466,7 @@ CREATE TABLE IF NOT EXISTS trip.routes (
     distance_km        NUMERIC(12,3) CHECK (distance_km IS NULL OR distance_km >= 0),
     estimated_duration_seconds INTEGER CHECK (estimated_duration_seconds IS NULL OR estimated_duration_seconds >= 0),
     geometry           JSONB,
+    is_active          BOOLEAN NOT NULL DEFAULT TRUE,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_route_geometry CHECK (
@@ -413,11 +474,14 @@ CREATE TABLE IF NOT EXISTS trip.routes (
     )
 );
 
+-- A trip is created first (POST /trips: route + schedule) and gets its
+-- driver and vehicle later (POST /trips/:id/assign), so both are NULL
+-- until the trip reaches 'assigned'; chk_trip_assignment enforces that.
 CREATE TABLE IF NOT EXISTS trip.trips (
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    vehicle_id         BIGINT NOT NULL REFERENCES fleet.vehicles(id)
+    vehicle_id         BIGINT REFERENCES fleet.vehicles(id)
                        ON DELETE RESTRICT ON UPDATE CASCADE,
-    driver_id          BIGINT NOT NULL REFERENCES fleet.drivers(id)
+    driver_id          BIGINT REFERENCES fleet.drivers(id)
                        ON DELETE RESTRICT ON UPDATE CASCADE,
     route_id           BIGINT REFERENCES trip.routes(id)
                        ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -432,6 +496,8 @@ CREATE TABLE IF NOT EXISTS trip.trips (
     actual_distance_km  NUMERIC(12,3) CHECK (actual_distance_km IS NULL OR actual_distance_km >= 0),
     planned_duration_seconds INTEGER CHECK (planned_duration_seconds IS NULL OR planned_duration_seconds >= 0),
     actual_duration_seconds  INTEGER CHECK (actual_duration_seconds IS NULL OR actual_duration_seconds >= 0),
+    -- Optimistic-locking counter, bumped by trg_trip_trips_version.
+    version            INTEGER NOT NULL DEFAULT 0,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_trip_schedule CHECK (
@@ -439,6 +505,14 @@ CREATE TABLE IF NOT EXISTS trip.trips (
     ),
     CONSTRAINT chk_trip_actual CHECK (
         actual_end IS NULL OR actual_start IS NULL OR actual_end >= actual_start
+    ),
+    CONSTRAINT chk_trip_schedule_required CHECK (
+        status IN ('draft', 'cancelled')
+        OR (scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL)
+    ),
+    CONSTRAINT chk_trip_assignment CHECK (
+        status IN ('draft', 'scheduled', 'cancelled')
+        OR (driver_id IS NOT NULL AND vehicle_id IS NOT NULL)
     )
 );
 
@@ -470,9 +544,23 @@ CREATE OR REPLACE TRIGGER trg_trip_trips_updated_at
     BEFORE UPDATE ON trip.trips
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
+CREATE OR REPLACE TRIGGER trg_trip_trips_version
+    BEFORE UPDATE ON trip.trips
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
 CREATE OR REPLACE TRIGGER trg_trip_stops_updated_at
     BEFORE UPDATE ON trip.trip_stops
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+-- fleet.dvir_reports.trip_id is created in 002, before trip.trips exists.
+DO $$ BEGIN
+    ALTER TABLE fleet.dvir_reports
+        ADD CONSTRAINT fk_dvir_trip
+        FOREIGN KEY (trip_id) REFERENCES trip.trips(id)
+        ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ===== 004_fuel.sql =====
 CREATE SCHEMA IF NOT EXISTS fuel;
@@ -767,7 +855,7 @@ CREATE TABLE IF NOT EXISTS tracking.vehicle_current_location (
                      ON DELETE RESTRICT ON UPDATE CASCADE,
     latitude         NUMERIC(9,6) NOT NULL CHECK (latitude BETWEEN -90 AND 90),
     longitude        NUMERIC(9,6) NOT NULL CHECK (longitude BETWEEN -180 AND 180),
-    speed_kmh        NUMERIC(8,2) CHECK (speed_kmh IS NULL OR speed_kmh >= 0),
+    speed_kmh        SMALLINT NOT NULL CHECK (speed_kmh >= 0),
     heading_degrees  NUMERIC(6,2) CHECK (heading_degrees IS NULL OR heading_degrees BETWEEN 0 AND 360),
     accuracy_m       NUMERIC(8,2) CHECK (accuracy_m IS NULL OR accuracy_m >= 0),
     ignition_on      BOOLEAN,
@@ -787,7 +875,9 @@ CREATE TABLE IF NOT EXISTS tracking.gps_pings (
                      ON DELETE SET NULL ON UPDATE CASCADE,
     latitude         NUMERIC(9,6) NOT NULL CHECK (latitude BETWEEN -90 AND 90),
     longitude        NUMERIC(9,6) NOT NULL CHECK (longitude BETWEEN -180 AND 180),
-    speed_kmh        NUMERIC(8,2) CHECK (speed_kmh IS NULL OR speed_kmh >= 0),
+    -- Integer km/h (FMS-02 card): speeding is "> 80 km/h", so decimals
+    -- add nothing but rounding ambiguity.
+    speed_kmh        SMALLINT NOT NULL CHECK (speed_kmh >= 0),
     heading_degrees  NUMERIC(6,2) CHECK (heading_degrees IS NULL OR heading_degrees BETWEEN 0 AND 360),
     altitude_m       NUMERIC(10,2),
     accuracy_m       NUMERIC(8,2) CHECK (accuracy_m IS NULL OR accuracy_m >= 0),
@@ -810,6 +900,9 @@ CREATE TABLE IF NOT EXISTS tracking.telemetry_flags (
     flag_type          tracking.telemetry_flag_type NOT NULL,
     severity           VARCHAR(20) NOT NULL DEFAULT 'medium',
     observed_at        TIMESTAMPTZ NOT NULL,
+    -- When the condition itself ended (vehicle back under the limit,
+    -- idling stopped). NULL while ongoing. Separate from review status.
+    resolved_at        TIMESTAMPTZ,
     details            JSONB NOT NULL DEFAULT '{}'::JSONB,
     status             tracking.telemetry_flag_status NOT NULL DEFAULT 'open',
     reviewed_by        BIGINT REFERENCES auth.users(id)
@@ -820,7 +913,9 @@ CREATE TABLE IF NOT EXISTS tracking.telemetry_flags (
     CONSTRAINT chk_telemetry_severity
         CHECK (severity IN ('low', 'medium', 'high', 'critical')),
     CONSTRAINT chk_telemetry_details
-        CHECK (jsonb_typeof(details) = 'object')
+        CHECK (jsonb_typeof(details) = 'object'),
+    CONSTRAINT chk_telemetry_resolved_time
+        CHECK (resolved_at IS NULL OR resolved_at >= observed_at)
 );
 
 CREATE OR REPLACE FUNCTION tracking.update_current_location_from_ping()
@@ -921,14 +1016,22 @@ CREATE TABLE IF NOT EXISTS alert.alert_acknowledgements (
         CHECK (action IN ('acknowledge', 'resolve', 'dismiss', 'comment'))
 );
 
+-- One row per recipient per channel. Doubles as the in-app inbox (S-17):
+-- an 'in_app' row is the inbox entry and read_at marks it read. Not every
+-- notification comes from an alert (e.g. "trip assigned"), so alert_id
+-- is optional and the content lives on the row itself.
 CREATE TABLE IF NOT EXISTS alert.notifications (
     id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    alert_id             BIGINT NOT NULL REFERENCES alert.alerts(id)
+    alert_id             BIGINT REFERENCES alert.alerts(id)
                          ON DELETE CASCADE ON UPDATE CASCADE,
     recipient_user_id    BIGINT NOT NULL REFERENCES auth.users(id)
                          ON DELETE RESTRICT ON UPDATE CASCADE,
     provider_id          BIGINT REFERENCES integration.external_providers(id)
                          ON DELETE SET NULL ON UPDATE CASCADE,
+    notification_type    VARCHAR(50) NOT NULL,
+    title                VARCHAR(255) NOT NULL,
+    message              TEXT NOT NULL,
+    read_at              TIMESTAMPTZ,
     channel              alert.notification_channel NOT NULL,
     status               alert.notification_status NOT NULL DEFAULT 'queued',
     provider_message_id  VARCHAR(255),
@@ -938,7 +1041,9 @@ CREATE TABLE IF NOT EXISTS alert.notifications (
     delivered_at         TIMESTAMPTZ,
     failed_at            TIMESTAMPTZ,
     failure_reason       TEXT,
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_notification_read_in_app
+        CHECK (read_at IS NULL OR channel = 'in_app')
 );
 
 CREATE TABLE IF NOT EXISTS alert.incident_reports (
@@ -1052,12 +1157,16 @@ REVOKE CREATE ON SCHEMA audit FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS audit.audit_logs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id       BIGINT REFERENCES auth.users(id)
-                  ON DELETE SET NULL ON UPDATE CASCADE,
+    -- Plain FK (no SET NULL / CASCADE): either action would have to UPDATE
+    -- audit rows, which the trigger forbids. Users are deactivated via
+    -- auth.users.status, never deleted.
+    user_id       BIGINT REFERENCES auth.users(id),
     action        VARCHAR(100) NOT NULL,
     entity_type   VARCHAR(100),
     entity_id     BIGINT,
-    request_id    VARCHAR(255),
+    -- Same uuid the API returns as `correlationId` in error bodies, so a
+    -- reported error can be traced to the mutations of that request.
+    correlation_id UUID,
     ip_address    INET,
     old_values    JSONB,
     new_values    JSONB,
@@ -1079,9 +1188,38 @@ CREATE OR REPLACE TRIGGER trg_audit_prevent_update_delete
     BEFORE UPDATE OR DELETE ON audit.audit_logs
     FOR EACH ROW EXECUTE FUNCTION audit.prevent_audit_mutation();
 
+CREATE OR REPLACE TRIGGER trg_audit_prevent_truncate
+    BEFORE TRUNCATE ON audit.audit_logs
+    FOR EACH STATEMENT EXECUTE FUNCTION audit.prevent_audit_mutation();
+
 -- ===== 011_indexes_and_analytics.sql =====
 CREATE SCHEMA IF NOT EXISTS analytics;
 REVOKE CREATE ON SCHEMA analytics FROM PUBLIC;
+
+-- Precomputed per-vehicle KPIs for the analytics dashboard (S-18,
+-- GET /analytics/utilisation). Written by a scheduled job as an UPSERT
+-- on (vehicle_id, period_type, period_start); safe to truncate and
+-- rebuild. Integer percentages and integer cents (no float).
+CREATE TABLE IF NOT EXISTS analytics.analytics_cache (
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vehicle_id          BIGINT NOT NULL REFERENCES fleet.vehicles(id)
+                        ON DELETE RESTRICT ON UPDATE CASCADE,
+    period_type         VARCHAR(10) NOT NULL,
+    period_start        DATE NOT NULL,
+    utilisation_pct     SMALLINT NOT NULL CHECK (utilisation_pct BETWEEN 0 AND 100),
+    cost_per_km_cents   INTEGER NOT NULL CHECK (cost_per_km_cents >= 0),
+    driver_on_time_pct  SMALLINT CHECK (driver_on_time_pct IS NULL OR driver_on_time_pct BETWEEN 0 AND 100),
+    computed_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_analytics_period_type
+        CHECK (period_type IN ('day', 'week', 'month')),
+    CONSTRAINT uq_analytics_cache_period
+        UNIQUE (vehicle_id, period_type, period_start)
+);
+
+CREATE OR REPLACE TRIGGER trg_analytics_cache_updated_at
+    BEFORE UPDATE ON analytics.analytics_cache
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
 -- ----------------------------
 -- Auth / RBAC
@@ -1096,11 +1234,20 @@ CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_active
     ON auth.refresh_sessions(user_id, expires_at)
     WHERE revoked_at IS NULL;
 
+-- Depot scoping; also serves GET /drivers?depotId= via the user join.
+CREATE INDEX IF NOT EXISTS idx_auth_users_depot
+    ON auth.users(depot_id);
+
 -- ----------------------------
 -- Fleet
 -- ----------------------------
 CREATE INDEX IF NOT EXISTS idx_fleet_vehicles_depot_status
     ON fleet.vehicles(depot_id, status);
+
+-- GET /vehicles?maintenanceFlag=true
+CREATE INDEX IF NOT EXISTS idx_fleet_vehicles_flagged
+    ON fleet.vehicles(depot_id)
+    WHERE maintenance_flag;
 
 CREATE INDEX IF NOT EXISTS idx_fleet_drivers_active
     ON fleet.drivers(is_active);
@@ -1221,6 +1368,11 @@ CREATE INDEX IF NOT EXISTS idx_alert_notifications_pending
 CREATE INDEX IF NOT EXISTS idx_alert_notifications_recipient
     ON alert.notifications(recipient_user_id, queued_at DESC);
 
+-- Notification inbox badge / unread list (S-17).
+CREATE INDEX IF NOT EXISTS idx_alert_notifications_unread
+    ON alert.notifications(recipient_user_id, queued_at DESC)
+    WHERE channel = 'in_app' AND read_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_incidents_vehicle_time
     ON alert.incident_reports(vehicle_id, occurred_at DESC);
 
@@ -1248,18 +1400,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_user_time
 CREATE INDEX IF NOT EXISTS idx_audit_entity_time
     ON audit.audit_logs(entity_type, entity_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_audit_request
-    ON audit.audit_logs(request_id);
-
--- Cross-module FK added here because `trip.trip` is created after `fleet.*`.
-DO $$ BEGIN
-    ALTER TABLE fleet.dvir_reports
-        ADD CONSTRAINT fk_dvir_trip
-        FOREIGN KEY (trip_id) REFERENCES trip.trips(id)
-        ON DELETE SET NULL ON UPDATE CASCADE;
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_audit_correlation
+    ON audit.audit_logs(correlation_id);
 
 -- =====================================================================
 -- Analytics views
@@ -1272,6 +1414,8 @@ SELECT
     v.make,
     v.model,
     v.status AS vehicle_status,
+    v.maintenance_flag,
+    v.health_score,
     d.name AS depot_name,
     vcl.latitude,
     vcl.longitude,
@@ -1358,6 +1502,8 @@ BEGIN
     GRANT USAGE ON SCHEMA analytics TO fms_app;
     GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO fms_app;
     ALTER DEFAULT PRIVILEGES IN SCHEMA analytics GRANT SELECT ON TABLES TO fms_app;
+    GRANT INSERT, UPDATE, DELETE ON analytics.analytics_cache TO fms_app;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA analytics TO fms_app;
 
     -- Append-only audit trail: no defaults, explicit table grants only.
     GRANT USAGE ON SCHEMA audit TO fms_app;

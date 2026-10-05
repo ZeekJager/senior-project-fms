@@ -1,8 +1,9 @@
 -- =====================================================================
 -- 010_audit.sql
 -- Architecture boundary: audit.*
--- Audit rows are append-only. The trigger rejects UPDATE and DELETE so
--- the application cannot tamper with audit history through normal DML.
+-- Audit rows are append-only. Triggers reject UPDATE, DELETE and
+-- TRUNCATE for every role, including the table owner; 012 additionally
+-- withholds those privileges from the app role.
 -- =====================================================================
 
 -- +migrate Up
@@ -12,12 +13,16 @@ REVOKE CREATE ON SCHEMA audit FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS audit.audit_logs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id       BIGINT REFERENCES auth.users(id)
-                  ON DELETE SET NULL ON UPDATE CASCADE,
+    -- Plain FK (no SET NULL / CASCADE): either action would have to UPDATE
+    -- audit rows, which the trigger forbids. Users are deactivated via
+    -- auth.users.status, never deleted.
+    user_id       BIGINT REFERENCES auth.users(id),
     action        VARCHAR(100) NOT NULL,
     entity_type   VARCHAR(100),
     entity_id     BIGINT,
-    request_id    VARCHAR(255),
+    -- Same uuid the API returns as `correlationId` in error bodies, so a
+    -- reported error can be traced to the mutations of that request.
+    correlation_id UUID,
     ip_address    INET,
     old_values    JSONB,
     new_values    JSONB,
@@ -39,8 +44,13 @@ CREATE OR REPLACE TRIGGER trg_audit_prevent_update_delete
     BEFORE UPDATE OR DELETE ON audit.audit_logs
     FOR EACH ROW EXECUTE FUNCTION audit.prevent_audit_mutation();
 
+CREATE OR REPLACE TRIGGER trg_audit_prevent_truncate
+    BEFORE TRUNCATE ON audit.audit_logs
+    FOR EACH STATEMENT EXECUTE FUNCTION audit.prevent_audit_mutation();
+
 -- +migrate Down
 
+DROP TRIGGER IF EXISTS trg_audit_prevent_truncate ON audit.audit_logs;
 DROP TRIGGER IF EXISTS trg_audit_prevent_update_delete ON audit.audit_logs;
 DROP FUNCTION IF EXISTS audit.prevent_audit_mutation();
 DROP TABLE IF EXISTS audit.audit_logs;
