@@ -52,6 +52,10 @@ Do **not** run these migrations on top of the old `public.*` tables without firs
 - **Telemetry retries**: `tracking.gps_pings` is unique on `(vehicle_id, recorded_at)`; insert with `ON CONFLICT DO NOTHING`.
 - **Analytics cache.** `analytics.analytics_cache` is derived data, upserted on `(vehicle_id, period_type, period_start)` by a scheduled job.
 
+## Upgrading an existing database
+
+`make migrate` records each applied file name in `schema_migrations` and skips it next time. The earlier `public.*` baseline used the same file names (`001_core_identity.sql`, ...) with different contents, so a database created from it would skip the new `001` and keep the old tables. This set is a replacement baseline for a **new** database: run `make clean` (drops the docker volume) and then `make dev` and `make migrate`. If the old tables hold data you need, migrate it first.
+
 ## Module boundaries
 
 The PostgreSQL schemas are aligned with the modular-monolith boundaries:

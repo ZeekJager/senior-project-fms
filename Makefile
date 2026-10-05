@@ -37,3 +37,7 @@ frontend-shell:
 # Open a shell inside the Python AI service
 ai-shell:
 	docker exec -it fms_ai_service bash
+
+# Run all pending database migrations
+migrate:
+	docker exec -e DB_USER=fms_admin -e DB_PASS=adminpassword fms_backend node scripts/migrate.js

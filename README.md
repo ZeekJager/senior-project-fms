@@ -39,7 +39,7 @@ We have wrapped the complex Docker commands into simple `make` commands:
 
 The single source of truth for the project's architecture lives in the `docs/` folder:
 - **[MVP Scope & Roles](docs/fms-mvp-spec.md)** - What we are building and who uses it.
-- **[Database Schema](docs/schema-fms.sql)** - The exact table structures.
+- **[Database Schema](packages/backend/migrations/README.md)** - The migrations that define every table (apply with `make migrate`).
 - **[API Contract](docs/api-contract.md)** - All REST endpoints and Socket.io events.
 - **[Screen Inventory](docs/screen-inventory.md)** - Every UI screen mapped to roles.
 

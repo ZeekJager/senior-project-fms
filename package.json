@@ -12,5 +12,8 @@
     "dev:clean": "docker-compose down -v --remove-orphans",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "eslint": "^10.12.0"
   }
 }
