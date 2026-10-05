@@ -29,7 +29,20 @@ jobs:
           echo "Waiting for services to boot..."
           sleep 10
           docker ps
-          
+
+      # Applies every migration's Up section in file order, twice (FMS-01
+      # idempotency bar), then every Down section in reverse file order,
+      # then Up again (DoD: reversible, down then up).
+      - name: Verify Migrations (up, up, down, up)
+        run: |
+          set -euo pipefail
+          until docker exec fms_postgres pg_isready -h localhost -U fms_admin -d fms_db; do sleep 1; done
+          run_sql() { docker exec -i fms_postgres psql -v ON_ERROR_STOP=1 -q -U fms_admin -d fms_db; }
+          up()   { for f in $(ls packages/backend/migrations/*.sql); do echo "up   $f"; sed -n '/^-- +migrate Up/,/^-- +migrate Down/p' "$f" | run_sql; done; }
+          down() { for f in $(ls -r packages/backend/migrations/*.sql); do echo "down $f"; sed -n '/^-- +migrate Down/,$p' "$f" | run_sql; done; }
+          up; up; down; up
+          docker exec fms_postgres psql -U fms_admin -d fms_db -c '\dt'
+
       - name: Tear Down
         if: always()
         run: docker compose down -v --remove-orphans
