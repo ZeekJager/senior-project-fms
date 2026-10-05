@@ -96,11 +96,11 @@ CREATE TABLE IF NOT EXISTS auth.refresh_sessions (
     CHECK (revoked_at IS NULL OR revoked_at >= issued_at)
 );
 
-CREATE TRIGGER trg_auth_roles_updated_at
+CREATE OR REPLACE TRIGGER trg_auth_roles_updated_at
     BEFORE UPDATE ON auth.roles
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_auth_users_updated_at
+CREATE OR REPLACE TRIGGER trg_auth_users_updated_at
     BEFORE UPDATE ON auth.users
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS fleet.drivers (
     emergency_phone  VARCHAR(50),
     is_active        BOOLEAN NOT NULL DEFAULT TRUE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS fleet.driver_vehicle_assignments (
@@ -351,27 +351,27 @@ CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
     )
 );
 
-CREATE TRIGGER trg_fleet_depots_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_depots_updated_at
     BEFORE UPDATE ON fleet.depots
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_vehicles_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_vehicles_updated_at
     BEFORE UPDATE ON fleet.vehicles
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_drivers_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_drivers_updated_at
     BEFORE UPDATE ON fleet.drivers
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_assignments_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_assignments_updated_at
     BEFORE UPDATE ON fleet.driver_vehicle_assignments
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_attendance_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_attendance_updated_at
     BEFORE UPDATE ON fleet.driver_attendance
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_dvir_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_dvir_updated_at
     BEFORE UPDATE ON fleet.dvir_reports
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -462,15 +462,15 @@ CREATE TABLE IF NOT EXISTS trip.trip_stops (
         CHECK (status IN ('planned', 'arrived', 'completed', 'skipped'))
 );
 
-CREATE TRIGGER trg_trip_routes_updated_at
+CREATE OR REPLACE TRIGGER trg_trip_routes_updated_at
     BEFORE UPDATE ON trip.routes
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_trip_trips_updated_at
+CREATE OR REPLACE TRIGGER trg_trip_trips_updated_at
     BEFORE UPDATE ON trip.trips
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_trip_stops_updated_at
+CREATE OR REPLACE TRIGGER trg_trip_stops_updated_at
     BEFORE UPDATE ON trip.trip_stops
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -534,11 +534,11 @@ CREATE TABLE IF NOT EXISTS fuel.fuel_anomalies (
         CHECK (severity IN ('low', 'medium', 'high', 'critical'))
 );
 
-CREATE TRIGGER trg_fuel_logs_updated_at
+CREATE OR REPLACE TRIGGER trg_fuel_logs_updated_at
     BEFORE UPDATE ON fuel.fuel_logs
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fuel_anomalies_updated_at
+CREATE OR REPLACE TRIGGER trg_fuel_anomalies_updated_at
     BEFORE UPDATE ON fuel.fuel_anomalies
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -649,15 +649,15 @@ CREATE TABLE IF NOT EXISTS maintenance.maintenance_predictions (
         CHECK (feature_snapshot IS NULL OR jsonb_typeof(feature_snapshot) = 'object')
 );
 
-CREATE TRIGGER trg_maintenance_inventory_parts_updated_at
+CREATE OR REPLACE TRIGGER trg_maintenance_inventory_parts_updated_at
     BEFORE UPDATE ON maintenance.inventory_parts
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_maintenance_records_updated_at
+CREATE OR REPLACE TRIGGER trg_maintenance_records_updated_at
     BEFORE UPDATE ON maintenance.maintenance_records
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_maintenance_predictions_updated_at
+CREATE OR REPLACE TRIGGER trg_maintenance_predictions_updated_at
     BEFORE UPDATE ON maintenance.maintenance_predictions
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -740,11 +740,11 @@ CREATE TABLE IF NOT EXISTS integration.fuel_card_transactions (
     CONSTRAINT chk_fuel_card_payload CHECK (jsonb_typeof(raw_payload) = 'object')
 );
 
-CREATE TRIGGER trg_integration_providers_updated_at
+CREATE OR REPLACE TRIGGER trg_integration_providers_updated_at
     BEFORE UPDATE ON integration.external_providers
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_integration_gps_devices_updated_at
+CREATE OR REPLACE TRIGGER trg_integration_gps_devices_updated_at
     BEFORE UPDATE ON integration.gps_devices
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -852,11 +852,11 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER trg_tracking_gps_ping_updates_current
+CREATE OR REPLACE TRIGGER trg_tracking_gps_ping_updates_current
     AFTER INSERT ON tracking.gps_pings
     FOR EACH ROW EXECUTE FUNCTION tracking.update_current_location_from_ping();
 
-CREATE TRIGGER trg_tracking_flags_updated_at
+CREATE OR REPLACE TRIGGER trg_tracking_flags_updated_at
     BEFORE UPDATE ON tracking.telemetry_flags
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -967,15 +967,15 @@ CREATE TABLE IF NOT EXISTS alert.incident_reports (
         CHECK (jsonb_typeof(attachments) = 'array')
 );
 
-CREATE TRIGGER trg_alert_alerts_updated_at
+CREATE OR REPLACE TRIGGER trg_alert_alerts_updated_at
     BEFORE UPDATE ON alert.alerts
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_alert_notifications_updated_at
+CREATE OR REPLACE TRIGGER trg_alert_notifications_updated_at
     BEFORE UPDATE ON alert.notifications
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_alert_incidents_updated_at
+CREATE OR REPLACE TRIGGER trg_alert_incidents_updated_at
     BEFORE UPDATE ON alert.incident_reports
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -1038,11 +1038,11 @@ CREATE TABLE IF NOT EXISTS ev.charging_sessions (
     CONSTRAINT uq_charging_external_session UNIQUE (external_session_id)
 );
 
-CREATE TRIGGER trg_ev_stations_updated_at
+CREATE OR REPLACE TRIGGER trg_ev_stations_updated_at
     BEFORE UPDATE ON ev.charging_stations
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_ev_sessions_updated_at
+CREATE OR REPLACE TRIGGER trg_ev_sessions_updated_at
     BEFORE UPDATE ON ev.charging_sessions
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
@@ -1075,7 +1075,7 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER trg_audit_prevent_update_delete
+CREATE OR REPLACE TRIGGER trg_audit_prevent_update_delete
     BEFORE UPDATE OR DELETE ON audit.audit_logs
     FOR EACH ROW EXECUTE FUNCTION audit.prevent_audit_mutation();
 
@@ -1333,3 +1333,34 @@ FROM alert.alerts a
 WHERE a.status IN ('open', 'acknowledged')
 GROUP BY a.severity;
 
+-- ===== 012_app_grants.sql =====
+DO $$
+DECLARE
+    s text;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        RAISE NOTICE 'role fms_app not found; skipping application grants';
+        RETURN;
+    END IF;
+
+    FOREACH s IN ARRAY ARRAY['shared', 'auth', 'fleet', 'trip', 'fuel',
+                             'maintenance', 'integration', 'tracking',
+                             'alert', 'ev']
+    LOOP
+        EXECUTE format('GRANT USAGE ON SCHEMA %I TO fms_app', s);
+        EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO fms_app', s);
+        EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO fms_app', s);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO fms_app', s);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT USAGE, SELECT ON SEQUENCES TO fms_app', s);
+    END LOOP;
+
+    -- Read-only reporting views.
+    GRANT USAGE ON SCHEMA analytics TO fms_app;
+    GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO fms_app;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA analytics GRANT SELECT ON TABLES TO fms_app;
+
+    -- Append-only audit trail: no defaults, explicit table grants only.
+    GRANT USAGE ON SCHEMA audit TO fms_app;
+    GRANT SELECT, INSERT ON audit.audit_logs TO fms_app;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA audit TO fms_app;
+END $$;

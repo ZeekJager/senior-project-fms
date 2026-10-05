@@ -17,10 +17,13 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 009 | `ev` | Battery telemetry, charging stations, charging sessions |
 | 010 | `audit` | Append-only audit logging |
 | 011 | `analytics` | Performance indexes and reporting/read views |
+| 012 | (grants) | Runtime privileges for the `fms_app` role; audit table stays INSERT/SELECT only |
 
 ## Important
 
 This set is designed for a **new PostgreSQL database** and intentionally supersedes the earlier `public.*` implementation and the MySQL `schema-fms.sql` file.
+
+The bundle in `bundle/fms_install_all.sql` is the concatenated Up sections for a one-shot install; regenerate it whenever a migration changes.
 
 Do **not** run these migrations on top of the old `public.*` tables without first performing a data migration.
 
