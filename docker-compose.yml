@@ -61,6 +61,8 @@ services:
     environment:
       - NODE_ENV=development
       - VITE_API_URL=http://localhost:3000/api/v1
+      # Dev-server /api proxy target (localhost here would be this container)
+      - API_PROXY_TARGET=http://backend:3000
     depends_on:
       - backend
 
