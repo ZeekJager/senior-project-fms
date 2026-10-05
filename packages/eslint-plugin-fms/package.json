@@ -1,0 +1,8 @@
+{
+  "name": "eslint-plugin-fms",
+  "version": "1.0.0",
+  "main": "index.js",
+  "peerDependencies": {
+    "eslint": ">=7.0.0"
+  }
+}
