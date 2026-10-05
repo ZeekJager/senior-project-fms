@@ -1,9 +1,9 @@
 -- =====================================================================
--- 012_app_grants.sql
+-- 013_app_grants.sql
 -- Runtime privileges for the application role (fms_app).
 --
 -- Migrations run as the schema owner (fms_admin in the docker stack).
--- 001-011 create every object in non-public schemas, and the docker
+-- 001-012 create every object in non-public schemas, and the docker
 -- init script only grants fms_app access to `public`, so without this
 -- file the backend gets "permission denied for schema ..." everywhere.
 --
@@ -34,7 +34,7 @@ BEGIN
 
     FOREACH s IN ARRAY ARRAY['shared', 'auth', 'fleet', 'trip', 'fuel',
                              'maintenance', 'integration', 'tracking',
-                             'alert', 'ev']
+                             'alert', 'ev', 'document', 'api']
     LOOP
         EXECUTE format('GRANT USAGE ON SCHEMA %I TO fms_app', s);
         EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO fms_app', s);
@@ -70,7 +70,7 @@ BEGIN
     -- the schemas and would make the later DROP SCHEMA statements fail.
     FOREACH s IN ARRAY ARRAY['shared', 'auth', 'fleet', 'trip', 'fuel',
                              'maintenance', 'integration', 'tracking',
-                             'alert', 'ev', 'analytics']
+                             'alert', 'ev', 'document', 'api', 'analytics']
     LOOP
         EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE ALL ON TABLES FROM fms_app', s);
         EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I REVOKE ALL ON SEQUENCES FROM fms_app', s);
@@ -78,7 +78,7 @@ BEGIN
 
     FOREACH s IN ARRAY ARRAY['shared', 'auth', 'fleet', 'trip', 'fuel',
                              'maintenance', 'integration', 'tracking',
-                             'alert', 'ev', 'analytics', 'audit']
+                             'alert', 'ev', 'document', 'api', 'analytics', 'audit']
     LOOP
         EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM fms_app', s);
         EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA %I FROM fms_app', s);

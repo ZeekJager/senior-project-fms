@@ -51,6 +51,8 @@ Content-Type: application/json; charset=utf-8
 
 Clients may send `X-Request-Id`. The server accepts or generates a UUID request/correlation id and returns it in the response metadata. The same correlation id is propagated to internal ML and integration calls.
 
+A client value is used only if it is a well-formed UUID; anything else is ignored and the server generates one. The id is stored with every audit entry (`audit.audit_logs.correlation_id`, a UUID column), so an unvalidated value would make the audited write fail.
+
 ### 3.3 Standard success envelope
 
 ```json
@@ -77,12 +79,51 @@ Clients may send `X-Request-Id`. The server accepts or generates a UUID request/
 
 | Convention | Rule |
 |---|---|
-| Business identifiers | UUID strings |
+| Business identifiers | UUID strings: the resource's `public_id` column. Internal numeric keys are never exposed |
+| Enumerated values | Lowercase snake_case exactly as stored, e.g. `active`, `diesel`, `en_route`, `high` |
 | Timestamps | ISO 8601 UTC |
 | Dates | `YYYY-MM-DD` |
 | Money | Integer minor units, e.g. cents; do not use floating-point money |
+| Fuel volume | Integer millilitres (`fuel_ml`) |
+| Speed | Integer km/h; fractional provider values are rounded on ingestion |
 | Coordinates | Latitude -90..90; longitude -180..180 |
 | Numerical measurements | Decimal values where fractional physical measurements are required |
+
+### 3.6 Error codes
+
+`error.code` is always one of these. The "Raised from" column names the database constraint the API translates, where one exists.
+
+| Code | Status | Meaning | Raised from |
+|---|---|---|---|
+| `VALIDATION_FAILED` | 400 | Request body/query failed schema validation | API |
+| `VALIDATION_INVALID_ENUM` | 400 | Value outside the allowed set | API / enum or CHECK |
+| `VALIDATION_INVALID_DATE_RANGE` | 400 | End before start, or range too wide | API / `chk_*_times` |
+| `VALIDATION_FLOAT_IN_MONEY_PATH` | 400 | Fractional value in a money or fuel field | API |
+| `AUTH_INVALID_CREDENTIALS` | 401 | Wrong email or password (same response for both) | API |
+| `AUTH_TOKEN_EXPIRED` | 401 | Access token expired | API |
+| `AUTH_TOKEN_INVALID` | 401 | Token malformed or signature invalid | API |
+| `AUTH_TOKEN_REVOKED` | 401 | Refresh session revoked or reused | `auth.refresh_sessions` |
+| `AUTH_ACCOUNT_DISABLED` | 403 | User status is not `active` | `auth.users.status` |
+| `FORBIDDEN_INSUFFICIENT_ROLE` | 403 | Caller lacks the required permission | RBAC |
+| `NOT_FOUND` | 404 | Resource does not exist or is not visible to the caller | API |
+| `CONFLICT_DUPLICATE_PLATE` | 409 | Registration number already exists | `uq_fleet_vehicle_registration` |
+| `CONFLICT_DUPLICATE_LICENSE` | 409 | Licence number already exists | `drivers_license_number_key` |
+| `CONFLICT_VEHICLE_IN_USE` | 409 | Vehicle has an active trip or assignment | API |
+| `CONFLICT_DRIVER_IN_USE` | 409 | Driver has an active trip or assignment | API |
+| `CONFLICT_DEPOT_NOT_EMPTY` | 409 | Depot still has active vehicles, drivers or users | API |
+| `CONFLICT_DRIVER_OVERLAP` | 409 | Driver already assigned in that time window | `ex_trip_driver_overlap` |
+| `CONFLICT_VEHICLE_OVERLAP` | 409 | Vehicle already assigned in that time window | `ex_trip_vehicle_overlap` |
+| `CONFLICT_VEHICLE_FLAGGED` | 409 | Vehicle has `maintenance_flag` set | API |
+| `CONFLICT_ATTENDANCE_DUPLICATE` | 409 | Attendance already recorded for driver/date | `driver_attendance_driver_id_attendance_date_key` |
+| `CONFLICT_INVALID_STATE_TRANSITION` | 409 | Status change not allowed from current state | API / `chk_trip_*` |
+| `CONFLICT_INSUFFICIENT_STOCK` | 409 | Movement would make stock negative | `inventory_parts_stock_quantity_check` |
+| `CONFLICT_ODOMETER_REGRESSION` | 409 | Odometer lower than last reading | API |
+| `CONFLICT_CONCURRENT_MODIFICATION` | 409 | Stale `version` (optimistic lock) | `trip.trips.version` |
+| `CONFLICT_IDEMPOTENCY_KEY_REUSED` | 409 | Same `Idempotency-Key` with a different body | `api.idempotency_keys` |
+| `CONFLICT_IDEMPOTENCY_IN_PROGRESS` | 409 | Same key still being processed | `api.idempotency_keys` |
+| `RATE_LIMITED` | 429 | Rate limit exceeded | API |
+| `INTERNAL_SERVER_ERROR` | 500 | Unexpected error (catch-all; no internals in the message) | API |
+| `UPSTREAM_UNAVAILABLE` | 502/503/504 | External provider or ML service failed | API |
 
 ## 4. HTTP Status Contract
 
@@ -119,6 +160,17 @@ The browser-facing API uses JWTs stored in Secure, HttpOnly cookies. The access 
 | `PATCH /users/{user_id}` | Update user | `users:write` | `UserUpdate` -> `User` |
 | `GET /roles` | List roles/permissions | `roles:read` | `Role[]` |
 
+Permission codes are the `resource:action` values in the "Auth / permission" columns of this document, seeded verbatim in `auth.permissions` (see `001_core_identity.sql` for the role grants).
+
+### 5.2 Audit log
+
+| Method + path | Purpose | Auth / permission | Request / response |
+|---|---|---|---|
+| `GET /audit-logs` | Search the audit trail (screen S-10) | `audit:read` | `user_id,entity_type,entity_id,correlation_id,from,to` + paging -> `AuditLog[]` |
+| `GET /audit` | Legacy-compatible alias | `audit:read` | Same as `GET /audit-logs` |
+
+The audit trail is read-only through the API. There is no create, update or delete endpoint; entries are written by the API in the same transaction as each mutation.
+
 ## 6. Fleet Management API
 
 ### 6.1 Depots
@@ -138,8 +190,10 @@ The browser-facing API uses JWTs stored in Secure, HttpOnly cookies. The access 
 | `POST /vehicles` | Create vehicle | `vehicle:write` | `VehicleCreate` -> `Vehicle` |
 | `GET /vehicles/{vehicle_id}` | Get vehicle | `vehicle:read` | `Vehicle` |
 | `PATCH /vehicles/{vehicle_id}` | Update vehicle | `vehicle:write` | `VehicleUpdate` -> `Vehicle` |
-| `DELETE /vehicles/{vehicle_id}` | Retire/remove vehicle | `vehicle:delete` | Soft delete/retire; 409 if in use |
+| `DELETE /vehicles/{vehicle_id}` | Retire/remove vehicle | `vehicle:delete` | Soft delete/retire; `409 CONFLICT_VEHICLE_IN_USE` if in use |
 | `GET /vehicles/{vehicle_id}/status` | Operational status | `vehicle:read` | `VehicleStatus` |
+
+`VehicleCreate` requires `fuel_efficiency_ml_per_km` (integer ml/km) unless `fuel_type` is `electric`; it is the expected consumption used by fuel reconciliation.
 
 ### 6.3 Drivers, assignments and attendance
 
@@ -157,6 +211,8 @@ The browser-facing API uses JWTs stored in Secure, HttpOnly cookies. The access 
 | `POST /attendance` | Record attendance | `attendance:write` | `driver_id,date,status`; 409 duplicate |
 | `GET /attendance/{attendance_id}` | Attendance detail | `attendance:read` | `Attendance` |
 | `PATCH /attendance/{attendance_id}` | Update attendance | `attendance:write` | `AttendanceUpdate` -> `Attendance` |
+
+A driver's `depot_id` is their home depot, stored once on the driver's user account (`auth.users.depot_id`). `POST /drivers` and `PATCH /drivers` write it there, and `GET /drivers?depot_id=` filters through it. Attendance `status` is one of `present`, `absent`, `on_leave`, `late`, `sick`, `other`; the recording user is taken from the session.
 
 ### 6.4 DVIR
 
@@ -185,14 +241,16 @@ The browser-facing API uses JWTs stored in Secure, HttpOnly cookies. The access 
 | `POST /trips` | Create trip | `trip:write` | route/vehicle/driver or scheduling data; `Idempotency-Key` |
 | `GET /trips/{trip_id}` | Get trip | `trip:read` | `Trip` |
 | `PATCH /trips/{trip_id}` | Update trip | `trip:write` | `TripUpdate` -> `Trip` |
-| `POST /trips/{trip_id}/assign` | Assign driver and vehicle | `trip:execute` | Runs overlap + vehicle maintenance/flag rules; 409 conflicts |
+| `POST /trips/{trip_id}/assign` | Assign driver and vehicle | `trip:assign` | Runs overlap + vehicle maintenance/flag rules; 409 conflicts |
 | `POST /trips/{trip_id}/start` | Start trip | `trip:execute` | Valid state transition -> `Trip` |
 | `POST /trips/{trip_id}/end` | End trip | `trip:execute` | Valid state transition -> `Trip` |
 | `POST /trips/{trip_id}/status` | Explicit status transition | `trip:execute` | `{status}`; `scheduled/assigned/en_route/completed/cancelled` |
 | `POST /trips/{trip_id}/stops/{stop_id}/complete` | Complete trip stop | `trip:execute` | Stop completion -> `TripStop` |
 | `GET /trips/{trip_id}/live` | Live trip state | `trip:read` | `TripLiveState` |
 
-Trip assignment preserves the earlier business rules: a driver cannot be assigned to overlapping trips; a vehicle cannot be assigned to overlapping trips; and a vehicle with an active maintenance/operational flag cannot be assigned when the domain rule forbids it. Typical conflicts are `409 CONFLICT_DRIVER_OVERLAP` and `409 CONFLICT_VEHICLE_FLAGGED`.
+Trip assignment preserves the earlier business rules: a driver cannot be assigned to overlapping trips; a vehicle cannot be assigned to overlapping trips; and a vehicle with an active maintenance/operational flag cannot be assigned when the domain rule forbids it. Typical conflicts are `409 CONFLICT_DRIVER_OVERLAP`, `409 CONFLICT_VEHICLE_OVERLAP` and `409 CONFLICT_VEHICLE_FLAGGED`.
+
+The overlap rules hold for any write that puts a trip into `assigned` or `en_route`, including `POST /trips` and `PATCH /trips` with a driver or vehicle, not only `/assign`. The database enforces them as well (`ex_trip_driver_overlap`, `ex_trip_vehicle_overlap`), so two concurrent assignments cannot both succeed. `trip:assign` is separate from `trip:execute` so drivers can start and end their trips without being able to assign trips.
 
 ### 7.3 Trip creation example
 
@@ -225,7 +283,7 @@ Documents are used for operational attachments such as registration records, lic
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /fuel-logs` | Record fuel event | `fuel:write` | `vehicle_id,trip_id,fuel_ml,cost_cents,odometer_km`; integer money |
+| `POST /fuel-logs` | Record fuel event | `fuel:write` | `vehicle_id,trip_id,fuel_ml,cost_cents,odometer_km`, optional `fuel_type` (defaults to the vehicle's); integer money |
 | `GET /fuel-logs` | Search fuel history | `fuel:read` | Paged `FuelLog[]` |
 | `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary | `fuel:read` | `FuelSummary` |
 | `GET /fuel-anomalies` | List anomalies | `fuel-anomaly:read` | Paged `FuelAnomaly[]` |
@@ -286,7 +344,7 @@ POST /internal/ml/predict-maintenance
 {
   "prediction": {
     "risk_score": 0.82,
-    "risk_level": "HIGH",
+    "risk_level": "high",
     "prediction_horizon_days": 30,
     "failure_category": "cooling_system",
     "model_version": "pm-2026.10",
@@ -343,10 +401,12 @@ An alert is a business event requiring attention. A notification is a delivery a
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /incidents` | Create incident | `incident:write` | `vehicle_id,trip_id,description,severity` -> `Incident` |
+| `POST /incidents` | Create incident | `incident:write` | `vehicle_id,trip_id,description,severity`, optional `incident_type` (default `other`), `occurred_at` (default now) -> `Incident` |
 | `GET /incidents` | List incidents | `incident:read` | Paged `Incident[]` |
 | `GET /incidents/{incident_id}` | Incident detail | `incident:read` | `Incident` |
 | `PATCH /incidents/{incident_id}` | Update incident | `incident:write` | `IncidentUpdate` -> `Incident` |
+
+Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The reporter is the authenticated user.
 
 ## 13. EV Fleet Management API
 
@@ -391,6 +451,14 @@ Analytics reads should prefer PostgreSQL read replicas or precomputed analytics 
 
 Webhook handlers verify signatures, validate schema and version, create a correlation id, normalize provider payloads, and persist/enqueue work. They return quickly so provider retries do not create duplicate business work. Idempotency is required for retried external events.
 
+Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING`:
+
+| Event | De-duplication key |
+|---|---|
+| Telemetry | `(vehicle_id, recorded_at)` on `tracking.gps_pings` |
+| Fuel card | `(provider_id, external_transaction_id)` on `integration.fuel_card_transactions` |
+| EV charging | `external_session_id` on `ev.charging_sessions` |
+
 ## 16. Resource Schemas
 
 ### 16.1 Vehicle
@@ -403,8 +471,12 @@ Webhook handlers verify signatures, validate schema and version, create a correl
   "make": "string",
   "model": "string",
   "year": 2024,
-  "fuel_type": "DIESEL",
-  "status": "ACTIVE",
+  "vehicle_type": "truck",
+  "fuel_type": "diesel",
+  "fuel_efficiency_ml_per_km": 320,
+  "status": "active",
+  "maintenance_flag": false,
+  "health_score": 87,
   "depot_id": "uuid",
   "odometer_km": 128450.5,
   "created_at": "2026-10-05T07:00:00Z",
@@ -420,13 +492,17 @@ Webhook handlers verify signatures, validate schema and version, create a correl
   "vehicle_id": "uuid",
   "driver_id": "uuid",
   "route_id": "uuid",
-  "status": "IN_PROGRESS",
-  "planned_start": "2026-10-05T08:00:00Z",
+  "status": "en_route",
+  "scheduled_start": "2026-10-05T08:00:00Z",
+  "scheduled_end": "2026-10-05T10:30:00Z",
   "actual_start": "2026-10-05T08:03:12Z",
   "actual_end": null,
+  "version": 3,
   "stops": []
 }
 ```
+
+`status` is one of `draft`, `scheduled`, `assigned`, `en_route`, `completed`, `cancelled`. `vehicle_id` and `driver_id` are `null` until the trip is assigned. Send `version` back on `PATCH`; a stale value returns `409 CONFLICT_CONCURRENT_MODIFICATION`.
 
 ### 16.3 Alert
 
@@ -434,9 +510,9 @@ Webhook handlers verify signatures, validate schema and version, create a correl
 {
   "id": "uuid",
   "vehicle_id": "uuid",
-  "type": "FUEL_ANOMALY",
-  "severity": "HIGH",
-  "status": "OPEN",
+  "type": "fuel_anomaly",
+  "severity": "high",
+  "status": "open",
   "title": "Unexpected fuel consumption",
   "message": "Fuel consumption exceeded expected range.",
   "created_at": "2026-10-05T07:15:00Z",
@@ -451,16 +527,17 @@ Webhook handlers verify signatures, validate schema and version, create a correl
 |---|---|
 | Registration number | Unique and normalized |
 | VIN | Unique when provided; format validation |
-| Vehicle retirement | Soft retirement; do not destroy historical references |
+| Vehicle retirement | Soft retirement; do not destroy historical references; `409 CONFLICT_VEHICLE_IN_USE` while assigned |
 | Driver retirement | Preserve historical trips and attendance |
 | Attendance | Duplicate driver/date submissions -> `409 CONFLICT_ATTENDANCE_DUPLICATE` |
 | Trip assignment | Driver overlap -> `409 CONFLICT_DRIVER_OVERLAP` |
-| Vehicle assignment | Overlapping vehicle or forbidden maintenance state -> `409 CONFLICT_VEHICLE_FLAGGED` / conflict |
+| Vehicle assignment | Overlapping vehicle -> `409 CONFLICT_VEHICLE_OVERLAP`; forbidden maintenance state -> `409 CONFLICT_VEHICLE_FLAGGED` |
 | Trip state | Only legal state transitions accepted |
 | Maintenance | Starting active maintenance sets maintenance flag; completion clears it when applicable |
 | Inventory | Inventory movement must never result in negative stock |
 | Fuel quantity | Positive and within configured operational bounds |
-| Fuel / money values | Money as integer minor units; reject floating-point money representations |
+| Fuel / money values | Money as integer minor units; reject floating-point money representations with `400 VALIDATION_FLOAT_IN_MONEY_PATH` |
+| GPS speed | Stored as integer km/h; ingestion rounds fractional provider values to the nearest integer before insert |
 | Odometer | Non-negative; downward jumps require correction workflow |
 | Coordinates | Latitude -90..90; longitude -180..180 |
 | EV charging | Explicit charging state machine; valid session transitions only |
@@ -469,7 +546,7 @@ Webhook handlers verify signatures, validate schema and version, create a correl
 ## 18. Pagination, Filtering and Sorting
 
 ```http
-GET /api/v1/vehicles?page=1&page_size=25&status=ACTIVE&depot_id={uuid}&sort_by=registration_number&sort_order=asc
+GET /api/v1/vehicles?page=1&page_size=25&status=active&depot_id={uuid}&sort_by=registration_number&sort_order=asc
 ```
 
 ```json
@@ -483,7 +560,7 @@ Normal resources use `page`/`page_size`. Server page size is capped. Telemetry h
 
 ## 19. Idempotency and Concurrency
 
-Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period. Reusing the same key with a different body returns `409 Conflict`. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
+Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
 
 ## 20. Rate Limiting and Resilience
 
@@ -523,8 +600,12 @@ Retry-prone create and command endpoints support `Idempotency-Key`. The server s
 | Alerts / incidents | `alert` | alerts, alert_acknowledgements, notifications, incident_reports |
 | EV | `ev` | ev_battery_logs, charging_stations, charging_sessions |
 | Integrations | `integration` | external_providers, gps_devices, sync_logs, fuel_card_transactions |
+| Documents | `document` | documents (metadata only; files live in object storage) |
+| Idempotency | `api` | idempotency_keys |
 | Audit | `audit` | audit_logs |
-| Analytics | `analytics` | reporting views |
+| Analytics | `analytics` | reporting views, analytics_cache |
+
+Every table the API exposes has a `public_id UUID`; that is the `id` in API payloads and paths.
 
 ## 23. End-to-End API Flows
 
@@ -596,6 +677,7 @@ Driver / fuel card / provider
 
 | Old contract capability | Canonical endpoint | Compatibility decision |
 |---|---|---|
+| `GET /audit` | `/audit-logs` | Retained as compatibility alias |
 | `GET/POST /depots` | `/depots` | Retained |
 | `GET/POST/PUT /attendance` | `/attendance` + `/attendance/{id}` | Retained and expanded |
 | `POST /documents`, `GET /documents/{id}` | `/documents` + `/documents/{id}` | Retained |
@@ -678,3 +760,22 @@ The API Contract, Database Architecture Specification and OpenAPI document toget
 | Integrations | Telematics, fuel-card, EV webhooks and provider sync |
 | Resilience | Idempotency, concurrency, rate limiting, circuit breaking |
 | Governance | OpenAPI, contract tests, versioning and deprecation |
+
+## 29. Revisions to the Combined Contract PDF
+
+This file is the combined contract (`Fleet_Management_API_Contract_Combined.pdf`) with these corrections, made so it matches the database schema in `packages/backend/migrations/`:
+
+| Section | Change | Reason |
+|---|---|---|
+| 3.2 | Client `X-Request-Id` used only if it is a valid UUID | Stored in a UUID audit column |
+| 3.5 | Identifiers are each table's `public_id`; enums lowercase; fuel and speed units stated | Schema uses BIGINT keys internally and lowercase enums |
+| 3.6 | Error code catalogue added | Codes the board's Definition of Done requires (`CONFLICT_VEHICLE_IN_USE`, `VALIDATION_FLOAT_IN_MONEY_PATH`, ...) were not listed |
+| 5.1 | Permission codes defined as seeded in `auth.permissions` | Contract and seed used different names |
+| 5.2 | `GET /audit-logs` (+ legacy `GET /audit`) added | Audit Log UI (S-10) had no endpoint |
+| 6.2, 6.3 | Vehicle fuel-efficiency requirement; driver depot stored on the user | Required DB columns / single source of depot |
+| 7.2 | `/assign` uses new `trip:assign`; overlap rules apply to every assigning write and are DB-enforced | Drivers need `trip:execute` without assignment rights; concurrent-assignment race |
+| 9.1, 12.2 | `fuel_type`, `incident_type`, `occurred_at` optional with defaults | Required DB columns the requests did not carry |
+| 15 | Webhook de-duplication keys | Telemetry retries were stored twice |
+| 16 | Examples use stored enum values; trip uses `scheduled_start/_end`, `en_route`, `version` | `IN_PROGRESS`, `planned_start` and uppercase values did not exist |
+| 17, 19 | Specific conflict codes; GPS speed rounding | Generic `409 Conflict`; integer `speed_kmh` column |
+| 22, 25 | Documents, idempotency and analytics cache mapped; audit alias | New tables in `012_api_contract_alignment.sql` |

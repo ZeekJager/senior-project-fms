@@ -137,127 +137,152 @@ INSERT INTO auth.roles (name, description) VALUES
     ('fleet_owner', 'Executive fleet visibility')
 ON CONFLICT (name) DO NOTHING;
 
+-- Permission codes are exactly the `resource:action` names in the
+-- "Auth / permission" column of docs/api-contract.md, so the RBAC
+-- middleware checks the contract's value verbatim. Two codes are added
+-- by this schema and documented in the contract: audit:read (§5.2) and
+-- trip:assign (§7.2, split from trip:execute so drivers can start/end
+-- trips without being able to assign them).
 INSERT INTO auth.permissions (code, description) VALUES
-    ('users.read', 'Read user profiles'),
-    ('users.write', 'Create and update user profiles'),
-    ('fleet.read', 'Read fleet data'),
-    ('fleet.write', 'Create and update fleet data'),
-    ('trip.read', 'Read trips and routes'),
-    ('trip.write', 'Create and update trips and routes'),
-    ('fuel.read', 'Read fuel records'),
-    ('fuel.write', 'Create and update fuel records'),
-    ('maintenance.read', 'Read maintenance records'),
-    ('maintenance.write', 'Create and update maintenance records'),
-    ('alerts.read', 'Read alerts and notifications'),
-    ('alerts.write', 'Create, acknowledge and resolve alerts'),
-    ('analytics.read', 'Read analytics and reporting'),
-    ('command_center.read', 'Read live command-center data'),
-    ('ev.read', 'Read EV fleet data'),
-    ('ev.write', 'Create and update EV fleet data'),
-    ('audit.read', 'Read audit records'),
-    ('integration.manage', 'Manage integration configuration'),
-    ('dvir.read', 'Read driver vehicle inspection reports'),
-    ('dvir.write', 'Create and update driver vehicle inspection reports'),
-    ('incident.read', 'Read incidents'),
-    ('incident.write', 'Create and update incidents'),
-    ('attendance.read', 'Read driver attendance'),
-    ('attendance.write', 'Create and update driver attendance'),
-    ('driver.self.read', 'Read own driver operational information'),
-    ('driver.self.write', 'Write own driver operational information')
+    ('users:read', 'Read user accounts'),
+    ('users:write', 'Create and update user accounts'),
+    ('roles:read', 'Read roles and their permissions'),
+    ('audit:read', 'Read the audit log'),
+    ('depot:read', 'Read depots'),
+    ('depot:write', 'Create and update depots'),
+    ('vehicle:read', 'Read vehicles'),
+    ('vehicle:write', 'Create and update vehicles'),
+    ('vehicle:delete', 'Retire vehicles'),
+    ('driver:read', 'Read drivers'),
+    ('driver:write', 'Create and update drivers'),
+    ('driver:delete', 'Retire drivers'),
+    ('assignment:read', 'Read driver/vehicle assignments'),
+    ('assignment:write', 'Create driver/vehicle assignments'),
+    ('attendance:read', 'Read driver attendance'),
+    ('attendance:write', 'Record and update driver attendance'),
+    ('dvir:read', 'Read driver vehicle inspection reports'),
+    ('dvir:write', 'Submit driver vehicle inspection reports'),
+    ('route:read', 'Read routes'),
+    ('route:write', 'Create and update routes'),
+    ('trip:read', 'Read trips'),
+    ('trip:write', 'Create and update trips'),
+    ('trip:assign', 'Assign a driver and vehicle to a trip'),
+    ('trip:execute', 'Start, end and transition trips and stops'),
+    ('document:read', 'Read document metadata and signed URLs'),
+    ('document:write', 'Upload documents'),
+    ('document:delete', 'Retire documents'),
+    ('fuel:read', 'Read fuel logs and summaries'),
+    ('fuel:write', 'Record fuel events'),
+    ('fuel-anomaly:read', 'Read fuel anomalies'),
+    ('fuel-anomaly:write', 'Resolve fuel anomalies'),
+    ('maintenance:read', 'Read maintenance records'),
+    ('maintenance:write', 'Create and update maintenance records'),
+    ('maintenance:execute', 'Complete maintenance work'),
+    ('inventory:read', 'Read spare-parts inventory'),
+    ('inventory:write', 'Adjust stock and record inventory movements'),
+    ('prediction:read', 'Read predictive-maintenance results'),
+    ('tracking:read', 'Read live and historical vehicle tracking'),
+    ('tracking:ingest', 'Submit GPS telemetry (device/service credentials)'),
+    ('command:read', 'Read the command-center overview'),
+    ('alert:read', 'Read alerts'),
+    ('alert:ack', 'Acknowledge alerts'),
+    ('alert:resolve', 'Resolve alerts'),
+    ('notification:read', 'Read notifications'),
+    ('incident:read', 'Read incidents'),
+    ('incident:write', 'Report and update incidents'),
+    ('ev:read', 'Read EV battery and charging data'),
+    ('ev:write', 'Record EV battery and charging data'),
+    ('analytics:read', 'Read analytics and reporting'),
+    ('integration:read', 'Read integration provider status'),
+    ('integration:execute', 'Trigger integration provider syncs')
 ON CONFLICT (code) DO NOTHING;
 
--- Admin receives every permission.
+-- Admin receives every permission; fleet_manager every permission except
+-- user administration and raw telemetry ingestion.
 INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM auth.roles r
 CROSS JOIN auth.permissions p
 WHERE r.name = 'admin'
+   OR (r.name = 'fleet_manager' AND p.code NOT IN ('users:write', 'tracking:ingest'))
 ON CONFLICT DO NOTHING;
 
--- Explicit least-privilege assignments for the remaining roles.
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'users.read', 'fleet.read', 'fleet.write', 'trip.read', 'trip.write',
-    'fuel.read', 'fuel.write', 'maintenance.read', 'maintenance.write',
-    'alerts.read', 'alerts.write', 'analytics.read', 'command_center.read',
-    'ev.read', 'ev.write', 'dvir.read', 'dvir.write', 'incident.read',
-    'incident.write', 'attendance.read', 'attendance.write', 'audit.read',
-    'integration.manage'
-)
-WHERE r.name = 'fleet_manager'
-ON CONFLICT DO NOTHING;
+-- Least-privilege grants for the remaining roles. tracking:ingest is
+-- reserved for device/provider service credentials, so no human role
+-- other than admin holds it.
+DROP TABLE IF EXISTS seed_role_grants;
+CREATE TEMP TABLE seed_role_grants (role_name TEXT NOT NULL, codes TEXT[] NOT NULL);
 
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'fleet.read', 'trip.read', 'trip.write', 'alerts.read', 'alerts.write',
-    'command_center.read', 'analytics.read'
-)
-WHERE r.name = 'dispatcher'
-ON CONFLICT DO NOTHING;
+INSERT INTO seed_role_grants (role_name, codes) VALUES
+    ('dispatcher', ARRAY[
+        'depot:read', 'vehicle:read', 'driver:read', 'assignment:read',
+        'assignment:write', 'attendance:read', 'route:read', 'route:write',
+        'trip:read', 'trip:write', 'trip:assign', 'trip:execute',
+        'tracking:read', 'command:read', 'alert:read', 'alert:ack',
+        'alert:resolve', 'incident:read', 'document:read',
+        'notification:read', 'analytics:read']),
+    ('driver', ARRAY[
+        'vehicle:read', 'route:read', 'trip:read', 'trip:execute',
+        'attendance:read', 'attendance:write', 'dvir:read', 'dvir:write',
+        'fuel:read', 'fuel:write', 'incident:read', 'incident:write',
+        'document:read', 'document:write', 'notification:read']),
+    ('technician', ARRAY[
+        'depot:read', 'vehicle:read', 'dvir:read', 'dvir:write',
+        'maintenance:read', 'maintenance:write', 'maintenance:execute',
+        'inventory:read', 'inventory:write', 'prediction:read',
+        'incident:read', 'incident:write', 'alert:read', 'document:read',
+        'document:write', 'notification:read']),
+    ('depot_admin', ARRAY[
+        'depot:read', 'vehicle:read', 'vehicle:write', 'vehicle:delete',
+        'driver:read', 'driver:write', 'driver:delete', 'assignment:read',
+        'assignment:write', 'attendance:read', 'attendance:write',
+        'route:read', 'route:write', 'trip:read', 'fuel:read', 'fuel:write',
+        'fuel-anomaly:read', 'maintenance:read', 'maintenance:write',
+        'inventory:read', 'inventory:write', 'prediction:read',
+        'tracking:read', 'command:read', 'alert:read', 'alert:ack',
+        'ev:read', 'ev:write', 'dvir:read', 'dvir:write', 'incident:read',
+        'incident:write', 'document:read', 'document:write',
+        'notification:read']),
+    ('finance_clerk', ARRAY[
+        'fuel:read', 'fuel:write', 'fuel-anomaly:read', 'fuel-anomaly:write',
+        'analytics:read', 'notification:read']),
+    ('compliance_officer', ARRAY[
+        'users:read', 'roles:read', 'audit:read', 'depot:read',
+        'vehicle:read', 'driver:read', 'assignment:read', 'attendance:read',
+        'route:read', 'trip:read', 'fuel:read', 'fuel-anomaly:read',
+        'maintenance:read', 'prediction:read', 'tracking:read', 'alert:read',
+        'incident:read', 'dvir:read', 'document:read', 'analytics:read',
+        'notification:read']),
+    ('fleet_owner', ARRAY[
+        'audit:read', 'depot:read', 'vehicle:read', 'driver:read',
+        'route:read', 'trip:read', 'fuel:read', 'maintenance:read',
+        'prediction:read', 'tracking:read', 'command:read', 'alert:read',
+        'analytics:read', 'ev:read', 'notification:read']);
 
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'fleet.read', 'maintenance.read', 'maintenance.write',
-    'dvir.read', 'dvir.write', 'incident.read', 'incident.write'
-)
-WHERE r.name = 'technician'
-ON CONFLICT DO NOTHING;
+-- A misspelled code would otherwise be dropped silently by the join below.
+DO $$
+DECLARE
+    unknown text;
+BEGIN
+    SELECT string_agg(DISTINCT c, ', ') INTO unknown
+    FROM seed_role_grants g
+    CROSS JOIN LATERAL unnest(g.codes) AS c
+    WHERE NOT EXISTS (SELECT 1 FROM auth.permissions p WHERE p.code = c);
 
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'fleet.read', 'fleet.write', 'trip.read', 'fuel.read', 'fuel.write',
-    'maintenance.read', 'maintenance.write', 'alerts.read',
-    'command_center.read', 'ev.read', 'ev.write', 'dvir.read', 'dvir.write',
-    'incident.read', 'incident.write', 'attendance.read', 'attendance.write'
-)
-WHERE r.name = 'depot_admin'
-ON CONFLICT DO NOTHING;
-
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN ('fuel.read', 'fuel.write', 'analytics.read')
-WHERE r.name = 'finance_clerk'
-ON CONFLICT DO NOTHING;
-
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'users.read', 'fleet.read', 'trip.read', 'fuel.read', 'maintenance.read',
-    'alerts.read', 'analytics.read', 'audit.read', 'dvir.read',
-    'incident.read', 'attendance.read'
-)
-WHERE r.name = 'compliance_officer'
-ON CONFLICT DO NOTHING;
-
-INSERT INTO auth.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'fleet.read', 'trip.read', 'fuel.read', 'maintenance.read',
-    'alerts.read', 'analytics.read', 'command_center.read', 'ev.read'
-)
-WHERE r.name = 'fleet_owner'
-ON CONFLICT DO NOTHING;
+    IF unknown IS NOT NULL THEN
+        RAISE EXCEPTION 'unknown permission code(s) in role seed: %', unknown;
+    END IF;
+END $$;
 
 INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
-FROM auth.roles r
-JOIN auth.permissions p ON p.code IN (
-    'fleet.read', 'trip.read', 'fuel.write', 'dvir.write', 'incident.write',
-    'driver.self.read', 'driver.self.write', 'dvir.read', 'incident.read'
-)
-WHERE r.name = 'driver'
+FROM seed_role_grants g
+CROSS JOIN LATERAL unnest(g.codes) AS c
+JOIN auth.roles r ON r.name = g.role_name
+JOIN auth.permissions p ON p.code = c
 ON CONFLICT DO NOTHING;
+
+DROP TABLE seed_role_grants;
 
 -- ===== 002_fleet.sql =====
 CREATE SCHEMA IF NOT EXISTS fleet;
@@ -1477,7 +1502,170 @@ FROM alert.alerts a
 WHERE a.status IN ('open', 'acknowledged')
 GROUP BY a.severity;
 
--- ===== 012_app_grants.sql =====
+-- ===== 012_api_contract_alignment.sql =====
+-- ---------------------------------------------------------------------
+-- Public identifiers. Joins and foreign keys keep the BIGINT keys; the
+-- API exposes only public_id, so identifiers are not sequential or
+-- guessable. Resolve public_id -> id once at the API boundary.
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE
+    t text;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'auth.users',
+        'fleet.depots', 'fleet.vehicles', 'fleet.drivers',
+        'fleet.driver_vehicle_assignments', 'fleet.driver_attendance',
+        'fleet.dvir_reports',
+        'trip.routes', 'trip.trips', 'trip.trip_stops',
+        'fuel.fuel_logs', 'fuel.fuel_anomalies',
+        'maintenance.maintenance_records', 'maintenance.inventory_parts',
+        'maintenance.inventory_movements', 'maintenance.maintenance_predictions',
+        'integration.external_providers', 'integration.sync_logs',
+        'tracking.telemetry_flags',
+        'alert.alerts', 'alert.notifications', 'alert.incident_reports',
+        'ev.ev_battery_logs', 'ev.charging_stations', 'ev.charging_sessions']
+    LOOP
+        EXECUTE format('ALTER TABLE %s ADD COLUMN IF NOT EXISTS public_id UUID NOT NULL DEFAULT gen_random_uuid()', t);
+        EXECUTE format('CREATE UNIQUE INDEX IF NOT EXISTS %I ON %s (public_id)',
+                       'ux_' || replace(t, '.', '_') || '_public_id', t);
+    END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- document.* — metadata for files held in object storage (§8). The file
+-- itself never lives in PostgreSQL.
+-- ---------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS document;
+REVOKE CREATE ON SCHEMA document FROM PUBLIC;
+
+CREATE TABLE IF NOT EXISTS document.documents (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    -- What the file belongs to. Polymorphic (like alert.alerts.source_*),
+    -- so it cannot be a single FK. The API must check the caller may read
+    -- the owner before issuing a signed URL.
+    owner_type        VARCHAR(50) NOT NULL,
+    owner_id          BIGINT NOT NULL,
+    document_type     VARCHAR(50) NOT NULL,
+    -- Server-generated object key; never derived from the upload filename.
+    storage_key       VARCHAR(512) NOT NULL UNIQUE,
+    original_filename VARCHAR(255),
+    content_type      VARCHAR(100) NOT NULL,
+    size_bytes        INTEGER NOT NULL,
+    sha256            CHAR(64) NOT NULL,
+    uploaded_by       BIGINT NOT NULL REFERENCES auth.users(id),
+    uploaded_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    retain_until      DATE,
+    -- Soft delete (DELETE /documents is a retirement, subject to retention).
+    deleted_at        TIMESTAMPTZ,
+    deleted_by        BIGINT REFERENCES auth.users(id),
+    CONSTRAINT chk_document_owner_type CHECK (owner_type IN
+        ('vehicle', 'driver', 'trip', 'maintenance_record', 'incident_report',
+         'dvir_report', 'fuel_log')),
+    CONSTRAINT chk_document_type CHECK (document_type IN
+        ('registration', 'licence', 'insurance', 'maintenance_invoice',
+         'inspection_evidence', 'incident_photo', 'dvir_attachment',
+         'fuel_receipt', 'other')),
+    CONSTRAINT chk_document_content_type CHECK (content_type IN
+        ('image/jpeg', 'image/png', 'application/pdf')),
+    CONSTRAINT chk_document_size CHECK (size_bytes BETWEEN 1 AND 10485760),
+    CONSTRAINT chk_document_sha256 CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT chk_document_deleted CHECK ((deleted_at IS NULL) = (deleted_by IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_owner
+    ON document.documents(owner_type, owner_id)
+    WHERE deleted_at IS NULL;
+
+-- ---------------------------------------------------------------------
+-- api.idempotency_keys — Idempotency-Key store (§19). Usage:
+--   INSERT ... ON CONFLICT (user_id, idempotency_key) DO NOTHING;
+--   conflict + different request_hash -> 409 CONFLICT_IDEMPOTENCY_KEY_REUSED
+--   conflict + status 'in_progress'   -> 409 (request still running)
+--   conflict + status 'completed'     -> replay response_status/body
+-- Webhooks de-duplicate on provider event keys instead (see below).
+-- ---------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS api;
+REVOKE CREATE ON SCHEMA api FROM PUBLIC;
+
+CREATE TABLE IF NOT EXISTS api.idempotency_keys (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id          BIGINT NOT NULL REFERENCES auth.users(id),
+    idempotency_key  VARCHAR(255) NOT NULL,
+    request_method   VARCHAR(10) NOT NULL,
+    request_path     VARCHAR(255) NOT NULL,
+    request_hash     CHAR(64) NOT NULL,
+    status           VARCHAR(20) NOT NULL DEFAULT 'in_progress',
+    response_status  SMALLINT,
+    response_body    JSONB,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at     TIMESTAMPTZ,
+    expires_at       TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uq_idempotency_caller_key UNIQUE (user_id, idempotency_key),
+    CONSTRAINT chk_idempotency_status CHECK (status IN ('in_progress', 'completed')),
+    CONSTRAINT chk_idempotency_outcome
+        CHECK ((status = 'completed') = (response_status IS NOT NULL)),
+    CONSTRAINT chk_idempotency_expiry CHECK (expires_at > created_at)
+);
+
+-- Purge job: DELETE FROM api.idempotency_keys WHERE expires_at < now().
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires
+    ON api.idempotency_keys(expires_at);
+
+-- ---------------------------------------------------------------------
+-- Trip overlap (§7.2, §17). The API checks first so it can answer with
+-- the right 409 code, but only the database closes the race where two
+-- concurrent assignments both pass that check. A violation raises
+-- SQLSTATE 23P01; map ex_trip_driver_overlap -> CONFLICT_DRIVER_OVERLAP
+-- and ex_trip_vehicle_overlap -> CONFLICT_VEHICLE_OVERLAP.
+-- ---------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+DO $$ BEGIN
+    ALTER TABLE trip.trips
+        ADD CONSTRAINT ex_trip_driver_overlap
+        EXCLUDE USING gist (
+            driver_id WITH =,
+            tstzrange(scheduled_start, scheduled_end, '[)') WITH &&
+        ) WHERE (status IN ('assigned', 'en_route'));
+EXCEPTION
+    WHEN duplicate_object OR duplicate_table THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.trips
+        ADD CONSTRAINT ex_trip_vehicle_overlap
+        EXCLUDE USING gist (
+            vehicle_id WITH =,
+            tstzrange(scheduled_start, scheduled_end, '[)') WITH &&
+        ) WHERE (status IN ('assigned', 'en_route'));
+EXCEPTION
+    WHEN duplicate_object OR duplicate_table THEN NULL;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- Telemetry retries (§15). One ping per vehicle per instant; webhook
+-- handlers insert with ON CONFLICT DO NOTHING, so a provider retry is a
+-- no-op. (Fuel-card and EV events already de-duplicate on their
+-- provider ids.) The partition key is part of the constraint, as
+-- PostgreSQL requires for partitioned tables.
+-- ---------------------------------------------------------------------
+DO $$ BEGIN
+    ALTER TABLE tracking.gps_pings
+        ADD CONSTRAINT uq_gps_ping_vehicle_time UNIQUE (vehicle_id, recorded_at);
+EXCEPTION
+    WHEN duplicate_object OR duplicate_table THEN NULL;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- POST /incidents sends vehicle_id, trip_id, description, severity only.
+-- reported_by comes from the authenticated user; these cover the rest.
+-- ---------------------------------------------------------------------
+ALTER TABLE alert.incident_reports ALTER COLUMN occurred_at SET DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE alert.incident_reports ALTER COLUMN incident_type SET DEFAULT 'other';
+
+-- ===== 013_app_grants.sql =====
 DO $$
 DECLARE
     s text;
@@ -1489,7 +1677,7 @@ BEGIN
 
     FOREACH s IN ARRAY ARRAY['shared', 'auth', 'fleet', 'trip', 'fuel',
                              'maintenance', 'integration', 'tracking',
-                             'alert', 'ev']
+                             'alert', 'ev', 'document', 'api']
     LOOP
         EXECUTE format('GRANT USAGE ON SCHEMA %I TO fms_app', s);
         EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO fms_app', s);

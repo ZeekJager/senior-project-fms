@@ -17,7 +17,8 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 009 | `ev` | Battery telemetry, charging stations, charging sessions |
 | 010 | `audit` | Append-only audit logging |
 | 011 | `analytics` | Performance indexes and reporting/read views |
-| 012 | (grants) | Runtime privileges for the `fms_app` role; audit table stays INSERT/SELECT only |
+| 012 | `document`, `api` (+ cross-cutting) | API-contract alignment: public UUIDs, documents, idempotency keys, trip overlap constraints, telemetry de-duplication |
+| 013 | (grants) | Runtime privileges for the `fms_app` role; audit table stays INSERT/SELECT only |
 
 ## Important
 
@@ -45,6 +46,10 @@ Do **not** run these migrations on top of the old `public.*` tables without firs
 - **Integer-only fuel/money/speed.** ml, cents, ml/km and km/h are integers. Note that Postgres rounds a numeric *literal* into an integer column; a value sent as a query parameter (`'1.5'`) is rejected. The API must still reject floats itself (`VALIDATION_FLOAT_IN_MONEY_PATH`).
 - **Audit.** `audit.audit_logs` rejects UPDATE/DELETE/TRUNCATE for every role (triggers) and the app role only has INSERT/SELECT (012). `correlation_id` is the uuid returned as `correlationId` in API errors.
 - **Notifications.** `alert.notifications` doubles as the in-app inbox: an `in_app` row is the inbox entry and `read_at` marks it read. `alert_id` is optional for non-alert notifications.
+- **Public identifiers.** Every table the API exposes has `public_id UUID` (012). Foreign keys and joins use the BIGINT `id`; the API only ever exposes `public_id`.
+- **Permissions** are the contract's `resource:action` codes, seeded in 001. The role seed raises an error on any unknown code, so a typo cannot silently drop a grant.
+- **Trip overlap** is enforced by exclusion constraints (`ex_trip_driver_overlap`, `ex_trip_vehicle_overlap`, SQLSTATE 23P01) on trips in `assigned`/`en_route`. Requires the `btree_gist` extension.
+- **Telemetry retries**: `tracking.gps_pings` is unique on `(vehicle_id, recorded_at)`; insert with `ON CONFLICT DO NOTHING`.
 - **Analytics cache.** `analytics.analytics_cache` is derived data, upserted on `(vehicle_id, period_type, period_start)` by a scheduled job.
 
 ## Module boundaries

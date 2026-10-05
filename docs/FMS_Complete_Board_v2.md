@@ -65,7 +65,7 @@ Unknown — genuinely undecided items and who answers them
 4. `screen-inventory.md` — every UI screen, its route, the five required states (Loading, Empty, Error, Success, Skeleton), and which role can access it
 
 **How cards reference these**
-- `api-contract.md §3.2` → section 3.2 of the API contract (the trips endpoint group)
+- `api-contract.md §7.2` → section 7.2 of the API contract (the trips endpoint group)
 - `table vehicles` → that `CREATE TABLE` in `schema-fms.sql`
 - `screen S-07` → that entry in the screen inventory
 
@@ -611,7 +611,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Allow authorised users to register, update, and decommission vehicles, with every change attributed to a named user, so the fleet registry is always auditable and accurate.
 
-**Where**: `GET /api/v1/vehicles` · `GET /api/v1/vehicles/:id` · `POST /api/v1/vehicles` · `PUT /api/v1/vehicles/:id` · `DELETE /api/v1/vehicles/:id` (soft) · `table vehicles` · `api-contract.md §2.1`
+**Where**: `GET /api/v1/vehicles` · `GET /api/v1/vehicles/:id` · `POST /api/v1/vehicles` · `PUT /api/v1/vehicles/:id` · `DELETE /api/v1/vehicles/:id` (soft) · `table vehicles` · `api-contract.md §6.2`
 
 **Layout / Behaviour**:
 - `GET /api/v1/vehicles` supports query params: `?depotId=`, `?status=active|inactive`, `?maintenanceFlag=true`. Returns paginated list.
@@ -640,7 +640,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Allow depot admins to register and manage driver profiles including license validity, so expired licenses can be caught before a driver is dispatched on a trip.
 
-**Where**: `GET /api/v1/drivers` · `GET /api/v1/drivers/:id` · `POST /api/v1/drivers` · `PUT /api/v1/drivers/:id` · `DELETE /api/v1/drivers/:id` (soft) · `table drivers` · `api-contract.md §2.2`
+**Where**: `GET /api/v1/drivers` · `GET /api/v1/drivers/:id` · `POST /api/v1/drivers` · `PUT /api/v1/drivers/:id` · `DELETE /api/v1/drivers/:id` (soft) · `table drivers` · `api-contract.md §6.3`
 
 **Layout / Behaviour**:
 - `POST /api/v1/drivers` requires: `userId` (links to a user with role `driver`), `licenseNumber`, `licenseExpiry`, `depotId`.
@@ -799,7 +799,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Create a permanent, auditable log of every repair performed on every vehicle so a vehicle's full mechanical history is available before dispatch, and so the AI model in Wave 3 has real data to train on.
 
-**Where**: `GET /api/v1/maintenance` · `POST /api/v1/maintenance` · `PUT /api/v1/maintenance/:id` · `table maintenance_records` · `table maintenance_parts` · `api-contract.md §2.5`
+**Where**: `GET /api/v1/maintenance` · `POST /api/v1/maintenance` · `PUT /api/v1/maintenance/:id` · `table maintenance_records` · `table maintenance_parts` · `api-contract.md §10.1`
 
 **Layout / Behaviour**:
 - `POST /api/v1/maintenance` requires: `vehicleId`, `description`, `labourHours`, `totalCostCents` (integer). Optional: `parts[]` (array of `{partId, quantity, unitCostCents}`).
@@ -953,7 +953,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Allow authorised users to query the audit trail to answer "who changed this record, and what did it look like before?" without direct database access.
 
-**Where**: `GET /api/v1/audit` · `table audit_logs` · `api-contract.md §6.1` · roles `admin`, `fleet_owner`, `compliance_officer` only
+**Where**: `GET /api/v1/audit` · `table audit_logs` · `api-contract.md §5.2` · roles `admin`, `fleet_owner`, `compliance_officer` only
 
 **Layout / Behaviour**:
 - Query params: `?entityType=vehicle&entityId=42`, `?userId=`, `?action=`, `?from=ISO_DATE&to=ISO_DATE`, `?correlationId=`.
@@ -1010,7 +1010,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Create the scheduling records that connect a driver, a vehicle, and a route for a specific time window — the core operational unit of the entire system.
 
-**Where**: `GET /api/v1/trips` · `POST /api/v1/trips` · `PUT /api/v1/trips/:id` · `DELETE /api/v1/trips/:id` (soft cancel) · `table trips` · `api-contract.md §3.1`
+**Where**: `GET /api/v1/trips` · `POST /api/v1/trips` · `PUT /api/v1/trips/:id` · `DELETE /api/v1/trips/:id` (soft cancel) · `table trips` · `api-contract.md §7.2`
 
 **Layout / Behaviour**:
 - `POST /api/v1/trips` requires: `driverId`, `vehicleId`, `routeId`, `scheduledStart`, `scheduledEnd`. Status defaults to `scheduled`.
@@ -1037,7 +1037,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Prevent dispatchers from creating physically impossible or unsafe assignments — a driver cannot be in two buses simultaneously, and a flagged vehicle cannot carry passengers. This is the most safety-critical logic in the system.
 
-**Where**: `packages/backend/src/modules/dispatch/assignmentRules.js` · invoked by `POST /api/v1/trips/:id/assign` · `api-contract.md §3.2`
+**Where**: `packages/backend/src/modules/dispatch/assignmentRules.js` · invoked by `POST /api/v1/trips/:id/assign` · `api-contract.md §7.2`
 
 **Layout / Behaviour**:
 - `POST /api/v1/trips/:id/assign` accepts `{driverId, vehicleId}` and runs both rules before any DB write.
@@ -1173,7 +1173,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Create a digital record of every pre-trip and post-trip inspection so vehicle defects are caught before they become accidents, and so there is a paper trail if a defect is reported after an incident.
 
-**Where**: `POST /api/v1/dvir` · `GET /api/v1/dvir?vehicleId=&tripId=` · `table dvir_reports` · `api-contract.md §4.1`
+**Where**: `POST /api/v1/dvir` · `GET /api/v1/dvir?vehicleId=&tripId=` · `table dvir_reports` · `api-contract.md §6.4`
 
 **Layout / Behaviour**:
 - `POST /api/v1/dvir` accepts: `vehicleId`, `tripId`, `type: 'pre_trip'|'post_trip'`, `items: [{name, passed: boolean, notes: string}]`, `issuesFound: boolean`.
@@ -1253,7 +1253,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Record every fuel purchase with the data needed to calculate cost-per-km and detect anomalies — fuel theft is one of the most common forms of fleet fraud and requires hard data to prosecute.
 
-**Where**: `POST /api/v1/fuel-logs` · `GET /api/v1/fuel-logs` · `table fuel_logs` · `api-contract.md §5.1`
+**Where**: `POST /api/v1/fuel-logs` · `GET /api/v1/fuel-logs` · `table fuel_logs` · `api-contract.md §9.1`
 
 **Layout / Behaviour**:
 - Required fields: `vehicleId`, `tripId`, `fuelMl` (integer millilitres), `costCents` (integer cents), `odometerKm` (integer).
@@ -1306,7 +1306,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Calculate the expected fuel consumption for each vehicle based on distance driven and flag vehicles where the actual fuel purchased deviates significantly, so fraud is surfaced automatically rather than buried in spreadsheets.
 
-**Where**: `GET /api/v1/fuel-reconciliation?vehicleId=&from=&to=` · background cron job (monthly) · `api-contract.md §5.2`
+**Where**: `GET /api/v1/fuel-reconciliation?vehicleId=&from=&to=` · background cron job (monthly) · `api-contract.md §9.2`
 
 **Layout / Behaviour**:
 - For each vehicle in the date range, calculates: `expected_ml = total_distance_km * vehicle.fuel_efficiency_ml_per_km`, `actual_ml = SUM(fuel_logs.fuel_ml)`, `variance_pct = ((actual_ml - expected_ml) / expected_ml) * 100`.
@@ -1366,13 +1366,13 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Establish the real-time communication channel and define the exact event shapes that the GPS broadcaster (FMS-62) emits and the map (FMS-44) consumes, so both sides can be developed in parallel without breaking each other.
 
-**Where**: `packages/backend/src/realtime/socketServer.js` · `packages/backend/src/realtime/events.js` · `api-contract.md §7` (WebSocket events section)
+**Where**: `packages/backend/src/realtime/socketServer.js` · `packages/backend/src/realtime/events.js` · `api-contract.md §11.2` (WebSocket events section)
 
 **Layout / Behaviour**:
 - Socket.io server mounted on the same Express HTTP server, at `/socket.io`.
 - Authentication: client must pass `{auth: {token: accessToken}}` on connection. Server validates the JWT. Unauthenticated connections are rejected immediately.
 - Namespaces: `/telemetry` for GPS data (requires `driver` or `dispatcher` role), `/notifications` for alert events (all authenticated roles).
-- Event contracts (defined in `events.js` and documented in `api-contract.md §7`):
+- Event contracts (defined in `events.js` and documented in `api-contract.md §11.2`):
   - `location_update` (client → server): `{tripId, lat, lng, speedKmh: integer, bearing: integer, accuracyM: integer}`
   - `vehicle_position` (server → client broadcast): `{vehicleId, tripId, lat, lng, speedKmh, bearing, lastSeen: ISO_timestamp}`
   - `trip_assigned` (server → client): `{tripId, driverId, vehicleId}`
@@ -1485,7 +1485,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Proactively notify relevant users of upcoming deadlines so they are not surprised by an expired document or an overdue maintenance service the day it becomes a problem.
 
-**Where**: `packages/backend/src/jobs/` · node-cron · `table notifications` · `api-contract.md §8`
+**Where**: `packages/backend/src/jobs/` · node-cron · `table notifications` · `api-contract.md §12.1`
 
 **Alert types and rules**:
 - **Document expiry** (runs daily 07:00): scan `documents` where `expiryDate` between today and today+30 days. Notify `depot_admin` and `fleet_manager` of the depot. Severity: amber at 30 days, red at 7 days.
@@ -1562,7 +1562,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Produce pre-aggregated fleet performance metrics so the Analytics Dashboard (FMS-51) does not run expensive GROUP BY queries on every page load.
 
-**Where**: `GET /api/v1/analytics/utilisation` · `GET /api/v1/analytics/costs` · `GET /api/v1/analytics/driver-performance` · `api-contract.md §9`
+**Where**: `GET /api/v1/analytics/utilisation` · `GET /api/v1/analytics/costs` · `GET /api/v1/analytics/driver-performance` · `api-contract.md §14`
 
 **Metrics to compute**:
 - **Fleet Utilisation**: for each vehicle, `utilised_hours / available_hours * 100` per week. `available_hours = 8 * work_days`. `utilised_hours = SUM(actual_end - actual_start)` for completed trips.
@@ -1837,7 +1837,7 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 **Goal**: Prevent two dispatchers from assigning the same driver to overlapping trips simultaneously, which the business rule check (FMS-31) could miss in a race condition between the check and the write.
 
-**Where**: `packages/backend/src/modules/dispatch/assignmentRules.js` · `table trips` (add `version INT DEFAULT 0`) · `api-contract.md §3.2`
+**Where**: `packages/backend/src/modules/dispatch/assignmentRules.js` · `table trips` (add `version INT DEFAULT 0`) · `api-contract.md §7.2`
 
 **Layout / Behaviour**:
 - Add `version` column to `trips` table.
