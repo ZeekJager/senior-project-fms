@@ -81,15 +81,15 @@ CREATE TABLE IF NOT EXISTS trip.trip_stops (
         CHECK (status IN ('planned', 'arrived', 'completed', 'skipped'))
 );
 
-CREATE TRIGGER trg_trip_routes_updated_at
+CREATE OR REPLACE TRIGGER trg_trip_routes_updated_at
     BEFORE UPDATE ON trip.routes
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_trip_trips_updated_at
+CREATE OR REPLACE TRIGGER trg_trip_trips_updated_at
     BEFORE UPDATE ON trip.trips
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_trip_stops_updated_at
+CREATE OR REPLACE TRIGGER trg_trip_stops_updated_at
     BEFORE UPDATE ON trip.trip_stops
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

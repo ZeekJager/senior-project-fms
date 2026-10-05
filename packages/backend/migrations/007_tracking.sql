@@ -111,11 +111,11 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER trg_tracking_gps_ping_updates_current
+CREATE OR REPLACE TRIGGER trg_tracking_gps_ping_updates_current
     AFTER INSERT ON tracking.gps_pings
     FOR EACH ROW EXECUTE FUNCTION tracking.update_current_location_from_ping();
 
-CREATE TRIGGER trg_tracking_flags_updated_at
+CREATE OR REPLACE TRIGGER trg_tracking_flags_updated_at
     BEFORE UPDATE ON tracking.telemetry_flags
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

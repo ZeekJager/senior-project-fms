@@ -35,7 +35,7 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER trg_audit_prevent_update_delete
+CREATE OR REPLACE TRIGGER trg_audit_prevent_update_delete
     BEFORE UPDATE OR DELETE ON audit.audit_logs
     FOR EACH ROW EXECUTE FUNCTION audit.prevent_audit_mutation();
 

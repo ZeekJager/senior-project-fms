@@ -111,15 +111,15 @@ CREATE TABLE IF NOT EXISTS maintenance.maintenance_predictions (
         CHECK (feature_snapshot IS NULL OR jsonb_typeof(feature_snapshot) = 'object')
 );
 
-CREATE TRIGGER trg_maintenance_inventory_parts_updated_at
+CREATE OR REPLACE TRIGGER trg_maintenance_inventory_parts_updated_at
     BEFORE UPDATE ON maintenance.inventory_parts
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_maintenance_records_updated_at
+CREATE OR REPLACE TRIGGER trg_maintenance_records_updated_at
     BEFORE UPDATE ON maintenance.maintenance_records
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_maintenance_predictions_updated_at
+CREATE OR REPLACE TRIGGER trg_maintenance_predictions_updated_at
     BEFORE UPDATE ON maintenance.maintenance_predictions
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

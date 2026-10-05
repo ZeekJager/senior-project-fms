@@ -112,15 +112,15 @@ CREATE TABLE IF NOT EXISTS alert.incident_reports (
         CHECK (jsonb_typeof(attachments) = 'array')
 );
 
-CREATE TRIGGER trg_alert_alerts_updated_at
+CREATE OR REPLACE TRIGGER trg_alert_alerts_updated_at
     BEFORE UPDATE ON alert.alerts
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_alert_notifications_updated_at
+CREATE OR REPLACE TRIGGER trg_alert_notifications_updated_at
     BEFORE UPDATE ON alert.notifications
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_alert_incidents_updated_at
+CREATE OR REPLACE TRIGGER trg_alert_incidents_updated_at
     BEFORE UPDATE ON alert.incident_reports
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

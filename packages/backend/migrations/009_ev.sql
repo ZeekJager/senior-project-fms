@@ -63,11 +63,11 @@ CREATE TABLE IF NOT EXISTS ev.charging_sessions (
     CONSTRAINT uq_charging_external_session UNIQUE (external_session_id)
 );
 
-CREATE TRIGGER trg_ev_stations_updated_at
+CREATE OR REPLACE TRIGGER trg_ev_stations_updated_at
     BEFORE UPDATE ON ev.charging_stations
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_ev_sessions_updated_at
+CREATE OR REPLACE TRIGGER trg_ev_sessions_updated_at
     BEFORE UPDATE ON ev.charging_sessions
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

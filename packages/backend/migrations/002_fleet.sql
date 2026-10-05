@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS fleet.drivers (
     emergency_phone  VARCHAR(50),
     is_active        BOOLEAN NOT NULL DEFAULT TRUE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS fleet.driver_vehicle_assignments (
@@ -117,27 +117,27 @@ CREATE TABLE IF NOT EXISTS fleet.dvir_reports (
     )
 );
 
-CREATE TRIGGER trg_fleet_depots_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_depots_updated_at
     BEFORE UPDATE ON fleet.depots
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_vehicles_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_vehicles_updated_at
     BEFORE UPDATE ON fleet.vehicles
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_drivers_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_drivers_updated_at
     BEFORE UPDATE ON fleet.drivers
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_assignments_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_assignments_updated_at
     BEFORE UPDATE ON fleet.driver_vehicle_assignments
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_attendance_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_attendance_updated_at
     BEFORE UPDATE ON fleet.driver_attendance
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fleet_dvir_updated_at
+CREATE OR REPLACE TRIGGER trg_fleet_dvir_updated_at
     BEFORE UPDATE ON fleet.dvir_reports
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

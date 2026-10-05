@@ -64,11 +64,11 @@ CREATE TABLE IF NOT EXISTS fuel.fuel_anomalies (
         CHECK (severity IN ('low', 'medium', 'high', 'critical'))
 );
 
-CREATE TRIGGER trg_fuel_logs_updated_at
+CREATE OR REPLACE TRIGGER trg_fuel_logs_updated_at
     BEFORE UPDATE ON fuel.fuel_logs
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_fuel_anomalies_updated_at
+CREATE OR REPLACE TRIGGER trg_fuel_anomalies_updated_at
     BEFORE UPDATE ON fuel.fuel_anomalies
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

@@ -109,11 +109,11 @@ CREATE TABLE IF NOT EXISTS auth.refresh_sessions (
     CHECK (revoked_at IS NULL OR revoked_at >= issued_at)
 );
 
-CREATE TRIGGER trg_auth_roles_updated_at
+CREATE OR REPLACE TRIGGER trg_auth_roles_updated_at
     BEFORE UPDATE ON auth.roles
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_auth_users_updated_at
+CREATE OR REPLACE TRIGGER trg_auth_users_updated_at
     BEFORE UPDATE ON auth.users
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 

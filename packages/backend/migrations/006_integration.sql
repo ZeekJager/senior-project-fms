@@ -86,11 +86,11 @@ CREATE TABLE IF NOT EXISTS integration.fuel_card_transactions (
     CONSTRAINT chk_fuel_card_payload CHECK (jsonb_typeof(raw_payload) = 'object')
 );
 
-CREATE TRIGGER trg_integration_providers_updated_at
+CREATE OR REPLACE TRIGGER trg_integration_providers_updated_at
     BEFORE UPDATE ON integration.external_providers
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
-CREATE TRIGGER trg_integration_gps_devices_updated_at
+CREATE OR REPLACE TRIGGER trg_integration_gps_devices_updated_at
     BEFORE UPDATE ON integration.gps_devices
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
 
