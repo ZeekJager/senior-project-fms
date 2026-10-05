@@ -1,126 +1,270 @@
 -- =====================================================================
--- Migration: 001_core_identity
--- Ticket:    FMS-01 — DB Migrations: Core Identity Tables
--- Target:    packages/backend/migrations/001_core_identity.sql
--- Tables:    roles, depots, users
+-- Fleet Management System - PostgreSQL Migrations
+-- 001_core_identity.sql
 --
--- Spec:    docs/schema-fms.sql (MySQL), translated to PostgreSQL
---          (the docker stack runs postgres:16):
---   TINYINT(1)      -> BOOLEAN
---   JSON            -> JSONB
---   AUTO_INCREMENT  -> SERIAL
+-- Architecture boundary:
+--   shared.*   -> shared database primitives/types/functions
+--   auth.*     -> identity, authentication and RBAC
 --
--- Up/Down split marker below follows the sql-migrate convention
--- ("-- +migrate Up" / "-- +migrate Down"). If your migration runner
--- expects a different marker, swap just these two lines.
+-- This is a replacement baseline for a NEW PostgreSQL database.
+-- It supersedes the earlier public.* identity tables.
 -- =====================================================================
 
 -- +migrate Up
 
--- Postgres has no native "ON UPDATE CURRENT_TIMESTAMP" column option,
--- so updated_at is maintained by a BEFORE UPDATE trigger instead. One
--- shared function, reused by all three tables below.
-CREATE OR REPLACE FUNCTION set_updated_at()
-RETURNS TRIGGER AS $$
+CREATE SCHEMA IF NOT EXISTS shared;
+CREATE SCHEMA IF NOT EXISTS auth;
+
+REVOKE CREATE ON SCHEMA shared FROM PUBLIC;
+REVOKE CREATE ON SCHEMA auth   FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION shared.set_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
--- ---------------------------------------------------------------------
--- roles
--- Fixed, code-defined role set. Never created via API — rows only ever
--- come from the seed INSERT below. `permissions` is a JSONB blob per
--- the MVP decision (no permissions-as-rows table).
--- Deliberate deviation from docs/schema-fms.sql: roles also carries
--- is_active and updated_at, because the FMS-01 card requires them on
--- ALL tables. (The spec's roles has only created_at.)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS roles (
-    id          SERIAL       PRIMARY KEY,
+DO $$ BEGIN
+    CREATE TYPE shared.vehicle_status AS ENUM
+        ('active', 'inactive', 'maintenance', 'retired', 'decommissioned');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TYPE shared.vehicle_type AS ENUM
+        ('car', 'suv', 'van', 'truck', 'bus', 'motorcycle', 'other');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TYPE shared.fuel_type AS ENUM
+        ('petrol', 'diesel', 'hybrid', 'electric', 'cng', 'lpg', 'other');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TYPE shared.user_status AS ENUM
+        ('active', 'inactive', 'suspended', 'locked');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS auth.roles (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name        VARCHAR(50)  NOT NULL UNIQUE,
-    permissions JSONB        NOT NULL DEFAULT '{}'::JSONB,
+    description TEXT,
     is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-DROP TRIGGER IF EXISTS trg_roles_updated_at ON roles;
-CREATE TRIGGER trg_roles_updated_at
-    BEFORE UPDATE ON roles
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
--- ---------------------------------------------------------------------
--- depots
--- Matches docs/schema-fms.sql: `location` is NOT NULL (POST /depots
--- accepts name + location per api-contract.md). Other depot attributes
--- (timezone, contact info, etc.) aren't specified — later migration.
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS depots (
-    id          SERIAL       PRIMARY KEY,
-    name        VARCHAR(255) NOT NULL,
-    location    VARCHAR(255) NOT NULL,
-    is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS auth.permissions (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    code        VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT
 );
 
-DROP TRIGGER IF EXISTS trg_depots_updated_at ON depots;
-CREATE TRIGGER trg_depots_updated_at
-    BEFORE UPDATE ON depots
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TABLE IF NOT EXISTS auth.role_permissions (
+    role_id       BIGINT NOT NULL REFERENCES auth.roles(id)
+                  ON DELETE CASCADE ON UPDATE CASCADE,
+    permission_id BIGINT NOT NULL REFERENCES auth.permissions(id)
+                  ON DELETE CASCADE ON UPDATE CASCADE,
+    PRIMARY KEY (role_id, permission_id)
+);
 
--- ---------------------------------------------------------------------
--- users
--- depot_id is nullable: admins are not depot-scoped. role_id is NOT
--- NULL — every user has exactly one of the 9 seeded roles.
--- password_hash is VARCHAR(255): do not shorten — bcrypt output must
--- not be truncated. full_name is a deliberate addition beyond
--- docs/schema-fms.sql.
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS users (
-    id            SERIAL       PRIMARY KEY,
-    depot_id      INTEGER      NULL REFERENCES depots(id)
-                                ON DELETE RESTRICT ON UPDATE CASCADE,
-    role_id       INTEGER      NOT NULL REFERENCES roles(id)
-                                ON DELETE RESTRICT ON UPDATE CASCADE,
-    email         VARCHAR(255) NOT NULL UNIQUE,
+CREATE TABLE IF NOT EXISTS auth.users (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email         VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     full_name     VARCHAR(255) NOT NULL,
-    is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+    phone         VARCHAR(50),
+    status        shared.user_status NOT NULL DEFAULT 'active',
+    last_login_at TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
-CREATE TRIGGER trg_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE UNIQUE INDEX IF NOT EXISTS ux_auth_users_email_lower
+    ON auth.users (LOWER(email));
 
--- ---------------------------------------------------------------------
--- Seed the 9 fixed roles. ON CONFLICT (name) DO NOTHING + the UNIQUE
--- constraint on `name` makes this safe to run twice (idempotent `up`).
--- permissions is left at its '{}' default for all roles for now.
--- ---------------------------------------------------------------------
-INSERT INTO roles (name) VALUES
-    ('admin'),
-    ('fleet_manager'),
-    ('dispatcher'),
-    ('driver'),
-    ('technician'),
-    ('depot_admin'),
-    ('finance_clerk'),
-    ('compliance_officer'),
-    ('fleet_owner')
+CREATE TABLE IF NOT EXISTS auth.user_roles (
+    user_id    BIGINT NOT NULL REFERENCES auth.users(id)
+               ON DELETE CASCADE ON UPDATE CASCADE,
+    role_id    BIGINT NOT NULL REFERENCES auth.roles(id)
+               ON DELETE RESTRICT ON UPDATE CASCADE,
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    assigned_by BIGINT REFERENCES auth.users(id)
+                ON DELETE SET NULL ON UPDATE CASCADE,
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS auth.refresh_sessions (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES auth.users(id)
+                ON DELETE CASCADE ON UPDATE CASCADE,
+    token_hash  VARCHAR(255) NOT NULL UNIQUE,
+    issued_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ,
+    CHECK (expires_at > issued_at),
+    CHECK (revoked_at IS NULL OR revoked_at >= issued_at)
+);
+
+CREATE TRIGGER trg_auth_roles_updated_at
+    BEFORE UPDATE ON auth.roles
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+CREATE TRIGGER trg_auth_users_updated_at
+    BEFORE UPDATE ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+INSERT INTO auth.roles (name, description) VALUES
+    ('admin', 'Full system administration'),
+    ('fleet_manager', 'Fleet-wide operational management'),
+    ('dispatcher', 'Trip and command-center operations'),
+    ('driver', 'Driver self-service and operational submissions'),
+    ('technician', 'Maintenance and spare-parts operations'),
+    ('depot_admin', 'Depot-level fleet administration'),
+    ('finance_clerk', 'Fuel, cost and finance-related operations'),
+    ('compliance_officer', 'Audit, compliance and incident oversight'),
+    ('fleet_owner', 'Executive fleet visibility')
 ON CONFLICT (name) DO NOTHING;
 
+INSERT INTO auth.permissions (code, description) VALUES
+    ('users.read', 'Read user profiles'),
+    ('users.write', 'Create and update user profiles'),
+    ('fleet.read', 'Read fleet data'),
+    ('fleet.write', 'Create and update fleet data'),
+    ('trip.read', 'Read trips and routes'),
+    ('trip.write', 'Create and update trips and routes'),
+    ('fuel.read', 'Read fuel records'),
+    ('fuel.write', 'Create and update fuel records'),
+    ('maintenance.read', 'Read maintenance records'),
+    ('maintenance.write', 'Create and update maintenance records'),
+    ('alerts.read', 'Read alerts and notifications'),
+    ('alerts.write', 'Create, acknowledge and resolve alerts'),
+    ('analytics.read', 'Read analytics and reporting'),
+    ('command_center.read', 'Read live command-center data'),
+    ('ev.read', 'Read EV fleet data'),
+    ('ev.write', 'Create and update EV fleet data'),
+    ('audit.read', 'Read audit records'),
+    ('integration.manage', 'Manage integration configuration'),
+    ('dvir.read', 'Read driver vehicle inspection reports'),
+    ('dvir.write', 'Create and update driver vehicle inspection reports'),
+    ('incident.read', 'Read incidents'),
+    ('incident.write', 'Create and update incidents'),
+    ('attendance.read', 'Read driver attendance'),
+    ('attendance.write', 'Create and update driver attendance'),
+    ('driver.self.read', 'Read own driver operational information'),
+    ('driver.self.write', 'Write own driver operational information')
+ON CONFLICT (code) DO NOTHING;
+
+-- Admin receives every permission.
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+CROSS JOIN auth.permissions p
+WHERE r.name = 'admin'
+ON CONFLICT DO NOTHING;
+
+-- Explicit least-privilege assignments for the remaining roles.
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'users.read', 'fleet.read', 'fleet.write', 'trip.read', 'trip.write',
+    'fuel.read', 'fuel.write', 'maintenance.read', 'maintenance.write',
+    'alerts.read', 'alerts.write', 'analytics.read', 'command_center.read',
+    'ev.read', 'ev.write', 'dvir.read', 'dvir.write', 'incident.read',
+    'incident.write', 'attendance.read', 'attendance.write', 'audit.read',
+    'integration.manage'
+)
+WHERE r.name = 'fleet_manager'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'fleet.read', 'trip.read', 'trip.write', 'alerts.read', 'alerts.write',
+    'command_center.read', 'analytics.read'
+)
+WHERE r.name = 'dispatcher'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'fleet.read', 'maintenance.read', 'maintenance.write',
+    'dvir.read', 'dvir.write', 'incident.read', 'incident.write'
+)
+WHERE r.name = 'technician'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'fleet.read', 'fleet.write', 'trip.read', 'fuel.read', 'fuel.write',
+    'maintenance.read', 'maintenance.write', 'alerts.read',
+    'command_center.read', 'ev.read', 'ev.write', 'dvir.read', 'dvir.write',
+    'incident.read', 'incident.write', 'attendance.read', 'attendance.write'
+)
+WHERE r.name = 'depot_admin'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN ('fuel.read', 'fuel.write', 'analytics.read')
+WHERE r.name = 'finance_clerk'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'users.read', 'fleet.read', 'trip.read', 'fuel.read', 'maintenance.read',
+    'alerts.read', 'analytics.read', 'audit.read', 'dvir.read',
+    'incident.read', 'attendance.read'
+)
+WHERE r.name = 'compliance_officer'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'fleet.read', 'trip.read', 'fuel.read', 'maintenance.read',
+    'alerts.read', 'analytics.read', 'command_center.read', 'ev.read'
+)
+WHERE r.name = 'fleet_owner'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM auth.roles r
+JOIN auth.permissions p ON p.code IN (
+    'fleet.read', 'trip.read', 'fuel.write', 'dvir.write', 'incident.write',
+    'driver.self.read', 'driver.self.write', 'dvir.read', 'incident.read'
+)
+WHERE r.name = 'driver'
+ON CONFLICT DO NOTHING;
 
 -- +migrate Down
 
--- Drop in reverse FK order: users (child) before depots/roles
--- (parents), then the shared trigger function last.
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS depots;
-DROP TABLE IF EXISTS roles;
-DROP FUNCTION IF EXISTS set_updated_at();
+DROP TABLE IF EXISTS auth.refresh_sessions;
+DROP TABLE IF EXISTS auth.user_roles;
+DROP TABLE IF EXISTS auth.role_permissions;
+DROP TABLE IF EXISTS auth.permissions;
+DROP TABLE IF EXISTS auth.users;
+DROP TABLE IF EXISTS auth.roles;
+
+DROP TYPE IF EXISTS shared.user_status;
+DROP TYPE IF EXISTS shared.fuel_type;
+DROP TYPE IF EXISTS shared.vehicle_type;
+DROP TYPE IF EXISTS shared.vehicle_status;
+
+DROP FUNCTION IF EXISTS shared.set_updated_at();
+DROP SCHEMA IF EXISTS auth;
+DROP SCHEMA IF EXISTS shared;
