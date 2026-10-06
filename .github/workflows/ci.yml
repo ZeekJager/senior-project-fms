@@ -41,7 +41,7 @@ jobs:
           up()   { for f in $(ls packages/backend/migrations/*.sql); do echo "up   $f"; sed -n '/^-- +migrate Up/,/^-- +migrate Down/p' "$f" | run_sql; done; }
           down() { for f in $(ls -r packages/backend/migrations/*.sql); do echo "down $f"; sed -n '/^-- +migrate Down/,$p' "$f" | run_sql; done; }
           up; up; down; up
-          docker exec fms_postgres psql -U fms_admin -d fms_db -c '\dt'
+          docker exec fms_postgres psql -U fms_admin -d fms_db -c "select table_schema, count(*) as tables from information_schema.tables where table_schema not in ('pg_catalog','information_schema') group by 1 order by 1"
 
       - name: Tear Down
         if: always()

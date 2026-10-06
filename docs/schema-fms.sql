@@ -1,3 +1,13 @@
+-- =====================================================================
+-- SUPERSEDED. This file describes the original flat schema and is kept
+-- for history only. It is not valid PostgreSQL as written and no longer
+-- matches the database.
+--
+-- The schema of record is packages/backend/migrations/ (see its README),
+-- applied with `make migrate`. Table names there are schema-qualified,
+-- e.g. fleet.vehicles, trip.trips, audit.audit_logs.
+-- =====================================================================
+
 -- FMS Database Schema
 -- Strict adherence to integer-only money/fuel values and soft-delete conventions.
 

@@ -21,13 +21,13 @@ app.get('/api/v1/health', (req, res) => {
 app.post('/api/v1/test-audit', async (req, res) => {
     try {
         // 1. Insert a mock depot
-        const inserted = await req.dbMutate('depots', 'INSERT', null, {
+        const inserted = await req.dbMutate('fleet.depots', 'INSERT', null, {
             name: 'Test Depot ' + Date.now(),
             location: 'Addis Ababa'
         });
         
         // 2. Soft-delete the mock depot immediately
-        const deleted = await req.dbMutate('depots', 'DELETE', inserted.id);
+        const deleted = await req.dbMutate('fleet.depots', 'DELETE', inserted.id);
         
         res.json({
             message: "FMS-03 Audit test completed!",
