@@ -42,6 +42,7 @@ The single source of truth for the project's architecture lives in the `docs/` f
 - **[Database Schema](packages/backend/migrations/README.md)** - The migrations that define every table (apply with `make migrate`).
 - **[API Contract](docs/api-contract.md)** - All REST endpoints and Socket.io events.
 - **[Screen Inventory](docs/screen-inventory.md)** - Every UI screen mapped to roles.
+- **[Continuous Integration](docs/ci.md)** - What each CI check does, how to run it locally, and the `master` branch protection rule.
 
 ## 🤝 Contribution & Jira Workflow
 

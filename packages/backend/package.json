@@ -4,7 +4,9 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "lint": "eslint src scripts",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",
