@@ -1,8 +1,8 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-const units = require('./units');
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import * as units from './units';
 
 test('toMillilitres returns integer millilitres', () => {
   assert.equal(units.toMillilitres(1.5), 1500);
@@ -25,7 +25,7 @@ test('display helpers return fixed two-decimal strings', () => {
 });
 
 test('null and undefined pass through unchanged', () => {
-  for (const fn of Object.values(units)) {
+  for (const fn of [units.toMillilitres, units.toLitres, units.toCents, units.toBirr]) {
     assert.equal(fn(null), null);
     assert.equal(fn(undefined), undefined);
   }
@@ -34,8 +34,9 @@ test('null and undefined pass through unchanged', () => {
 // FMS-04: backend and frontend must convert identically.
 test('frontend units.js exports the same functions with the same results', async () => {
   const frontendPath = path.resolve(__dirname, '../../../frontend/src/lib/units.js');
-  const frontend = await import(pathToFileURL(frontendPath).href);
-  assert.deepEqual(Object.keys(units).sort(), Object.keys(frontend).filter((k) => k !== 'default').sort());
+  const frontend = (await import(pathToFileURL(frontendPath).href)) as typeof units;
+  const names = (m: object) => Object.keys(m).filter((k) => k !== 'default' && k !== '__esModule').sort();
+  assert.deepEqual(names(units), names(frontend));
   for (const input of [0, 0.1, 1.5, 23.456, 149.99]) {
     assert.equal(frontend.toMillilitres(input), units.toMillilitres(input));
     assert.equal(frontend.toCents(input), units.toCents(input));

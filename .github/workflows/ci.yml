@@ -54,21 +54,24 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint -w fms-backend
-      # Activates once FMS-70 adds a `typecheck` script.
       - name: Type-check
-        run: npm run typecheck -w fms-backend --if-present
+        run: npm run typecheck -w fms-backend
+      - name: Build
+        run: npm run build -w fms-backend
       - name: Prepare database (app role + migrations)
         run: |
           psql -v ON_ERROR_STOP=1 -q -f docker/postgres/init/01_app_role.sql
-          node packages/backend/scripts/migrate.js
+          npm run migrate -w fms-backend
         env:
           DB_HOST: localhost
           DB_PORT: "5432"
           DB_USER: fms_admin
           DB_PASS: adminpassword
           DB_NAME: fms_db
-      - name: Unit and integration tests
+      - name: Unit tests
         run: npm test -w fms-backend
+      - name: Integration tests
+        run: npm run test:integration -w fms-backend
         env:
           DB_HOST: localhost
           DB_PORT: "5432"
@@ -142,11 +145,11 @@ jobs:
         run: |
           set -euo pipefail
           psql -q -c "create database fms_runner_check"
-          node packages/backend/scripts/migrate.js
+          npm run -s migrate -w fms-backend
           applied=$(psql -d fms_runner_check -At -c "select count(*) from schema_migrations")
           files=$(ls packages/backend/migrations/*.sql | wc -l)
           if [ "$applied" != "$files" ]; then echo "Runner applied $applied of $files files"; exit 1; fi
-          node packages/backend/scripts/migrate.js | tee "$RUNNER_TEMP/second-run.log"
+          npm run -s migrate -w fms-backend | tee "$RUNNER_TEMP/second-run.log"
           if grep -q "RUNNING" "$RUNNER_TEMP/second-run.log"; then echo "Second run re-applied a migration"; exit 1; fi
         env:
           DB_HOST: localhost

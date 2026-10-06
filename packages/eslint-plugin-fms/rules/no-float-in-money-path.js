@@ -5,15 +5,15 @@ module.exports = {
       description: "Prevent floats in money/fuel paths to avoid floating point math errors.",
     },
     messages: {
-      noFloat: "Do not use parseFloat, Number, or division on money/fuel variables. Use the units.js module instead.",
+      noFloat: "Do not use parseFloat, Number, or division on money/fuel variables. Use the units module (units.js / units.ts) instead.",
     },
   },
   create(context) {
     // We get the filename in a cross-platform way
     const filename = context.getFilename ? context.getFilename() : context.filename;
     
-    // The rule doesn't apply inside the units.js utility itself
-    if (filename && filename.endsWith('units.js')) {
+    // The rule doesn't apply inside the units module itself (units.js or units.ts)
+    if (filename && /units\.(js|ts)$/.test(filename)) {
       return {};
     }
 
