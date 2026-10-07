@@ -20,11 +20,23 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+  # CI databases are throwaway containers reachable only on the runner.
+  # The admin password is derived per run (service containers cannot use
+  # values generated in steps), so no password is stored in this file.
+  CI_DB_ADMIN_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
   PGHOST: localhost
   PGPORT: "5432"
   PGUSER: fms_admin
-  PGPASSWORD: adminpassword
+  PGPASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
   PGDATABASE: fms_db
+  # Read by the backend config (src/config) and by 01_app_role.sh.
+  DB_HOST: localhost
+  DB_PORT: "5432"
+  DB_NAME: fms_db
+  DB_ADMIN_USER: fms_admin
+  DB_ADMIN_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+  POSTGRES_USER: fms_admin
+  POSTGRES_DB: fms_db
 
 # Job `name`s are the required status checks in branch protection
 # (see docs/ci.md). Renaming one means updating the protection rule.
@@ -38,7 +50,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: fms_admin
-          POSTGRES_PASSWORD: adminpassword
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: fms_db
         ports: [ "5432:5432" ]
         options: >-
@@ -58,26 +70,24 @@ jobs:
         run: npm run typecheck -w fms-backend
       - name: Build
         run: npm run build -w fms-backend
+      # Random per run and masked in logs; never stored anywhere.
+      - name: Generate per-run secrets
+        run: |
+          for name in DB_APP_PASSWORD JWT_SECRET; do
+            value=$(openssl rand -hex 32)
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
       - name: Prepare database (app role + migrations)
         run: |
-          psql -v ON_ERROR_STOP=1 -q -f docker/postgres/init/01_app_role.sql
+          sh docker/postgres/init/01_app_role.sh
           npm run migrate -w fms-backend
-        env:
-          DB_HOST: localhost
-          DB_PORT: "5432"
-          DB_USER: fms_admin
-          DB_PASS: adminpassword
-          DB_NAME: fms_db
       - name: Unit tests
         run: npm test -w fms-backend
       - name: Integration tests
-        run: npm run test:integration -w fms-backend
+        run: DB_PASSWORD="$DB_APP_PASSWORD" npm run test:integration -w fms-backend
         env:
-          DB_HOST: localhost
-          DB_PORT: "5432"
           DB_USER: fms_app
-          DB_PASS: apppassword
-          DB_NAME: fms_db
 
   frontend:
     name: frontend-ci
@@ -110,7 +120,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: fms_admin
-          POSTGRES_PASSWORD: adminpassword
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: fms_db
         ports: [ "5432:5432" ]
         options: >-
@@ -118,8 +128,16 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v5
+      # Random per run and masked in logs; never stored anywhere.
+      - name: Generate per-run secrets
+        run: |
+          for name in DB_APP_PASSWORD JWT_SECRET; do
+            value=$(openssl rand -hex 32)
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
       - name: Create app role
-        run: psql -v ON_ERROR_STOP=1 -q -f docker/postgres/init/01_app_role.sql
+        run: sh docker/postgres/init/01_app_role.sh
       # Every Up section in file order twice (idempotency), every Down in
       # reverse order, then Up again (Definition of Done: reversible).
       - name: Verify migrations (up, up, down, up)
@@ -152,10 +170,6 @@ jobs:
           npm run -s migrate -w fms-backend | tee "$RUNNER_TEMP/second-run.log"
           if grep -q "RUNNING" "$RUNNER_TEMP/second-run.log"; then echo "Second run re-applied a migration"; exit 1; fi
         env:
-          DB_HOST: localhost
-          DB_PORT: "5432"
-          DB_USER: fms_admin
-          DB_PASS: adminpassword
           DB_NAME: fms_runner_check
 
   docker:
@@ -164,6 +178,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+      - name: Create .env with generated secrets
+        run: node scripts/init-env.mjs
       - name: Build images
         run: docker compose build
       - name: Start stack
@@ -181,3 +197,25 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v --remove-orphans
+
+  secrets:
+    name: secrets-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          file="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$file" "$base/$file"
+          curl -sSfL -o "$RUNNER_TEMP/checksums.txt" "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $file\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" gitleaks
+      # Scans the checked-out files (not history) with the default rules
+      # plus the project rules in .gitleaks.toml (weak hardcoded passwords).
+      - name: Scan for secrets
+        run: $RUNNER_TEMP/gitleaks dir . --config .gitleaks.toml --redact --no-banner --exit-code 1

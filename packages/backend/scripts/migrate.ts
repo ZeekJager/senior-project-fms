@@ -1,15 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Client } from 'pg';
+import { ConfigError, loadMigrationConfig, type DbConfig } from '../src/config/schema';
 
-// Must run as the schema owner (fms_admin) to create tables and triggers.
-const dbConfig = {
-  host: process.env.DB_HOST ?? 'postgres',
-  port: Number(process.env.DB_PORT ?? 5432),
-  user: process.env.DB_USER ?? 'fms_admin',
-  password: process.env.DB_PASS ?? 'adminpassword',
-  database: process.env.DB_NAME ?? 'fms_db',
-};
+// Runs as the schema owner (DB_ADMIN_USER) to create tables and triggers.
+function migrationConfig(): DbConfig {
+  try {
+    return loadMigrationConfig(process.env);
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+const dbConfig = migrationConfig();
 
 // The script runs from `scripts/` (tsx) or `dist/scripts/` (compiled), so
 // walk up to the package's `migrations/` folder instead of a fixed path.
