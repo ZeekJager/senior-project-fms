@@ -1,48 +1,180 @@
 name: FMS CI Pipeline
 
+# Runs on every PR to master, every push to master, and on demand.
+# Feature-branch pushes are covered by their PR run, so they are not
+# triggered twice.
 on:
   push:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
 
+permissions:
+  contents: read
+
+# A newer push to the same PR cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "22"
+  PGHOST: localhost
+  PGPORT: "5432"
+  PGUSER: fms_admin
+  PGPASSWORD: adminpassword
+  PGDATABASE: fms_db
+
+# Job `name`s are the required status checks in branch protection
+# (see docs/ci.md). Renaming one means updating the protection rule.
 jobs:
-  build-and-test:
-    name: Build Docker Stack
-    runs-on: ubuntu-latest
-
+  backend:
+    name: backend-ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fms_admin
+          POSTGRES_PASSWORD: adminpassword
+          POSTGRES_DB: fms_db
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U fms_admin -d fms_db"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Verify Docker Compose Build
-        run: docker compose build
-
-      - name: Start Services (Dry Run)
-        run: docker compose up -d
-
-      - name: Check Container Health
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint -w fms-backend
+      # Activates once FMS-70 adds a `typecheck` script.
+      - name: Type-check
+        run: npm run typecheck -w fms-backend --if-present
+      - name: Prepare database (app role + migrations)
         run: |
-          echo "Waiting for services to boot..."
-          sleep 10
-          docker ps
+          psql -v ON_ERROR_STOP=1 -q -f docker/postgres/init/01_app_role.sql
+          node packages/backend/scripts/migrate.js
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: fms_admin
+          DB_PASS: adminpassword
+          DB_NAME: fms_db
+      - name: Unit and integration tests
+        run: npm test -w fms-backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: fms_app
+          DB_PASS: apppassword
+          DB_NAME: fms_db
 
-      # Applies every migration's Up section in file order, twice (FMS-01
-      # idempotency bar), then every Down section in reverse file order,
-      # then Up again (DoD: reversible, down then up).
-      - name: Verify Migrations (up, up, down, up)
+  frontend:
+    name: frontend-ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint -w fms-frontend
+      - name: Type-check
+        run: npm run typecheck -w fms-frontend
+      # Activates once FMS-74 adds a `test` script (Vitest).
+      - name: Unit tests
+        run: npm test -w fms-frontend --if-present
+      - name: Build
+        run: npm run build -w fms-frontend
+
+  migrations:
+    name: migrations-ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fms_admin
+          POSTGRES_PASSWORD: adminpassword
+          POSTGRES_DB: fms_db
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U fms_admin -d fms_db"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create app role
+        run: psql -v ON_ERROR_STOP=1 -q -f docker/postgres/init/01_app_role.sql
+      # Every Up section in file order twice (idempotency), every Down in
+      # reverse order, then Up again (Definition of Done: reversible).
+      - name: Verify migrations (up, up, down, up)
         run: |
           set -euo pipefail
-          until docker exec fms_postgres pg_isready -h localhost -U fms_admin -d fms_db; do sleep 1; done
-          run_sql() { docker exec -i fms_postgres psql -v ON_ERROR_STOP=1 -q -U fms_admin -d fms_db; }
+          run_sql() { psql -v ON_ERROR_STOP=1 -q; }
           up()   { for f in $(ls packages/backend/migrations/*.sql); do echo "up   $f"; sed -n '/^-- +migrate Up/,/^-- +migrate Down/p' "$f" | run_sql; done; }
           down() { for f in $(ls -r packages/backend/migrations/*.sql); do echo "down $f"; sed -n '/^-- +migrate Down/,$p' "$f" | run_sql; done; }
-          up; up; down; up
-          docker exec fms_postgres psql -U fms_admin -d fms_db -c "select table_schema, count(*) as tables from information_schema.tables where table_schema not in ('pg_catalog','information_schema') group by 1 order by 1"
+          up; up; down
+          left=$(psql -At -c "select count(*) from pg_namespace where nspname not like 'pg_%' and nspname not in ('information_schema','public')")
+          if [ "$left" != "0" ]; then echo "Down left $left schema(s) behind"; exit 1; fi
+          up
+          psql -c "select table_schema, count(*) as tables from information_schema.tables where table_schema not in ('pg_catalog','information_schema') group by 1 order by 1"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # The path developers use (`make migrate`): fresh database, apply all,
+      # then a second run must skip every file.
+      - name: Verify migration runner on a fresh database
+        run: |
+          set -euo pipefail
+          psql -q -c "create database fms_runner_check"
+          node packages/backend/scripts/migrate.js
+          applied=$(psql -d fms_runner_check -At -c "select count(*) from schema_migrations")
+          files=$(ls packages/backend/migrations/*.sql | wc -l)
+          if [ "$applied" != "$files" ]; then echo "Runner applied $applied of $files files"; exit 1; fi
+          node packages/backend/scripts/migrate.js | tee "$RUNNER_TEMP/second-run.log"
+          if grep -q "RUNNING" "$RUNNER_TEMP/second-run.log"; then echo "Second run re-applied a migration"; exit 1; fi
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: fms_admin
+          DB_PASS: adminpassword
+          DB_NAME: fms_runner_check
 
-      - name: Tear Down
+  docker:
+    name: docker-stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build images
+        run: docker compose build
+      - name: Start stack
+        run: docker compose up -d
+      - name: Backend answers its health check
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/v1/health; then echo; exit 0; fi
+            sleep 2
+          done
+          echo "Backend did not become healthy in 120 s"; exit 1
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+      - name: Tear down
         if: always()
         run: docker compose down -v --remove-orphans
