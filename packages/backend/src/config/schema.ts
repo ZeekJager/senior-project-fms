@@ -20,6 +20,7 @@ const appSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: port.default(3000),
+    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
     ...dbConnection,
     DB_USER: required,
     DB_PASSWORD: required,
@@ -51,6 +52,7 @@ export interface DbConfig {
 export interface AppConfig {
   nodeEnv: 'development' | 'test' | 'production';
   port: number;
+  logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   db: DbConfig;
   jwtSecret: string;
 }
@@ -78,6 +80,7 @@ export function loadAppConfig(env: Env): AppConfig {
   return {
     nodeEnv: e.NODE_ENV,
     port: e.PORT,
+    logLevel: e.LOG_LEVEL,
     db: { host: e.DB_HOST, port: e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
     jwtSecret: e.JWT_SECRET,
   };

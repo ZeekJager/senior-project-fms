@@ -7,7 +7,7 @@ Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`,
 | `backend-ci` | `npm ci`, ESLint (including `no-float-in-money-path`), `tsc --noEmit`, `tsc` build, migrations into a Postgres 16 service, unit tests, integration tests as `fms_app` | Lint error, type error, build error, failing test |
 | `frontend-ci` | `npm ci`, ESLint, `tsc -b`, tests (once FMS-74 adds Vitest), `vite build` | Lint error, type error, failing test, build error |
 | `migrations-ci` | Applies every migration Up twice, every Down in reverse, Up again; then runs `npm run migrate` on a fresh database twice | A migration is not idempotent or not reversible, Down leaves a schema behind, the runner fails or re-applies a file |
-| `docker-stack` | Creates a `.env` with generated secrets, builds the Compose images, starts the stack, waits for `GET /api/v1/health` | An image does not build or the backend does not start |
+| `docker-stack` | Creates a `.env` with generated secrets, builds the Compose images, starts the stack, waits for `GET /health/ready` | An image does not build or the backend does not start |
 | `secrets-scan` | gitleaks over the checked-out files, with the default rules plus `.gitleaks.toml` (weak hardcoded passwords, literal fallbacks in code, SQL role passwords) | Any secret is committed |
 
 CI needs no repository secrets. Its databases are throwaway containers on the runner; the admin password is derived from the run id, and the app password and JWT secret are generated per run and masked in logs.

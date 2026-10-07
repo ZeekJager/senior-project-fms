@@ -1,6 +1,7 @@
 import { createApp } from './app';
 import { config } from './config';
+import { logger } from './shared/logging/logger';
 
 createApp().listen(config.port, () => {
-  console.log(`[fms-backend] running on port ${config.port} (${config.nodeEnv})`);
+  logger.info({ port: config.port, nodeEnv: config.nodeEnv }, 'fms-backend listening');
 });

@@ -12,6 +12,12 @@ module.exports = [
   // never apply to plain JS such as the ESLint plugin itself.
   ...tseslint.configs.recommended.map((config) => ({ ...config, files: backendTs })),
 
+  // Application code logs through pino (src/shared/logging); CLI scripts may print.
+  {
+    files: ['packages/backend/src/**/*.ts'],
+    rules: { 'no-console': 'error' }
+  },
+
   {
     plugins: {
       fms: fmsPlugin
