@@ -31,8 +31,8 @@ secretGroup = 1
 keywords = ["pass", "secret", "token"]
 
   [[rules.allowlists]]
-  # Test fixtures use obvious fake values.
-  paths = ['''(?i)\.test\.(ts|tsx|js)$''']
+  # Test-only code (test files, test/ support folders) uses obvious fake values.
+  paths = ['''(?i)\.test\.(ts|tsx|js)$''', '''(?i)(^|[/\\])test[/\\]''']
 
 [[rules]]
 id = "fms-sql-role-password"

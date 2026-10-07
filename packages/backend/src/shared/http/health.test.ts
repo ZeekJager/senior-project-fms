@@ -1,4 +1,4 @@
-import { after, test } from 'node:test';
+import { afterAll, test } from 'vitest';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
@@ -11,7 +11,7 @@ interface ReadyBody {
 }
 
 const servers: Server[] = [];
-after(() => Promise.all(servers.map((s) => new Promise((r) => s.close(r)))));
+afterAll(() => Promise.all(servers.map((s) => new Promise((r) => s.close(r)))));
 
 async function serve(checks: Record<string, ReadinessCheck>, timeoutMs?: number): Promise<string> {
   const app = express().use(healthRouter(checks, timeoutMs));

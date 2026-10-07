@@ -67,17 +67,21 @@ jobs:
           done
       - name: Start PostgreSQL
         run: sh scripts/ci/start-postgres.sh
-      - name: Prepare database (app role + migrations)
-        run: |
-          sh docker/postgres/init/01_app_role.sh
-          npm run migrate -w fms-backend
-      - name: Unit tests
-        run: npm test -w fms-backend
-      - name: Integration tests
-        run: DB_PASSWORD="$DB_APP_PASSWORD" npm run test:integration -w fms-backend
+      # The app role is cluster-wide, as in the dev stack. The test run then
+      # creates and migrates its own fms_test database (test/support).
+      - name: Create app role
+        run: sh docker/postgres/init/01_app_role.sh
+      - name: Unit and integration tests with coverage
+        run: DB_PASSWORD="$DB_APP_PASSWORD" npm run test:coverage -w fms-backend
         env:
           DB_USER: fms_app
-          LOG_LEVEL: warn
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage
+          path: packages/backend/coverage/
+          retention-days: 14
 
   frontend:
     name: frontend-ci
@@ -95,9 +99,15 @@ jobs:
         run: npm run lint -w fms-frontend
       - name: Type-check
         run: npm run typecheck -w fms-frontend
-      # Activates once FMS-74 adds a `test` script (Vitest).
-      - name: Unit tests
-        run: npm test -w fms-frontend --if-present
+      - name: Component tests with coverage
+        run: npm run test:coverage -w fms-frontend
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage
+          path: packages/frontend/coverage/
+          retention-days: 14
       - name: Build
         run: npm run build -w fms-frontend
 

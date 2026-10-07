@@ -16,7 +16,7 @@ The backend is TypeScript in `strict` mode.
 - **Build:** `tsc -p tsconfig.build.json` to `dist/`; `npm start` runs `dist/src/server.js`.
 - **Module format:** CommonJS output (`module: NodeNext` without `"type": "module"`), so `pg`, `express` and `__dirname` work unchanged.
 - **Linting:** the root ESLint 10 config applies `typescript-eslint` to `packages/backend/**/*.ts`; the FMS money rule exempts `units.ts` as it did `units.js`.
-- **Tests:** Node's built-in runner through `tsx` for now (`npm test`, `npm run test:integration`). FMS-74 decides the long-term runner.
+- **Tests:** Vitest, chosen in FMS-74 (same runner as the frontend, native TypeScript). See docs/testing.md.
 - **Layout:** `src/modules/<module>/{api,application,domain,infrastructure}` with an `index.ts` public interface per module, registered in `src/modules/index.ts` and mounted by `src/app.ts`.
 
 ## Consequences
