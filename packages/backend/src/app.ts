@@ -1,3 +1,4 @@
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
 import { pool } from './db';
@@ -23,6 +24,9 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(requestLogger);
   app.use(cors({ exposedHeaders: ['X-Request-Id'] }));
   app.use(express.json({ limit: '1mb' }));
+  // Unsigned: session cookies hold a signed JWT or an opaque token whose
+  // hash is checked against the database.
+  app.use(cookieParser());
   app.use(auditLogMiddleware);
 
   app.use(healthRouter(readinessChecks));

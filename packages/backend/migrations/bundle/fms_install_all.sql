@@ -1698,3 +1698,16 @@ BEGIN
     GRANT SELECT, INSERT ON audit.audit_logs TO fms_app;
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA audit TO fms_app;
 END $$;
+
+-- ===== 014_auth_session_family.sql =====
+-- Rows from before this migration each become their own family.
+ALTER TABLE auth.refresh_sessions
+    ADD COLUMN IF NOT EXISTS family_id UUID NOT NULL DEFAULT gen_random_uuid();
+-- No default from here on: the application always sets the family.
+ALTER TABLE auth.refresh_sessions
+    ALTER COLUMN family_id DROP DEFAULT;
+
+-- Revoking a family, and finding a family's live session.
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_family
+    ON auth.refresh_sessions(family_id)
+    WHERE revoked_at IS NULL;

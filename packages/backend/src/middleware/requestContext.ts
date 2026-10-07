@@ -7,9 +7,9 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
   req.correlationId = resolveRequestId(req.headers['x-request-id']);
   res.setHeader('X-Request-Id', req.correlationId);
 
-  // FMS-05 populates req.user from the JWT; until then the actor is anonymous.
+  // Anonymous until `authenticate` (auth module) resolves the access cookie.
   if (!req.user) {
-    req.user = { id: null };
+    req.user = { id: null, publicId: null, roles: [], permissions: [], depotId: null };
   }
 
   next();

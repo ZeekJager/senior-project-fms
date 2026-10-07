@@ -19,6 +19,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 011 | `analytics` | Performance indexes and reporting/read views |
 | 012 | `document`, `api` (+ cross-cutting) | API-contract alignment: public UUIDs, documents, idempotency keys, trip overlap constraints, telemetry de-duplication |
 | 013 | (grants) | Runtime privileges for the `fms_app` role; audit table stays INSERT/SELECT only |
+| 014 | `auth` | Session families on `refresh_sessions` for refresh-token rotation and reuse detection (FMS-05) |
 
 ## Important
 
@@ -47,6 +48,7 @@ Do **not** run these migrations on top of the old `public.*` tables without firs
 - **Audit.** `audit.audit_logs` rejects UPDATE/DELETE/TRUNCATE for every role (triggers) and the app role only has INSERT/SELECT (012). `correlation_id` is the uuid returned as `correlationId` in API errors.
 - **Notifications.** `alert.notifications` doubles as the in-app inbox: an `in_app` row is the inbox entry and `read_at` marks it read. `alert_id` is optional for non-alert notifications.
 - **Public identifiers.** Every table the API exposes has `public_id UUID` (012). Foreign keys and joins use the BIGINT `id`; the API only ever exposes `public_id`.
+- **Refresh sessions.** `auth.refresh_sessions.token_hash` is the SHA-256 of the refresh token, never the token. Every login starts a `family_id`; a refresh revokes the used row and inserts the next one in the same family, and a revoked token presented again revokes the whole family (see docs/auth.md).
 - **Permissions** are the contract's `resource:action` codes, seeded in 001. The role seed raises an error on any unknown code, so a typo cannot silently drop a grant.
 - **Trip overlap** is enforced by exclusion constraints (`ex_trip_driver_overlap`, `ex_trip_vehicle_overlap`, SQLSTATE 23P01) on trips in `assigned`/`en_route`. Requires the `btree_gist` extension.
 - **Telemetry retries**: `tracking.gps_pings` is unique on `(vehicle_id, recorded_at)`; insert with `ON CONFLICT DO NOTHING`.

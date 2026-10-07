@@ -57,6 +57,19 @@ describe('req.dbMutate', () => {
     expect(deactivated.is_active).toBe(false);
   });
 
+  test('password hashes are redacted in audit rows', async () => {
+    const req = fakeRequest();
+    const user = await req.dbMutate('auth.users', 'INSERT', null, { email: 'hash@example.com', password_hash: 'x', full_name: 'IT' });
+    await req.dbMutate('auth.users', 'UPDATE', user.id as string, { full_name: 'Renamed' });
+    const res = await pool.query(
+      'SELECT old_values, new_values FROM audit.audit_logs WHERE correlation_id = $1 ORDER BY id',
+      [req.correlationId],
+    );
+    expect(res.rows.map((r) => r.new_values.password_hash)).toEqual(['[REDACTED]', '[REDACTED]']);
+    expect(res.rows[1].old_values.password_hash).toBe('[REDACTED]');
+    expect(res.rows[1].new_values.full_name).toBe('Renamed');
+  });
+
   test('a failed mutation rolls back and writes no audit row', async () => {
     const req = fakeRequest();
     await expect(req.dbMutate('fleet.depots', 'INSERT', null, { name: 'missing location' })).rejects.toThrow();

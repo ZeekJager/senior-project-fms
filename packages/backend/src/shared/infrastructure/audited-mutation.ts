@@ -6,7 +6,7 @@ export type Row = Record<string, unknown>;
 export type RecordId = string | number;
 
 export interface MutationContext {
-  userId: number | null;
+  userId: RecordId | null;
   correlationId: string;
 }
 
@@ -35,6 +35,16 @@ function softDeleteSql(tableName: string): string {
   return tableName === 'auth.users'
     ? `UPDATE ${tableName} SET status = 'inactive' WHERE id = $1`
     : `UPDATE ${tableName} SET is_active = FALSE WHERE id = $1`;
+}
+
+// Never copied into audit.audit_logs: the audit trail is readable through
+// GET /audit-logs, and a hash is enough for an offline guessing attack.
+const REDACTED_COLUMNS = new Set(['password_hash', 'token_hash']);
+
+function forAudit(row: Row): string {
+  const copy: Row = { ...row };
+  for (const col of REDACTED_COLUMNS) if (col in copy) copy[col] = '[REDACTED]';
+  return JSON.stringify(copy);
 }
 
 async function selectById(client: PoolClient, tableName: string, id: RecordId): Promise<Row | undefined> {
@@ -107,8 +117,8 @@ export async function auditedMutation(
       tableName,
       finalRecordId,
       action,
-      oldState ? JSON.stringify(oldState) : null,
-      JSON.stringify(newState),
+      oldState ? forAudit(oldState) : null,
+      forAudit(newState),
       ctx.userId,
       ctx.correlationId,
     ],

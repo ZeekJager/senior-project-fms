@@ -38,6 +38,7 @@ We have wrapped the complex Docker commands into simple `make` commands:
 - `make clean` - Stop all services **and wipe the database**.
 - `make db-shell` - Open an interactive psql terminal inside the database container.
 - `make backend-shell` - Open a terminal inside the Node.js backend.
+- `docker exec -it fms_backend npm run user:create -- --email admin@fms.local --name "Admin" --role admin` - Create a user who can sign in (prints a generated password once; see [docs/auth.md](docs/auth.md)).
 
 ## 📚 Project Documentation
 
@@ -46,6 +47,7 @@ The single source of truth for the project's architecture lives in the `docs/` f
 - **[Database Schema](packages/backend/migrations/README.md)** - The migrations that define every table (apply with `make migrate`).
 - **[API Contract](docs/api-contract.md)** - All REST endpoints and Socket.io events.
 - **[Screen Inventory](docs/screen-inventory.md)** - Every UI screen mapped to roles.
+- **[Authentication](docs/auth.md)** - Login, session cookies, refresh rotation, and creating the first user.
 - **[Testing](docs/testing.md)** - How to run and write backend and frontend tests.
 - **[Continuous Integration](docs/ci.md)** - What each CI check does, how to run it locally, and the `master` branch protection rule.
 
