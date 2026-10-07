@@ -20,21 +20,18 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
-  # CI databases are throwaway containers reachable only on the runner.
-  # The admin password is derived per run (service containers cannot use
-  # values generated in steps), so no password is stored in this file.
-  CI_DB_ADMIN_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+  # CI databases are throwaway containers on the runner, started by
+  # scripts/ci/start-postgres.sh. Every password is generated per run in the
+  # "Generate per-run secrets" step; none is written in this file.
   PGHOST: localhost
   PGPORT: "5432"
   PGUSER: fms_admin
-  PGPASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
   PGDATABASE: fms_db
   # Read by the backend config (src/config) and by 01_app_role.sh.
   DB_HOST: localhost
   DB_PORT: "5432"
   DB_NAME: fms_db
   DB_ADMIN_USER: fms_admin
-  DB_ADMIN_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
   POSTGRES_USER: fms_admin
   POSTGRES_DB: fms_db
 
@@ -45,17 +42,6 @@ jobs:
     name: backend-ci
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: fms_admin
-          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
-          POSTGRES_DB: fms_db
-        ports: [ "5432:5432" ]
-        options: >-
-          --health-cmd "pg_isready -U fms_admin -d fms_db"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -70,14 +56,17 @@ jobs:
         run: npm run typecheck -w fms-backend
       - name: Build
         run: npm run build -w fms-backend
-      # Random per run and masked in logs; never stored anywhere.
+      # Random per run and masked in logs; never stored anywhere. psql reads
+      # the admin password under its own variable name, so it gets two names.
       - name: Generate per-run secrets
         run: |
-          for name in DB_APP_PASSWORD JWT_SECRET; do
+          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET; do
             value=$(openssl rand -hex 32)
             echo "::add-mask::$value"
-            echo "$name=$value" >> "$GITHUB_ENV"
+            for name in $names; do echo "$name=$value" >> "$GITHUB_ENV"; done
           done
+      - name: Start PostgreSQL
+        run: sh scripts/ci/start-postgres.sh
       - name: Prepare database (app role + migrations)
         run: |
           sh docker/postgres/init/01_app_role.sh
@@ -115,27 +104,19 @@ jobs:
     name: migrations-ci
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: fms_admin
-          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
-          POSTGRES_DB: fms_db
-        ports: [ "5432:5432" ]
-        options: >-
-          --health-cmd "pg_isready -U fms_admin -d fms_db"
-          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v5
-      # Random per run and masked in logs; never stored anywhere.
+      # Random per run and masked in logs; never stored anywhere. psql reads
+      # the admin password under its own variable name, so it gets two names.
       - name: Generate per-run secrets
         run: |
-          for name in DB_APP_PASSWORD JWT_SECRET; do
+          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET; do
             value=$(openssl rand -hex 32)
             echo "::add-mask::$value"
-            echo "$name=$value" >> "$GITHUB_ENV"
+            for name in $names; do echo "$name=$value" >> "$GITHUB_ENV"; done
           done
+      - name: Start PostgreSQL
+        run: sh scripts/ci/start-postgres.sh
       - name: Create app role
         run: sh docker/postgres/init/01_app_role.sh
       # Every Up section in file order twice (idempotency), every Down in
