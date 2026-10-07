@@ -45,8 +45,8 @@ jobs:
           --health-cmd "pg_isready -U fms_admin -d fms_db"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -81,8 +81,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -114,7 +114,7 @@ jobs:
           --health-cmd "pg_isready -U fms_admin -d fms_db"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Create app role
         run: psql -v ON_ERROR_STOP=1 -q -f docker/postgres/init/01_app_role.sql
       # Every Up section in file order twice (idempotency), every Down in
@@ -130,7 +130,7 @@ jobs:
           if [ "$left" != "0" ]; then echo "Down left $left schema(s) behind"; exit 1; fi
           up
           psql -c "select table_schema, count(*) as tables from information_schema.tables where table_schema not in ('pg_catalog','information_schema') group by 1 order by 1"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -160,7 +160,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build images
         run: docker compose build
       - name: Start stack
