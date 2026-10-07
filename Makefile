@@ -40,4 +40,4 @@ ai-shell:
 
 # Run all pending database migrations
 migrate:
-	docker exec -e DB_USER=fms_admin -e DB_PASS=adminpassword fms_backend node scripts/migrate.js
+	docker exec -e DB_USER=fms_admin -e DB_PASS=adminpassword fms_backend npm run migrate

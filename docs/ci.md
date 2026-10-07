@@ -4,16 +4,17 @@ Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`,
 
 | Check name | What it does | Fails when |
 |---|---|---|
-| `backend-ci` | `npm ci`, ESLint (including `no-float-in-money-path`), type-check (once the backend is TypeScript, FMS-70), migrations into a Postgres 16 service, `npm test -w fms-backend` | Lint error, type error, failing test |
+| `backend-ci` | `npm ci`, ESLint (including `no-float-in-money-path`), `tsc --noEmit`, `tsc` build, migrations into a Postgres 16 service, unit tests, integration tests as `fms_app` | Lint error, type error, build error, failing test |
 | `frontend-ci` | `npm ci`, ESLint, `tsc -b`, tests (once FMS-74 adds Vitest), `vite build` | Lint error, type error, failing test, build error |
-| `migrations-ci` | Applies every migration Up twice, every Down in reverse, Up again; then runs `scripts/migrate.js` on a fresh database twice | A migration is not idempotent or not reversible, Down leaves a schema behind, the runner fails or re-applies a file |
+| `migrations-ci` | Applies every migration Up twice, every Down in reverse, Up again; then runs `npm run migrate` on a fresh database twice | A migration is not idempotent or not reversible, Down leaves a schema behind, the runner fails or re-applies a file |
 | `docker-stack` | Builds the Compose images, starts the stack, waits for `GET /api/v1/health` | An image does not build or the backend does not start |
 
 Run the same checks locally before pushing:
 
 ```bash
 npm ci
-npm run lint -w fms-backend && npm test -w fms-backend
+npm run lint -w fms-backend && npm run typecheck -w fms-backend && npm test -w fms-backend
+npm run test:integration -w fms-backend   # needs a migrated database (make dev, make migrate)
 npm run lint -w fms-frontend && npm run typecheck -w fms-frontend && npm run build -w fms-frontend
 ```
 
