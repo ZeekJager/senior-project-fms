@@ -1,7 +1,7 @@
 const fmsPlugin = require('eslint-plugin-fms');
 const tseslint = require('typescript-eslint');
 
-const backendTs = ['packages/backend/**/*.ts'];
+const backendTs = ['packages/backend/**/*.ts', 'packages/backend/**/*.mts'];
 
 module.exports = [
   // The frontend has its own ESLint 9 config (eslint-plugin-react does not
