@@ -1,11 +1,13 @@
 import { Router } from 'express';
+import { asyncHandler } from '../../../shared/http/async-handler';
 
 export const fleetRouter = Router();
 
 // Smoke route proving the audited mutation path end to end (FMS-03).
 // Remove once the depot API (FMS-20) exists.
-fleetRouter.post('/test-audit', async (req, res) => {
-  try {
+fleetRouter.post(
+  '/test-audit',
+  asyncHandler(async (req, res) => {
     const inserted = await req.dbMutate('fleet.depots', 'INSERT', null, {
       name: 'Test Depot ' + Date.now(),
       location: 'Addis Ababa',
@@ -18,8 +20,5 @@ fleetRouter.post('/test-audit', async (req, res) => {
       inserted,
       deleted,
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
+  }),
+);

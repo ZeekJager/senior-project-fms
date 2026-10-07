@@ -5,8 +5,9 @@ function load(): AppConfig {
     return loadAppConfig(process.env);
   } catch (err) {
     if (err instanceof ConfigError) {
-      // Fail fast with the list of problems instead of a stack trace.
-      console.error(err.message);
+      // Fail fast with the list of problems instead of a stack trace. The
+      // logger needs this config, so write to stderr directly.
+      process.stderr.write(`${err.message}\n`);
       process.exit(1);
     }
     throw err;

@@ -106,6 +106,8 @@ A client value is used only if it is a well-formed UUID; anything else is ignore
 | `AUTH_ACCOUNT_DISABLED` | 403 | User status is not `active` | `auth.users.status` |
 | `FORBIDDEN_INSUFFICIENT_ROLE` | 403 | Caller lacks the required permission | RBAC |
 | `NOT_FOUND` | 404 | Resource does not exist or is not visible to the caller | API |
+| `PAYLOAD_TOO_LARGE` | 413 | Request body over the size limit (JSON: 1 MB; uploads: §8) | API |
+| `CONFLICT_DUPLICATE` | 409 | A unique value already exists (constraints without a more specific code); `details` names the field | unique constraint |
 | `CONFLICT_DUPLICATE_PLATE` | 409 | Registration number already exists | `uq_fleet_vehicle_registration` |
 | `CONFLICT_DUPLICATE_LICENSE` | 409 | Licence number already exists | `drivers_license_number_key` |
 | `CONFLICT_VEHICLE_IN_USE` | 409 | Vehicle has an active trip or assignment | API |
@@ -124,6 +126,15 @@ A client value is used only if it is a well-formed UUID; anything else is ignore
 | `RATE_LIMITED` | 429 | Rate limit exceeded | API |
 | `INTERNAL_SERVER_ERROR` | 500 | Unexpected error (catch-all; no internals in the message) | API |
 | `UPSTREAM_UNAVAILABLE` | 502/503/504 | External provider or ML service failed | API |
+
+### 3.7 Health checks
+
+Unversioned and unauthenticated, for load balancers and container orchestration:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /health/live` | `200` while the process is running; checks no dependencies |
+| `GET /health/ready` | `200` when every dependency check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}` |
 
 ## 4. HTTP Status Contract
 

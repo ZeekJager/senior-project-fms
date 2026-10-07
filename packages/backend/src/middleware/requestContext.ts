@@ -1,9 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { resolveRequestId } from '../shared/http/request-id';
 
-export function requestContext(req: Request, _res: Response, next: NextFunction): void {
-  // Every request gets a correlation id for the audit log.
-  req.correlationId = randomUUID();
+export function requestContext(req: Request, res: Response, next: NextFunction): void {
+  // One id per request: logs, the error envelope's meta.request_id and the
+  // audit log's correlation_id all use it, and the client gets it back.
+  req.correlationId = resolveRequestId(req.headers['x-request-id']);
+  res.setHeader('X-Request-Id', req.correlationId);
 
   // FMS-05 populates req.user from the JWT; until then the actor is anonymous.
   if (!req.user) {

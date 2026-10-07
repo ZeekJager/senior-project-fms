@@ -77,6 +77,7 @@ jobs:
         run: DB_PASSWORD="$DB_APP_PASSWORD" npm run test:integration -w fms-backend
         env:
           DB_USER: fms_app
+          LOG_LEVEL: warn
 
   frontend:
     name: frontend-ci
@@ -168,7 +169,7 @@ jobs:
       - name: Backend answers its health check
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS http://localhost:3000/api/v1/health; then echo; exit 0; fi
+            if curl -fsS http://localhost:3000/health/ready; then echo; exit 0; fi
             sleep 2
           done
           echo "Backend did not become healthy in 120 s"; exit 1

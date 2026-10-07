@@ -13,9 +13,9 @@ import { requestContext } from '../../src/middleware/requestContext';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function fakeRequest(): Request {
-  const req = {} as Request;
+  const req = { headers: {} } as Request;
   const next: NextFunction = () => {};
-  requestContext(req, {} as Response, next);
+  requestContext(req, { setHeader: () => undefined } as unknown as Response, next);
   auditLogMiddleware(req, {} as Response, next);
   return req;
 }
@@ -108,8 +108,8 @@ describe('composition root', () => {
 
   after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-  test('GET /api/v1/health', async () => {
-    const res = await fetch(`${base}/api/v1/health`);
+  test('GET /health/ready', async () => {
+    const res = await fetch(`${base}/health/ready`);
     assert.equal(res.status, 200);
     assert.equal(((await res.json()) as { status: string }).status, 'ok');
   });
