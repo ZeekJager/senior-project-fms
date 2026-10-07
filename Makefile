@@ -1,11 +1,20 @@
-.PHONY: dev down clean logs db-shell backend-shell frontend-shell ai-shell
+.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate
+
+# Create .env from .env.example with generated secrets (keeps an existing .env).
+# Uses local Node if present, otherwise a throwaway Node container.
+env:
+	@if command -v node >/dev/null 2>&1; then node scripts/init-env.mjs; \
+	else docker run --rm -v "$(CURDIR):/w" -w /w node:22-alpine node scripts/init-env.mjs; fi
+
+.env:
+	@$(MAKE) --no-print-directory env
 
 # Boot the entire application (rebuilds images if changed)
-dev:
+dev: .env
 	docker-compose up --build
 
 # Run in detached mode (background)
-dev-bg:
+dev-bg: .env
 	docker-compose up -d --build
 
 # Stop the application
@@ -40,4 +49,4 @@ ai-shell:
 
 # Run all pending database migrations
 migrate:
-	docker exec -e DB_USER=fms_admin -e DB_PASS=adminpassword fms_backend npm run migrate
+	docker exec fms_backend npm run migrate

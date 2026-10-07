@@ -1,14 +1,9 @@
 import { Pool, type QueryResultRow } from 'pg';
+import { config } from './config';
 
-// Runtime app credentials, not the admin ones: fms_app is a non-owner role
-// whose privileges are narrowed by migration 013 (e.g. audit is INSERT-only).
-export const pool = new Pool({
-  host: process.env.DB_HOST ?? 'postgres',
-  port: Number(process.env.DB_PORT ?? 5432),
-  user: process.env.DB_USER ?? 'fms_app',
-  password: process.env.DB_PASS ?? 'apppassword',
-  database: process.env.DB_NAME ?? 'fms_db',
-});
+// Runtime app credentials (fms_app), not the admin ones: fms_app is a
+// non-owner role whose privileges are narrowed by migration 013.
+export const pool = new Pool(config.db);
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);

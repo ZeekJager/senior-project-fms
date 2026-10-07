@@ -1,7 +1,6 @@
 import { createApp } from './app';
+import { config } from './config';
 
-const PORT = Number(process.env.PORT ?? 3000);
-
-createApp().listen(PORT, () => {
-  console.log(`[fms-backend] running on port ${PORT}`);
+createApp().listen(config.port, () => {
+  console.log(`[fms-backend] running on port ${config.port} (${config.nodeEnv})`);
 });

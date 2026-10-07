@@ -16,7 +16,11 @@ You only need **Docker** and **Docker Compose** installed on your machine to run
    ```bash
    make dev
    ```
-   *(If you are on Windows and don't have `make` installed, run `docker-compose up --build` instead).*
+   On first run this creates `.env` with generated secrets (database passwords, JWT signing key, ML service token). `.env` is git-ignored; never commit it. Every setting is documented in [`.env.example`](.env.example).
+
+   *If you are on Windows and don't have `make`, run `node scripts/init-env.mjs` once, then `docker-compose up --build`.*
+
+   *Upgrading an existing database volume:* the passwords in `.env` are only applied when the database is first created. Either run `make clean` once (wipes local data), or set `DB_ADMIN_PASSWORD=adminpassword` and `DB_APP_PASSWORD=apppassword` in your `.env` to keep using the old volume.
 
 Once the boot finishes, the following services will be available:
 - **Frontend (React/Vite):** [http://localhost:5173](http://localhost:5173)

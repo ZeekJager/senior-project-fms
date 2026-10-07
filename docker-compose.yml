@@ -1,3 +1,6 @@
+# Secrets come from .env in this folder (see .env.example). `make dev`
+# creates it on first run; otherwise run `node scripts/init-env.mjs`.
+# A missing value stops `docker compose up` and says how to create .env.
 
 services:
   # 1. PostgreSQL Database (Persisted)
@@ -9,8 +12,10 @@ services:
     container_name: fms_postgres
     environment:
       POSTGRES_USER: fms_admin
-      POSTGRES_PASSWORD: adminpassword
+      POSTGRES_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       POSTGRES_DB: fms_db
+      # Read by docker/postgres/init/01_app_role.sh on first boot only.
+      DB_APP_PASSWORD: "${DB_APP_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
     ports:
       - "5432:5432"
     volumes:
@@ -35,14 +40,17 @@ services:
       - ./packages/backend:/app
       - /app/node_modules
     environment:
-      - NODE_ENV=development
-      - PORT=3000
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=fms_app
-      - DB_PASS=apppassword
-      - DB_NAME=fms_db
-      - JWT_SECRET=development_secret_do_not_use_in_prod
+      NODE_ENV: development
+      PORT: "3000"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: fms_db
+      DB_USER: fms_app
+      DB_PASSWORD: "${DB_APP_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      # Used only by `make migrate`, which runs inside this container.
+      DB_ADMIN_USER: fms_admin
+      DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      JWT_SECRET: "${JWT_SECRET:?is not set - run make env or node scripts/init-env.mjs to create .env}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,10 +67,10 @@ services:
       - ./packages/frontend:/app
       - /app/node_modules
     environment:
-      - NODE_ENV=development
-      - VITE_API_URL=http://localhost:3000/api/v1
+      NODE_ENV: development
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:3000/api/v1}
       # Dev-server /api proxy target (localhost here would be this container)
-      - API_PROXY_TARGET=http://backend:3000
+      API_PROXY_TARGET: http://backend:3000
     depends_on:
       - backend
 
@@ -77,8 +85,8 @@ services:
     volumes:
       - ./packages/ai-service:/app
     environment:
-      - FLASK_ENV=development
-      - INTERNAL_TOKEN=ai_internal_secret
+      FLASK_ENV: development
+      ML_SERVICE_TOKEN: "${ML_SERVICE_TOKEN:?is not set - run make env or node scripts/init-env.mjs to create .env}"
 
 volumes:
   postgres_data:

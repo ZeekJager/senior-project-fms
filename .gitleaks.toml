@@ -1,0 +1,42 @@
+# gitleaks configuration for the secrets-scan CI job (FMS-71).
+# The default rules catch high-entropy keys and known token formats; the
+# rules below also catch weak hardcoded credentials such as
+# `POSTGRES_PASSWORD: adminpassword`, which the defaults miss.
+# Secrets belong in .env (git-ignored); see .env.example.
+
+[extend]
+useDefault = true
+
+# Config, compose, CI, shell and Makefile: KEY: value / KEY=value.
+[[rules]]
+id = "fms-hardcoded-credential"
+description = "A PASSWORD/PASS/SECRET/TOKEN setting has a literal value. Read it from .env instead."
+path = '''(?i)(\.ya?ml|\.env[^/\\]*|\.sh|\.toml|\.ini|\.conf|Makefile|Dockerfile[^/\\]*)$'''
+# `:` must touch the key (YAML), so psql's `PASSWORD :'var'` is not a match.
+regex = '''(?im)\b[A-Z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN)[A-Z0-9_]*['"]?(?::|\s*=)\s*['"]?([A-Za-z0-9_\-+/=!@#%^&*~]{6,})(?:['"\s]|$)'''
+secretGroup = 1
+keywords = ["pass", "secret", "token"]
+
+  [[rules.allowlists]]
+  # The documented placeholder in .env.example.
+  regexes = ['''^change-me$''']
+
+# Code: a literal fallback such as `process.env.DB_PASS ?? 'apppassword'`.
+[[rules]]
+id = "fms-hardcoded-credential-in-code"
+description = "A password/secret/token gets a literal string in code. Read it from config instead."
+path = '''(?i)\.(ts|tsx|js|mjs|cjs|py)$'''
+regex = '''(?im)(?:password|passwd|secret|token)\w*['"]?\s*(?:[:=]|\?\?|\|\|)[^\n'"]*['"]([^'"\s]{6,})['"]'''
+secretGroup = 1
+keywords = ["pass", "secret", "token"]
+
+  [[rules.allowlists]]
+  # Test fixtures use obvious fake values.
+  paths = ['''(?i)\.test\.(ts|tsx|js)$''']
+
+[[rules]]
+id = "fms-sql-role-password"
+description = "SQL role created with a literal password. Pass it in as a psql variable instead."
+regex = '''(?i)\bPASSWORD\s+'([^':][^']{5,})''''
+secretGroup = 1
+keywords = ["password"]
