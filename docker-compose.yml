@@ -34,6 +34,10 @@ services:
       context: ./packages/backend
       dockerfile: Dockerfile.dev
     container_name: fms_backend
+    # Polls for changes: a bind mount from a Windows drive (Docker Desktop)
+    # delivers no file-change events, so plain `npm run dev` never reloads.
+    # Same reason the frontend's Vite config sets usePolling.
+    command: ["npm", "run", "dev:docker"]
     ports:
       - "3000:3000"
     volumes:

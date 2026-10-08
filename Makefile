@@ -9,13 +9,16 @@ env:
 .env:
 	@$(MAKE) --no-print-directory env
 
-# Boot the entire application (rebuilds images if changed)
+# Boot the entire application (rebuilds images if changed).
+# --renew-anon-volumes: each container's node_modules lives in an anonymous
+# volume, which Compose otherwise carries over from the old container, so
+# packages added since the last run would be missing ("Cannot find module").
 dev: .env
-	docker-compose up --build
+	docker-compose up --build --renew-anon-volumes
 
 # Run in detached mode (background)
 dev-bg: .env
-	docker-compose up -d --build
+	docker-compose up -d --build --renew-anon-volumes
 
 # Stop the application
 down:
