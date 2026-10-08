@@ -12,7 +12,7 @@ test('every schema a migration creates has an owner', () => {
   const dir = path.join(backend, 'migrations');
   const created = new Set();
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.sql'))) {
-    for (const m of fs.readFileSync(path.join(dir, file), 'utf8').matchAll(/CREATE SCHEMA IF NOT EXISTS\s+([a-z_]+)/gi)) {
+    for (const m of fs.readFileSync(path.join(dir, file), 'utf8').matchAll(/CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?/gi)) {
       created.add(m[1].toLowerCase());
     }
   }

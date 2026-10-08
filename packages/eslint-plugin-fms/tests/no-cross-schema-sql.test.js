@@ -21,6 +21,9 @@ tsRuleTester().run('no-cross-schema-sql', rule, {
     // Another schema's name inside a quoted SQL value or a comment is data, not a table.
     { filename: trip, code: "db.query(`INSERT INTO trip.trips (origin) VALUES ('fleet.depots') -- see fleet.depots`);" },
     { filename: trip, code: 'db.query(`SELECT 1 FROM trip.trips /* not maintenance.maintenance_records */`);' },
+    // SQL built with + on the module's own schema; a dynamic part cannot be checked.
+    { filename: trip, code: "db.query('SELECT * FROM ' + 'trip.trips' + ' WHERE id = ' + id);" },
+    { filename: trip, code: "db.query('SELECT * FROM ' + table + ' WHERE id = $1', [id]);" },
     // Strings that are not SQL: audit action names, messages.
     { filename: trip, code: "const action = 'maintenance.flag_cleared';" },
     { filename: trip, code: "log('maintenance.records sync done');" },
@@ -55,6 +58,15 @@ tsRuleTester().run('no-cross-schema-sql', rule, {
       code: 'db.query(`SELECT 1 FROM fleet.vehicles v JOIN fuel.fuel_logs f ON f.vehicle_id = v.id JOIN fleet.drivers d ON true`);',
       errors: [{ messageId: 'crossSchema', data: { module: 'trip', schema: 'fleet', owner: "module 'fleet'" } }, { messageId: 'crossSchema', data: { module: 'trip', schema: 'fuel', owner: "module 'fuel'" } }],
     },
+    // A `--` inside a quoted value is data, not a comment: the rest of the line is still checked.
+    {
+      filename: trip,
+      code: "db.query(`INSERT INTO trip.trips (origin) VALUES ('a--b') RETURNING (SELECT 1 FROM maintenance.maintenance_records)`);",
+      errors: [{ messageId: 'crossSchema', data: { module: 'trip', schema: 'maintenance', owner: "module 'maintenance'" } }],
+    },
+    // SQL built with +: the table can sit in a piece with no SQL keyword. Reported once, on the whole chain.
+    { filename: trip, code: "db.query('SELECT * FROM ' + 'maintenance.maintenance_records');", errors: [{ messageId: 'crossSchema' }] },
+    { filename: trip, code: "db.query(`SELECT * FROM ${t} t` + ' JOIN fleet.vehicles v ON v.id = t.vehicle_id');", errors: [{ messageId: 'crossSchema' }] },
     // Another module's table through the audited-mutation helpers.
     { filename: trip, code: "await req.dbMutate('maintenance.maintenance_records', 'UPDATE', id, data);", errors: [{ messageId: 'crossSchema' }] },
     { filename: trip, code: "await this.mutate(ctx, 'fleet.vehicles', 'UPDATE', id, data);", errors: [{ messageId: 'crossSchema' }] },

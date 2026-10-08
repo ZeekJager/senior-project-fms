@@ -5,6 +5,7 @@ const {
   moduleOfFile,
   toPosix,
 } = require('../lib/module-boundaries');
+const { sqlCode } = require('../lib/sql-code');
 
 // A string is treated as SQL when it contains one of these words.
 const SQL_KEYWORD = /\b(select|insert|update|delete|from|join|into|with|merge|truncate|alter|create|drop|copy|returning)\b/i;
@@ -18,13 +19,26 @@ const QUALIFIED = /(^|[^\w.$"])"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\.\s*"?[A-Za-z_][A
 const TABLE_ARG_CALLEES = new Set(['dbMutate', 'mutate', 'auditedMutation']);
 const TABLE_NAME = /^([a-z_][a-z0-9_]*)\.[a-z_][a-z0-9_]*$/;
 
-/** Removes SQL comments and quoted string literals, so data such as 'fleet.depots' in a VALUES list is not read as a table. */
-function stripSqlNoise(sql) {
-  return sql
-    .replace(/--[^\n]*/g, ' ')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/'(?:[^']|'')*'/g, "''");
+/**
+ * The static text of a string built with `+` ('SELECT * FROM ' + table +
+ * ' WHERE ...'), with a placeholder for each dynamic part. Checking the parts
+ * one by one would miss a table name in a piece without a SQL keyword.
+ */
+function concatenatedText(node) {
+  if (node.type === 'BinaryExpression' && node.operator === '+') {
+    return concatenatedText(node.left) + concatenatedText(node.right);
+  }
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'TemplateLiteral') return templateText(node);
+  return ' $x ';
 }
+
+/** A template's text; each interpolation becomes a placeholder, since a dynamic `${table}` cannot be checked. */
+function templateText(node) {
+  return node.quasis.map((q) => q.value.cooked ?? q.value.raw).join(' $x ');
+}
+
+const isConcatenation = (node) => Boolean(node) && node.type === 'BinaryExpression' && node.operator === '+';
 
 function calleeName(callee) {
   if (callee.type === 'Identifier') return callee.name;
@@ -84,7 +98,7 @@ module.exports = {
     function checkSql(node, text) {
       if (!SQL_KEYWORD.test(text)) return;
       const seen = new Set();
-      for (const match of stripSqlNoise(text).matchAll(QUALIFIED)) {
+      for (const match of sqlCode(text).matchAll(QUALIFIED)) {
         const schema = match[2].toLowerCase();
         if (ownerOf.has(schema) && !allowed.has(schema) && !seen.has(schema)) {
           seen.add(schema);
@@ -94,12 +108,15 @@ module.exports = {
     }
 
     return {
+      // A string inside a `+` chain is checked once, as part of the whole chain.
       Literal(node) {
-        if (typeof node.value === 'string') checkSql(node, node.value);
+        if (typeof node.value === 'string' && !isConcatenation(node.parent)) checkSql(node, node.value);
       },
       TemplateLiteral(node) {
-        // Interpolations become a placeholder; a dynamic `${table}` cannot be checked.
-        checkSql(node, node.quasis.map((q) => q.value.cooked ?? q.value.raw).join(' $x '));
+        if (!isConcatenation(node.parent)) checkSql(node, templateText(node));
+      },
+      BinaryExpression(node) {
+        if (node.operator === '+' && !isConcatenation(node.parent)) checkSql(node, concatenatedText(node));
       },
       CallExpression(node) {
         if (!TABLE_ARG_CALLEES.has(calleeName(node.callee))) return;

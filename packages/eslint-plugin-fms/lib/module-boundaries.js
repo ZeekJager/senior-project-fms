@@ -1,5 +1,3 @@
-const path = require('node:path');
-
 /**
  * Which backend module owns which PostgreSQL schema (CONVENTIONS.md, Schema
  * ownership; CFG-5 / SE-107 in Jira). A module's SQL may use only its own
@@ -32,7 +30,10 @@ const PLATFORM_SCHEMAS = ['shared'];
  */
 const PLATFORM_OWNED_SCHEMAS = ['api'];
 
-const toPosix = (file) => file.split(path.sep).join('/');
+// Both separators, whatever the platform running the linter: a Windows path
+// linted on Linux (or the reverse) must still be recognised. Splitting on
+// path.sep alone left `C:\...` untouched on Linux CI.
+const toPosix = (file) => file.replace(/\\/g, '/');
 
 /**
  * `{ modulesRoot, module }` for a file under `<...>/src/modules/<module>/`,
