@@ -43,6 +43,7 @@ We have wrapped the complex Docker commands into simple `make` commands:
 ## 📚 Project Documentation
 
 The single source of truth for the project's architecture lives in the `docs/` folder:
+- **[Conventions](CONVENTIONS.md)** - How we do things here: money and fuel, soft delete, modules, IDs, permissions, errors, events, SQL, file names. Read it before your first PR.
 - **[MVP Scope & Roles](docs/fms-mvp-spec.md)** - What we are building and who uses it.
 - **[Database Schema](packages/backend/migrations/README.md)** - The migrations that define every table (apply with `make migrate`).
 - **[API Contract](docs/api-contract.md)** - All REST endpoints and Socket.io events.
