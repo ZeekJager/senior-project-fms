@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { RoleGate } from '@/components/RoleGate'
@@ -6,6 +7,11 @@ import { LoginPage } from '@/pages/Login'
 import { NotFoundPage } from '@/pages/placeholders'
 import { homePathFor } from './redirect'
 import { portals } from './routes'
+
+// The shared-components examples page exists only under `vite` dev. In a
+// production build `import.meta.env.DEV` is false, so the import is dropped
+// and the page is not in the bundle.
+const UiExamples = import.meta.env.DEV ? lazy(() => import('@/pages/dev/UiExamples')) : null
 
 function Shell() {
   const { session, logout } = useAuth()
@@ -36,6 +42,16 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {UiExamples && (
+        <Route
+          path="/dev/ui"
+          element={
+            <Suspense fallback={null}>
+              <UiExamples />
+            </Suspense>
+          }
+        />
+      )}
       <Route element={<ProtectedRoute />}>
         <Route element={<Shell />}>
           <Route index element={<Home />} />
