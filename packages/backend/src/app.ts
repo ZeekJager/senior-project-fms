@@ -6,12 +6,16 @@ import { auditLogMiddleware } from './middleware/auditLog';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { requestContext } from './middleware/requestContext';
 import { requestLogger } from './middleware/requestLogger';
-import { modules } from './modules';
+import { modules as defaultModules } from './modules';
+import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
 import { healthRouter, type ReadinessCheck } from './shared/http/health';
+import type { AppModule } from './shared/module';
 
 export interface AppOptions {
   /** Dependencies `/health/ready` checks. Defaults to the database. */
   readinessChecks?: Record<string, ReadinessCheck>;
+  /** The modules to mount. Defaults to every module; tests pass their own routes. */
+  modules?: AppModule[];
 }
 
 /** Composition root: shared middleware first, then each module's routes. */
@@ -31,9 +35,12 @@ export function createApp(options: AppOptions = {}): Express {
 
   app.use(healthRouter(readinessChecks));
 
-  for (const mod of modules) {
+  for (const mod of options.modules ?? defaultModules) {
     if (mod.router) app.use('/api/v1', mod.router);
   }
+
+  // Deny by default: a route with no declared access policy stops the boot.
+  assertEveryRouteDeclaresPolicy(app);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

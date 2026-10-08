@@ -1,2 +1,4 @@
 # Shell scripts run inside Linux containers; CRLF line endings break them.
 *.sh text eol=lf
+*.snap text eol=lf
+docs/permissions.md text eol=lf

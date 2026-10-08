@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src scripts test vitest.config.mts",
     "migrate": "tsx scripts/migrate.ts",
+    "permissions:doc": "tsx scripts/permission-matrix.ts",
     "user:create": "tsx scripts/create-user.ts",
     "test": "vitest run",
     "test:integration": "vitest run --project integration",

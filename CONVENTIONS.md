@@ -99,12 +99,12 @@ The API exposes `public_id` (a UUID) and never the numeric `id`, so identifiers 
 
 A permission code is `resource:action`: `vehicle:write`, `fuel-anomaly:read`, `alert:ack`. The 51 codes and the role grants are seeded in migration `001_core_identity.sql` and are the exact strings in the "Auth / permission" column of the API contract; add a code in a migration and in the contract together.
 
-- **Deny by default.** A route with no declared permission is not served. A caller without the permission gets `403 FORBIDDEN_INSUFFICIENT_ROLE`; no session gets `401`, never `403`.
+- **Deny by default.** A route with no declared permission stops the app from starting. A caller without the permission gets `403 FORBIDDEN_INSUFFICIENT_ROLE`; no session gets `401`, never `403`.
 - **Out-of-scope records return `404`, not `403`**, so a depot A user cannot learn that a depot B record exists.
 - **Check permissions, not role names.** Roles are bundles of permissions that change; code that tests `role === 'dispatcher'` breaks when a grant moves. The frontend does the same: `RoleGate permission="..."` uses the codes from `/auth/me`.
 - **Hiding a button is not security.** The server enforces every permission; the frontend gate only decides what to render.
 
-The enforcement middleware and scope helpers are FMS-06.
+Use `authorize('resource:action')` on every route, or `authenticated()` / `publicRoute()` on purpose; the app will not start with a route that declares none. Filter rows with `depotScope` / `ownDriverScope` and `scopeClause` inside the repository. How, and the role-to-permission table, are in [docs/auth.md](docs/auth.md#authorization) and [docs/permissions.md](docs/permissions.md).
 
 ## Errors
 

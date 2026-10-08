@@ -88,6 +88,44 @@ router.get('/vehicles', authenticate, asyncHandler(async (req, res) => {
 
 Permission checks (`requirePermission('vehicle:read')`) are FMS-06.
 
+## Authorization
+
+Card: FMS-06 (SE-42). Code: `modules/auth/api/authorize.ts`, `shared/authz/`. The permission codes and which role holds which are in [permissions.md](permissions.md), generated from the seed.
+
+```ts
+import { authorize, authenticated, publicRoute, depotScope, scopeClause } from '../auth';
+
+router.get('/vehicles', authorize('vehicle:read'), handler);         // signed in AND holds the code
+router.post('/alerts/:id/close', authorize('alert:resolve', 'incident:write'), handler); // any one of several
+router.get('/auth/me', authenticated(), handler);                    // any signed-in user
+router.post('/auth/login', publicRoute(), handler);                  // anyone
+```
+
+- **Deny by default.** Every route must declare one of the four. When the app is built it walks its routes and **refuses to start** if one declares nothing, naming the route. (This found `POST /test-audit`, which was open to anyone.)
+- **401 vs 403.** Not signed in is `401` (never `403`); signed in without the permission is `403 FORBIDDEN_INSUFFICIENT_ROLE`; a suspended account is `403 AUTH_ACCOUNT_DISABLED`.
+- **Permissions are read from the database on every request** (see `authenticate` above), not cached, so removing a role or suspending a user takes effect on the next request. A cache would trade that immediacy for a query that costs about a millisecond.
+- **Check permission codes, never role names.**
+
+### Scope: which records, not just which actions
+
+Permissions say what a user may do; scope says to which records. Repositories build the `WHERE` clause from a scope so the filter is in the query:
+
+```ts
+const scope = scopeClause(depotScope(req.user), 'v.depot_id', 2);
+db.query(`SELECT ... FROM fleet.vehicles v WHERE v.public_id = $1 AND ${scope.sql}`, [id, ...scope.params]);
+// no row -> the service throws notFound() -> 404
+```
+
+| Helper | Meaning |
+|---|---|
+| `depotScope(user)` | `admin`, `fleet_manager`, `fleet_owner`, `compliance_officer` see every depot. Every other role sees only its home depot. A depot-scoped user with **no** depot sees nothing |
+| `ownDriverScope(user)` | A user whose only role is `driver` sees only their own records; anyone with another role is not narrowed by this helper |
+
+- **Out of scope is `404`, not `403`**, with the same body as a record that does not exist, so a depot A user cannot learn that a depot B record exists.
+- **Fails closed.** An anonymous caller, an unknown role or a missing depot gives `none` (`WHERE FALSE`), never `all`.
+- The admin bypasses depot scope but **not** permissions: `authorize` still has to pass.
+- The column passed to `scopeClause` is a literal from repository code, never request input.
+
 ## Creating a user
 
 There is no user administration API yet (`POST /users` is a later card). Create users from the backend container:
