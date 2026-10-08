@@ -102,6 +102,7 @@ A permission code is `resource:action`: `vehicle:write`, `fuel-anomaly:read`, `a
 - **Deny by default.** A route with no declared permission stops the app from starting. A caller without the permission gets `403 FORBIDDEN_INSUFFICIENT_ROLE`; no session gets `401`, never `403`.
 - **Out-of-scope records return `404`, not `403`**, so a depot A user cannot learn that a depot B record exists.
 - **Check permissions, not role names.** Roles are bundles of permissions that change; code that tests `role === 'dispatcher'` breaks when a grant moves. The frontend does the same: `RoleGate permission="..."` uses the codes from `/auth/me`.
+- **A permission is not a scope.** Drivers hold `fuel:read` (they enter and review their own fuel), so `GET /fuel-logs` is allowed for them, and the repository must limit what they get. Any endpoint a driver can read returns only the driver's own records: filter with `ownDriverScope`, and answer another driver's record by id with `404`, not `403`.
 - **Hiding a button is not security.** The server enforces every permission; the frontend gate only decides what to render.
 
 Use `authorize('resource:action')` on every route, or `authenticated()` / `publicRoute()` on purpose; the app will not start with a route that declares none. Filter rows with `depotScope` / `ownDriverScope` and `scopeClause` inside the repository. How, and the role-to-permission table, are in [docs/auth.md](docs/auth.md#authorization) and [docs/permissions.md](docs/permissions.md).
