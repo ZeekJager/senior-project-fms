@@ -5,6 +5,7 @@ import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
 import { auditLogMiddleware } from '../../src/middleware/auditLog';
 import { requestContext } from '../../src/middleware/requestContext';
+import { createUser } from '../support/factories';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -14,6 +15,12 @@ function fakeRequest(): Request {
   requestContext(req, { setHeader: () => undefined } as unknown as Response, next);
   auditLogMiddleware(req, {} as Response, next);
   return req;
+}
+
+/** Signs in over HTTP and returns the session cookies for the next request. */
+async function loginCookie(app: ReturnType<typeof createApp>, email: string): Promise<string> {
+  const res = await request(app).post('/api/v1/auth/login').send({ email, password: 'Correct-Horse-7' });
+  return (res.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
 }
 
 async function auditRows(correlationId: string) {
@@ -101,10 +108,21 @@ describe('composition root', () => {
     expect(res.body.status).toBe('ok');
   });
 
-  test('fleet module route POST /api/v1/test-audit is mounted and audited', async () => {
-    const res = await request(createApp()).post('/api/v1/test-audit');
+  test('fleet module route POST /api/v1/test-audit is mounted, audited and needs depot:write', async () => {
+    const app = createApp();
+
+    const anonymous = await request(app).post('/api/v1/test-audit');
+    expect(anonymous.status).toBe(401);
+
+    const driver = await createUser({ roles: ['driver'], password: 'Correct-Horse-7' });
+    const driverCookie = await loginCookie(app, driver.email as string);
+    expect((await request(app).post('/api/v1/test-audit').set('Cookie', driverCookie)).status).toBe(403);
+
+    const admin = await createUser({ roles: ['admin'], password: 'Correct-Horse-7' });
+    const res = await request(app).post('/api/v1/test-audit').set('Cookie', await loginCookie(app, admin.email as string));
     expect(res.status).toBe(200);
     expect(res.body.deleted.is_active).toBe(false);
-    expect(await auditRows(res.body.correlationId)).toHaveLength(2);
+    const rows = await auditRows(res.body.correlationId);
+    expect(rows).toHaveLength(2);
   });
 });

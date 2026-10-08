@@ -49,6 +49,7 @@ The single source of truth for the project's architecture lives in the `docs/` f
 - **[API Contract](docs/api-contract.md)** - All REST endpoints and Socket.io events.
 - **[Screen Inventory](docs/screen-inventory.md)** - Every UI screen mapped to roles.
 - **[Authentication](docs/auth.md)** - Login, session cookies, refresh rotation, and creating the first user.
+- **[Permissions](docs/permissions.md)** - Which role holds which permission (generated from the database seed).
 - **[Testing](docs/testing.md)** - How to run and write backend and frontend tests.
 - **[Continuous Integration](docs/ci.md)** - What each CI check does, how to run it locally, and the `master` branch protection rule.
 

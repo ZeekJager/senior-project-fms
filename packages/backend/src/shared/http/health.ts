@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { publicRoute } from '../authz/route-policy';
 
 /** Resolves when the dependency is usable; rejects (or times out) otherwise. */
 export type ReadinessCheck = () => Promise<unknown>;
@@ -20,11 +21,11 @@ function withTimeout(check: ReadinessCheck, ms: number): Promise<unknown> {
 export function healthRouter(checks: Record<string, ReadinessCheck>, timeoutMs = 2000): Router {
   const router = Router();
 
-  router.get('/health/live', (_req, res) => {
+  router.get('/health/live', publicRoute(), (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  router.get('/health/ready', async (_req, res) => {
+  router.get('/health/ready', publicRoute(), async (_req, res) => {
     const names = Object.keys(checks);
     const results = await Promise.allSettled(names.map((n) => withTimeout(checks[n], timeoutMs)));
     const report = Object.fromEntries(names.map((n, i) => [n, results[i].status === 'fulfilled' ? 'ok' : 'failed']));
