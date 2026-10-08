@@ -1,0 +1,48 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`StatusBadge colour vocabulary > renders the colour classes for each status 1`] = `
+<div>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-800"
+    data-status="draft"
+  >
+    Draft
+  </span>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-800"
+    data-status="scheduled"
+  >
+    Scheduled
+  </span>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800"
+    data-status="assigned"
+  >
+    Assigned
+  </span>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-900"
+    data-status="en_route"
+  >
+    En route
+  </span>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800"
+    data-status="completed"
+  >
+    Completed
+  </span>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800"
+    data-status="cancelled"
+  >
+    Cancelled
+  </span>
+  <span
+    class="inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-900"
+    data-status="flagged"
+  >
+    Flagged
+  </span>
+</div>
+`;
