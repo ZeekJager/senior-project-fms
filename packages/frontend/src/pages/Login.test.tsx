@@ -69,6 +69,39 @@ describe('Login screen', () => {
     expect(calls.n).toBe(0)
   })
 
+  it.each(['abc', 'sam@fms', 'sam@fms.l', 'sam fms@fms.local', 'sam@fms..local'])(
+    'rejects the malformed email %j on the field before any API call',
+    async (email) => {
+      const calls = countLogins()
+      const user = await openLogin()
+
+      await fill(user, email, 'secret')
+      await submit(user)
+
+      expect(screen.getByText('Enter a valid email address, like name@example.com.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.queryByText('Could not sign in. Try again.')).not.toBeInTheDocument()
+      expect(calls.n).toBe(0)
+    },
+  )
+
+  it('shows an email the API rejects as invalid on the field, not as a generic failure', async () => {
+    server.use(
+      http.post('/api/v1/auth/login', () =>
+        errorEnvelope(400, 'VALIDATION_FAILED', 'The request is invalid.', [{ field: 'email', reason: 'invalid_format' }]),
+      ),
+    )
+    const user = await openLogin()
+
+    await fill(user, 'sam@-fms.local', 'secret')
+    await submit(user)
+
+    expect(await screen.findByText('Enter a valid email address, like name@example.com.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByText('Could not sign in. Try again.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+  })
+
   it('renders the generic message for a wrong password, never naming the field', async () => {
     countLogins()
     const user = await openLogin()
