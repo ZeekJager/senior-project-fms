@@ -43,7 +43,18 @@ Each login starts a **session family** (`auth.refresh_sessions.family_id`, migra
 
 `authenticate` reads the user's status, roles and permissions from the database on every request and checks that the token's family is still live. A disabled user, a role change, a logout or a reuse detection therefore takes effect immediately, not when the 15-minute token expires.
 
-**Frontend (FMS-09):** send only one refresh at a time. Two tabs refreshing with the same cookie at once look like reuse, and the second request ends the session. Refresh on a `401 AUTH_TOKEN_EXPIRED`, then retry the original request once.
+**Frontend (FMS-09):** send only one refresh at a time. Two tabs refreshing with the same cookie at once look like reuse, and the second request ends the session. Refresh on a `401 AUTH_TOKEN_EXPIRED` **or `AUTH_TOKEN_INVALID`**, then retry the original request once. A browser deletes the access cookie when its 15 minutes are up, so after that the server sees no cookie and answers `AUTH_TOKEN_INVALID`; it never sees an expired token from a browser.
+
+## Frontend session handling
+
+Card: FMS-09 (SE-45). Code: `packages/frontend/src/{context,router,components,lib/api}`.
+
+- **No token in the page.** The tokens are HttpOnly cookies, so `AuthContext` keeps only the current user (from `/auth/refresh`, whose body is the same as `/auth/me`) in memory. Nothing goes to `localStorage` or `sessionStorage`.
+- **Silent refresh on load.** `AuthProvider` calls `POST /auth/refresh`; success means signed in, a 4xx means signed out. The API client (`lib/api/client.ts`) shares one in-flight refresh, so React StrictMode and parallel requests never present the cookie twice.
+- **API client.** `api.request(path, {method, json})` returns `body.data` and throws `ApiError {status, code, message, details, requestId}` built from the error envelope. On `401 AUTH_TOKEN_EXPIRED` or `AUTH_TOKEN_INVALID` (the browser dropped the expired access cookie) it refreshes once and retries once; a second 401, a rejected refresh, or `AUTH_TOKEN_REVOKED` ends the session. `lib/query.ts` configures TanStack Query on top of it (4xx errors are not retried).
+- **Routes.** Add a screen as one line in `router/routes.tsx`: `{ path, element, permission? }`. `ProtectedRoute` sends visitors without a session to `/login?redirect=<url>`; after sign-in `LoginPage` returns them there (in-app paths only) or to their portal home. `RoleGate permission="fuel-anomaly:read"` renders nothing when the user lacks the code; it checks the permission codes from `/auth/me`, never role names, and does not replace the server check.
+- **Idle logout.** 30 minutes without input calls `POST /auth/logout` and goes to `/login?reason=idle`.
+
 
 ## Login throttling
 

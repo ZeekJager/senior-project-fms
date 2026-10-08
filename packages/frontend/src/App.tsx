@@ -1,10 +1,21 @@
+import { QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
+import { BrowserRouter } from 'react-router-dom'
+import { AuthProvider } from '@/context/AuthContext'
+import { createQueryClient } from '@/lib/query'
+import { AppRouter } from '@/router/AppRouter'
+
 function App() {
+  const [queryClient] = useState(createQueryClient)
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-2 bg-slate-50 text-slate-900">
-      <h1 className="text-3xl font-semibold text-fms-primary">Fleet Management System</h1>
-      <p className="text-slate-600">React + Vite + TypeScript + Tailwind are running.</p>
-    </main>
-  );
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppRouter />
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
+  )
 }
 
-export default App;
+export default App
