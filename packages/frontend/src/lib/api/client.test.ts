@@ -142,10 +142,10 @@ describe('api client', () => {
     })
   })
 
-  it.each(['AUTH_TOKEN_INVALID', 'AUTH_TOKEN_REVOKED'])('ends the session on %s without refreshing', async (code) => {
+  it('ends the session on AUTH_TOKEN_REVOKED without refreshing', async () => {
     let refreshes = 0
     server.use(
-      http.get('/api/v1/vehicles', () => errorEnvelope(401, code)),
+      http.get('/api/v1/vehicles', () => errorEnvelope(401, 'AUTH_TOKEN_REVOKED')),
       http.post('/api/v1/auth/refresh', () => {
         refreshes += 1
         return ok()
@@ -155,9 +155,60 @@ describe('api client', () => {
     const ended = vi.fn()
     api.onSessionEnded(ended)
 
-    await expect(api.request('/vehicles')).rejects.toMatchObject({ code })
+    await expect(api.request('/vehicles')).rejects.toMatchObject({ code: 'AUTH_TOKEN_REVOKED' })
     expect(refreshes).toBe(0)
     expect(ended).toHaveBeenCalledTimes(1)
+  })
+
+  // The browser deletes the access cookie when its 15 minutes are up, so the
+  // server sees no cookie and answers AUTH_TOKEN_INVALID. Found by the Sprint 1
+  // browser run: without this the user is signed out every 15 minutes.
+  describe('AUTH_TOKEN_INVALID (the access cookie expired and the browser dropped it)', () => {
+    it('refreshes once and retries, like an expired token', async () => {
+      let calls = 0
+      server.use(
+        http.get('/api/v1/vehicles', () => (++calls === 1 ? errorEnvelope(401, 'AUTH_TOKEN_INVALID') : envelope([{ id: 1 }]))),
+        http.post('/api/v1/auth/refresh', ok),
+      )
+      const api = testApi()
+      const ended = vi.fn()
+      api.onSessionEnded(ended)
+
+      await expect(api.request('/vehicles')).resolves.toEqual([{ id: 1 }])
+      expect(calls).toBe(2)
+      expect(ended).not.toHaveBeenCalled()
+    })
+
+    it('ends the session when there is no refresh cookie either', async () => {
+      server.use(
+        http.get('/api/v1/vehicles', () => errorEnvelope(401, 'AUTH_TOKEN_INVALID')),
+        http.post('/api/v1/auth/refresh', () => errorEnvelope(401, 'AUTH_TOKEN_INVALID')),
+      )
+      const api = testApi()
+      const ended = vi.fn()
+      api.onSessionEnded(ended)
+
+      await expect(api.request('/vehicles')).rejects.toMatchObject({ status: 401 })
+      expect(ended).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not loop: a second INVALID after the refresh ends the session', async () => {
+      let calls = 0
+      server.use(
+        http.get('/api/v1/vehicles', () => {
+          calls += 1
+          return errorEnvelope(401, 'AUTH_TOKEN_INVALID')
+        }),
+        http.post('/api/v1/auth/refresh', ok),
+      )
+      const api = testApi()
+      const ended = vi.fn()
+      api.onSessionEnded(ended)
+
+      await expect(api.request('/vehicles')).rejects.toMatchObject({ code: 'AUTH_TOKEN_INVALID' })
+      expect(calls).toBe(2)
+      expect(ended).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('leaves login failures to the caller: no refresh, no session end', async () => {

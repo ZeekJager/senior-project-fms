@@ -26,7 +26,8 @@ export interface ApiClient {
 /**
  * The API client. The access and refresh tokens live in HttpOnly cookies
  * that page scripts cannot read, so the client holds no token: it sends
- * cookies with each request and, on `401 AUTH_TOKEN_EXPIRED`, refreshes once
+ * cookies with each request and, on `401 AUTH_TOKEN_EXPIRED` or
+ * `AUTH_TOKEN_INVALID`, refreshes once
  * and retries the original request once. A second 401 ends the session.
  */
 export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...args)): ApiClient {
@@ -61,9 +62,12 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     } catch (err) {
       if (!(err instanceof ApiError) || err.status !== 401 || AUTH_PATHS.includes(path)) throw err
 
-      // Only an expired access token is recoverable. Invalid or revoked
-      // tokens mean the session is gone.
-      if (err.code !== 'AUTH_TOKEN_EXPIRED') {
+      // An access token that lapsed is recoverable with the refresh cookie.
+      // The browser drops the access cookie when its 15 minutes are up, so the
+      // server then sees no cookie at all and answers AUTH_TOKEN_INVALID, not
+      // AUTH_TOKEN_EXPIRED: both mean "try the refresh cookie once". A revoked
+      // session (logout, reuse detected) is final.
+      if (err.code !== 'AUTH_TOKEN_EXPIRED' && err.code !== 'AUTH_TOKEN_INVALID') {
         endSession()
         throw err
       }
