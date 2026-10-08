@@ -9,6 +9,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { pool } from '../../src/db';
+import { hashPassword } from '../../src/modules/auth';
 
 export type RoleName =
   | 'admin' | 'fleet_manager' | 'dispatcher' | 'driver' | 'technician'
@@ -37,6 +38,8 @@ export interface CreateUserOptions {
   email?: string;
   fullName?: string;
   status?: 'active' | 'inactive' | 'suspended' | 'locked';
+  /** Hashed with the real argon2id hasher, so the user can log in. Omit to skip the hashing cost. */
+  password?: string;
 }
 
 /** A user with roles, optionally scoped to a depot. `roles` is returned with the row. */
@@ -44,7 +47,7 @@ export async function createUser(options: CreateUserOptions = {}): Promise<Row &
   const { roles = [], depot = null, status = 'active' } = options;
   const user = await insert('auth.users', {
     email: options.email ?? `user-${unique()}@test.fms`,
-    password_hash: 'not-a-real-hash',
+    password_hash: options.password === undefined ? 'not-a-real-hash' : await hashPassword(options.password),
     full_name: options.fullName ?? 'Test User',
     depot_id: depot?.id ?? null,
     status,

@@ -162,14 +162,16 @@ The browser-facing API uses JWTs stored in Secure, HttpOnly cookies. The access 
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /auth/login` | Authenticate user | Public | `{email,password}` -> user/session cookies |
-| `POST /auth/refresh` | Rotate/renew session | Refresh cookie | Sets new access/refresh cookies |
-| `POST /auth/logout` | Terminate session | Authenticated | Clears session cookies |
-| `GET /auth/me` | Current user and permissions | Authenticated | User + permissions |
+| `POST /auth/login` | Authenticate user | Public (throttled: 5 failures per account + IP per 15 min) | `{email,password}` -> session cookies + current user |
+| `POST /auth/refresh` | Rotate/renew session | Refresh cookie | Sets new access/refresh cookies + current user; a reused refresh token revokes its session family |
+| `POST /auth/logout` | Terminate session | Refresh cookie (works after the access token expired) | `204`, clears session cookies |
+| `GET /auth/me` | Current user and permissions | Authenticated | `{user, roles, permissions}` |
 | `GET /users` | User administration | `users:read` | Paged `User[]` |
 | `POST /users` | Create user | `users:write` | `UserCreate` -> `User` |
 | `PATCH /users/{user_id}` | Update user | `users:write` | `UserUpdate` -> `User` |
 | `GET /roles` | List roles/permissions | `roles:read` | `Role[]` |
+
+Cookies, token lifetimes, rotation and the audit events are described in [auth.md](auth.md).
 
 Permission codes are the `resource:action` values in the "Auth / permission" columns of this document, seeded verbatim in `auth.permissions` (see `001_core_identity.sql` for the role grants).
 

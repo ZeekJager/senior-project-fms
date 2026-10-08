@@ -23,6 +23,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     // Picked up by the request logger, which logs it with the stack.
     res.err = err instanceof Error ? err : new Error(String(err));
   }
+  if (appErr.headers) res.set(appErr.headers);
   const stack = config.nodeEnv === 'development' && appErr.status >= 500 && err instanceof Error ? err.stack : undefined;
   res.status(appErr.status).json(errorBody(appErr, req.correlationId, stack));
 }

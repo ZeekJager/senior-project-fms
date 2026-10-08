@@ -49,10 +49,13 @@ import { createDepot, createDriver, createUser, createVehicle } from '../support
 const depot = await createDepot();
 const dispatcher = await createUser({ roles: ['dispatcher'], depot });
 const admin = await createUser({ roles: ['admin'] });           // not depot-scoped
+const canLogIn = await createUser({ roles: ['driver'], password: 'Test-Pass-1' }); // real argon2id hash
 const truck = await createVehicle({ depot });
 const ev = await createVehicle({ depot, fuel_type: 'electric', fuel_efficiency_ml_per_km: null });
 const { user, driver } = await createDriver({ depot });
 ```
+
+Without `password`, users get a placeholder hash that never verifies, which skips the hashing cost. Pass one only when the test logs in.
 
 Add a factory here when a second test needs the same kind of row.
 

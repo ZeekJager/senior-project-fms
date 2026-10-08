@@ -34,6 +34,12 @@ keywords = ["pass", "secret", "token"]
   # Test-only code (test files, test/ support folders) uses obvious fake values.
   paths = ['''(?i)\.test\.(ts|tsx|js)$''', '''(?i)(^|[/\\])test[/\\]''']
 
+  [[rules.allowlists]]
+  # Error factories such as `tokenInvalid = () => new AppError(401, 'AUTH_TOKEN_INVALID', ...)`:
+  # the literal is a contract error code, not a credential.
+  regexTarget = "line"
+  regexes = ['''new AppError\(\d{3}, '[A-Z_]+',''']
+
 [[rules]]
 id = "fms-sql-role-password"
 description = "SQL role created with a literal password. Pass it in as a psql variable instead."
