@@ -1,3 +1,5 @@
+> **Historical document.** The database schema of record is `packages/backend/migrations/` (PostgreSQL, one schema per module; see `CONVENTIONS.md` and the migrations README). `docs/schema-fms.sql` is superseded and kept for history only. Where this document calls `schema-fms.sql` the single source of truth, read the migrations instead. Jira is the current board.
+
 # FMS Engineering Board Specification (Deel Methodology)
 
 This document defines the absolute source of truth for how the Fleet Management System (FMS) engineering team operates. It enforces the strict, production-level conventions extracted from the Deel methodology.

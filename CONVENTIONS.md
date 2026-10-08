@@ -70,7 +70,7 @@ Code used by several modules lives in `src/shared/` (errors, HTTP helpers, repos
 
 ### Schema ownership
 
-One PostgreSQL schema per module. Tables are created only by that module's migrations.
+One PostgreSQL schema per module. Tables are created only by that module's migrations. The full table-by-table list, with the developer track that owns each schema, is CFG-5 in Jira (SE-107); this table is the same ownership in short.
 
 | Schema | Owning module | Tables |
 |---|---|---|
@@ -84,7 +84,10 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `integration` | integration | external_providers, gps_devices, fuel_card_transactions, sync_logs |
 | `analytics` | analytics | analytics_cache and read-only views |
 | `audit` | audit | audit_logs |
-| `shared`, `api`, `tracking`, `document` | **to be assigned in CFG-5 (FMS-69)** | shared: enum types and trigger functions; api: idempotency_keys; tracking: gps_pings, telemetry_flags, vehicle_current_location; document: documents |
+| `tracking` | integration | gps_pings (default partition included), telemetry_flags, vehicle_current_location. `trip` reads positions through the integration module's `index.ts` |
+| `document` | fleet | documents |
+| `api` | platform (`src/shared`) | idempotency_keys, used by the Idempotency-Key middleware (FMS-87) |
+| `shared` | platform | enum types and trigger functions only; no tables |
 
 Foreign keys to another module's table are allowed in the database (they are integrity, not access). Reading through them is not.
 
