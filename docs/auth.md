@@ -45,6 +45,17 @@ Each login starts a **session family** (`auth.refresh_sessions.family_id`, migra
 
 **Frontend (FMS-09):** send only one refresh at a time. Two tabs refreshing with the same cookie at once look like reuse, and the second request ends the session. Refresh on a `401 AUTH_TOKEN_EXPIRED`, then retry the original request once.
 
+## Frontend session handling
+
+Card: FMS-09 (SE-45). Code: `packages/frontend/src/{context,router,components,lib/api}`.
+
+- **No token in the page.** The tokens are HttpOnly cookies, so `AuthContext` keeps only the current user (from `/auth/refresh`, whose body is the same as `/auth/me`) in memory. Nothing goes to `localStorage` or `sessionStorage`.
+- **Silent refresh on load.** `AuthProvider` calls `POST /auth/refresh`; success means signed in, a 4xx means signed out. The API client (`lib/api/client.ts`) shares one in-flight refresh, so React StrictMode and parallel requests never present the cookie twice.
+- **API client.** `api.request(path, {method, json})` returns `body.data` and throws `ApiError {status, code, message, details, requestId}` built from the error envelope. On `401 AUTH_TOKEN_EXPIRED` it refreshes once and retries once; a second 401, or `AUTH_TOKEN_INVALID` / `AUTH_TOKEN_REVOKED`, ends the session. `lib/query.ts` configures TanStack Query on top of it (4xx errors are not retried).
+- **Routes.** Add a screen as one line in `router/routes.tsx`: `{ path, element, permission? }`. `ProtectedRoute` sends visitors without a session to `/login?redirect=<url>`; after sign-in `LoginPage` returns them there (in-app paths only) or to their portal home. `RoleGate permission="fuel-anomaly:read"` renders nothing when the user lacks the code; it checks the permission codes from `/auth/me`, never role names, and does not replace the server check.
+- **Idle logout.** 30 minutes without input calls `POST /auth/logout` and goes to `/login?reason=idle`.
+
+
 ## Login throttling
 
 After 5 failed logins for the same email from the same IP within 15 minutes, further attempts get `429 RATE_LIMITED` until the oldest failure is 15 minutes old. Wrong passwords and unknown emails both count; a successful login resets the count. The counter is in memory per API process (`InMemoryLoginThrottle`), behind the `LoginThrottle` interface so FMS-72 can move it to Redis when the API runs on several instances.
