@@ -32,8 +32,12 @@ export function currentUser(roles: string[], permissions: string[]): CurrentUser
 
 export const envelope = (data: unknown) => HttpResponse.json({ data, meta: { request_id: 'r-1' } })
 
-export const errorEnvelope = (status: number, code: string, message = code) =>
-  HttpResponse.json({ error: { code, message }, meta: { request_id: 'r-1' } }, { status })
+export const errorEnvelope = (
+  status: number,
+  code: string,
+  message = code,
+  details?: { field?: string; reason: string }[],
+) => HttpResponse.json({ error: { code, message, ...(details ? { details } : {}) }, meta: { request_id: 'r-1' } }, { status })
 
 /** The silent refresh on load succeeds with this user (the session cookie exists). */
 export function signedInAs(user: CurrentUser) {

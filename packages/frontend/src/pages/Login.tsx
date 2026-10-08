@@ -14,6 +14,15 @@ const MESSAGES: Record<string, string> = {
 }
 const FALLBACK_MESSAGE = 'Could not sign in. Try again.'
 
+const EMAIL_FORMAT_MESSAGE = 'Enter a valid email address, like name@example.com.'
+
+// Close to the API's rule (zod's email check): one @, no spaces, a dot in the
+// domain and a top-level domain of 2+ letters. The form has `noValidate`, so
+// this replaces the browser's check, which accepts `name@host`. Anything this
+// lets through that the API still rejects comes back as VALIDATION_FAILED
+// and is shown on the field (see onSubmit).
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)*\.[A-Za-z]{2,}$/
+
 function Spinner() {
   return (
     <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -45,6 +54,7 @@ export function LoginPage() {
 
     const errors: { email?: string; password?: string } = {}
     if (!email.trim()) errors.email = 'Enter your email.'
+    else if (!EMAIL_PATTERN.test(email.trim())) errors.email = EMAIL_FORMAT_MESSAGE
     if (!password) errors.password = 'Enter your password.'
     setFieldErrors(errors)
     setFormError(null)
@@ -56,7 +66,13 @@ export function LoginPage() {
       await login(email.trim(), password)
       // Signed in: the render above navigates away.
     } catch (err) {
-      setFormError((err instanceof ApiError && MESSAGES[err.code]) || FALLBACK_MESSAGE)
+      if (err instanceof ApiError && err.code === 'VALIDATION_FAILED' && err.details.some((d) => d.field === 'email')) {
+        // The API's email rule is stricter than the pattern above in a few
+        // cases (e.g. a domain label starting with '-'): show it on the field.
+        setFieldErrors({ email: EMAIL_FORMAT_MESSAGE })
+      } else {
+        setFormError((err instanceof ApiError && MESSAGES[err.code]) || FALLBACK_MESSAGE)
+      }
       setSubmitting(false)
     } finally {
       inFlight.current = false
