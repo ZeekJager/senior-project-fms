@@ -128,14 +128,14 @@ Use `authorize('resource:action')` on every route, or `authenticated()` / `publi
 
 ## Events
 
-Modules react to each other through events. Status: the event bus and outbox arrive with FMS-73 (Sprint 3); follow these rules from the start so modules are ready.
+Modules react to each other through events. Status: until FMS-73 (Sprint 3) brings the outbox and Redis pub/sub, `eventBus` in `src/shared/events` delivers in process, after the transaction commits, at most once. Publish with `eventBus.publish([createEvent(type, payload, ctx)])` once the transaction has resolved; FMS-73 keeps the interface. Follow these rules from the start so modules are ready.
 
 - **Name:** `PastTense` PascalCase, a fact that already happened: `TripAssigned`, `FuelAnomalyDetected`. Not `AssignTrip`, `TripAssigning` or `TripUpdate`.
 - **Envelope:** every event is `{ id, type, version, occurred_at, actor, correlation_id, payload }`. `id` is unique per event, `version` starts at 1 and increases when the payload changes shape, `correlation_id` is the request's id.
 - **Payload carries ids, not personal data.** Consumers re-read what they need through the owning module, with their own authorization.
 - **Delivery is at least once**, so a consumer must be idempotent by event `id`.
 - **Publish in the same transaction as the change.** A rolled-back change publishes nothing.
-- **Catalogue** (extended as events are added): `TripAssigned`, `TripStarted`, `TripCompleted`, `VehicleLocationUpdated`, `FuelAnomalyDetected`, `MaintenanceRiskDetected`, `VehicleFaultDetected`, `AlertCreated`, `BatteryThresholdExceeded`.
+- **Catalogue** (extended as events are added): `VehicleRegistered`, `VehicleUpdated`, `VehicleRetired` (fleet, FMS-15), `TripAssigned`, `TripStarted`, `TripCompleted`, `VehicleLocationUpdated`, `FuelAnomalyDetected`, `MaintenanceRiskDetected`, `VehicleFaultDetected`, `AlertCreated`, `BatteryThresholdExceeded`.
 
 ## API
 
