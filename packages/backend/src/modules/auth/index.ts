@@ -7,8 +7,19 @@ import { authenticatedWith, authorizeWith } from './api/authorize';
 import { AuthService } from './application/auth.service';
 import { InMemoryLoginThrottle } from './application/login-throttle';
 import { TokenService } from './application/token.service';
+import type { DepotDirectory } from './domain/depot-directory';
 import { AuthUserRepository } from './infrastructure/auth-user.repository';
 import { SessionRepository } from './infrastructure/session.repository';
+
+let depotDirectory: DepotDirectory | null = null;
+
+/**
+ * Connects the fleet module's depot lookup. Called once by src/modules/index.ts:
+ * auth cannot import fleet itself, since fleet imports auth.
+ */
+export function provideDepotDirectory(directory: DepotDirectory): void {
+  depotDirectory = directory;
+}
 
 const authService = new AuthService({
   db: pool,
@@ -16,6 +27,12 @@ const authService = new AuthService({
   sessions: new SessionRepository(),
   tokens: new TokenService(config.jwtSecret),
   throttle: new InMemoryLoginThrottle(),
+  depots: {
+    publicIdOf(depotId) {
+      if (!depotDirectory) throw new Error('auth: no DepotDirectory provided; src/modules/index.ts connects the fleet module');
+      return depotDirectory.publicIdOf(depotId);
+    },
+  },
 });
 
 /**
@@ -40,5 +57,6 @@ export { publicRoute } from '../../shared/authz/route-policy';
 export { depotScope, ownDriverScope, scopeClause, type Scope } from '../../shared/authz/scope';
 
 export { hashPassword } from './infrastructure/password-hasher';
+export type { DepotDirectory } from './domain/depot-directory';
 
 export const authModule: AppModule = { name: 'auth', router: authRouter(authService, authenticate) };

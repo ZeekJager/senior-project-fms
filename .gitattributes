@@ -2,3 +2,5 @@
 *.sh text eol=lf
 *.snap text eol=lf
 docs/permissions.md text eol=lf
+# Git hooks run under sh, so they must keep LF endings on Windows checkouts too.
+.husky/** text eol=lf

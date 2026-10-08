@@ -64,7 +64,16 @@ Dependencies point inward: `api` -> `application` -> `domain`, and `infrastructu
 3. **No cross-schema SQL.** A module's SQL touches only the schema it owns. `trip` never selects from `maintenance.maintenance_records`; it asks the maintenance module, or reacts to its events.
 4. **No module reaches into another's tables for a join "just this once".** If you need the data often, the owning module exposes a query function in its `index.ts`.
 
-Until the boundary linter (FMS-12, Sprint 2) enforces rules 1 and 3 in CI, reviewers do.
+Rules 1 and 3 are enforced by ESLint (FMS-12): `fms/no-cross-module-import` and `fms/no-cross-schema-sql` run on every backend `.ts` file in the pre-commit hook (Husky + lint-staged) and in `backend-ci`, so a violating commit is blocked locally and a PR cannot merge.
+
+- `no-cross-module-import`: from `src/modules/<a>/`, another module may only be imported as `'../<b>'` (its `index.ts`), never `'../<b>/domain/...'`; type-only imports included. `src/shared/` imports no module at all.
+- `no-cross-schema-sql`: a SQL string or template inside `src/modules/<x>/` may only name `<schema>.<table>` for the schemas module `x` owns (table below), plus `shared` (types and functions). The same applies to the table argument of `dbMutate` / `mutate` / `auditedMutation`. Quoted values and SQL comments are ignored; a dynamic `${table}` cannot be checked.
+
+When the linter stops you:
+
+- **You need another module's data:** call a function exported from its `index.ts` (rule 4). Example: auth shows the user's depot as a public id, which `fleet` provides through `depotDirectory`.
+- **The two modules would import each other** (fleet already imports auth for `authorize`): the lower module declares an interface and the composition root `src/modules/index.ts` hands it the implementation. Example: `provideDepotDirectory(depotDirectory)`.
+- **Writing the audit trail:** use `auditedMutation` or `recordAuditEntry` from `src/shared/infrastructure`. They are the only code that writes `audit.audit_logs`; no module writes the audit schema's SQL itself.
 
 Code used by several modules lives in `src/shared/` (errors, HTTP helpers, repository base class, transactions, logging). Shared code never imports from a module.
 
@@ -90,6 +99,8 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `shared` | platform | enum types and trigger functions only; no tables |
 
 Foreign keys to another module's table are allowed in the database (they are integrity, not access). Reading through them is not.
+
+The linter's copy of this table is `MODULE_SCHEMAS` in `packages/eslint-plugin-fms/lib/module-boundaries.js`. Its tests fail when a migration creates a schema with no owner there, or a folder under `src/modules` has no entry, so a new module or schema updates both.
 
 ## IDs
 

@@ -50,8 +50,12 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      # Includes the module boundary rules (FMS-12): a cross-module import or
+      # cross-schema SQL fails here even if the pre-commit hook was skipped.
       - name: Lint
         run: npm run lint -w fms-backend
+      - name: ESLint rule tests
+        run: npm test -w eslint-plugin-fms
       - name: Type-check
         run: npm run typecheck -w fms-backend
       - name: Build

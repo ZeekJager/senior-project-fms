@@ -1,4 +1,4 @@
-import { isIP } from 'node:net';
+import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { AuthAuditAction } from '../domain/auth-policy';
 
@@ -16,19 +16,15 @@ export interface AuthAuditEvent {
   details?: Record<string, unknown>;
 }
 
-/** One audit.audit_logs row per sign-in, sign-out and token-reuse event. */
+/** One audit entry per sign-in, sign-out and token-reuse event, through the platform audit writer. */
 export async function writeAuthAudit(db: Queryable, event: AuthAuditEvent): Promise<void> {
-  await db.query(
-    `INSERT INTO audit.audit_logs
-       (user_id, action, entity_type, entity_id, correlation_id, ip_address, details)
-     VALUES ($1, $2, 'auth.users', $3, $4, $5, $6)`,
-    [
-      event.actorId,
-      event.action,
-      event.subjectId,
-      event.correlationId,
-      event.ip && isIP(event.ip) ? event.ip : null,
-      JSON.stringify({ ...event.details, user_agent: event.userAgent?.slice(0, USER_AGENT_MAX) ?? null }),
-    ],
-  );
+  await recordAuditEntry(db, {
+    action: event.action,
+    userId: event.actorId,
+    entityType: 'auth.users',
+    entityId: event.subjectId,
+    correlationId: event.correlationId,
+    ip: event.ip,
+    details: { ...event.details, user_agent: event.userAgent?.slice(0, USER_AGENT_MAX) ?? null },
+  });
 }

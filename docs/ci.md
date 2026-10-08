@@ -4,13 +4,15 @@ Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`,
 
 | Check name | What it does | Fails when |
 |---|---|---|
-| `backend-ci` | `npm ci`, ESLint (including `no-float-in-money-path`), `tsc --noEmit`, `tsc` build, then unit and integration tests with coverage against PostgreSQL 16 as `fms_app` (the tests create and migrate their own `fms_test` database); uploads the `backend-coverage` report | Lint error, type error, build error, failing test, a test leaving rows behind |
+| `backend-ci` | `npm ci`, ESLint (including `no-float-in-money-path` and the module boundary rules `no-cross-module-import` / `no-cross-schema-sql`), the ESLint rule tests, `tsc --noEmit`, `tsc` build, then unit and integration tests with coverage against PostgreSQL 16 as `fms_app` (the tests create and migrate their own `fms_test` database); uploads the `backend-coverage` report | Lint error (including a cross-module import or cross-schema SQL), type error, build error, failing test, a test leaving rows behind |
 | `frontend-ci` | `npm ci`, ESLint, `tsc -b`, component tests with coverage (uploads `frontend-coverage`), `vite build` | Lint error, type error, failing test, build error |
 | `migrations-ci` | Applies every migration Up twice, every Down in reverse, Up again; then runs `npm run migrate` on a fresh database twice | A migration is not idempotent or not reversible, Down leaves a schema behind, the runner fails or re-applies a file |
 | `docker-stack` | Creates a `.env` with generated secrets, builds the Compose images, starts the stack, waits for `GET /health/ready` | An image does not build or the backend does not start |
 | `secrets-scan` | gitleaks over the checked-out files, with the default rules plus `.gitleaks.toml` (weak hardcoded passwords, literal fallbacks in code, SQL role passwords) | Any secret is committed |
 
 CI needs no repository secrets. Its databases are throwaway PostgreSQL containers on the runner (`scripts/ci/start-postgres.sh`); every password and the JWT secret are generated per run and masked in logs.
+
+A pre-commit hook (Husky + lint-staged, installed by `npm install`) lints the staged backend files with the same rules, so most lint failures never reach CI. `git commit --no-verify` skips it, but `backend-ci` still fails.
 
 Run the same checks locally before pushing (integration tests need the `make dev` stack running; see [testing.md](testing.md)):
 

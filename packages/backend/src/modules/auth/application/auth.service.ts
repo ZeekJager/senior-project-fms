@@ -11,6 +11,7 @@ import {
   tokenRevoked,
 } from '../domain/auth-errors';
 import { REFRESH_TOKEN_TTL_SECONDS } from '../domain/auth-policy';
+import type { DepotDirectory } from '../domain/depot-directory';
 import { writeAuthAudit, type AuthAuditEvent } from '../infrastructure/auth-audit';
 import type { AuthUserRepository, Principal, UserProfile } from '../infrastructure/auth-user.repository';
 import { verifyAgainstDummy, verifyPassword } from '../infrastructure/password-hasher';
@@ -45,6 +46,8 @@ export interface AuthServiceDeps {
   sessions: SessionRepository;
   tokens: TokenService;
   throttle: LoginThrottle;
+  /** Resolves the home depot's public id; implemented by the fleet module. */
+  depots: DepotDirectory;
 }
 
 export class AuthService {
@@ -194,7 +197,9 @@ export class AuthService {
     const profile = await users.findProfile(db, userId);
     const principal = await users.findPrincipalById(db, userId);
     if (!profile || !principal) throw tokenInvalid();
-    return { user: profile, roles: principal.roles, permissions: principal.permissions };
+    const { depotId, ...rest } = profile;
+    const depot_id = depotId === null ? null : await this.deps.depots.publicIdOf(depotId);
+    return { user: { ...rest, depot_id }, roles: principal.roles, permissions: principal.permissions };
   }
 
   private async issue(principal: Principal, familyId: string, refreshToken: string): Promise<IssuedSession> {

@@ -25,5 +25,16 @@ module.exports = [
     rules: {
       'fms/no-float-in-money-path': 'error'
     }
+  },
+
+  // Module boundaries (FMS-12, System Design §32 rules 1 and 3): another
+  // module only through its index.ts, and SQL only on the module's own
+  // schemas. The schema ownership map is in eslint-plugin-fms/lib/module-boundaries.js.
+  {
+    files: ['packages/backend/src/**/*.ts'],
+    rules: {
+      'fms/no-cross-module-import': 'error',
+      'fms/no-cross-schema-sql': 'error'
+    }
   }
 ];
