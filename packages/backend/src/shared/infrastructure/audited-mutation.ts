@@ -34,16 +34,19 @@ function assertColumns(keys: string[]): void {
 // whose is_active is generated from status and cannot be written directly.
 // `data` adds columns to set in the same statement (a vehicle's status
 // becomes 'retired'), so the retirement is one change and one audit row.
+// document.documents is the one table with deleted_at / deleted_by instead
+// (a retirement is subject to its retention date); pass deleted_by in `data`.
 function softDeleteSql(tableName: string, extraKeys: string[]): string {
   const extra = extraKeys.map((k, i) => `, ${k} = $${i + 2}`).join('');
-  return tableName === 'auth.users'
-    ? `UPDATE ${tableName} SET status = 'inactive'${extra} WHERE id = $1`
-    : `UPDATE ${tableName} SET is_active = FALSE${extra} WHERE id = $1`;
+  if (tableName === 'auth.users') return `UPDATE ${tableName} SET status = 'inactive'${extra} WHERE id = $1`;
+  if (tableName === 'document.documents') return `UPDATE ${tableName} SET deleted_at = CURRENT_TIMESTAMP${extra} WHERE id = $1`;
+  return `UPDATE ${tableName} SET is_active = FALSE${extra} WHERE id = $1`;
 }
 
-// Never copied into audit.audit_logs: the audit trail is readable through
-// GET /audit-logs, and a hash is enough for an offline guessing attack.
-const REDACTED_COLUMNS = new Set(['password_hash', 'token_hash']);
+// Never copied into audit.audit_logs, which is readable through GET
+// /audit-logs: a hash is enough for an offline guessing attack, and a
+// document's storage key is never shown to anyone (api-contract §8).
+const REDACTED_COLUMNS = new Set(['password_hash', 'token_hash', 'storage_key']);
 
 function forAudit(row: Row): Row {
   const copy: Row = { ...row };

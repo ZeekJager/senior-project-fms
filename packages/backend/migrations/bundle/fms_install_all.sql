@@ -1766,3 +1766,11 @@ SELECT u.id, u.full_name, u.email, u.depot_id, u.status
   FROM fleet.drivers d
   JOIN auth.users u ON u.id = d.user_id
 ON CONFLICT (user_id) DO NOTHING;
+
+-- ===== 018_document_expiry.sql =====
+ALTER TABLE document.documents ADD COLUMN IF NOT EXISTS expires_on DATE;
+
+-- "Live documents expiring before X", the FMS-26 query.
+CREATE INDEX IF NOT EXISTS idx_document_expires_on
+    ON document.documents(expires_on)
+    WHERE deleted_at IS NULL AND expires_on IS NOT NULL;

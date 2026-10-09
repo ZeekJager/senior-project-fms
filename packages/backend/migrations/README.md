@@ -23,6 +23,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 015 | `fleet` | `drivers.license_categories TEXT[]` of European licence categories (AM ... DE), replacing the free-text `license_category` (FMS-16) |
 | 016 | `fleet` | `version` on `vehicles` and `drivers`, bumped by trigger, for optimistic concurrency (If-Match / ETag) (FMS-16) |
 | 017 | `fleet` | `driver_accounts`: the fleet module's copy of drivers' name, email, depot and account status, so the driver list filters and sorts in one query (FMS-16) |
+| 018 | `document` | `documents.expires_on`: a document's own expiry date (registration, licence, insurance), indexed for live documents, for expiry warnings (FMS-17) |
 
 ## Important
 

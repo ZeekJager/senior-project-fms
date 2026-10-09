@@ -107,6 +107,7 @@ A client value is used only if it is a well-formed UUID; anything else is ignore
 | `FORBIDDEN_INSUFFICIENT_ROLE` | 403 | Caller lacks the required permission | RBAC |
 | `NOT_FOUND` | 404 | Resource does not exist or is not visible to the caller | API |
 | `PAYLOAD_TOO_LARGE` | 413 | Request body over the size limit (JSON: 1 MB; uploads: §8) | API |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | An upload whose content is not an accepted type (§8: JPEG, PNG, PDF, judged by the file's bytes, not its name or declared type) | API |
 | `CONFLICT_DUPLICATE` | 409 | A unique value already exists (constraints without a more specific code); `details` names the field | unique constraint |
 | `CONFLICT_DUPLICATE_PLATE` | 409 | Registration number already exists | `uq_fleet_vehicle_registration` |
 | `CONFLICT_DUPLICATE_LICENSE` | 409 | Licence number already exists | `drivers_license_number_key` |
@@ -314,9 +315,21 @@ Documents are used for operational attachments such as registration records, lic
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /documents` | Upload document | `document:write` | `multipart/form-data`; jpeg/png/pdf; max 10 MB -> `Document` |
+| `POST /documents` | Upload document | `document:write` | `multipart/form-data`; jpeg/png/pdf; max 10 MB -> `201 Document` |
 | `GET /documents/{document_id}` | Get document access | `document:read` | Returns metadata + time-limited signed URL |
+| `GET /documents/{document_id}/content` | Download the file | Signed URL (no session) | `?expires=&signature=` from `url` -> the file |
 | `DELETE /documents/{document_id}` | Retire/delete document | `document:delete` | 204; subject to retention policy |
+
+Document rules (FMS-17):
+
+- **Upload form:** the file is the `file` part (one file); the other parts are `owner_type` (`vehicle` or `driver`), `owner_id` (the owner's public id), `document_type` (`registration`, `licence`, `insurance`, `maintenance_invoice`, `inspection_evidence`, `incident_photo`, `dvir_attachment`, `fuel_receipt`, `other`) and, optionally, `expires_on` (the document's own expiry, e.g. an insurance end date) and `retain_until` (how long the file must be kept), both `YYYY-MM-DD`. Any other part is `400 VALIDATION_FAILED` (`reason: "not_writable"`); a body that is not readable multipart is `400` with `field: "body"`, `reason: "malformed_multipart"`.
+- **File checks:** the type is judged from the file's first bytes, not its name or the declared `Content-Type`: JPEG, PNG or PDF, anything else (a `.txt` renamed `.pdf`, say) is `415 UNSUPPORTED_MEDIA_TYPE`. A file over 10 MB is `413 PAYLOAD_TOO_LARGE`; the server stops reading at the limit. The stored `content_type`, `size_bytes` and `sha256` are computed by the server.
+- **Owner:** the caller must be able to read the owner. A vehicle needs `vehicle:read` and the vehicle's depot in the caller's scope; a driver needs `driver:read` and the driver's home depot in scope, or to be that driver (a driver uploads and reads their own licence). An owner the caller cannot read, or that does not exist, is `400 VALIDATION_FAILED` with `field: "owner_id"`, `reason: "references_missing_record"`. The same rule decides reads and deletes: a document whose owner is out of scope is `404`, as if it did not exist.
+- **`Document`:** `id`, `owner_type`, `owner_id`, `document_type`, `original_filename` (the name only, without directories or control characters), `content_type`, `size_bytes`, `sha256`, `expires_on`, `retain_until`, `uploaded_by` (user public id), `uploaded_at`. `GET /documents/{document_id}` adds `url` and `url_expires_at`. Where the file is stored is never returned.
+- **Signed URL:** `url` is valid for one hour and needs no session, so it can go in an `<img>` or a download link; it names one document and an expiry, signed with HMAC-SHA256 on the server. A link past its expiry is `401 AUTH_TOKEN_EXPIRED`; a changed or missing signature or expiry is `401 AUTH_TOKEN_INVALID`; a link to a deleted document is `404`. The file is sent with its sniffed `Content-Type`, `Content-Disposition: inline` with the original name, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. Fetch a fresh link from `GET /documents/{document_id}` when one expires.
+- **Storage:** files are stored under random keys, outside any web root: on local disk in development (`STORAGE_DRIVER=local`, `STORAGE_LOCAL_DIR`), in S3-compatible object storage elsewhere (`STORAGE_DRIVER=s3`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, optional `S3_ENDPOINT` for MinIO and `S3_REGION`). A file is never overwritten.
+- **Delete:** soft. `DELETE` marks the document deleted (`deleted_at`, `deleted_by`, one audit row) and returns `204`; it then reads as `404` and its links stop working. The file itself is kept for retention (`retain_until`); purging it is a later job.
+- **Events:** `DocumentUploaded`, with `document_id`, `owner_type`, `owner_id`, `document_type` and `expires_on`.
 
 ## 9. Fuel Tracking and Reconciliation API
 

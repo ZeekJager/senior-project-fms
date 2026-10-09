@@ -43,6 +43,8 @@ services:
     volumes:
       - ./packages/backend:/app
       - /app/node_modules
+      # Uploaded documents (FMS-17), kept in a volume outside the source tree.
+      - document_files:/app/storage
     environment:
       NODE_ENV: development
       PORT: "3000"
@@ -56,6 +58,8 @@ services:
       DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       JWT_SECRET: "${JWT_SECRET:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_DIR: /app/storage
     healthcheck:
       # 200 only when the API can reach PostgreSQL (GET /health/ready).
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health/ready >/dev/null || exit 1"]
@@ -102,3 +106,4 @@ services:
 
 volumes:
   postgres_data:
+  document_files:

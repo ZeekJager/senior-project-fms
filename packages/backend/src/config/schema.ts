@@ -25,8 +25,21 @@ const appSchema = z
     DB_USER: required,
     DB_PASSWORD: required,
     JWT_SECRET: z.string({ error: 'is required' }).min(32, 'must be at least 32 characters'),
+    // Document files (FMS-17): local disk in development, S3-compatible elsewhere.
+    STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+    STORAGE_LOCAL_DIR: z.string().trim().min(1).default('storage'),
+    S3_ENDPOINT: z.url().optional(),
+    S3_REGION: z.string().trim().min(1).default('us-east-1'),
+    S3_BUCKET: z.string().trim().min(1).optional(),
+    S3_ACCESS_KEY_ID: z.string().trim().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().trim().min(1).optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.STORAGE_DRIVER === 's3') {
+      for (const key of ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const) {
+        if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: 'is required when STORAGE_DRIVER=s3' });
+      }
+    }
     if (env.NODE_ENV !== 'production') return;
     for (const key of ['DB_PASSWORD', 'JWT_SECRET'] as const) {
       if (env[key].includes(PLACEHOLDER)) {
@@ -55,7 +68,20 @@ export interface AppConfig {
   logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   db: DbConfig;
   jwtSecret: string;
+  storage: StorageConfig;
 }
+
+export type StorageConfig =
+  | { driver: 'local'; localDir: string }
+  | {
+      driver: 's3';
+      /** Omit for AWS; set for MinIO or another S3-compatible service. */
+      endpoint?: string;
+      region: string;
+      bucket: string;
+      accessKeyId: string;
+      secretAccessKey: string;
+    };
 
 export class ConfigError extends Error {
   constructor(readonly problems: string[]) {
@@ -83,6 +109,17 @@ export function loadAppConfig(env: Env): AppConfig {
     logLevel: e.LOG_LEVEL,
     db: { host: e.DB_HOST, port: e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
     jwtSecret: e.JWT_SECRET,
+    storage:
+      e.STORAGE_DRIVER === 's3'
+        ? {
+            driver: 's3',
+            endpoint: e.S3_ENDPOINT,
+            region: e.S3_REGION,
+            bucket: e.S3_BUCKET!,
+            accessKeyId: e.S3_ACCESS_KEY_ID!,
+            secretAccessKey: e.S3_SECRET_ACCESS_KEY!,
+          }
+        : { driver: 'local', localDir: e.STORAGE_LOCAL_DIR },
   };
 }
 
