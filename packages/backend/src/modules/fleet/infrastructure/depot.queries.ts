@@ -1,34 +1,5 @@
 import { scopeClause, type Scope } from '../../../shared/authz/scope';
-import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-
-/** A depot as GET /depots returns it (public id only). */
-export interface DepotView {
-  id: string;
-  name: string;
-  code: string | null;
-  location: string;
-}
-
-/** Live depots in the caller's scope, by name: the choices for depot filters and pickers. */
-export async function listDepots(db: Queryable, scope: Scope, page: Page): Promise<{ items: DepotView[]; total: number }> {
-  const clause = scopeClause(scope, 'd.id', 1);
-  const { limit, offset } = limitOffset(page);
-  const n = clause.params.length;
-  const count = await db.query<{ total: number }>(
-    `SELECT count(*)::int AS total FROM fleet.depots d WHERE d.is_active AND ${clause.sql}`,
-    clause.params,
-  );
-  const rows = await db.query<DepotView>(
-    `SELECT d.public_id AS id, d.name, d.code, d.location
-       FROM fleet.depots d
-      WHERE d.is_active AND ${clause.sql}
-      ORDER BY d.name, d.id
-      LIMIT $${n + 1} OFFSET $${n + 2}`,
-    [...clause.params, limit, offset],
-  );
-  return { items: rows.rows, total: count.rows[0].total };
-}
 
 /** A depot's public_id from its internal id, or null if there is no such depot. */
 export async function findDepotPublicId(db: Queryable, depotId: string): Promise<string | null> {
@@ -46,11 +17,16 @@ export async function depotPublicIds(db: Queryable, depotIds: readonly string[])
   return new Map(res.rows.map((r) => [r.id, r.public_id]));
 }
 
-/** A live depot's internal id from its public id, if the caller's scope includes it. */
+/**
+ * A live depot's internal id from its public id, if the caller's scope
+ * includes it. Share-locks the depot row: a vehicle or driver written into it
+ * in this transaction and a concurrent DELETE /depots wait for each other, so
+ * a depot can never be emptied-checked and filled at the same time.
+ */
 export async function resolveDepotInScope(db: Queryable, publicId: string, scope: Scope): Promise<string | null> {
   const clause = scopeClause(scope, 'd.id', 2);
   const res = await db.query<{ id: string }>(
-    `SELECT d.id FROM fleet.depots d WHERE d.public_id = $1 AND d.is_active AND ${clause.sql}`,
+    `SELECT d.id FROM fleet.depots d WHERE d.public_id = $1 AND d.is_active AND ${clause.sql} FOR SHARE OF d`,
     [publicId, ...clause.params],
   );
   return res.rows[0]?.id ?? null;

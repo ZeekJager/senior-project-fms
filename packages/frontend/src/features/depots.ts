@@ -9,12 +9,15 @@ export interface Depot {
   location: string
 }
 
-/** Depots in the caller's scope, for filters and forms. One page of 100 covers any real fleet. */
+/**
+ * Depots in the caller's scope (`in_scope=true`), for filters and forms: a
+ * depot admin picks only their own. One page of 100 covers any real fleet.
+ */
 export function useDepots() {
   const { api } = useAuth()
   return useQuery({
     queryKey: ['depots'],
-    queryFn: () => api.request<Depot[]>('/depots?page_size=100'),
+    queryFn: () => api.request<Depot[]>('/depots?in_scope=true&page_size=100'),
     staleTime: 5 * 60_000,
   })
 }

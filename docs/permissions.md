@@ -18,7 +18,7 @@ Generated from the role grants seeded in `packages/backend/migrations/001_core_i
 | `audit:read` | x | x |  |  |  |  |  | x | x |
 | `command:read` | x | x | x | x |  |  |  |  | x |
 | `depot:read` | x | x | x | x | x |  |  | x | x |
-| `depot:write` | x | x |  |  |  |  |  |  |  |
+| `depot:write` | x |  |  |  |  |  |  |  | x |
 | `document:delete` | x | x |  |  |  |  |  |  |  |
 | `document:read` | x | x | x | x | x | x |  | x |  |
 | `document:write` | x | x |  | x | x | x |  |  |  |

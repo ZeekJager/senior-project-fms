@@ -75,6 +75,15 @@ export const userDirectory = {
     return created;
   },
 
+  /** Active accounts whose home depot this is (internal id); a depot with any cannot be deleted. */
+  async countActiveInDepot(db: Queryable, depotId: string): Promise<number> {
+    const res = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM auth.users WHERE depot_id = $1 AND status = 'active'`,
+      [depotId],
+    );
+    return res.rows[0].n;
+  },
+
   /** Moves a user to a home depot, as one audited change in the caller's transaction. */
   async setDepot(client: PoolClient, ctx: MutationContext, userId: string, depotId: string): Promise<void> {
     await auditedMutation(client, ctx, 'auth.users', 'UPDATE', userId, { depot_id: depotId });

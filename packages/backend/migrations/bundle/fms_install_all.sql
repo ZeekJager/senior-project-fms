@@ -1774,3 +1774,22 @@ ALTER TABLE document.documents ADD COLUMN IF NOT EXISTS expires_on DATE;
 CREATE INDEX IF NOT EXISTS idx_document_expires_on
     ON document.documents(expires_on)
     WHERE deleted_at IS NULL AND expires_on IS NOT NULL;
+
+-- ===== 019_depot_management.sql =====
+ALTER TABLE fleet.depots ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE TRIGGER trg_fleet_depots_version
+    BEFORE UPDATE ON fleet.depots
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+UPDATE fleet.depots SET code = upper(btrim(code)) WHERE code IS NOT NULL AND code <> upper(btrim(code));
+
+DELETE FROM auth.role_permissions rp
+ USING auth.roles r, auth.permissions p
+ WHERE rp.role_id = r.id AND rp.permission_id = p.id
+   AND r.name = 'fleet_manager' AND p.code = 'depot:write';
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE r.name = 'fleet_owner' AND p.code = 'depot:write'
+ON CONFLICT DO NOTHING;
