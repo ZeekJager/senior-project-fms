@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { recordAuditEntry } from './audit-log';
 
 export type MutationAction = 'INSERT' | 'UPDATE' | 'DELETE';
 export type Row = Record<string, unknown>;
@@ -41,10 +42,10 @@ function softDeleteSql(tableName: string): string {
 // GET /audit-logs, and a hash is enough for an offline guessing attack.
 const REDACTED_COLUMNS = new Set(['password_hash', 'token_hash']);
 
-function forAudit(row: Row): string {
+function forAudit(row: Row): Row {
   const copy: Row = { ...row };
   for (const col of REDACTED_COLUMNS) if (col in copy) copy[col] = '[REDACTED]';
-  return JSON.stringify(copy);
+  return copy;
 }
 
 async function selectById(client: PoolClient, tableName: string, id: RecordId): Promise<Row | undefined> {
@@ -109,20 +110,15 @@ export async function auditedMutation(
 
   if (!newState) throw new Error(`${action} on ${tableName} returned no row`);
 
-  await client.query(
-    `INSERT INTO audit.audit_logs
-       (entity_type, entity_id, action, old_values, new_values, user_id, correlation_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [
-      tableName,
-      finalRecordId,
-      action,
-      oldState ? forAudit(oldState) : null,
-      forAudit(newState),
-      ctx.userId,
-      ctx.correlationId,
-    ],
-  );
+  await recordAuditEntry(client, {
+    action,
+    userId: ctx.userId,
+    entityType: tableName,
+    entityId: finalRecordId,
+    correlationId: ctx.correlationId,
+    oldValues: oldState ? forAudit(oldState) : null,
+    newValues: forAudit(newState),
+  });
 
   return newState;
 }

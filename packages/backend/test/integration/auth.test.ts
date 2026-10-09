@@ -5,7 +5,7 @@ import { createApp } from '../../src/app';
 import { config } from '../../src/config';
 import { pool } from '../../src/db';
 import { TokenService } from '../../src/modules/auth/application/token.service';
-import { createUser, type CreateUserOptions } from '../support/factories';
+import { createDepot, createUser, type CreateUserOptions } from '../support/factories';
 
 const app = createApp();
 const PASSWORD = 'Correct-Horse-7';
@@ -192,6 +192,20 @@ describe('POST /auth/login', () => {
 });
 
 describe('GET /auth/me', () => {
+  test("returns the home depot's public id, resolved by the fleet module, and null without a depot", async () => {
+    const depot = await createDepot();
+    const scoped = await signUp({ depot });
+    const unscoped = await signUp({ roles: ['admin'] });
+
+    const withDepot = await login(scoped.email as string);
+    const me = await request(app).get('/api/v1/auth/me').set('Cookie', cookieHeader({ access: withDepot.access }));
+    expect(me.body.data.user.depot_id).toBe(depot.public_id);
+    expect(withDepot.res.body.data.user.depot_id).toBe(depot.public_id);
+
+    const noDepot = await login(unscoped.email as string);
+    expect(noDepot.res.body.data.user.depot_id).toBeNull();
+  });
+
   test('returns the user, roles and permission codes', async () => {
     const user = await signUp({ roles: ['dispatcher', 'driver'] });
     const { access } = await login(user.email as string);

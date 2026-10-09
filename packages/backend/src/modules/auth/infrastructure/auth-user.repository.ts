@@ -24,9 +24,13 @@ export interface UserProfile {
   full_name: string;
   phone: string | null;
   status: UserStatus;
+  /** The home depot's public_id (resolved by the fleet module). */
   depot_id: string | null;
   last_login_at: Date | null;
 }
+
+/** A UserProfile as stored: the depot is still the internal fleet.depots id. */
+export type UserProfileRow = Omit<UserProfile, 'depot_id'> & { depotId: string | null };
 
 // Roles and permissions come only through active roles.
 const PRINCIPAL_SQL = `
@@ -59,12 +63,11 @@ export class AuthUserRepository {
     return res.rows[0] ?? null;
   }
 
-  async findProfile(db: Queryable, id: string): Promise<UserProfile | null> {
-    const res = await db.query<UserProfile>(
+  async findProfile(db: Queryable, id: string): Promise<UserProfileRow | null> {
+    const res = await db.query<UserProfileRow>(
       `SELECT u.public_id AS id, u.email, u.full_name, u.phone, u.status,
-              d.public_id AS depot_id, u.last_login_at
+              u.depot_id AS "depotId", u.last_login_at
          FROM auth.users u
-         LEFT JOIN fleet.depots d ON d.id = u.depot_id
         WHERE u.id = $1`,
       [id],
     );

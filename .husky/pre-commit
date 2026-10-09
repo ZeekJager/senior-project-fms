@@ -1,0 +1,3 @@
+# Lints the staged backend files, including the module boundary rules (FMS-12).
+# Bypassing it (git commit --no-verify) still fails backend-ci.
+npx lint-staged
