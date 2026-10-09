@@ -89,3 +89,22 @@ export async function createDriver(options: { depot: { id: string } } & Record<s
   });
   return { user, driver };
 }
+
+/**
+ * A trip for a vehicle and driver. Defaults to `assigned` with a schedule an
+ * hour from now, the state in which the vehicle counts as in use.
+ */
+export function createTrip(
+  options: { vehicle: { id: string }; driver: { id: string } } & Record<string, unknown>,
+): Promise<Row> {
+  const { vehicle, driver, ...overrides } = options;
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  return insert('trip.trips', {
+    vehicle_id: vehicle.id,
+    driver_id: driver.id,
+    status: 'assigned',
+    scheduled_start: start.toISOString(),
+    scheduled_end: new Date(start.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+    ...overrides,
+  });
+}

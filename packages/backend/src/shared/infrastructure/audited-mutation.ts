@@ -32,10 +32,13 @@ function assertColumns(keys: string[]): void {
 
 // Soft delete (DoD #6): every core table has is_active, except auth.users,
 // whose is_active is generated from status and cannot be written directly.
-function softDeleteSql(tableName: string): string {
+// `data` adds columns to set in the same statement (a vehicle's status
+// becomes 'retired'), so the retirement is one change and one audit row.
+function softDeleteSql(tableName: string, extraKeys: string[]): string {
+  const extra = extraKeys.map((k, i) => `, ${k} = $${i + 2}`).join('');
   return tableName === 'auth.users'
-    ? `UPDATE ${tableName} SET status = 'inactive' WHERE id = $1`
-    : `UPDATE ${tableName} SET is_active = FALSE WHERE id = $1`;
+    ? `UPDATE ${tableName} SET status = 'inactive'${extra} WHERE id = $1`
+    : `UPDATE ${tableName} SET is_active = FALSE${extra} WHERE id = $1`;
 }
 
 // Never copied into audit.audit_logs: the audit trail is readable through
@@ -56,7 +59,8 @@ async function selectById(client: PoolClient, tableName: string, id: RecordId): 
 /**
  * Performs one mutation and writes its audit.audit_logs row on the given
  * client, so both commit or roll back together with the caller's
- * transaction. DELETE is a soft delete.
+ * transaction. DELETE is a soft delete; its `data` is set in the same
+ * statement.
  */
 export async function auditedMutation(
   client: PoolClient,
@@ -82,7 +86,7 @@ export async function auditedMutation(
 
   switch (action) {
     case 'DELETE': {
-      await client.query(softDeleteSql(tableName), [recordId]);
+      await client.query(softDeleteSql(tableName, Object.keys(data)), [recordId, ...Object.values(data)]);
       newState = await selectById(client, tableName, recordId as RecordId);
       break;
     }

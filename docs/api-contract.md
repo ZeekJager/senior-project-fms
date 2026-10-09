@@ -199,14 +199,23 @@ The audit trail is read-only through the API. There is no create, update or dele
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /vehicles` | List/search vehicles | `vehicle:read` | `page,page_size,status,depot_id,maintenance_flag,search` -> `Vehicle[]` |
+| `GET /vehicles` | List/search vehicles | `vehicle:read` | `page,page_size,status,depot_id,maintenance_flag,search,sort_by,sort_order` -> `Vehicle[]` |
 | `POST /vehicles` | Create vehicle | `vehicle:write` | `VehicleCreate` -> `Vehicle` |
 | `GET /vehicles/{vehicle_id}` | Get vehicle | `vehicle:read` | `Vehicle` |
 | `PATCH /vehicles/{vehicle_id}` | Update vehicle | `vehicle:write` | `VehicleUpdate` -> `Vehicle` |
-| `DELETE /vehicles/{vehicle_id}` | Retire/remove vehicle | `vehicle:delete` | Soft delete/retire; `409 CONFLICT_VEHICLE_IN_USE` if in use |
+| `DELETE /vehicles/{vehicle_id}` | Retire/remove vehicle | `vehicle:delete` | `204`. Soft retire; `409 CONFLICT_VEHICLE_IN_USE` if in use |
 | `GET /vehicles/{vehicle_id}/status` | Operational status | `vehicle:read` | `VehicleStatus` |
 
 `VehicleCreate` requires `fuel_efficiency_ml_per_km` (integer ml/km) unless `fuel_type` is `electric`; it is the expected consumption used by fuel reconciliation.
+
+Vehicle rules (FMS-15):
+
+- **Writable fields** (`VehicleCreate`; `VehicleUpdate` is any non-empty subset): `registration_number`, `vin`, `make`, `model`, `year`, `vehicle_type`, `fuel_type`, `fuel_efficiency_ml_per_km`, `depot_id`, `odometer_km`. Required on create: `registration_number`, `make`, `model`, `vehicle_type`, `fuel_type`, `depot_id`, and `fuel_efficiency_ml_per_km` unless electric. `status`, `maintenance_flag` and `health_score` are set by their own workflows (vehicle status FMS-76, maintenance, the ML service); sending them, or any other field, is `400 VALIDATION_FAILED` with `reason: "not_writable"`.
+- **Values:** `registration_number` is stored trimmed, upper case, single-spaced, so `aa  3-12345` and `AA 3-12345` are the same plate (`409 CONFLICT_DUPLICATE_PLATE`). `vin` is 17 characters (ISO 3779), unique (`409 CONFLICT_DUPLICATE`, `field: "vin"`). A fractional `fuel_efficiency_ml_per_km` is `400 VALIDATION_FLOAT_IN_MONEY_PATH`. `odometer_km` has at most one decimal and never goes down: a lower reading is `409 CONFLICT_ODOMETER_REGRESSION`. The fuel-efficiency rule is checked on the vehicle as it would be after a `PATCH`.
+- **Depot scope:** reads and writes cover the caller's depots only (`depotScope`). A vehicle outside it is `404`; a `depot_id` outside it, on create or `PATCH`, is `400 VALIDATION_FAILED` with `reason: "references_missing_record"`, the same as an unknown depot.
+- **Retirement:** `DELETE` sets `status = retired` and `is_active = false` (one audit row) and returns `204`. It is refused with `409 CONFLICT_VEHICLE_IN_USE` while the vehicle is on an `assigned` or `en_route` trip or has an active driver assignment. Retiring a retired vehicle returns `204` and changes nothing. A retired vehicle is left out of `GET /vehicles` unless `status=retired` is asked for, can still be read by id, and cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`). Its plate stays taken.
+- **List:** `page` from 1, `page_size` default 25, capped at 100. `search` matches registration number, VIN, make or model (case-insensitive, wildcards literal). `sort_by`: `registration_number` (default), `make`, `model`, `year`, `odometer_km`, `health_score`, `created_at`, `updated_at`; `sort_order` `asc` (default) or `desc`.
+- **Events:** `VehicleRegistered`, `VehicleUpdated` (with `changed_fields`) and `VehicleRetired`, each with `vehicle_id` and `depot_id` (public ids).
 
 ### 6.3 Drivers, assignments and attendance
 
