@@ -38,41 +38,7 @@ export interface Vehicle {
   updated_at: string
 }
 
-export interface Depot {
-  id: string
-  name: string
-  code: string | null
-  location: string
-}
-
-export const DOCUMENT_TYPES = [
-  'registration',
-  'licence',
-  'insurance',
-  'maintenance_invoice',
-  'inspection_evidence',
-  'incident_photo',
-  'dvir_attachment',
-  'fuel_receipt',
-  'other',
-] as const
-
-export type DocumentType = (typeof DOCUMENT_TYPES)[number]
-
-export interface VehicleDocument {
-  id: string
-  owner_type: 'vehicle' | 'driver'
-  owner_id: string
-  document_type: DocumentType
-  original_filename: string | null
-  content_type: 'image/jpeg' | 'image/png' | 'application/pdf'
-  size_bytes: number
-  sha256: string
-  expires_on: string | null
-  retain_until: string | null
-  uploaded_by: string
-  uploaded_at: string
-}
+export type { Depot } from '@/features/depots'
 
 export const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
   car: 'Car',
@@ -91,17 +57,5 @@ export const FUEL_TYPE_LABELS: Record<FuelType, string> = {
   electric: 'Electric',
   cng: 'CNG',
   lpg: 'LPG',
-  other: 'Other',
-}
-
-export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
-  registration: 'Registration',
-  licence: 'Licence',
-  insurance: 'Insurance',
-  maintenance_invoice: 'Maintenance invoice',
-  inspection_evidence: 'Inspection evidence',
-  incident_photo: 'Incident photo',
-  dvir_attachment: 'DVIR attachment',
-  fuel_receipt: 'Fuel receipt',
   other: 'Other',
 }

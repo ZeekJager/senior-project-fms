@@ -754,3 +754,118 @@ describe('POST /drivers/import (enhancement 10)', () => {
     expect(again.body).toEqual(first.body);
   });
 });
+
+describe('POST /drivers with a new account (FMS-19)', () => {
+  const newAccount = (overrides: Record<string, unknown> = {}) => ({
+    full_name: 'Tigist Haile',
+    email: `tigist.${randomUUID().slice(0, 8)}@fleet.test`,
+    phone: '+251 911 000111',
+    ...overrides,
+  });
+
+  test('creates the account (driver role, home depot, no password) and the driver in one transaction', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const account = newAccount({ email: '  Tigist.NEW@Fleet.Test ' });
+
+    const res = await api.post('/drivers', { account, license_number: licence(), license_expiry: '2031-01-31', depot_id: depot.public_id }, cookie);
+
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({
+      full_name: 'Tigist Haile',
+      email: 'tigist.new@fleet.test',
+      phone: '+251 911 000111',
+      depot_id: depot.public_id,
+      status: 'active',
+      current_trip: null,
+    });
+    expect(await auditRows(res)).toEqual([
+      { action: 'INSERT', entity_type: 'auth.users' },
+      { action: 'INSERT', entity_type: 'fleet.drivers' },
+    ]);
+    const roles = await pool.query(
+      `SELECT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id JOIN auth.users u ON u.id = ur.user_id WHERE u.public_id = $1`,
+      [res.body.data.user_id],
+    );
+    expect(roles.rows).toEqual([{ name: 'driver' }]);
+    // No password is set, so nothing signs in: not an empty one, not the marker, not a guess.
+    for (const password of ['', '!unset', 'anything']) {
+      const login = await request(app).post('/api/v1/auth/login').send({ email: 'tigist.new@fleet.test', password });
+      expect(login.status).toBeGreaterThanOrEqual(400);
+      expect(login.status).toBeLessThan(500);
+    }
+    // The new driver is listed: fleet's copy of the account is filled.
+    expect(ids(await api.get(`/drivers?depot_id=${depot.public_id}`, cookie))).toContain(res.body.data.id);
+  });
+
+  test('a used email is 409 on account.email; a used licence is 409 CONFLICT_DUPLICATE_LICENSE and leaves no account', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const existing = await createUser({ roles: ['dispatcher'], depot });
+
+    const email = await api.post(
+      '/drivers',
+      { account: newAccount({ email: existing.email }), license_number: licence(), license_expiry: '2031-01-31', depot_id: depot.public_id },
+      cookie,
+    );
+    expect(email.status).toBe(409);
+    expect(email.body.error).toMatchObject({ code: 'CONFLICT_DUPLICATE', details: [{ field: 'account.email', reason: 'already_exists' }] });
+
+    const taken = licence();
+    const first = await api.post('/drivers', { account: newAccount(), license_number: taken, license_expiry: '2031-01-31', depot_id: depot.public_id }, cookie);
+    expect(first.status).toBe(201);
+    const second = newAccount();
+    const dup = await api.post(
+      '/drivers',
+      { account: second, license_number: taken.toLowerCase(), license_expiry: '2031-01-31', depot_id: depot.public_id },
+      cookie,
+    );
+    expect(dup.status).toBe(409);
+    expect(dup.body.error.code).toBe('CONFLICT_DUPLICATE_LICENSE');
+    expect((await pool.query('SELECT 1 FROM auth.users WHERE email = $1', [second.email])).rowCount).toBe(0);
+  });
+
+  test('needs exactly one of user_id and account, and a depot in scope', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const user = await createUser({ roles: ['driver'] });
+    const base = { license_number: licence(), license_expiry: '2031-01-31', depot_id: depot.public_id };
+
+    const both = await api.post('/drivers', { ...base, user_id: user.public_id, account: newAccount() }, cookie);
+    expect(both.status).toBe(400);
+    expect(both.body.error.details).toEqual([expect.objectContaining({ field: 'user_id', reason: 'user_id_or_account' })]);
+    expect((await api.post('/drivers', base, cookie)).status).toBe(400);
+    expect((await api.post('/drivers', { ...base, account: newAccount({ email: 'not-an-email' }) }, cookie)).status).toBe(400);
+
+    const other = await createDepot();
+    const outside = await api.post('/drivers', { ...base, account: newAccount(), depot_id: other.public_id }, cookie);
+    expect(outside.status).toBe(400);
+    expect(outside.body.error.details).toEqual([{ field: 'depot_id', reason: 'references_missing_record' }]);
+  });
+
+  test('a dispatcher (driver:read only) cannot add a driver', async () => {
+    const depot = await createDepot();
+    const res = await api.post(
+      '/drivers',
+      { account: newAccount(), license_number: licence(), license_expiry: '2031-01-31', depot_id: depot.public_id },
+      await signIn(['dispatcher'], depot),
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('current_trip on drivers', () => {
+  test('a driver on an assigned or en-route trip shows it; others show null', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['dispatcher'], depot);
+    const { driver: busy } = await createDriver({ depot });
+    const { driver: idle } = await createDriver({ depot });
+    const vehicle = await createVehicle({ depot });
+    const trip = await createTrip({ vehicle, driver: busy, origin: 'Adama', destination: 'Dire Dawa' });
+
+    const list = await api.get(`/drivers?depot_id=${depot.public_id}`, cookie);
+    const byId = new Map((list.body.data as { id: string; current_trip: unknown }[]).map((d) => [d.id, d.current_trip]));
+    expect(byId.get(busy.public_id as string)).toMatchObject({ id: trip.public_id, status: 'assigned', origin: 'Adama', destination: 'Dire Dawa' });
+    expect(byId.get(idle.public_id as string)).toBeNull();
+  });
+});

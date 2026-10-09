@@ -103,6 +103,13 @@ export class DriverRepository extends Repository {
     return res.rows[0];
   }
 
+  /** Drivers by public id, for a page of owners (documents); unknown ids are left out. */
+  async findByPublicIds(db: Queryable, publicIds: readonly string[]): Promise<DriverRow[]> {
+    if (publicIds.length === 0) return [];
+    const res = await db.query<DriverRow>(`${ROW_SQL} WHERE d.public_id = ANY($1::uuid[])`, [publicIds]);
+    return res.rows;
+  }
+
   /** The driver profile of a user account (internal user id), if any. */
   async findByUserId(db: Queryable, userId: string): Promise<DriverRow | null> {
     const res = await db.query<DriverRow>(`${ROW_SQL} WHERE d.user_id = $1`, [userId]);

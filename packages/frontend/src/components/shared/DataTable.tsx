@@ -107,7 +107,7 @@ export function DataTable<T>({
                 ? Array.from({ length: placeholderCount }, (_, i) => (
                     <tr key={`skeleton-${i}`} className={ROW} data-testid="skeleton-row">
                       {columns.map((column) => (
-                        <td key={column.key} className={cn('px-4', column.hideBelow && HIDE_BELOW[column.hideBelow], column.width)}>
+                        <td key={column.key} className={cn('px-3', column.hideBelow && HIDE_BELOW[column.hideBelow], column.width)}>
                           {column.skeleton ?? <Skeleton className={cn('h-3.5', i % 3 === 0 ? 'w-3/4' : i % 3 === 1 ? 'w-1/2' : 'w-2/3')} />}
                         </td>
                       ))}
@@ -119,7 +119,7 @@ export function DataTable<T>({
                         <td
                           key={column.key}
                           className={cn(
-                            'px-4 text-sm text-ink',
+                            'px-3 text-sm text-ink',
                             column.align === 'right' && 'text-right',
                             column.hideBelow && HIDE_BELOW[column.hideBelow],
                           )}
@@ -143,7 +143,7 @@ export function DataTable<T>({
 function HeaderCell<T>({ column, sort }: { column: Column<T>; sort?: SortState }) {
   const sorted = sort && column.sortKey === sort.key ? sort.order : null
   const classes = cn(
-    'h-11 px-4 text-xs font-medium uppercase tracking-wide text-ink-subtle',
+    'h-11 px-3 text-xs font-medium uppercase tracking-wide text-ink-subtle',
     column.align === 'right' && 'text-right',
     column.hideBelow && HIDE_BELOW[column.hideBelow],
     column.width,

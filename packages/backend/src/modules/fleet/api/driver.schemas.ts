@@ -43,8 +43,25 @@ export const driverFields = {
 
 const writable = { ...driverFields, depot_id: z.uuid() };
 
-/** POST /drivers: an existing user account with the driver role, its licence, and its home depot. */
-export const driverCreateBody = z.strictObject({ user_id: z.uuid(), ...writable });
+/** A new account for POST /drivers: created with the driver role and no password (FMS-19). */
+const newAccount = z.strictObject({
+  full_name: z.string().trim().min(1).max(255),
+  email: z.string().trim().toLowerCase().pipe(z.email().max(255)),
+  phone: phone.nullable().optional(),
+});
+
+/**
+ * POST /drivers: the licence and home depot, plus the person: an existing
+ * user account with the driver role (`user_id`), or a new one (`account`).
+ * Exactly one of the two.
+ */
+export const driverCreateBody = z
+  .strictObject({ user_id: z.uuid().optional(), account: newAccount.optional(), ...writable })
+  .refine((v) => (v.user_id === undefined) !== (v.account === undefined), {
+    message: 'Send user_id for an existing account or account for a new one, not both.',
+    path: ['user_id'],
+    params: { reason: 'user_id_or_account' },
+  });
 
 /** PATCH /drivers/{id}: at least one writable field. */
 export const driverUpdateBody = z

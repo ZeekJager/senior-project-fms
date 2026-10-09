@@ -1,5 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
-import type { VehicleType } from './vehicle';
+import type { VehicleTrip, VehicleType } from './vehicle';
 
 /**
  * European driving licence categories (EU Directive 2006/126/EC), in the
@@ -94,6 +94,8 @@ export interface DriverView {
   hire_date: string | null;
   emergency_phone: string | null;
   status: 'active' | 'retired';
+  /** The assigned or en-route trip, if any (en route first). */
+  current_trip: VehicleTrip | null;
   /** Bumped on every change, a depot move included; also the ETag. Send it back in `If-Match` to refuse a stale PATCH. */
   version: number;
   created_at: Date;
@@ -132,6 +134,10 @@ export const driverRetired = () => new AppError(409, 'CONFLICT_INVALID_STATE_TRA
 /** The account in `user_id` does not exist, is outside the caller's depots, is not active, or lacks the driver role. */
 export const unknownDriverAccount = (reason: 'references_missing_record' | 'account_not_active' | 'not_a_driver') =>
   new AppError(400, 'VALIDATION_FAILED', 'The user account cannot be registered as a driver.', [{ field: 'user_id', reason }]);
+
+/** POST /drivers with `account`: the email already belongs to an account. */
+export const accountEmailTaken = () =>
+  new AppError(409, 'CONFLICT_DUPLICATE', 'An account with this email already exists.', [{ field: 'account.email', reason: 'already_exists' }]);
 
 export const driverDepotNotFound = () =>
   new AppError(400, 'VALIDATION_FAILED', 'The depot does not exist.', [{ field: 'depot_id', reason: 'references_missing_record' }]);

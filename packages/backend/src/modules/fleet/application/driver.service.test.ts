@@ -93,13 +93,17 @@ function harness(options: HarnessOptions = {}) {
       findByIds: async () => [acct],
       findByEmail: async () => acct,
       setDepot: async (_c, _ctx, userId, depotId) => void calls.push(`setDepot:${userId}:${depotId}`),
+      createDriverAccount: async () => {
+        calls.push('createAccount');
+        return acct;
+      },
     },
     depots: {
       resolveInScope: async (_db, publicId) => (publicId === DEPOT_A ? '5' : null),
       publicIds: async () => new Map([['5', DEPOT_A]]),
       publicIdByCode: async () => DEPOT_A,
     },
-    trips: { driverHasActiveTrip: async () => options.activeTrip ?? false },
+    trips: { driverHasActiveTrip: async () => options.activeTrip ?? false, activeTripsForDrivers: async () => new Map() },
     events,
   };
   return { service: new DriverService(deps), calls, published };

@@ -5,8 +5,9 @@ import { describe, expect, it } from 'vitest'
 import { createApiClient, type ApiClient } from '@/lib/api/client'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
-import { today } from './documents'
-import type { Vehicle, VehicleDocument } from './types'
+import { today } from '@/features/documents/expiry'
+import type { OwnedDocument } from '@/features/documents/types'
+import type { Vehicle } from './types'
 
 const DEPOT_A = '11111111-1111-4111-8111-111111111111'
 const DEPOT_B = '22222222-2222-4222-8222-222222222222'
@@ -49,7 +50,7 @@ function plusDays(days: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-function doc(ownerId: string, expiresOn: string | null, overrides: Partial<VehicleDocument> = {}): VehicleDocument {
+function doc(ownerId: string, expiresOn: string | null, overrides: Partial<OwnedDocument> = {}): OwnedDocument {
   seq += 1
   return {
     id: `d0000000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
@@ -69,7 +70,7 @@ function doc(ownerId: string, expiresOn: string | null, overrides: Partial<Vehic
 }
 
 /** A fake API over `fleet`: filters, paging and counts like GET /vehicles; records every list query. */
-function serveFleet(fleet: Vehicle[], documents: VehicleDocument[] = []) {
+function serveFleet(fleet: Vehicle[], documents: OwnedDocument[] = []) {
   const queries: URLSearchParams[] = []
   server.use(
     http.get('/api/v1/vehicles', ({ request }) => {

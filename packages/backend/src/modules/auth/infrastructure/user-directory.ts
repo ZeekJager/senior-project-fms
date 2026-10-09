@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { auditedMutation, type MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { UserStatus } from '../domain/auth-policy';
+import { UNSET_HASH } from './password-hasher';
 
 /** What other modules may know about a user account. Internal ids for joins; `publicId` for responses. */
 export interface UserAccount {
@@ -45,6 +46,33 @@ export const userDirectory = {
     if (ids.length === 0) return [];
     const res = await db.query<UserAccount>(`${ACCOUNT_SQL} WHERE u.id = ANY($1::bigint[]) GROUP BY u.id`, [ids]);
     return res.rows;
+  },
+
+  /**
+   * A new account with the driver role in a home depot, created without a
+   * password (it cannot sign in until one is set). One audited insert in the
+   * caller's transaction. The email must be free (the caller checks first;
+   * the unique index is the backstop).
+   */
+  async createDriverAccount(
+    client: PoolClient,
+    ctx: MutationContext,
+    account: { email: string; fullName: string; phone: string | null; depotId: string },
+  ): Promise<UserAccount> {
+    const row = await auditedMutation(client, ctx, 'auth.users', 'INSERT', null, {
+      email: account.email,
+      password_hash: UNSET_HASH,
+      full_name: account.fullName,
+      phone: account.phone,
+      depot_id: account.depotId,
+    });
+    await client.query(
+      `INSERT INTO auth.user_roles (user_id, role_id, assigned_by)
+       SELECT $1, id, $2 FROM auth.roles WHERE name = 'driver'`,
+      [row.id, ctx.userId],
+    );
+    const [created] = await userDirectory.findByIds(client, [row.id as string]);
+    return created;
   },
 
   /** Moves a user to a home depot, as one audited change in the caller's transaction. */

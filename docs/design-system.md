@@ -66,8 +66,11 @@ focus only). Never remove an outline without it.
 | `FilterSelect` | The filter-bar pill: label, value, an animated listbox. Arrow keys, Home/End, Enter/Space, Escape. Tinted while a filter is applied |
 | `Dialog`, `Drawer` | Portal, focus trap, Escape and backdrop close, scroll lock, focus returned on close. Drawers are floating sheets inset 8px from the edge; use them for forms and detail instead of new pages |
 | `Card`, `Badge`, `Skeleton`, `Spinner` | Surfaces; tinted pills with a dot or icon; shimmering placeholders the size of what they replace |
+| `StatCard`, `StatShare` (`components/shared`) | A clickable figure with an icon and a share bar; pressed while its filter applies to the table below (vehicles, drivers) |
 | `ToastProvider`, `useToast` | Confirmations after an action ("Vehicle registered"). Errors belong next to what failed, not in a toast |
 | `AppShell` (`components/layout`) | Frosted sidebar with the screens the user may open (from `router/routes.tsx`, filtered by permission), a top bar and slide-in menu below 1024px, a skip link, and an `ErrorBoundary` around each screen |
+
+Shared by several screens: `features/documents` (the documents drawer, expiry rules, document hooks) and `features/depots` (`useDepots`).
 
 ## A screen, step by step
 

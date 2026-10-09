@@ -6,6 +6,18 @@ import { hash, verify } from '@node-rs/argon2';
 // cannot silently change them. Existing hashes carry their own parameters.
 const OPTIONS = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
 
+/**
+ * Stored instead of a hash for an account created without a password (a
+ * driver registered by a depot admin, FMS-19). No password matches it; the
+ * account can sign in once a password is set (user administration, later).
+ */
+export const UNSET_HASH = '!unset';
+
+/** Whether a stored value is a real hash that a password could match. */
+export function hasUsablePassword(passwordHash: string): boolean {
+  return passwordHash.startsWith('$argon2');
+}
+
 export function hashPassword(password: string): Promise<string> {
   return hash(password, OPTIONS);
 }

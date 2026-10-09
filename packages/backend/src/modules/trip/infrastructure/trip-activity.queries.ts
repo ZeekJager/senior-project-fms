@@ -43,15 +43,24 @@ export interface ActiveTrip {
  * vehicle id: a trip en route before an assigned one, then the earliest
  * scheduled. Vehicles without an active trip are absent from the map.
  */
-export async function activeTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ActiveTrip>> {
-  if (vehicleIds.length === 0) return new Map();
-  const res = await db.query<ActiveTrip & { vehicle_id: string }>(
-    `SELECT DISTINCT ON (t.vehicle_id)
-            t.vehicle_id, t.public_id AS id, t.status, t.origin, t.destination, t.scheduled_start
+export function activeTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ActiveTrip>> {
+  return activeTripsBy(db, 'vehicle_id', vehicleIds);
+}
+
+/** The same for drivers (internal fleet.drivers ids). */
+export function activeTripsForDrivers(db: Queryable, driverIds: readonly string[]): Promise<Map<string, ActiveTrip>> {
+  return activeTripsBy(db, 'driver_id', driverIds);
+}
+
+async function activeTripsBy(db: Queryable, column: 'vehicle_id' | 'driver_id', ids: readonly string[]): Promise<Map<string, ActiveTrip>> {
+  if (ids.length === 0) return new Map();
+  const res = await db.query<ActiveTrip & { owner_id: string }>(
+    `SELECT DISTINCT ON (t.${column})
+            t.${column} AS owner_id, t.public_id AS id, t.status, t.origin, t.destination, t.scheduled_start
        FROM trip.trips t
-      WHERE t.vehicle_id = ANY($1::bigint[]) AND t.status = ANY($2::trip.trip_status[])
-      ORDER BY t.vehicle_id, (t.status = 'en_route') DESC, t.scheduled_start ASC NULLS LAST, t.id`,
-    [vehicleIds, ACTIVE_TRIP_STATUSES],
+      WHERE t.${column} = ANY($1::bigint[]) AND t.status = ANY($2::trip.trip_status[])
+      ORDER BY t.${column}, (t.status = 'en_route') DESC, t.scheduled_start ASC NULLS LAST, t.id`,
+    [ids, ACTIVE_TRIP_STATUSES],
   );
-  return new Map(res.rows.map(({ vehicle_id, ...trip }) => [vehicle_id, trip]));
+  return new Map(res.rows.map(({ owner_id, ...trip }) => [owner_id, trip]));
 }
