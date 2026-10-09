@@ -87,7 +87,22 @@ export async function createDriver(options: { depot: { id: string } } & Record<s
     license_expiry: '2030-12-31',
     ...overrides,
   });
+  await copyDriverAccount(user.id);
   return { user, driver };
+}
+
+/**
+ * Fills fleet.driver_accounts (fleet's copy of the account fields the driver
+ * list filters on) for a driver created directly in SQL, as the API does.
+ */
+export async function copyDriverAccount(userId: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO fleet.driver_accounts (user_id, full_name, email, depot_id, account_status)
+     SELECT id, full_name, email, depot_id, status FROM auth.users WHERE id = $1
+     ON CONFLICT (user_id) DO UPDATE SET full_name = EXCLUDED.full_name, email = EXCLUDED.email,
+       depot_id = EXCLUDED.depot_id, account_status = EXCLUDED.account_status`,
+    [userId],
+  );
 }
 
 /**

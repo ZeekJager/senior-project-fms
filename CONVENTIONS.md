@@ -84,7 +84,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | Schema | Owning module | Tables |
 |---|---|---|
 | `auth` | auth | users, roles, permissions, role_permissions, user_roles, refresh_sessions |
-| `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports |
+| `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017) |
 | `trip` | trip | routes, trips, trip_stops |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
 | `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions, inventory_parts, inventory_movements |
@@ -142,7 +142,7 @@ Modules react to each other through events. Status: until FMS-73 (Sprint 3) brin
 - Every endpoint is under **`/api/v1/`**. A breaking change gets `/api/v2/`; additive changes stay in v1.
 - Success body `{ data, meta: { request_id } }`; errors as above. Field names are `snake_case`, enum values lowercase `snake_case` exactly as stored (`en_route`), timestamps ISO 8601 UTC, dates `YYYY-MM-DD`.
 - Cookie-based sessions: tokens are `HttpOnly; Secure; SameSite=Strict` cookies and never appear in a response body or `localStorage` (`docs/auth.md`).
-- Endpoints marked `Idempotency-Key` in the contract must honour it.
+- Endpoints marked `Idempotency-Key` in the contract must honour it: add `idempotent()` (`src/shared/http/idempotency.ts`) after `authorize(...)`. It stores the first successful response and replays it to retries (api-contract §19).
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 
 ## SQL

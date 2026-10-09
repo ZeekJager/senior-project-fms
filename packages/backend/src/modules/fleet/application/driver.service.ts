@@ -1,6 +1,8 @@
 import type { PoolClient } from 'pg';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
 import { createEvent, deterministicEventId } from '../../../shared/events/domain-event';
+import { AppError, validationFailed } from '../../../shared/errors/app-error';
+import { toAppError } from '../../../shared/errors/to-app-error';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -25,6 +27,9 @@ import type { VehicleType } from '../domain/vehicle';
 import type { DriverListFilter, DriverRepository, DriverRow, DriverSortKey, DriverWrite } from '../infrastructure/driver.repository';
 import type { Caller } from './caller';
 
+/** Accounts re-read from the auth module per query when re-syncing. */
+const SYNC_BATCH = 500;
+
 /** Fields of POST /drivers, after validation and normalization. */
 export interface DriverCreate {
   /** The user account's public id. */
@@ -39,6 +44,26 @@ export interface DriverCreate {
 }
 
 export type DriverUpdate = Partial<Omit<DriverCreate, 'user_id'>>;
+
+/** One row of a CSV import, its fields already validated (see api/driver-import.ts). */
+export interface DriverImportRow {
+  /** Spreadsheet row number (the header is row 1). */
+  row: number;
+  /** The driver's account, by email. */
+  email: string;
+  depot: { code: string } | { id: string };
+  licence: Omit<DriverCreate, 'user_id' | 'depot_id'>;
+}
+
+/** A problem with an import row, reported as `rows.<row>.<field>`. */
+export interface ImportProblem {
+  row: number;
+  field?: string;
+  reason: string;
+}
+
+/** Thrown inside the import transaction to roll a dry run back. */
+class DryRunDone extends Error {}
 
 export interface DriverListQuery {
   page: number;
@@ -69,18 +94,25 @@ export interface DriverServiceDeps {
     | 'retire'
     | 'touch'
   >;
+  /** fleet.driver_accounts, fleet's copy of the account fields drivers are listed by. */
+  accounts: {
+    upsert(db: Queryable, accounts: readonly UserAccount[]): Promise<void>;
+    driverUserIds(db: Queryable): Promise<string[]>;
+    isDriver(db: Queryable, userId: string): Promise<boolean>;
+  };
   /** A vehicle's type, for licence-class checks. */
   vehicles: { typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> };
   /** The auth module's user directory (through its index.ts). */
   users: {
     findByPublicId(db: Queryable, publicId: string): Promise<UserAccount | null>;
+    findByEmail(db: Queryable, email: string): Promise<UserAccount | null>;
     findByIds(db: Queryable, ids: readonly string[]): Promise<UserAccount[]>;
-    idsMatching(db: Queryable, filter: { depotIds: readonly string[] | null; search?: string }): Promise<string[]>;
     setDepot(client: PoolClient, ctx: MutationContext, userId: string, depotId: string): Promise<void>;
   };
   depots: {
     resolveInScope(db: Queryable, publicId: string, scope: Scope): Promise<string | null>;
     publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>>;
+    publicIdByCode(db: Queryable, code: string): Promise<string | null>;
   };
   /** The trip module's answer: is the driver on an assigned or en-route trip? */
   trips: { driverHasActiveTrip(db: Queryable, driverId: string): Promise<boolean> };
@@ -96,35 +128,53 @@ export class DriverService {
   constructor(private readonly deps: DriverServiceDeps) {}
 
   async list(caller: Caller, query: DriverListQuery): Promise<{ items: DriverView[]; total: number }> {
-    const { drivers, users, depots } = this.deps;
+    const { drivers, depots } = this.deps;
     return drivers.inTransaction(async (client) => {
       const scope = depotScope(caller.user);
-
-      // The depots to look in: the requested one if the caller may see it, else the caller's scope.
-      let depotIds: string[] | null;
-      if (query.depot_id) {
-        const id = await depots.resolveInScope(client, query.depot_id, scope);
-        depotIds = id ? [id] : [];
-      } else {
-        depotIds = scope.kind === 'all' ? null : scope.kind === 'depot' ? [scope.depotId] : [];
-      }
-      if (depotIds?.length === 0) return { items: [], total: 0 };
-
       const filter: DriverListFilter = {
         page: query.page,
         page_size: query.page_size,
-        userIds: depotIds === null ? null : await users.idsMatching(client, { depotIds }),
+        scope,
+        search: query.search,
         status: query.status,
         licenseExpiringBefore: query.license_expiring_before,
         licenseStatus: query.license_status,
         sort_by: query.sort_by,
         sort_order: query.sort_order,
       };
-      if (query.search) {
-        filter.search = { term: query.search, userIds: await users.idsMatching(client, { depotIds, search: query.search }) };
+      if (query.depot_id) {
+        // A depot the caller may not see filters to nothing, like an unknown one.
+        const depotId = await depots.resolveInScope(client, query.depot_id, scope);
+        if (!depotId) return { items: [], total: 0 };
+        filter.depotId = depotId;
       }
       const { rows, total } = await drivers.list(client, filter);
       return { items: await this.views(client, rows), total };
+    });
+  }
+
+  /**
+   * Refreshes fleet's copy of drivers' account fields (fleet.driver_accounts)
+   * from the auth module: the given users, or every driver. Run daily, it
+   * repairs a copy that missed an account change.
+   */
+  async syncAccounts(userIds?: readonly string[]): Promise<number> {
+    const { drivers, users, accounts } = this.deps;
+    return drivers.inTransaction(async (client) => {
+      const ids = userIds ?? (await accounts.driverUserIds(client));
+      for (let i = 0; i < ids.length; i += SYNC_BATCH) {
+        await accounts.upsert(client, await users.findByIds(client, ids.slice(i, i + SYNC_BATCH)));
+      }
+      return ids.length;
+    });
+  }
+
+  /** An account changed in another module (UserAccountChanged): refresh the copy if the user is a driver. */
+  async onAccountChanged(userPublicId: string): Promise<void> {
+    const { drivers, users, accounts } = this.deps;
+    await drivers.inTransaction(async (client) => {
+      const account = await users.findByPublicId(client, userPublicId);
+      if (account && (await accounts.isDriver(client, account.id))) await accounts.upsert(client, [account]);
     });
   }
 
@@ -151,27 +201,103 @@ export class DriverService {
   }
 
   async create(caller: Caller, input: DriverCreate): Promise<DriverView> {
-    const { drivers, users } = this.deps;
-    const scope = depotScope(caller.user);
-
-    const view = await drivers.inTransaction(async (client) => {
-      const account = await users.findByPublicId(client, input.user_id);
-      // An account in another depot looks like no account at all.
-      if (!account || (account.depotId !== null && !depotInScope(scope, account.depotId))) {
-        throw unknownDriverAccount('references_missing_record');
-      }
-      if (account.status !== 'active') throw unknownDriverAccount('account_not_active');
-      if (!account.roles.includes('driver')) throw unknownDriverAccount('not_a_driver');
-
-      const depotId = await this.depotInScope(client, input.depot_id, scope);
-      const ctx = mutationContext(caller);
-      const row = await drivers.insert(ctx, { ...toColumns(input), user_id: account.id }, client);
-      if (account.depotId !== depotId) await users.setDepot(client, ctx, account.id, depotId);
-      return (await this.views(client, [await drivers.findById(client, row.id as string)]))[0];
-    });
-
+    const view = await this.deps.drivers.inTransaction((client) => this.register(client, caller, input));
     await this.publish(caller, DRIVER_EVENTS.registered, view);
     return view;
+  }
+
+  /**
+   * POST /drivers/import: registers every row, or none. Each row goes through
+   * the same rules as POST /drivers, in a savepoint, so one bad row does not
+   * stop the others being checked; rows are also checked against each other
+   * (a licence or account twice in the file). Any problem, here or from
+   * parsing (`problems`), rolls the whole import back and is reported per row
+   * and column. `dryRun` checks everything and saves nothing.
+   */
+  async importDrivers(
+    caller: Caller,
+    rows: readonly DriverImportRow[],
+    problems: readonly ImportProblem[],
+    dryRun: boolean,
+  ): Promise<{ created: { row: number; id: string }[] } | { valid: number }> {
+    const { drivers, users, depots } = this.deps;
+    const found: ImportProblem[] = [...problems];
+    let views: { row: number; view: DriverView }[] = [];
+
+    try {
+      views = await drivers.inTransaction(async (client) => {
+        const created: { row: number; view: DriverView }[] = [];
+        const firstLicence = new Map<string, number>();
+        const firstEmail = new Map<string, number>();
+
+        for (const r of rows) {
+          const licenceRow = firstLicence.get(r.licence.license_number);
+          const emailRow = firstEmail.get(r.email);
+          if (licenceRow !== undefined) found.push({ row: r.row, field: 'license_number', reason: `duplicate_of_row_${licenceRow}` });
+          if (emailRow !== undefined) found.push({ row: r.row, field: 'email', reason: `duplicate_of_row_${emailRow}` });
+          if (licenceRow === undefined) firstLicence.set(r.licence.license_number, r.row);
+          if (emailRow === undefined) firstEmail.set(r.email, r.row);
+          if (licenceRow !== undefined || emailRow !== undefined) continue;
+
+          const account = await users.findByEmail(client, r.email);
+          if (!account) {
+            found.push({ row: r.row, field: 'email', reason: 'references_missing_record' });
+            continue;
+          }
+          const depotColumn = 'code' in r.depot ? 'depot_code' : 'depot_id';
+          const depotId = 'code' in r.depot ? await depots.publicIdByCode(client, r.depot.code) : r.depot.id;
+          if (!depotId) {
+            found.push({ row: r.row, field: depotColumn, reason: 'references_missing_record' });
+            continue;
+          }
+
+          await client.query('SAVEPOINT import_row');
+          try {
+            const view = await this.register(client, caller, { ...r.licence, user_id: account.publicId, depot_id: depotId });
+            await client.query('RELEASE SAVEPOINT import_row');
+            created.push({ row: r.row, view });
+          } catch (err) {
+            await client.query('ROLLBACK TO SAVEPOINT import_row');
+            found.push(...importProblems(r.row, toAppError(err), depotColumn));
+          }
+        }
+
+        if (found.length > 0) {
+          throw validationFailed(
+            found.map((p) => ({ field: `rows.${p.row}${p.field ? `.${p.field}` : ''}`, reason: p.reason })),
+            `${new Set(found.map((p) => p.row)).size} row(s) have problems; nothing was imported.`,
+          );
+        }
+        if (dryRun) throw new DryRunDone();
+        return created;
+      });
+    } catch (err) {
+      if (err instanceof DryRunDone) return { valid: rows.length };
+      throw err;
+    }
+
+    for (const { view } of views) await this.publish(caller, DRIVER_EVENTS.registered, view);
+    return { created: views.map(({ row, view }) => ({ row, id: view.id })) };
+  }
+
+  /** Registers one driver in the caller's transaction (POST /drivers and each import row). */
+  private async register(client: PoolClient, caller: Caller, input: DriverCreate): Promise<DriverView> {
+    const { drivers, users } = this.deps;
+    const scope = depotScope(caller.user);
+    const account = await users.findByPublicId(client, input.user_id);
+    // An account in another depot looks like no account at all.
+    if (!account || (account.depotId !== null && !depotInScope(scope, account.depotId))) {
+      throw unknownDriverAccount('references_missing_record');
+    }
+    if (account.status !== 'active') throw unknownDriverAccount('account_not_active');
+    if (!account.roles.includes('driver')) throw unknownDriverAccount('not_a_driver');
+
+    const depotId = await this.depotInScope(client, input.depot_id, scope);
+    const ctx = mutationContext(caller);
+    const row = await drivers.insert(ctx, { ...toColumns(input), user_id: account.id }, client);
+    if (account.depotId !== depotId) await users.setDepot(client, ctx, account.id, depotId);
+    await this.deps.accounts.upsert(client, [{ ...account, depotId }]);
+    return (await this.views(client, [await drivers.findById(client, row.id as string)]))[0];
   }
 
   /**
@@ -198,6 +324,7 @@ export class DriverService {
         const [account] = await users.findByIds(client, [row.userId]);
         if (account.depotId !== depotId) {
           await users.setDepot(client, ctx, row.userId, depotId);
+          await this.deps.accounts.upsert(client, [{ ...account, depotId }]);
           if (fields.length === 0) await drivers.touch(client, row.id);
           const from = account.depotId === null ? null : ((await depots.publicIds(client, [account.depotId])).get(account.depotId) ?? null);
           moved = { from, to: patch.depot_id };
@@ -379,4 +506,19 @@ function toColumns(input: DriverUpdate): DriverWrite {
   if (input.hire_date !== undefined) data.hire_date = input.hire_date;
   if (input.emergency_phone !== undefined) data.emergency_phone = input.emergency_phone;
   return data;
+}
+
+/** A registration failure in the import's terms: CSV columns instead of API fields. */
+function importProblems(row: number, err: AppError, depotColumn: string): ImportProblem[] {
+  if (err.code === 'CONFLICT_DUPLICATE_LICENSE') return [{ row, field: 'license_number', reason: 'already_exists' }];
+  if (err.code === 'CONFLICT_DUPLICATE') return [{ row, field: 'email', reason: 'already_a_driver' }];
+  if (err.status >= 500) throw err;
+  if (err.details?.length) {
+    return err.details.map((d) => ({
+      row,
+      field: d.field === 'user_id' ? 'email' : d.field === 'depot_id' ? depotColumn : d.field,
+      reason: d.reason,
+    }));
+  }
+  return [{ row, reason: err.code.toLowerCase() }];
 }

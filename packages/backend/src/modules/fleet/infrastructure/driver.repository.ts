@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
@@ -22,6 +23,7 @@ export interface DriverRow {
 }
 
 export const DRIVER_SORT_COLUMNS = {
+  full_name: 'a.full_name',
   license_number: 'd.license_number',
   license_expiry: 'd.license_expiry',
   hire_date: 'd.hire_date',
@@ -33,10 +35,12 @@ export type DriverSortKey = keyof typeof DRIVER_SORT_COLUMNS;
 export interface DriverListFilter {
   page: number;
   page_size: number;
-  /** Drivers whose user is one of these (the depot filter and scope, resolved by the auth module); null: no limit. */
-  userIds: readonly string[] | null;
-  /** Search: drivers whose user matched by name or email, or whose licence number contains `term`. */
-  search?: { term: string; userIds: readonly string[] };
+  /** The caller's depot scope, applied to the driver's home depot. */
+  scope: Scope;
+  /** A depot (internal id) the caller asked for, already checked against the scope. */
+  depotId?: string;
+  /** Name, email (fleet.driver_accounts) or licence number contains this, case-insensitively. */
+  search?: string;
   status?: 'active' | 'retired';
   /** `YYYY-MM-DD`: licences that expire before this date (already expired included). */
   licenseExpiringBefore?: string;
@@ -76,9 +80,9 @@ const ROW_SQL = `SELECT ${ROW_COLUMNS} FROM fleet.drivers d`;
 const containsPattern = (term: string) => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 /**
- * fleet.drivers. Depot scope cannot be a WHERE clause here: a driver's depot
- * is on their user account, which belongs to the auth module. The service
- * applies it, through user ids resolved by the auth module.
+ * fleet.drivers. A driver's depot is on their user account (auth module):
+ * the list filters on fleet's copy of it (fleet.driver_accounts); reads and
+ * writes by id check the account itself, in the service.
  */
 export class DriverRepository extends Repository {
   constructor(db: Pool) {
@@ -111,6 +115,11 @@ export class DriverRepository extends Repository {
     return res.rows[0] ?? null;
   }
 
+  /**
+   * A page of drivers. Name, email and depot come from fleet.driver_accounts
+   * (fleet's copy of the account fields, migration 017), so depot scope,
+   * search and sorting by name are all in this one query.
+   */
   async list(db: Queryable, filter: DriverListFilter): Promise<{ rows: DriverRow[]; total: number }> {
     const params: unknown[] = [];
     const add = (value: unknown) => {
@@ -119,25 +128,28 @@ export class DriverRepository extends Repository {
     };
     const where: string[] = [];
 
+    const scope = scopeClause(filter.scope, 'a.depot_id', 1);
+    where.push(scope.sql);
+    params.push(...scope.params);
     // Retired drivers leave the default list; status=retired lists them.
     where.push(filter.status === 'retired' ? 'NOT d.is_active' : 'd.is_active');
-    if (filter.userIds !== null) where.push(`d.user_id = ANY(${add(filter.userIds)}::bigint[])`);
+    if (filter.depotId) where.push(`a.depot_id = ${add(filter.depotId)}`);
     if (filter.search) {
-      where.push(
-        `(d.user_id = ANY(${add(filter.search.userIds)}::bigint[]) OR d.license_number ILIKE ${add(containsPattern(filter.search.term))})`,
-      );
+      const p = add(containsPattern(filter.search));
+      where.push(`(a.full_name ILIKE ${p} OR a.email ILIKE ${p} OR d.license_number ILIKE ${p})`);
     }
     if (filter.licenseExpiringBefore) where.push(`d.license_expiry < ${add(filter.licenseExpiringBefore)}::date`);
     if (filter.licenseStatus) where.push(`${LICENSE_STATUS_SQL} = ${add(filter.licenseStatus)}`);
 
     const whereSql = where.join(' AND ');
-    const count = await db.query<{ total: number }>(`SELECT count(*)::int AS total FROM fleet.drivers d WHERE ${whereSql}`, params);
+    const from = 'fleet.drivers d JOIN fleet.driver_accounts a ON a.user_id = d.user_id';
+    const count = await db.query<{ total: number }>(`SELECT count(*)::int AS total FROM ${from} WHERE ${whereSql}`, params);
 
     const direction = filter.sort_order === 'desc' ? 'DESC' : 'ASC';
     const limit = add(filter.page_size);
     const offset = add((filter.page - 1) * filter.page_size);
     const rows = await db.query<DriverRow>(
-      `${ROW_SQL} WHERE ${whereSql}
+      `SELECT ${ROW_COLUMNS} FROM ${from} WHERE ${whereSql}
         ORDER BY ${DRIVER_SORT_COLUMNS[filter.sort_by]} ${direction} NULLS LAST, d.id ${direction}
         LIMIT ${limit} OFFSET ${offset}`,
       params,

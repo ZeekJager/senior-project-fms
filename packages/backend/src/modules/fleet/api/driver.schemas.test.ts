@@ -84,6 +84,7 @@ describe('driverListQuery', () => {
   test('rejects a malformed date, status or sort column', () => {
     expect(rejection(driverListQuery, { license_expiring_before: 'tomorrow' }).code).toBe('VALIDATION_FAILED');
     expect(rejection(driverListQuery, { status: 'deleted' }).code).toBe('VALIDATION_INVALID_ENUM');
-    expect(rejection(driverListQuery, { sort_by: 'full_name' }).code).toBe('VALIDATION_INVALID_ENUM');
+    expect(rejection(driverListQuery, { sort_by: 'email' }).code).toBe('VALIDATION_INVALID_ENUM');
+    expect(parseInput(driverListQuery, { sort_by: 'full_name' }).sort_by).toBe('full_name');
   });
 });

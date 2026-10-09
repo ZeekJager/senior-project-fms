@@ -6,7 +6,7 @@ import { pool } from '../../src/db';
 import { checkDriverEligibility, fleetModule, isDriverEligible } from '../../src/modules/fleet';
 import type { DomainEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
-import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
+import { copyDriverAccount, createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 
 const app = createApp();
 const PASSWORD = 'Driver-Test-1';
@@ -188,6 +188,7 @@ describe('GET /drivers', () => {
       "INSERT INTO fleet.drivers (user_id, license_number, license_expiry) VALUES ($1, $2, '2030-01-01') RETURNING public_id",
       [named.id, `ZX-${randomUUID().slice(0, 6).toUpperCase()}`],
     );
+    await copyDriverAccount(named.id);
     const other = await createDriver({ depot });
 
     const search = async (term: string) => ids(await api.get(`/drivers?depot_id=${depot.public_id}&search=${encodeURIComponent(term)}`, cookie));
@@ -558,5 +559,198 @@ describe('If-Match on PATCH /drivers/{id} (enhancement 6)', () => {
 
     expect((await api.patch(`/drivers/${driver.public_id}`, { license_categories: [] }, cookie).set('If-Match', 'v2')).status).toBe(400);
     expect((await api.patch(`/drivers/${driver.public_id}`, { license_categories: [] }, cookie)).status).toBe(200); // no If-Match: allowed
+  });
+});
+
+describe('Idempotency-Key on POST /drivers (enhancement 8)', () => {
+  test('a retried POST replays the first response instead of registering twice', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const user = await createUser({ roles: ['driver'], depot });
+    const body = driverBody(user, depot);
+    const key = `k-${randomUUID()}`;
+
+    const first = await api.post('/drivers', body, cookie).set('Idempotency-Key', key);
+    expect(first.status).toBe(201);
+    const retry = await api.post('/drivers', body, cookie).set('Idempotency-Key', key);
+    expect(retry.status).toBe(201);
+    expect(retry.headers['idempotent-replayed']).toBe('true');
+    expect(retry.body).toEqual(first.body);
+    expect(await auditRows(retry)).toEqual([]);
+    expect((await pool.query('SELECT count(*)::int AS n FROM fleet.drivers WHERE user_id = $1', [user.id])).rows[0].n).toBe(1);
+  });
+
+  test('the same key with a different body is 409 CONFLICT_IDEMPOTENCY_KEY_REUSED; while running, 409 IN_PROGRESS', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const key = `k-${randomUUID()}`;
+    const [a, b] = [await createUser({ roles: ['driver'], depot }), await createUser({ roles: ['driver'], depot })];
+
+    expect((await api.post('/drivers', driverBody(a, depot), cookie).set('Idempotency-Key', key)).status).toBe(201);
+    const reused = await api.post('/drivers', driverBody(b, depot), cookie).set('Idempotency-Key', key);
+    expect(reused.status).toBe(409);
+    expect(reused.body.error.code).toBe('CONFLICT_IDEMPOTENCY_KEY_REUSED');
+
+    // A request that is still running holds its key.
+    const running = `k-${randomUUID()}`;
+    const body = driverBody(b, depot);
+    const caller = await pool.query<{ id: string }>(
+      "SELECT user_id AS id FROM api.idempotency_keys WHERE idempotency_key = $1", [key],
+    );
+    await pool.query(
+      `INSERT INTO api.idempotency_keys (user_id, idempotency_key, request_method, request_path, request_hash, expires_at)
+       VALUES ($1, $2, 'POST', '/api/v1/drivers', repeat('0', 64), now() + interval '1 hour')`,
+      [caller.rows[0].id, running],
+    );
+    const busy = await api.post('/drivers', body, cookie).set('Idempotency-Key', running);
+    expect(busy.status).toBe(409);
+    expect(busy.body.error.code).toBe('CONFLICT_IDEMPOTENCY_IN_PROGRESS');
+  });
+
+  test('a failed request frees its key for a corrected retry; no key behaves as before', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const user = await createUser({ roles: ['driver'], depot });
+    const key = `k-${randomUUID()}`;
+
+    const bad = await api.post('/drivers', driverBody(user, depot, { license_expiry: 'never' }), cookie).set('Idempotency-Key', key);
+    expect(bad.status).toBe(400);
+    const fixed = await api.post('/drivers', driverBody(user, depot), cookie).set('Idempotency-Key', key);
+    expect(fixed.status).toBe(201);
+    expect((await api.post('/drivers', driverBody(await createUser({ roles: ['driver'], depot }), depot), cookie)).status).toBe(201);
+    expect((await api.post('/drivers', driverBody(user, depot), cookie).set('Idempotency-Key', 'has space')).status).toBe(400);
+  });
+});
+
+describe('driver list from fleet.driver_accounts (enhancement 9)', () => {
+  test('sorts by name, and follows the account after a depot move, an event, or the daily re-sync', async () => {
+    const [a, b] = [await createDepot(), await createDepot()];
+    const cookie = await signIn(['fleet_manager']);
+    const zed = await createDriver({ depot: a });
+    await pool.query("UPDATE auth.users SET full_name = 'Zeleke' WHERE id = $1", [zed.user.id]);
+    const abe = await createDriver({ depot: a });
+    await pool.query("UPDATE auth.users SET full_name = 'Abebe' WHERE id = $1", [abe.user.id]);
+
+    // The copy is stale until it is refreshed: the daily job re-syncs every driver.
+    const job = fleetModule.jobs!.find((j) => j.name === 'driver-account-sync')!;
+    await job.run(new Date());
+    const byName = await api.get(`/drivers?depot_id=${a.public_id}&sort_by=full_name`, cookie);
+    expect(byName.body.data.map((d: { full_name: string }) => d.full_name)).toEqual(['Abebe', 'Zeleke']);
+
+    // A depot move through the API updates the copy in the same transaction.
+    await api.patch(`/drivers/${zed.driver.public_id}`, { depot_id: b.public_id }, cookie);
+    expect(ids(await api.get(`/drivers?depot_id=${b.public_id}`, cookie))).toEqual([zed.driver.public_id]);
+
+    // An account change made elsewhere arrives as UserAccountChanged.
+    await pool.query("UPDATE auth.users SET full_name = 'Kidist' WHERE id = $1", [abe.user.id]);
+    await eventBus.publish([
+      { id: randomUUID(), type: 'UserAccountChanged', version: 1, occurred_at: new Date().toISOString(), actor: null, correlation_id: randomUUID(), payload: { user_id: abe.user.public_id } },
+    ]);
+    expect(ids(await api.get(`/drivers?search=kidist`, cookie))).toEqual([abe.driver.public_id]);
+  });
+
+  test('a depot-scoped caller only sees drivers whose (copied) depot is theirs', async () => {
+    const [a, b] = [await createDepot(), await createDepot()];
+    const [da, db] = [await createDriver({ depot: a }), await createDriver({ depot: b })];
+    const seen = ids(await api.get('/drivers?page_size=100', await signIn(['dispatcher'], a)));
+    expect(seen).toContain(da.driver.public_id);
+    expect(seen).not.toContain(db.driver.public_id);
+  });
+});
+
+describe('POST /drivers/import (enhancement 10)', () => {
+  const csv = (path: string, body: string, cookie: string) =>
+    request(app).post(`/api/v1${path}`).set('Cookie', cookie).set('Content-Type', 'text/csv').send(body);
+
+  test('registers every row: accounts by email, depot by code, categories in one cell', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const [a, b] = [await createUser({ roles: ['driver'] }), await createUser({ roles: ['driver'], depot })];
+    const body = [
+      'email,license_number,license_expiry,license_categories,depot_code,emergency_phone',
+      `${String(a.email).toUpperCase()},imp-${randomUUID().slice(0, 6)},2030-01-31,"CE, B",${depot.code},+251 911 000000`,
+      `${b.email},IMP-${randomUUID().slice(0, 6)},2031-05-01,D1,${String(depot.code).toLowerCase()},`,
+    ].join('\r\n');
+
+    const res = await csv('/drivers/import', body, cookie);
+    expect(res.status).toBe(201);
+    expect(res.body.data.created.map((c: { row: number }) => c.row)).toEqual([2, 3]);
+    const first = await api.get(`/drivers/${res.body.data.created[0].id}`, cookie);
+    expect(first.body.data).toMatchObject({ user_id: a.public_id, depot_id: depot.public_id, license_categories: ['B', 'CE'] });
+    // Row 2's account had no depot: it is moved to the import's depot, audited.
+    expect((await auditRows(res)).filter((r) => r.entity_type === 'fleet.drivers')).toHaveLength(2);
+  });
+
+  test('any problem rolls everything back and is reported by row and column', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const ok = await createUser({ roles: ['driver'], depot });
+    const taken = await createDriver({ depot });
+    const twice = await createUser({ roles: ['driver'], depot });
+    const lic = `DUP-${randomUUID().slice(0, 6)}`;
+    const body = [
+      'email,license_number,license_expiry,depot_code',
+      `${ok.email},${lic},2030-01-01,${depot.code}`, // fine on its own
+      `nobody-${randomUUID().slice(0, 6)}@x.et,OK-${randomUUID().slice(0, 6)},2030-01-01,${depot.code}`, // unknown account
+      `${twice.email},${lic},2030-01-01,${depot.code}`, // licence repeated in the file
+      `${taken.user.email},NEW-${randomUUID().slice(0, 6)},2030-01-01,${depot.code}`, // already a driver
+      `${ok.email},ZZ-1,2030-13-45,NOPE`, // bad date, account repeated
+    ].join('\n');
+
+    const res = await csv('/drivers/import', body, cookie);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_FAILED');
+    expect(res.body.error.details).toEqual(
+      expect.arrayContaining([
+        { field: 'rows.3.email', reason: 'references_missing_record' },
+        { field: 'rows.4.license_number', reason: 'duplicate_of_row_2' },
+        { field: 'rows.5.email', reason: 'already_a_driver' },
+        expect.objectContaining({ field: 'rows.6.license_expiry' }),
+      ]),
+    );
+    expect((await pool.query('SELECT count(*)::int AS n FROM fleet.drivers WHERE user_id = $1', [ok.id])).rows[0].n).toBe(0);
+  });
+
+  test('?dry_run=true checks the file and saves nothing', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const user = await createUser({ roles: ['driver'], depot });
+    const res = await csv('/drivers/import?dry_run=true', `email,license_number,license_expiry,depot_code\n${user.email},DRY-1,2030-01-01,${depot.code}`, cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ valid: 1 });
+    expect((await pool.query('SELECT count(*)::int AS n FROM fleet.drivers WHERE user_id = $1', [user.id])).rows[0].n).toBe(0);
+  });
+
+  test('a bad header, an empty body or JSON is 400; a depot outside the scope is reported on its row', async () => {
+    const [mine, other] = [await createDepot(), await createDepot()];
+    const cookie = await signIn(['depot_admin'], mine);
+    const header = await csv('/drivers/import', 'email,license_number,depot_code,colour\nx@y.et,A1,D', cookie);
+    expect(header.body.error.details).toEqual(
+      expect.arrayContaining([
+        { field: 'rows.1.colour', reason: 'unknown_column' },
+        { field: 'rows.1.license_expiry', reason: 'missing_column' },
+      ]),
+    );
+    expect((await csv('/drivers/import', '', cookie)).status).toBe(400);
+    expect((await api.post('/drivers/import', { rows: [] }, cookie)).body.error.details).toEqual([{ field: 'body', reason: 'csv_required' }]);
+
+    const user = await createUser({ roles: ['driver'] });
+    const scoped = await csv('/drivers/import', `email,license_number,license_expiry,depot_code\n${user.email},SC-1,2030-01-01,${other.code}`, cookie);
+    expect(scoped.body.error.details).toEqual([{ field: 'rows.2.depot_code', reason: 'references_missing_record' }]);
+  });
+
+  test('needs driver:write; a retried import with the same Idempotency-Key is replayed', async () => {
+    const depot = await createDepot();
+    expect((await csv('/drivers/import', 'email\nx@y.et', await signIn(['dispatcher'], depot))).status).toBe(403);
+
+    const cookie = await signIn(['depot_admin'], depot);
+    const user = await createUser({ roles: ['driver'], depot });
+    const body = `email,license_number,license_expiry,depot_code\n${user.email},IDEM-${randomUUID().slice(0, 6)},2030-01-01,${depot.code}`;
+    const key = `imp-${randomUUID()}`;
+    const first = await csv('/drivers/import', body, cookie).set('Idempotency-Key', key);
+    const again = await csv('/drivers/import', body, cookie).set('Idempotency-Key', key);
+    expect(first.status).toBe(201);
+    expect(again.headers['idempotent-replayed']).toBe('true');
+    expect(again.body).toEqual(first.body);
   });
 });

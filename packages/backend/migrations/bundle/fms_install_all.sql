@@ -1745,3 +1745,24 @@ CREATE OR REPLACE TRIGGER trg_fleet_vehicles_version
 CREATE OR REPLACE TRIGGER trg_fleet_drivers_version
     BEFORE UPDATE ON fleet.drivers
     FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+-- ===== 017_fleet_driver_accounts.sql =====
+CREATE TABLE IF NOT EXISTS fleet.driver_accounts (
+    user_id         BIGINT PRIMARY KEY REFERENCES auth.users(id)
+                    ON DELETE CASCADE ON UPDATE CASCADE,
+    full_name       VARCHAR(255) NOT NULL,
+    email           VARCHAR(255) NOT NULL,
+    depot_id        BIGINT REFERENCES fleet.depots(id)
+                    ON DELETE SET NULL ON UPDATE CASCADE,
+    account_status  shared.user_status NOT NULL,
+    synced_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fleet_driver_accounts_depot
+    ON fleet.driver_accounts(depot_id);
+
+INSERT INTO fleet.driver_accounts (user_id, full_name, email, depot_id, account_status)
+SELECT u.id, u.full_name, u.email, u.depot_id, u.status
+  FROM fleet.drivers d
+  JOIN auth.users u ON u.id = d.user_id
+ON CONFLICT (user_id) DO NOTHING;

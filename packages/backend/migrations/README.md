@@ -22,6 +22,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 014 | `auth` | Session families on `refresh_sessions` for refresh-token rotation and reuse detection (FMS-05) |
 | 015 | `fleet` | `drivers.license_categories TEXT[]` of European licence categories (AM ... DE), replacing the free-text `license_category` (FMS-16) |
 | 016 | `fleet` | `version` on `vehicles` and `drivers`, bumped by trigger, for optimistic concurrency (If-Match / ETag) (FMS-16) |
+| 017 | `fleet` | `driver_accounts`: the fleet module's copy of drivers' name, email, depot and account status, so the driver list filters and sorts in one query (FMS-16) |
 
 ## Important
 

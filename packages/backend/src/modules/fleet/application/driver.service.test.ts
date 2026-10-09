@@ -82,16 +82,22 @@ function harness(options: HarnessOptions = {}) {
       retire: async (_c, id) => (calls.push(`retire:${id}`), { id }),
       touch: async (_c, id) => void calls.push(`touch:${id}`),
     },
+    accounts: {
+      upsert: async (_db, accts) => void calls.push(`sync:${accts.map((a) => `${a.id}@${a.depotId}`).join(',')}`),
+      driverUserIds: async () => [acct.id],
+      isDriver: async () => true,
+    },
     vehicles: { typeOf: async () => (options.vehicleType === undefined ? 'truck' : options.vehicleType) },
     users: {
       findByPublicId: async () => acct,
       findByIds: async () => [acct],
-      idsMatching: async () => [acct.id],
+      findByEmail: async () => acct,
       setDepot: async (_c, _ctx, userId, depotId) => void calls.push(`setDepot:${userId}:${depotId}`),
     },
     depots: {
       resolveInScope: async (_db, publicId) => (publicId === DEPOT_A ? '5' : null),
       publicIds: async () => new Map([['5', DEPOT_A]]),
+      publicIdByCode: async () => DEPOT_A,
     },
     trips: { driverHasActiveTrip: async () => options.activeTrip ?? false },
     events,
@@ -136,11 +142,11 @@ describe('create rules', () => {
   test('the depot is written to the account only when it changes', async () => {
     const moved = harness({ account: account({ depotId: null }) });
     await moved.service.create(caller, input);
-    expect(moved.calls).toEqual(['insert', 'setDepot:20:5']);
+    expect(moved.calls).toEqual(['insert', 'setDepot:20:5', 'sync:20@5']);
 
     const same = harness();
     await same.service.create(caller, input);
-    expect(same.calls).toEqual(['insert']);
+    expect(same.calls).toEqual(['insert', 'sync:20@5']);
   });
 
   test.each([

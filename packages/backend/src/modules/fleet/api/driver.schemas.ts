@@ -27,7 +27,8 @@ const phone = z.string().trim().regex(/^\+?[0-9][0-9 ()-]{5,29}$/, 'A phone numb
  * the user account's and change through user administration; `user_id` is
  * fixed once the driver exists.
  */
-const writable = {
+/** Field rules shared by POST /drivers and the CSV import. */
+export const driverFields = {
   license_number: licenseNumber,
   // European categories held (LICENSE_CATEGORY_VEHICLE_TYPES); they decide which vehicle types the driver may drive.
   // Stored without duplicates in licence order; [] clears them.
@@ -38,8 +39,9 @@ const writable = {
     .nullable()
     .optional(),
   emergency_phone: phone.nullable().optional(),
-  depot_id: z.uuid(),
 };
+
+const writable = { ...driverFields, depot_id: z.uuid() };
 
 /** POST /drivers: an existing user account with the driver role, its licence, and its home depot. */
 export const driverCreateBody = z.strictObject({ user_id: z.uuid(), ...writable });

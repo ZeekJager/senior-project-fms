@@ -26,3 +26,12 @@ export async function resolveDepotInScope(db: Queryable, publicId: string, scope
   );
   return res.rows[0]?.id ?? null;
 }
+
+/** A live depot's public id from its code (as people write it in a spreadsheet), case-insensitively. */
+export async function depotPublicIdByCode(db: Queryable, code: string): Promise<string | null> {
+  const res = await db.query<{ public_id: string }>(
+    'SELECT public_id FROM fleet.depots WHERE lower(code) = lower($1) AND is_active',
+    [code.trim()],
+  );
+  return res.rows[0]?.public_id ?? null;
+}

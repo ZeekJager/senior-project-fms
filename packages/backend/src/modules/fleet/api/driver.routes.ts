@@ -1,13 +1,21 @@
-import { Router, type Request } from 'express';
+import express, { Router, type Request } from 'express';
+import { z } from 'zod';
+import { validationFailed } from '../../../shared/errors/app-error';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { etagFor, ifMatchVersion } from '../../../shared/http/etag';
+import { idempotent } from '../../../shared/http/idempotency';
 import { pageMeta } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authenticated, authorize } from '../../auth';
 import type { Caller } from '../application/caller';
 import type { DriverService } from '../application/driver.service';
 import { driverNotFound } from '../domain/driver';
+import { parseDriverImport } from './driver-import';
 import { driverCreateBody, driverListQuery, driverUpdateBody } from './driver.schemas';
+
+/** The CSV body of POST /drivers/import (the app parses JSON only). */
+const csvBody = express.text({ type: ['text/csv', 'text/plain'], limit: '1mb' });
+const importQuery = z.object({ dry_run: z.enum(['true', 'false']).optional() });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -39,6 +47,7 @@ export function driverRouter(service: DriverService): Router {
   router.post(
     '/drivers',
     authorize('driver:write'),
+    idempotent(),
     asyncHandler(async (req, res) => {
       const driver = await service.create(caller(req), parseInput(driverCreateBody, req.body));
       res
@@ -46,6 +55,23 @@ export function driverRouter(service: DriverService): Router {
         .location(`/api/v1/drivers/${driver.id}`)
         .set('ETag', etagFor(driver.version))
         .json({ data: driver, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // Bulk onboarding: a CSV of drivers, all registered or none (rules: DriverService.importDrivers).
+  router.post(
+    '/drivers/import',
+    authorize('driver:write'),
+    csvBody,
+    idempotent(),
+    asyncHandler(async (req, res) => {
+      if (typeof req.body !== 'string' || req.body.trim() === '') {
+        throw validationFailed([{ field: 'body', reason: 'csv_required' }], 'Send the drivers as CSV with Content-Type: text/csv.');
+      }
+      const dryRun = parseInput(importQuery, req.query).dry_run === 'true';
+      const { rows, problems } = parseDriverImport(req.body);
+      const result = await service.importDrivers(caller(req), rows, problems, dryRun);
+      res.status('created' in result ? 201 : 200).json({ data: result, meta: { request_id: req.correlationId } });
     }),
   );
 
