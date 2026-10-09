@@ -8,11 +8,29 @@ const AUTH_PATHS = ['/auth/login', '/auth/refresh', '/auth/logout']
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   /** Serialised as JSON. */
   json?: unknown
+  /** Sent as multipart/form-data (uploads); the browser sets the boundary. */
+  formData?: FormData
+}
+
+/** The whole success body: `data` plus `meta` (pagination, request id; api-contract §3.3). */
+export interface Envelope<T> {
+  data: T
+  meta: Record<string, unknown>
+}
+
+/** `meta` of a paged list (api-contract §18). */
+export interface PageMeta {
+  page: number
+  page_size: number
+  total_items: number
+  total_pages: number
 }
 
 export interface ApiClient {
   /** Calls the API and returns `body.data`. Throws ApiError for any non-2xx response. */
   request<T = unknown>(path: string, options?: RequestOptions): Promise<T>
+  /** Like `request`, but returns the whole envelope, for lists that need `meta`. */
+  requestEnvelope<T = unknown>(path: string, options?: RequestOptions): Promise<Envelope<T>>
   /**
    * Rotates the session cookies. Concurrent callers share one request:
    * the server treats a refresh cookie presented twice as theft and revokes
@@ -36,27 +54,34 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
 
   const endSession = () => sessionEndedHandlers.forEach((handler) => handler())
 
-  async function send<T>(path: string, options: RequestOptions): Promise<T> {
-    const { json, headers, ...init } = options
+  async function send<T>(path: string, options: RequestOptions): Promise<Envelope<T>> {
+    const { json, formData, headers, ...init } = options
     const res = await fetchImpl(`${API_BASE}${path}`, {
       credentials: 'same-origin',
       ...init,
       headers: { Accept: 'application/json', ...(json === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },
-      body: json === undefined ? undefined : JSON.stringify(json),
+      body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
     })
     if (!res.ok) throw await toApiError(res)
-    if (res.status === 204) return undefined as T
-    return ((await res.json()) as { data: T }).data
+    if (res.status === 204) return { data: undefined as T, meta: {} }
+    const body = (await res.json()) as Partial<Envelope<T>>
+    return { data: body.data as T, meta: body.meta ?? {} }
   }
 
   function refresh<T>(): Promise<T> {
-    inflightRefresh ??= send('/auth/refresh', { method: 'POST' }).finally(() => {
-      inflightRefresh = undefined
-    })
+    inflightRefresh ??= send('/auth/refresh', { method: 'POST' })
+      .then((body) => body.data)
+      .finally(() => {
+        inflightRefresh = undefined
+      })
     return inflightRefresh as Promise<T>
   }
 
   async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    return (await requestEnvelope<T>(path, options)).data
+  }
+
+  async function requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<Envelope<T>> {
     try {
       return await send<T>(path, options)
     } catch (err) {
@@ -90,6 +115,7 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
 
   return {
     request,
+    requestEnvelope,
     refresh,
     onSessionEnded(handler) {
       sessionEndedHandlers.add(handler)

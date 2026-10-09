@@ -82,7 +82,7 @@ describe('POST /vehicles', () => {
     expect(res.body.data.id).toMatch(UUID);
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
-        'created_at', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'id', 'maintenance_flag',
+        'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'id', 'maintenance_flag',
         'make', 'model', 'odometer_km', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );
@@ -225,6 +225,67 @@ describe('GET /vehicles', () => {
     const badSort = await api.get('/vehicles?sort_by=password_hash', cookie);
     expect(badSort.status).toBe(400);
     expect(badSort.body.error.code).toBe('VALIDATION_INVALID_ENUM');
+  });
+});
+
+describe('current_trip', () => {
+  test('a vehicle on an assigned or en-route trip shows it (en route first); others show null', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['dispatcher'], depot);
+    const { driver } = await createDriver({ depot });
+    const { driver: other } = await createDriver({ depot });
+    const idle = await createVehicle({ depot });
+    const busy = await createVehicle({ depot });
+    const tomorrow = Date.now() + 24 * 60 * 60 * 1000;
+    await createTrip({ vehicle: idle, driver, status: 'completed' });
+    await createTrip({
+      vehicle: busy,
+      driver: other,
+      status: 'assigned',
+      origin: 'Addis Ababa',
+      destination: 'Adama',
+      scheduled_start: new Date(tomorrow).toISOString(),
+      scheduled_end: new Date(tomorrow + 60 * 60 * 1000).toISOString(),
+    });
+    const enRoute = await createTrip({
+      vehicle: busy,
+      driver,
+      status: 'en_route',
+      origin: 'Addis Ababa',
+      destination: 'Hawassa',
+      actual_start: new Date().toISOString(),
+    });
+
+    const list = await api.get(`/vehicles?depot_id=${depot.public_id}`, cookie);
+    const byId = new Map(list.body.data.map((v: { id: string }) => [v.id, v]));
+    expect((byId.get(idle.public_id) as { current_trip: unknown }).current_trip).toBeNull();
+    expect((byId.get(busy.public_id) as { current_trip: unknown }).current_trip).toMatchObject({
+      id: enRoute.public_id,
+      status: 'en_route',
+      origin: 'Addis Ababa',
+      destination: 'Hawassa',
+    });
+    expect((await api.get(`/vehicles/${busy.public_id}`, cookie)).body.data.current_trip.id).toBe(enRoute.public_id);
+  });
+});
+
+describe('GET /depots', () => {
+  test('lists live depots in the caller\'s scope by name; needs depot:read', async () => {
+    const mine = await createDepot({ name: 'Zz Mine' });
+    const other = await createDepot({ name: 'Zz Other' });
+    const closed = await createDepot({ name: 'Zz Closed', is_active: false });
+
+    const scoped = await api.get('/depots', await signIn(['depot_admin'], mine));
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.data).toEqual([{ id: mine.public_id, name: 'Zz Mine', code: mine.code, location: mine.location }]);
+    expect(scoped.body.meta).toMatchObject({ page: 1, total_items: 1 });
+
+    const all = await api.get('/depots?page_size=100', await signIn(['fleet_manager']));
+    const ids = all.body.data.map((d: { id: string }) => d.id);
+    expect(ids).toEqual(expect.arrayContaining([mine.public_id, other.public_id]));
+    expect(ids).not.toContain(closed.public_id);
+
+    expect((await api.get('/depots', await signIn(['driver'], mine))).status).toBe(403);
   });
 });
 

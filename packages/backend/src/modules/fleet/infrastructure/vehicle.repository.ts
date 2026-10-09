@@ -3,7 +3,7 @@ import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { FuelType, VehicleStatus, VehicleType, VehicleView } from '../domain/vehicle';
+import type { FuelType, VehicleStatus, VehicleTrip, VehicleType, VehicleView } from '../domain/vehicle';
 import { resolveDepotInScope } from './depot.queries';
 
 /** Columns a list can be sorted by, and the SQL behind each. */
@@ -59,8 +59,14 @@ export interface LockedVehicle {
   version: number;
 }
 
+/** Current trips by vehicle internal id: the trip module's query, passed in through its index.ts. */
+export type ActiveTripLookup = (db: Queryable, vehicleIds: readonly string[]) => Promise<Map<string, VehicleTrip>>;
+
+/** A VIEW_SQL row: the view before its trip is attached, plus the internal id to attach it by. */
+type VehicleRow = Omit<VehicleView, 'current_trip'> & { internal_id: string };
+
 const VIEW_SQL = `
-  SELECT v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
+  SELECT v.id AS internal_id, v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
          v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.status, v.maintenance_flag,
          v.health_score, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
          v.version, v.created_at, v.updated_at
@@ -78,7 +84,10 @@ function containsPattern(term: string): string {
  * through `mutate`, one audit row each.
  */
 export class VehicleRepository extends Repository {
-  constructor(db: Pool) {
+  constructor(
+    db: Pool,
+    private readonly activeTrips: ActiveTripLookup,
+  ) {
     super(db);
   }
 
@@ -88,14 +97,16 @@ export class VehicleRepository extends Repository {
 
   async findView(db: Queryable, publicId: string, scope: Scope): Promise<VehicleView | null> {
     const clause = scopeClause(scope, 'v.depot_id', 2);
-    const res = await db.query<VehicleView>(`${VIEW_SQL} WHERE v.public_id = $1 AND ${clause.sql}`, [publicId, ...clause.params]);
-    return res.rows[0] ?? null;
+    const res = await db.query<VehicleRow>(`${VIEW_SQL} WHERE v.public_id = $1 AND ${clause.sql}`, [publicId, ...clause.params]);
+    const [view] = await this.withTrips(db, res.rows);
+    return view ?? null;
   }
 
   /** By internal id, without a scope: for re-reading a row the caller has just written. */
   async findViewById(db: Queryable, id: string): Promise<VehicleView> {
-    const res = await db.query<VehicleView>(`${VIEW_SQL} WHERE v.id = $1`, [id]);
-    return res.rows[0];
+    const res = await db.query<VehicleRow>(`${VIEW_SQL} WHERE v.id = $1`, [id]);
+    const [view] = await this.withTrips(db, res.rows);
+    return view;
   }
 
   async list(db: Queryable, query: VehicleListQuery, scope: Scope): Promise<{ items: VehicleView[]; total: number }> {
@@ -129,13 +140,19 @@ export class VehicleRepository extends Repository {
     const direction = query.sort_order === 'desc' ? 'DESC' : 'ASC';
     const limit = add(query.page_size);
     const offset = add((query.page - 1) * query.page_size);
-    const rows = await db.query<VehicleView>(
+    const rows = await db.query<VehicleRow>(
       `${VIEW_SQL} WHERE ${whereSql}
         ORDER BY ${VEHICLE_SORT_COLUMNS[query.sort_by]} ${direction} NULLS LAST, v.id ${direction}
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     );
-    return { items: rows.rows, total: count.rows[0].total };
+    return { items: await this.withTrips(db, rows.rows), total: count.rows[0].total };
+  }
+
+  /** Attaches each vehicle's current trip (one query for all rows) and drops the internal id. */
+  private async withTrips(db: Queryable, rows: VehicleRow[]): Promise<VehicleView[]> {
+    const trips = await this.activeTrips(db, rows.map((r) => r.internal_id));
+    return rows.map(({ internal_id, ...row }) => ({ ...row, current_trip: trips.get(internal_id) ?? null }));
   }
 
   /** A live depot's internal id from its public id, if the caller's scope includes it. */
@@ -167,6 +184,17 @@ export class VehicleRepository extends Repository {
       ['publicId' in by ? by.publicId : by.id, ...clause.params],
     );
     return res.rows[0] ?? null;
+  }
+
+  /** Both ids of each vehicle in the caller's scope (retired included) among these public ids; the rest are left out. */
+  async findRefs(db: Queryable, publicIds: readonly string[], scope: Scope): Promise<{ id: string; publicId: string }[]> {
+    if (publicIds.length === 0) return [];
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const res = await db.query<{ id: string; publicId: string }>(
+      `SELECT v.id, v.public_id AS "publicId" FROM fleet.vehicles v WHERE v.public_id = ANY($1::uuid[]) AND ${clause.sql}`,
+      [publicIds, ...clause.params],
+    );
+    return res.rows;
   }
 
   /** A vehicle's type by internal id, or null if there is no such vehicle (used by driver eligibility). */

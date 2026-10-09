@@ -9,12 +9,17 @@ describe('StatusBadge colour vocabulary', () => {
   it('maps every status to one colour', () => {
     expect(Object.fromEntries(STATUSES.map((status) => [status, STATUS_STYLES[status].colour]))).toMatchInlineSnapshot(`
       {
+        "active": "green",
         "assigned": "blue",
         "cancelled": "red",
         "completed": "green",
+        "decommissioned": "red",
         "draft": "grey",
         "en_route": "yellow",
         "flagged": "orange",
+        "inactive": "grey",
+        "maintenance": "orange",
+        "retired": "grey",
         "scheduled": "grey",
       }
     `)
@@ -41,7 +46,7 @@ describe('StatusBadge colour vocabulary', () => {
 
   it('shows the label as text, so colour is never the only signal', () => {
     render(<StatusBadge status="en_route" />)
-    expect(screen.getByText('En route')).toHaveClass('bg-yellow-100')
+    expect(screen.getByText('En route')).toHaveClass('bg-yellow-50')
   })
 
   it('does not accept a status without a colour entry (compile-time)', () => {

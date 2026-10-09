@@ -66,6 +66,18 @@ export class DocumentRepository extends Repository {
     return res.rows[0];
   }
 
+  /** Live documents of these owners (internal ids): soonest expiry first, then newest. */
+  async listForOwners(db: Queryable, ownerType: DocumentOwnerType, ownerIds: readonly string[]): Promise<DocumentRow[]> {
+    if (ownerIds.length === 0) return [];
+    const res = await db.query<DocumentRow>(
+      `${ROW_SQL}
+        WHERE owner_type = $1 AND owner_id = ANY($2::bigint[]) AND deleted_at IS NULL
+        ORDER BY expires_on ASC NULLS LAST, uploaded_at DESC, id DESC`,
+      [ownerType, ownerIds],
+    );
+    return res.rows;
+  }
+
   insert(ctx: MutationContext, data: DocumentInsert, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'document.documents', 'INSERT', null, { ...data }, client);
   }

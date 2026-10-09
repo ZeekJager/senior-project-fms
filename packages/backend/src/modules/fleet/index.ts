@@ -6,7 +6,8 @@ import { createDocumentStorage } from '../../shared/storage/document-storage';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory } from '../auth';
-import { driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
 import { fleetRouter } from './api/fleet.routes';
@@ -16,13 +17,13 @@ import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
-import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
+import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, listDepots, resolveDepotInScope } from './infrastructure/depot.queries';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
-const vehicleRepository = new VehicleRepository(pool);
+const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles);
 
 const vehicleService = new VehicleService({
   vehicles: vehicleRepository,
@@ -46,7 +47,10 @@ const documentService = new DocumentService({
   documents: new DocumentRepository(pool),
   storage: createDocumentStorage(config.storage),
   urls: new DocumentUrlSigner(config.jwtSecret),
-  vehicles: { findRef: (db, by, scope) => vehicleRepository.findRef(db, by, scope) },
+  vehicles: {
+    findRef: (db, by, scope) => vehicleRepository.findRef(db, by, scope),
+    findRefs: (db, publicIds, scope) => vehicleRepository.findRefs(db, publicIds, scope),
+  },
   drivers: {
     findByPublicId: (db, id) => driverRepository.findByPublicId(db, id),
     findById: (db, id) => driverRepository.findById(db, id),
@@ -62,6 +66,7 @@ eventBus.subscribe(USER_EVENTS.accountChanged, async (event) => {
 
 const router = Router();
 router.use(fleetRouter);
+router.use(depotRouter({ list: (scope, page) => listDepots(pool, scope, page) }));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));

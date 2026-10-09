@@ -1,6 +1,6 @@
 # Shared UI components: money, fuel and status
 
-Card: FMS-11 (SE-47). Code: `packages/frontend/src/components/shared/`. Import from `@/components/shared`.
+Card: FMS-11 (SE-47). Code: `packages/frontend/src/components/shared/`. Import from `@/components/shared`. Built on the design system in `docs/design-system.md` (`@/components/ui`).
 
 Money is stored as integer Ethiopian cents and fuel as integer millilitres (api-contract §3.5). These components are the only place the frontend turns those integers into text and back, so a rounding bug cannot exist on one screen and not another.
 
@@ -32,6 +32,10 @@ Money is stored as integer Ethiopian cents and fuel as integer millilitres (api-
 | `completed` | green |
 | `cancelled` | red |
 | `flagged` | orange |
+| `active` (vehicle) | green |
+| `inactive`, `retired` (vehicle) | grey |
+| `maintenance` (vehicle) | orange |
+| `decommissioned` (vehicle) | red |
 
 The badge always shows its label as text, so colour is never the only signal.
 
@@ -39,6 +43,15 @@ The badge always shows its label as text, so colour is never the only signal.
 
 `/dev/ui` shows every component in each state. It exists only under `npm run dev`; the production build leaves it out.
 
-## Not here
+## Tables, states and dialogs
 
-`DataTable`, `EmptyState`, `ErrorBoundary` and `ConfirmDialog` are FMS-67 (Sprint 2).
+Built with the vehicle screen (FMS-18) on the design system (`docs/design-system.md`), to the FMS-67 spec:
+
+| Component | Props | Notes |
+|---|---|---|
+| `DataTable` | `columns`, `data`, `rowKey`, `caption`, `isLoading`, `isEmpty`, `error`, `onRetry`, `emptyState`, `pagination`, `sort` | Fixed layout (no sideways scroll on a desktop); every row, real or skeleton, is 64px, so nothing shifts when data arrives. Columns can hide below a breakpoint. Page-number paging, as the API pages (§18) |
+| `EmptyState` | `icon`, `heading`, `description`, `action` | One heading, a short why, the next step |
+| `ErrorBoundary` / `ErrorState` | `resetKey` / `error`, `onRetry` | Shows the error code and the correlation id (`ApiError.requestId`) with "Copy error details". The app shell wraps every screen in one, reset on navigation |
+| `ConfirmDialog` | `open`, `onClose`, `title`, `message`, `action`, `onConfirm`, `requireTyping`, `error`, `busy` | With `requireTyping`, confirm stays disabled until the text matches exactly. `error` shows inside the dialog, never as a toast |
+
+Still FMS-67: cursor paging (the API pages by number today).

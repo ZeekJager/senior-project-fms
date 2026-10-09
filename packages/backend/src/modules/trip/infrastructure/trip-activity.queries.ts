@@ -28,3 +28,30 @@ export async function driverHasActiveTrip(db: Queryable, driverId: string): Prom
   );
   return res.rows[0].active;
 }
+
+/** A vehicle's current trip, as other modules show it (public ids only). */
+export interface ActiveTrip {
+  id: string;
+  status: (typeof ACTIVE_TRIP_STATUSES)[number];
+  origin: string | null;
+  destination: string | null;
+  scheduled_start: Date | null;
+}
+
+/**
+ * The current trip of each vehicle (internal ids) that has one, keyed by
+ * vehicle id: a trip en route before an assigned one, then the earliest
+ * scheduled. Vehicles without an active trip are absent from the map.
+ */
+export async function activeTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ActiveTrip>> {
+  if (vehicleIds.length === 0) return new Map();
+  const res = await db.query<ActiveTrip & { vehicle_id: string }>(
+    `SELECT DISTINCT ON (t.vehicle_id)
+            t.vehicle_id, t.public_id AS id, t.status, t.origin, t.destination, t.scheduled_start
+       FROM trip.trips t
+      WHERE t.vehicle_id = ANY($1::bigint[]) AND t.status = ANY($2::trip.trip_status[])
+      ORDER BY t.vehicle_id, (t.status = 'en_route') DESC, t.scheduled_start ASC NULLS LAST, t.id`,
+    [vehicleIds, ACTIVE_TRIP_STATUSES],
+  );
+  return new Map(res.rows.map(({ vehicle_id, ...trip }) => [vehicle_id, trip]));
+}

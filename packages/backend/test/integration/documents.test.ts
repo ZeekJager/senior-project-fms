@@ -252,6 +252,44 @@ describe('driver documents', () => {
   });
 });
 
+describe('GET /documents (by owner)', () => {
+  test('lists the live documents of the named owners, soonest expiry first; owners out of scope are left out', async () => {
+    const depot = await createDepot();
+    const other = await createDepot();
+    const a = await createVehicle({ depot });
+    const b = await createVehicle({ depot });
+    const foreign = await createVehicle({ depot: other });
+    const admin = await signIn(['admin']);
+    const later = await upload(admin, vehicleDoc(a, { expires_on: '2031-01-01' }), { bytes: PNG, name: 'later.png' });
+    const sooner = await upload(admin, vehicleDoc(b, { expires_on: '2027-01-01', document_type: 'insurance' }), { bytes: PDF, name: 'b.pdf' });
+    const none = await upload(admin, vehicleDoc(a), { bytes: JPEG, name: 'none.jpg' });
+    const gone = await upload(admin, vehicleDoc(a), { bytes: PNG, name: 'gone.png' });
+    await upload(admin, vehicleDoc(foreign), { bytes: PNG, name: 'foreign.png' });
+    expect((await request(app).delete(`/api/v1/documents/${gone.body.data.id}`).set('Cookie', admin)).status).toBe(204);
+
+    const cookie = await signIn(['depot_admin'], depot);
+    const res = await request(app)
+      .get(`/api/v1/documents?owner_type=vehicle&owner_id=${a.public_id},${b.public_id},${foreign.public_id}`)
+      .set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((d: { id: string }) => d.id)).toEqual([sooner.body.data.id, later.body.data.id, none.body.data.id]);
+    expect(res.body.data[0]).toMatchObject({ owner_id: b.public_id, document_type: 'insurance', expires_on: '2027-01-01' });
+    expect(res.body.data[0]).not.toHaveProperty('storage_key');
+    expect(res.body.data[0]).not.toHaveProperty('url');
+  });
+
+  test('needs an owner type and 1 to 100 valid owner ids', async () => {
+    const cookie = await signIn(['fleet_manager']);
+    const get = (query: string) => request(app).get(`/api/v1/documents?${query}`).set('Cookie', cookie);
+    expect((await get(`owner_type=vehicle&owner_id=${randomUUID()}`)).body.data).toEqual([]);
+    expect((await get('owner_type=vehicle&owner_id=not-a-uuid')).status).toBe(400);
+    expect((await get(`owner_id=${randomUUID()}`)).status).toBe(400);
+    const many = Array.from({ length: 101 }, () => randomUUID()).join(',');
+    expect((await get(`owner_type=vehicle&owner_id=${many}`)).status).toBe(400);
+    expect((await request(app).get(`/api/v1/documents?owner_type=vehicle&owner_id=${randomUUID()}`)).status).toBe(401);
+  });
+});
+
 describe('DELETE /documents/{id}', () => {
   test('soft-deletes with one audit row: the document and its link are gone, the file is kept', async () => {
     const depot = await createDepot();

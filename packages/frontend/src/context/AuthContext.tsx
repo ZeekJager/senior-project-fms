@@ -30,8 +30,14 @@ export interface AuthContextValue {
   /** Throws ApiError (AUTH_INVALID_CREDENTIALS, AUTH_ACCOUNT_DISABLED, RATE_LIMITED, ...) for the login form to show. */
   login(email: string, password: string): Promise<void>
   logout(options?: { reason?: 'idle' }): Promise<void>
-  hasPermission(permission: string | readonly string[]): boolean
+  /** Any one of the codes (a string or a list), or every code in `{ all: [...] }`. */
+  hasPermission(permission: PermissionRule): boolean
+  /** The API client this session uses (tests pass their own to AuthProvider). */
+  api: ApiClient
 }
+
+/** A permission code, a list of which any one is enough, or `{ all }` of which every one is needed. */
+export type PermissionRule = string | readonly string[] | { all: readonly string[] }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
@@ -115,8 +121,11 @@ export function AuthProvider({ children, api = defaultApi, idleTimeoutMs = IDLE_
   useIdleTimeout(status === 'authenticated', idleTimeoutMs, () => void logout({ reason: 'idle' }))
 
   const hasPermission = useCallback(
-    (permission: string | readonly string[]) => {
+    (permission: PermissionRule) => {
       if (!session) return false
+      if (typeof permission === 'object' && 'all' in permission) {
+        return permission.all.every((code) => session.permissions.includes(code))
+      }
       const wanted = typeof permission === 'string' ? [permission] : permission
       return wanted.some((code) => session.permissions.includes(code))
     },
@@ -124,8 +133,8 @@ export function AuthProvider({ children, api = defaultApi, idleTimeoutMs = IDLE_
   )
 
   const value = useMemo(
-    () => ({ status, session, login, logout, hasPermission }),
-    [status, session, login, logout, hasPermission],
+    () => ({ status, session, login, logout, hasPermission, api }),
+    [status, session, login, logout, hasPermission, api],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

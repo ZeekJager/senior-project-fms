@@ -1,3 +1,121 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Design tokens (docs/design-system.md). Each colour is "R G B" so Tailwind
+ * can add opacity (`bg-brand/10`). Text/background pairs meet WCAG AA:
+ * ink-subtle on surface is the lowest pair, about 4.9:1 light and 6:1 dark.
+ */
+@layer base {
+  :root {
+    color-scheme: light;
+    --c-canvas: 246 247 249;
+    --c-surface: 255 255 255;
+    --c-surface-muted: 249 250 251;
+    --c-surface-sunken: 242 244 247;
+    --c-line: 228 231 236;
+    --c-line-strong: 208 213 221;
+    --c-ink: 16 24 40;
+    --c-ink-muted: 71 84 103;
+    --c-ink-subtle: 102 112 133;
+    --c-brand: 79 70 229;
+    --c-brand-strong: 67 56 202;
+    --c-brand-soft: 238 242 255;
+    --c-brand-ink: 67 56 202;
+    --c-success: 6 118 71;
+    --c-success-soft: 236 253 243;
+    --c-warning: 181 71 8;
+    --c-warning-soft: 255 250 235;
+    --c-danger: 180 35 24;
+    --c-danger-soft: 254 243 242;
+    --c-danger-solid: 217 45 32;
+    --c-info: 23 92 211;
+    --c-info-soft: 239 248 255;
+    --c-neutral: 52 64 84;
+    --c-neutral-soft: 242 244 247;
+    --c-overlay: 16 24 40;
+    --shadow: 16 24 40;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --c-canvas: 10 12 17;
+      --c-surface: 18 21 28;
+      --c-surface-muted: 22 26 34;
+      --c-surface-sunken: 14 17 23;
+      --c-line: 35 40 52;
+      --c-line-strong: 50 57 71;
+      --c-ink: 242 244 247;
+      --c-ink-muted: 180 188 200;
+      --c-ink-subtle: 141 150 167;
+      --c-brand: 88 80 236;
+      --c-brand-strong: 99 102 241;
+      --c-brand-soft: 31 30 72;
+      --c-brand-ink: 165 180 252;
+      --c-success: 71 205 137;
+      --c-success-soft: 10 41 28;
+      --c-warning: 253 176 34;
+      --c-warning-soft: 46 31 6;
+      --c-danger: 249 112 102;
+      --c-danger-soft: 52 17 15;
+      --c-danger-solid: 217 45 32;
+      --c-info: 83 177 253;
+      --c-info-soft: 11 36 64;
+      --c-neutral: 205 213 223;
+      --c-neutral-soft: 30 35 46;
+      --c-overlay: 0 0 0;
+      --shadow: 0 0 0;
+    }
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-sm text-ink;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    /* Soft light from the top corners; fixed so it does not scroll with long tables. */
+    background-image:
+      radial-gradient(1100px 520px at 0% -10%, rgb(var(--c-brand) / 0.07), transparent 60%),
+      radial-gradient(900px 480px at 100% -15%, rgb(147 51 234 / 0.05), transparent 60%);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: rgb(var(--c-brand) / 0.18);
+  }
+
+  /* Native date pickers follow the theme. */
+  input[type='date']::-webkit-calendar-picker-indicator {
+    opacity: 0.6;
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* The one focus style: a soft brand halo, keyboard focus only. */
+  .focus-ring {
+    @apply outline-none focus-visible:ring-4 focus-visible:ring-brand/20;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Motion is decoration: honour the system setting to reduce it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
