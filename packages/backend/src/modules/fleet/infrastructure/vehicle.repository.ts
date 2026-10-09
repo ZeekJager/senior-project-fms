@@ -3,7 +3,8 @@ import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { FuelType, VehicleStatus, VehicleView } from '../domain/vehicle';
+import type { FuelType, VehicleStatus, VehicleType, VehicleView } from '../domain/vehicle';
+import { resolveDepotInScope } from './depot.queries';
 
 /** Columns a list can be sorted by, and the SQL behind each. */
 export const VEHICLE_SORT_COLUMNS = {
@@ -55,13 +56,14 @@ export interface LockedVehicle {
   fuelType: FuelType;
   fuelEfficiencyMlPerKm: number | null;
   odometerKm: number;
+  version: number;
 }
 
 const VIEW_SQL = `
   SELECT v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
          v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.status, v.maintenance_flag,
          v.health_score, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
-         v.created_at, v.updated_at
+         v.version, v.created_at, v.updated_at
     FROM fleet.vehicles v
     JOIN fleet.depots d ON d.id = v.depot_id`;
 
@@ -137,13 +139,8 @@ export class VehicleRepository extends Repository {
   }
 
   /** A live depot's internal id from its public id, if the caller's scope includes it. */
-  async resolveDepot(db: Queryable, publicId: string, scope: Scope): Promise<string | null> {
-    const clause = scopeClause(scope, 'd.id', 2);
-    const res = await db.query<{ id: string }>(
-      `SELECT d.id FROM fleet.depots d WHERE d.public_id = $1 AND d.is_active AND ${clause.sql}`,
-      [publicId, ...clause.params],
-    );
-    return res.rows[0]?.id ?? null;
+  resolveDepot(db: Queryable, publicId: string, scope: Scope): Promise<string | null> {
+    return resolveDepotInScope(db, publicId, scope);
   }
 
   /** Reads and row-locks a vehicle in the caller's scope, for a write in the same transaction. */
@@ -151,13 +148,20 @@ export class VehicleRepository extends Repository {
     const clause = scopeClause(scope, 'v.depot_id', 2);
     const res = await client.query<LockedVehicle>(
       `SELECT v.id, v.depot_id AS "depotId", v.is_active AS "isActive", v.fuel_type AS "fuelType",
-              v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm"
+              v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm",
+              v.version
          FROM fleet.vehicles v
         WHERE v.public_id = $1 AND ${clause.sql}
           FOR UPDATE`,
       [publicId, ...clause.params],
     );
     return res.rows[0] ?? null;
+  }
+
+  /** A vehicle's type by internal id, or null if there is no such vehicle (used by driver eligibility). */
+  async typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> {
+    const res = await db.query<{ vehicle_type: VehicleType }>('SELECT vehicle_type FROM fleet.vehicles WHERE id = $1', [vehicleId]);
+    return res.rows[0]?.vehicle_type ?? null;
   }
 
   /** True while a driver holds an active assignment to the vehicle (fleet.driver_vehicle_assignments). */

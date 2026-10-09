@@ -1,31 +1,99 @@
 import { Router } from 'express';
 import { pool } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
+import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
-import type { DepotDirectory } from '../auth';
-import { vehicleHasActiveTrip } from '../trip';
+import { USER_EVENTS, userDirectory, type DepotDirectory } from '../auth';
+import { driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { driverRouter } from './api/driver.routes';
 import { fleetRouter } from './api/fleet.routes';
 import { vehicleRouter } from './api/vehicle.routes';
+import { DriverService } from './application/driver.service';
+import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
-import { findDepotPublicId } from './infrastructure/depot.queries';
+import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
+import { driverAccounts } from './infrastructure/driver-account.projection';
+import { DriverRepository } from './infrastructure/driver.repository';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
+const vehicleRepository = new VehicleRepository(pool);
+
 const vehicleService = new VehicleService({
-  vehicles: new VehicleRepository(pool),
+  vehicles: vehicleRepository,
   trips: { vehicleHasActiveTrip },
   events: eventBus,
+});
+
+const driverService = new DriverService({
+  drivers: new DriverRepository(pool),
+  vehicles: { typeOf: (db, vehicleId) => vehicleRepository.typeOf(db, vehicleId) },
+  users: userDirectory,
+  accounts: driverAccounts,
+  depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds, publicIdByCode: depotPublicIdByCode },
+  trips: { driverHasActiveTrip },
+  events: eventBus,
+});
+
+// Keep fleet's copy of driver account fields current when another module changes an account.
+eventBus.subscribe(USER_EVENTS.accountChanged, async (event) => {
+  if (typeof event.payload.user_id === 'string') await driverService.onAccountChanged(event.payload.user_id);
 });
 
 const router = Router();
 router.use(fleetRouter);
 router.use(vehicleRouter(vehicleService));
+router.use(driverRouter(driverService));
 
-export const fleetModule: AppModule = { name: 'fleet', router };
+export const fleetModule: AppModule = {
+  name: 'fleet',
+  router,
+  jobs: [
+    {
+      // DriverLicenseExpiring 30 and 7 days before a licence expires.
+      name: 'driver-licence-expiry-warnings',
+      hour: 6,
+      run: async (now) => {
+        await driverService.publishExpiringLicences(now);
+      },
+    },
+    {
+      // Re-copies every driver's account fields, repairing any missed UserAccountChanged.
+      name: 'driver-account-sync',
+      hour: 3,
+      run: async () => {
+        await driverService.syncAccounts();
+      },
+    },
+  ],
+};
 
 /** Depot lookups other modules need; the auth module uses it for /auth/me. */
 export const depotDirectory: DepotDirectory = {
   publicIdOf: (depotId) => findDepotPublicId(pool, depotId),
 };
 
-/** Vehicle event types, for modules that subscribe to them. */
+/**
+ * For the trip module: whether a driver (internal id) may be dispatched at
+ * `at`, with every reason if not (retired, account not active, licence
+ * expired on that date in Addis Ababa, and with `vehicleId` a licence class
+ * that does not cover the vehicle's type). Pass the caller's transaction
+ * client as `db` to read inside it.
+ */
+export function checkDriverEligibility(
+  driverId: string,
+  at: Date,
+  options: { vehicleId?: string; db?: Queryable } = {},
+): Promise<DriverEligibility> {
+  return driverService.checkEligibility(options.db ?? pool, driverId, at, options.vehicleId);
+}
+
+/** `checkDriverEligibility(...).eligible`, for callers that need only yes or no. */
+export async function isDriverEligible(driverId: string, at: Date, db: Queryable = pool): Promise<boolean> {
+  return (await checkDriverEligibility(driverId, at, { db })).eligible;
+}
+
+export type { DriverEligibility, EligibilityReason } from './domain/driver';
+
+/** Event types, for modules that subscribe to them. */
+export { DRIVER_EVENTS } from './domain/driver';
 export { VEHICLE_EVENTS } from './domain/vehicle';

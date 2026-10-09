@@ -25,6 +25,8 @@ export interface VehicleView {
   health_score: number | null;
   depot_id: string;
   odometer_km: number;
+  /** Bumped on every change; also the ETag. Send it back in `If-Match` to refuse a stale PATCH. */
+  version: number;
   created_at: Date;
   updated_at: Date;
 }

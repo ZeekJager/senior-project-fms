@@ -2,9 +2,10 @@ import type { PoolClient } from 'pg';
 import { depotScope } from '../../../shared/authz/scope';
 import { createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
+import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import type { RequestUser } from '../../../types/express';
+import type { Caller } from './caller';
 import {
   VEHICLE_EVENTS,
   depotNotFound,
@@ -20,11 +21,7 @@ import {
 } from '../domain/vehicle';
 import type { VehicleListQuery, VehicleRepository, VehicleWrite } from '../infrastructure/vehicle.repository';
 
-/** Who is asking, for scope, audit and events. */
-export interface Caller {
-  user: RequestUser;
-  correlationId: string;
-}
+export type { Caller } from './caller';
 
 /** Fields of POST /vehicles, after validation and normalization. */
 export interface VehicleCreate {
@@ -88,11 +85,13 @@ export class VehicleService {
     return view;
   }
 
-  async update(caller: Caller, vehicleId: string, patch: VehicleUpdate): Promise<VehicleView> {
+  /** `expectedVersion` (from If-Match): refuse with 409 CONFLICT_CONCURRENT_MODIFICATION if the vehicle has changed since. */
+  async update(caller: Caller, vehicleId: string, patch: VehicleUpdate, expectedVersion: number | null = null): Promise<VehicleView> {
     const { vehicles } = this.deps;
     const view = await vehicles.inTransaction(async (client) => {
       const current = await vehicles.lockForWrite(client, vehicleId, depotScope(caller.user));
       if (!current) throw vehicleNotFound();
+      if (expectedVersion !== null && expectedVersion !== current.version) throw staleVersion();
       if (!current.isActive) throw vehicleRetired();
 
       // The fuel-efficiency rule holds for the vehicle after the change, so a

@@ -35,7 +35,7 @@ function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?:
   const locked =
     options.locked === null
       ? null
-      : { id: '7', depotId: '5', isActive: true, fuelType: 'diesel' as const, fuelEfficiencyMlPerKm: 320, odometerKm: 1000, ...options.locked };
+      : { id: '7', depotId: '5', isActive: true, fuelType: 'diesel' as const, fuelEfficiencyMlPerKm: 320, odometerKm: 1000, version: 0, ...options.locked };
 
   const vehicles: VehicleServiceDeps['vehicles'] = {
     inTransaction: (fn) => fn({} as PoolClient),

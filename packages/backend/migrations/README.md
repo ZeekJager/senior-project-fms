@@ -20,6 +20,9 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 012 | `document`, `api` (+ cross-cutting) | API-contract alignment: public UUIDs, documents, idempotency keys, trip overlap constraints, telemetry de-duplication |
 | 013 | (grants) | Runtime privileges for the `fms_app` role; audit table stays INSERT/SELECT only |
 | 014 | `auth` | Session families on `refresh_sessions` for refresh-token rotation and reuse detection (FMS-05) |
+| 015 | `fleet` | `drivers.license_categories TEXT[]` of European licence categories (AM ... DE), replacing the free-text `license_category` (FMS-16) |
+| 016 | `fleet` | `version` on `vehicles` and `drivers`, bumped by trigger, for optimistic concurrency (If-Match / ETag) (FMS-16) |
+| 017 | `fleet` | `driver_accounts`: the fleet module's copy of drivers' name, email, depot and account status, so the driver list filters and sorts in one query (FMS-16) |
 
 ## Important
 
@@ -39,7 +42,7 @@ Do **not** run these migrations on top of the old `public.*` tables without firs
 
 ## Design notes
 
-- **Depot scoping.** `auth.users.depot_id` is the single source of a user's home depot (NULL = depot-unscoped, e.g. admin). A driver's depot is their user's depot; `fleet.drivers` keeps no copy, so the two cannot drift. `GET /drivers?depotId=` joins through `auth.users`.
+- **Depot scoping.** `auth.users.depot_id` is the single source of a user's home depot (NULL = depot-unscoped, e.g. admin). A driver's depot is their user's depot; `fleet.drivers` keeps no copy, so the two cannot drift. `GET /drivers?depot_id=` filters through the account: the fleet module asks the auth module (`userDirectory` in its `index.ts`) for the matching user ids, since fleet SQL may not query `auth.users` (FMS-12).
 - **Cross-module foreign keys** are added by the migration that creates the *referenced* table and dropped first in its Down: `fk_users_depot` in 002, `fk_dvir_trip` in 003.
 - **Trip lifecycle.** A trip is created with route + schedule and assigned a driver and vehicle later. `chk_trip_assignment` requires both from `assigned` onward; `chk_trip_schedule_required` requires times outside `draft`/`cancelled`.
 - **Optimistic locking.** `trip.trips.version` is bumped by a trigger on every UPDATE. Write with `UPDATE ... WHERE id = $1 AND version = $2`; 0 rows updated means a concurrent edit.

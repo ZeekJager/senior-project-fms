@@ -83,7 +83,7 @@ describe('POST /vehicles', () => {
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
         'created_at', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'id', 'maintenance_flag',
-        'make', 'model', 'odometer_km', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'vin', 'year',
+        'make', 'model', 'odometer_km', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );
     expect(await auditRows(res)).toEqual([{ action: 'INSERT', entity_type: 'fleet.vehicles' }]);
@@ -395,5 +395,26 @@ describe('vehicle events', () => {
     expect(received[2].id).toMatch(UUID);
     expect(received[2].actor).toMatch(UUID);
     expect(Number.isNaN(Date.parse(received[2].occurred_at))).toBe(false);
+  });
+});
+
+describe('If-Match on PATCH /vehicles/{id}', () => {
+  test('the ETag is the version; a stale If-Match is 409 CONFLICT_CONCURRENT_MODIFICATION', async () => {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const cookie = await signIn(['depot_admin'], depot);
+
+    const read = await api.get(`/vehicles/${vehicle.public_id}`, cookie);
+    expect(read.headers.etag).toBe('"0"');
+    expect(read.body.data.version).toBe(0);
+
+    const first = await api.patch(`/vehicles/${vehicle.public_id}`, { model: 'FVR' }, cookie).set('If-Match', '"0"');
+    expect(first.status).toBe(200);
+    expect(first.headers.etag).toBe('"1"');
+
+    const stale = await api.patch(`/vehicles/${vehicle.public_id}`, { model: 'NPR' }, cookie).set('If-Match', '"0"');
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('CONFLICT_CONCURRENT_MODIFICATION');
+    expect((await api.get(`/vehicles/${vehicle.public_id}`, cookie)).body.data.model).toBe('FVR');
   });
 });

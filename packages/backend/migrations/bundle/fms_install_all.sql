@@ -1711,3 +1711,58 @@ ALTER TABLE auth.refresh_sessions
 CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_family
     ON auth.refresh_sessions(family_id)
     WHERE revoked_at IS NULL;
+
+-- ===== 015_driver_license_categories.sql =====
+ALTER TABLE fleet.drivers
+    ADD COLUMN IF NOT EXISTS license_categories TEXT[] NOT NULL DEFAULT '{}';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'fleet' AND table_name = 'drivers' AND column_name = 'license_category') THEN
+        UPDATE fleet.drivers
+           SET license_categories = ARRAY[upper(trim(license_category))]
+         WHERE upper(trim(license_category)) IN
+               ('AM','A1','A2','A','B1','B','BE','C1','C1E','C','CE','D1','D1E','D','DE');
+        ALTER TABLE fleet.drivers DROP COLUMN license_category;
+    END IF;
+END $$;
+
+ALTER TABLE fleet.drivers DROP CONSTRAINT IF EXISTS chk_driver_license_categories;
+ALTER TABLE fleet.drivers
+    ADD CONSTRAINT chk_driver_license_categories CHECK (
+        license_categories <@ ARRAY['AM','A1','A2','A','B1','B','BE','C1','C1E','C','CE','D1','D1E','D','DE']::TEXT[]
+    );
+
+-- ===== 016_fleet_row_versions.sql =====
+ALTER TABLE fleet.vehicles ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE fleet.drivers  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE TRIGGER trg_fleet_vehicles_version
+    BEFORE UPDATE ON fleet.vehicles
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+CREATE OR REPLACE TRIGGER trg_fleet_drivers_version
+    BEFORE UPDATE ON fleet.drivers
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+-- ===== 017_fleet_driver_accounts.sql =====
+CREATE TABLE IF NOT EXISTS fleet.driver_accounts (
+    user_id         BIGINT PRIMARY KEY REFERENCES auth.users(id)
+                    ON DELETE CASCADE ON UPDATE CASCADE,
+    full_name       VARCHAR(255) NOT NULL,
+    email           VARCHAR(255) NOT NULL,
+    depot_id        BIGINT REFERENCES fleet.depots(id)
+                    ON DELETE SET NULL ON UPDATE CASCADE,
+    account_status  shared.user_status NOT NULL,
+    synced_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fleet_driver_accounts_depot
+    ON fleet.driver_accounts(depot_id);
+
+INSERT INTO fleet.driver_accounts (user_id, full_name, email, depot_id, account_status)
+SELECT u.id, u.full_name, u.email, u.depot_id, u.status
+  FROM fleet.drivers d
+  JOIN auth.users u ON u.id = d.user_id
+ON CONFLICT (user_id) DO NOTHING;

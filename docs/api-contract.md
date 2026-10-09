@@ -216,16 +216,20 @@ Vehicle rules (FMS-15):
 - **Retirement:** `DELETE` sets `status = retired` and `is_active = false` (one audit row) and returns `204`. It is refused with `409 CONFLICT_VEHICLE_IN_USE` while the vehicle is on an `assigned` or `en_route` trip or has an active driver assignment. Retiring a retired vehicle returns `204` and changes nothing. A retired vehicle is left out of `GET /vehicles` unless `status=retired` is asked for, can still be read by id, and cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`). Its plate stays taken.
 - **List:** `page` from 1, `page_size` default 25, capped at 100. `search` matches registration number, VIN, make or model (case-insensitive, wildcards literal). `sort_by`: `registration_number` (default), `make`, `model`, `year`, `odometer_km`, `health_score`, `created_at`, `updated_at`; `sort_order` `asc` (default) or `desc`.
 - **Events:** `VehicleRegistered`, `VehicleUpdated` (with `changed_fields`) and `VehicleRetired`, each with `vehicle_id` and `depot_id` (public ids).
+- **Concurrency:** `version` and `ETag` / `If-Match` as described under the driver rules (§6.3).
 
 ### 6.3 Drivers, assignments and attendance
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /drivers` | List/search drivers | `driver:read` | `depot_id,license_expiring_before,search` -> `Driver[]` |
-| `POST /drivers` | Create driver | `driver:write` | `user_id,license_number,license_expiry,depot_id` -> `Driver` |
+| `GET /drivers` | List/search drivers | `driver:read` | `depot_id,license_expiring_before,license_status,search,status` -> `Driver[]` |
+| `POST /drivers` | Create driver | `driver:write` | `user_id,license_number,license_expiry,depot_id` -> `Driver`; `Idempotency-Key` |
+| `POST /drivers/import` | Bulk onboarding from CSV | `driver:write` | `text/csv`; all rows or none; `?dry_run=true`; `Idempotency-Key` |
+| `GET /drivers/me` | The caller's own driver profile (driver PWA) | Authenticated | `Driver`; `404` if the caller is not a driver |
 | `GET /drivers/{driver_id}` | Get driver | `driver:read` | `Driver` |
 | `PATCH /drivers/{driver_id}` | Update driver | `driver:write` | `DriverUpdate` -> `Driver` |
-| `DELETE /drivers/{driver_id}` | Retire driver | `driver:delete` | Soft retire; preserve historical references |
+| `DELETE /drivers/{driver_id}` | Retire driver | `driver:delete` | `204`. Soft retire; preserve historical references; `409 CONFLICT_DRIVER_IN_USE` if in use |
+| `POST /drivers/{driver_id}/reinstate` | Reinstate a retired driver | `driver:write` | `Driver`; history kept; reinstating an active driver changes nothing |
 | `POST /driver-vehicle-assignments` | Create driver/vehicle assignment | `assignment:write` | `driver_id,vehicle_id,start_at,end_at` -> `Assignment` |
 | `GET /vehicles/{vehicle_id}/assignments` | Assignment history | `assignment:read` | `Assignment[]` |
 | `GET /drivers/{driver_id}/assignments` | Driver assignment history | `assignment:read` | `Assignment[]` |
@@ -234,7 +238,22 @@ Vehicle rules (FMS-15):
 | `GET /attendance/{attendance_id}` | Attendance detail | `attendance:read` | `Attendance` |
 | `PATCH /attendance/{attendance_id}` | Update attendance | `attendance:write` | `AttendanceUpdate` -> `Attendance` |
 
-A driver's `depot_id` is their home depot, stored once on the driver's user account (`auth.users.depot_id`). `POST /drivers` and `PATCH /drivers` write it there, and `GET /drivers?depot_id=` filters through it. Attendance `status` is one of `present`, `absent`, `on_leave`, `late`, `sick`, `other`; the recording user is taken from the session.
+A driver's `depot_id` is their home depot, stored once on the driver's user account (`auth.users.depot_id`). `POST /drivers` and `PATCH /drivers` write it there, and `GET /drivers?depot_id=` filters through it.
+
+Driver rules (FMS-16):
+
+- **`Driver`:** `id`, `user_id`, `full_name`, `email`, `phone`, `depot_id`, `license_number`, `license_categories`, `license_expiry` (`YYYY-MM-DD`), `license_status` (`valid`, `expiring_soon` within 30 days, or `expired`, by today's date in Addis Ababa), `hire_date`, `emergency_phone`, `status` (`active` or `retired`), `version`, `created_at`, `updated_at`. Name, email and phone are the user account's and change through user administration, not here. Licence and phone are personal data: every driver endpoint needs `driver:read` or more.
+- **`POST /drivers`:** `user_id` must be an active account with the `driver` role, in the caller's depots (or without a depot yet); otherwise `400 VALIDATION_FAILED` on `user_id` with `references_missing_record`, `account_not_active` or `not_a_driver`. Also required: `license_number`, `license_expiry`, `depot_id`; optional `license_categories`, `hire_date` (not in the future), `emergency_phone`. A second driver for the same account is `409 CONFLICT_DUPLICATE` on `user_id`.
+- **Licence number** is stored trimmed, upper case, single-spaced; a duplicate is `409 CONFLICT_DUPLICATE_LICENSE` whatever its case or spacing.
+- **`license_categories`** lists the European licence categories held (EU Directive 2006/126/EC): `AM`, `A1`, `A2`, `A`, `B1`, `B`, `BE`, `C1`, `C1E`, `C`, `CE`, `D1`, `D1E`, `D`, `DE`; stored without duplicates in that order, `[]` when not recorded. Anything else is `400 VALIDATION_INVALID_ENUM`. A vehicle is allowed when any held category allows its type (A* motorcycle, B/BE car, SUV, van, C* truck, D* bus, B1 other); the table is `LICENSE_CATEGORY_VEHICLE_TYPES` in the fleet module.
+- **`PATCH /drivers/{id}`:** any non-empty subset of the licence fields, `emergency_phone` and `depot_id`; `user_id` is fixed. A retired driver cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`); reinstate them first.
+- **Concurrency** (§19), drivers and vehicles: `version` is bumped on every change (a driver's depot move included) and returned as the `ETag` of `GET`, `POST` and `PATCH`. A `PATCH` with `If-Match: "<version>"` for an older version is refused with `409 CONFLICT_CONCURRENT_MODIFICATION`; a malformed `If-Match` is `400`. Without `If-Match` the change goes through (last write wins); clients that edit should send it.
+- **Depot scope:** as for vehicles. A driver whose account is outside the caller's depots is `404`; a `depot_id` outside them is `400 references_missing_record`.
+- **Retirement** sets `is_active = false` (one audit row), keeps trips and attendance, and leaves the user account as it is. It is refused with `409 CONFLICT_DRIVER_IN_USE` while the driver is on an `assigned` or `en_route` trip or has an active vehicle assignment. Retiring a retired driver returns `204` and changes nothing.
+- **List:** `license_expiring_before=YYYY-MM-DD` returns licences expiring before that date (already expired included). `search` matches name, email or licence number. `status` (`active` default, or `retired`), `page`/`page_size` as §18, `sort_by` `license_number` (default), `full_name`, `license_expiry`, `hire_date` or `created_at`. Name, email and depot are matched on the fleet module's copy of the account fields (`fleet.driver_accounts`), refreshed in the same transaction when the driver API changes an account, on `UserAccountChanged` from other modules, and daily.
+- **`POST /drivers/import`:** a CSV (`Content-Type: text/csv`, at most 500 rows, 1 MB) with a header row naming its columns: `email` (the account), `license_number`, `license_expiry`, `depot_code` or `depot_id`, and optional `license_categories` (one cell, separated by spaces, commas, semicolons or bars), `hire_date`, `emergency_phone`. Every row goes through the `POST /drivers` rules, and rows are checked against each other (`duplicate_of_row_<n>`). If any row fails, nothing is saved and the response is `400 VALIDATION_FAILED` with one detail per problem, `field` being `rows.<row>.<column>` (the header is row 1). Success is `201` with `{ created: [{ row, id }] }`; `?dry_run=true` checks everything, saves nothing and returns `200` with `{ valid: <rows> }`.
+- **Eligibility** (for trip assignment): the fleet module's `checkDriverEligibility(driverId, at, { vehicleId })` returns `{ eligible, reasons }`. Reasons: `driver_not_found`, `driver_retired`, `account_not_active`, `license_expired` (on `at`'s date in Addis Ababa), and with a vehicle `license_category_missing`, `license_category_not_valid_for_vehicle` or `vehicle_not_found`. Assignment should return them in its `409` details so the dispatcher sees why. `isDriverEligible` is the yes/no shortcut.
+- **Events:** `DriverRegistered`, `DriverRetired` and `DriverReinstated`, with `driver_id`, `user_id` and `depot_id` (public ids). `DriverUpdated` adds `changed_fields` (licence or contact fields); `DriverTransferred` adds `from_depot_id` and `to_depot_id` (a home-depot move). `DriverLicenseExpiring` (with `license_expiry` and `days_left`) is published by a daily job (06:00 Addis Ababa) 30 and 7 days before a licence expires; its event id is fixed per driver, expiry and day count, so a rerun repeats the id instead of a new fact. Attendance `status` is one of `present`, `absent`, `on_leave`, `late`, `sick`, `other`; the recording user is taken from the session.
 
 ### 6.4 DVIR
 
@@ -583,6 +602,8 @@ Normal resources use `page`/`page_size`. Server page size is capped. Telemetry h
 ## 19. Idempotency and Concurrency
 
 Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
+
+`Idempotency-Key` is optional on the endpoints marked with it. The first request with a key runs; a `2xx` response is stored and replayed to any retry with the same key and body, with the header `Idempotent-Replayed: true`. An error response frees the key, so a corrected retry may reuse it. Keys are per user and kept 24 hours.
 
 ## 20. Rate Limiting and Resilience
 

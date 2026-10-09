@@ -57,6 +57,16 @@ export { publicRoute } from '../../shared/authz/route-policy';
 export { depotScope, ownDriverScope, scopeClause, type Scope } from '../../shared/authz/scope';
 
 export { hashPassword } from './infrastructure/password-hasher';
+/** User accounts for other modules (drivers live on their account): look up, move depot. */
+export { userDirectory, type UserAccount } from './infrastructure/user-directory';
+
+/**
+ * Account events. Code that changes a user's name, email, status or depot
+ * outside the module that asked for it (user administration, SE users API)
+ * publishes UserAccountChanged with `{ user_id }` (public id), so modules
+ * that keep a copy (fleet.driver_accounts) refresh it.
+ */
+export const USER_EVENTS = { accountChanged: 'UserAccountChanged' } as const;
 export type { DepotDirectory } from './domain/depot-directory';
 
 export const authModule: AppModule = { name: 'auth', router: authRouter(authService, authenticate) };
