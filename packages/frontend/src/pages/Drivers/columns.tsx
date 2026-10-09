@@ -18,6 +18,13 @@ export interface ColumnContext {
   onAddDocument: (driver: Driver) => void
 }
 
+/** Today's attendance that makes a driver a dispatch risk: a warning, not a block (FMS-21). */
+const UNAVAILABLE: Partial<Record<NonNullable<Driver['attendance_today']>, string>> = {
+  absent: 'Absent today',
+  on_leave: 'On leave today',
+  sick: 'Sick today',
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?'
@@ -88,7 +95,13 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
           </div>
           <div className="min-w-0">
             <p className="truncate font-semibold text-ink">{d.full_name}</p>
-            <p className="hidden truncate text-xs text-ink-subtle sm:block">{d.email}</p>
+            {d.attendance_today && UNAVAILABLE[d.attendance_today] ? (
+              <span className="mt-0.5 hidden sm:block">
+                <Badge tone="warning">{UNAVAILABLE[d.attendance_today]}</Badge>
+              </span>
+            ) : (
+              <p className="hidden truncate text-xs text-ink-subtle sm:block">{d.email}</p>
+            )}
             {/* Phones drop the expiry column; the badge rides under the name. */}
             <span className="mt-1 block sm:hidden" aria-hidden="true">
               <LicenceBadge status={d.license_status} expiry={d.license_expiry} />

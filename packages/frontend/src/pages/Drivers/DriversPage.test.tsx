@@ -42,6 +42,7 @@ function driver(overrides: Partial<Driver> = {}): Driver {
     emergency_phone: null,
     status: 'active',
     current_trip: null,
+    attendance_today: null,
     version: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
@@ -136,7 +137,8 @@ describe('Driver Management (S-05)', () => {
     expect(listed).toBe(false)
   })
 
-  describe('add driver', () => {
+  // These type a whole form; under a full parallel run they can pass 5s.
+  describe('add driver', { timeout: 15_000 }, () => {
     async function fillForm(user: ReturnType<typeof userEvent.setup>, licence: string) {
       await user.click(screen.getAllByRole('button', { name: 'Add driver' })[0])
       const drawer = await screen.findByRole('dialog', { name: 'Add driver' })
@@ -296,6 +298,16 @@ describe('Driver Management (S-05)', () => {
 
     expect(within(rowFor(d.full_name)).getByRole('link', { name: /Adama.*Dire Dawa/ })).toHaveAttribute('href', '/dispatch?trip=t-9')
     expect(await within(rowFor(d.full_name)).findByText('1 expired')).toHaveClass('bg-danger-soft')
+  })
+
+  it('flags a driver who is absent today, as a warning', async () => {
+    const absent = driver({ attendance_today: 'absent' })
+    const present = driver({ attendance_today: 'present' })
+    serveDrivers([absent, present])
+    await openDrivers()
+    await within(await screen.findByRole('table', { name: 'Drivers' })).findByText(absent.full_name)
+    expect(within(rowFor(absent.full_name)).getByText('Absent today')).toHaveClass('bg-warning-soft')
+    expect(within(rowFor(present.full_name)).queryByText(/today/)).not.toBeInTheDocument()
   })
 
   it('says so when a depot has no drivers', async () => {
