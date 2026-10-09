@@ -4,7 +4,7 @@ import { createEvent, type DomainEvent } from '../../../shared/events/domain-eve
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import type { RequestUser } from '../../../types/express';
+import type { Caller } from './caller';
 import {
   VEHICLE_EVENTS,
   depotNotFound,
@@ -20,11 +20,7 @@ import {
 } from '../domain/vehicle';
 import type { VehicleListQuery, VehicleRepository, VehicleWrite } from '../infrastructure/vehicle.repository';
 
-/** Who is asking, for scope, audit and events. */
-export interface Caller {
-  user: RequestUser;
-  correlationId: string;
-}
+export type { Caller } from './caller';
 
 /** Fields of POST /vehicles, after validation and normalization. */
 export interface VehicleCreate {

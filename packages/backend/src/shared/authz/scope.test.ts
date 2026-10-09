@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RequestUser } from '../../types/express';
-import { depotScope, ownDriverScope, scopeClause } from './scope';
+import { depotInScope, depotScope, ownDriverScope, scopeClause } from './scope';
 
 const user = (roles: string[], depotId: string | null = '7'): RequestUser => ({
   id: '42',
@@ -66,5 +66,17 @@ describe('scopeClause', () => {
 
   it.each(["depot_id; DROP TABLE x", 'a b', '"depot_id"', '1depot', '', 'a.b.c'])('rejects the column %j', (column) => {
     expect(() => scopeClause({ kind: 'all' }, column, 1)).toThrow(/Invalid column/);
+  });
+});
+
+describe('depotInScope', () => {
+  it('all sees every depot and no depot; a depot scope only its own; own and none see nothing', () => {
+    expect(depotInScope({ kind: 'all' }, '5')).toBe(true);
+    expect(depotInScope({ kind: 'all' }, null)).toBe(true);
+    expect(depotInScope({ kind: 'depot', depotId: '5' }, '5')).toBe(true);
+    expect(depotInScope({ kind: 'depot', depotId: '5' }, '6')).toBe(false);
+    expect(depotInScope({ kind: 'depot', depotId: '5' }, null)).toBe(false);
+    expect(depotInScope({ kind: 'own', userId: '1' }, '5')).toBe(false);
+    expect(depotInScope({ kind: 'none' }, '5')).toBe(false);
   });
 });

@@ -135,7 +135,7 @@ Modules react to each other through events. Status: until FMS-73 (Sprint 3) brin
 - **Payload carries ids, not personal data.** Consumers re-read what they need through the owning module, with their own authorization.
 - **Delivery is at least once**, so a consumer must be idempotent by event `id`.
 - **Publish in the same transaction as the change.** A rolled-back change publishes nothing.
-- **Catalogue** (extended as events are added): `VehicleRegistered`, `VehicleUpdated`, `VehicleRetired` (fleet, FMS-15), `TripAssigned`, `TripStarted`, `TripCompleted`, `VehicleLocationUpdated`, `FuelAnomalyDetected`, `MaintenanceRiskDetected`, `VehicleFaultDetected`, `AlertCreated`, `BatteryThresholdExceeded`.
+- **Catalogue** (extended as events are added): `VehicleRegistered`, `VehicleUpdated`, `VehicleRetired` (fleet, FMS-15), `DriverRegistered`, `DriverRetired` (fleet, FMS-16), `TripAssigned`, `TripStarted`, `TripCompleted`, `VehicleLocationUpdated`, `FuelAnomalyDetected`, `MaintenanceRiskDetected`, `VehicleFaultDetected`, `AlertCreated`, `BatteryThresholdExceeded`.
 
 ## API
 

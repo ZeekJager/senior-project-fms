@@ -73,3 +73,14 @@ export function scopeClause(scope: Scope, column: string, nextParam: number): Sc
       return { sql: 'FALSE', params: [] };
   }
 }
+
+/**
+ * Whether a record in `depotId` is inside a scope, for the rare check that
+ * cannot be a WHERE clause because the depot lives in another module (a
+ * driver's depot is on their user account). Prefer `scopeClause`.
+ */
+export function depotInScope(scope: Scope, depotId: string | null): boolean {
+  if (scope.kind === 'all') return true;
+  if (scope.kind === 'depot') return depotId === scope.depotId;
+  return false;
+}

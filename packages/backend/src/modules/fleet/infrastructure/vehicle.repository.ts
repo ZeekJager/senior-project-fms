@@ -4,6 +4,7 @@ import type { MutationContext, Row } from '../../../shared/infrastructure/audite
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
 import type { FuelType, VehicleStatus, VehicleView } from '../domain/vehicle';
+import { resolveDepotInScope } from './depot.queries';
 
 /** Columns a list can be sorted by, and the SQL behind each. */
 export const VEHICLE_SORT_COLUMNS = {
@@ -137,13 +138,8 @@ export class VehicleRepository extends Repository {
   }
 
   /** A live depot's internal id from its public id, if the caller's scope includes it. */
-  async resolveDepot(db: Queryable, publicId: string, scope: Scope): Promise<string | null> {
-    const clause = scopeClause(scope, 'd.id', 2);
-    const res = await db.query<{ id: string }>(
-      `SELECT d.id FROM fleet.depots d WHERE d.public_id = $1 AND d.is_active AND ${clause.sql}`,
-      [publicId, ...clause.params],
-    );
-    return res.rows[0]?.id ?? null;
+  resolveDepot(db: Queryable, publicId: string, scope: Scope): Promise<string | null> {
+    return resolveDepotInScope(db, publicId, scope);
   }
 
   /** Reads and row-locks a vehicle in the caller's scope, for a write in the same transaction. */

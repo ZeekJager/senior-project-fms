@@ -57,6 +57,8 @@ export { publicRoute } from '../../shared/authz/route-policy';
 export { depotScope, ownDriverScope, scopeClause, type Scope } from '../../shared/authz/scope';
 
 export { hashPassword } from './infrastructure/password-hasher';
+/** User accounts for other modules (drivers live on their account): look up, filter by depot or name, move depot. */
+export { userDirectory, type UserAccount } from './infrastructure/user-directory';
 export type { DepotDirectory } from './domain/depot-directory';
 
 export const authModule: AppModule = { name: 'auth', router: authRouter(authService, authenticate) };

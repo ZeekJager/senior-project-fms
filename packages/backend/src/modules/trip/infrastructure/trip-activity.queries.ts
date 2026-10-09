@@ -17,3 +17,14 @@ export async function vehicleHasActiveTrip(db: Queryable, vehicleId: string): Pr
   );
   return res.rows[0].active;
 }
+
+/** True when the driver (internal fleet.drivers id) is on a trip that is assigned or en route. */
+export async function driverHasActiveTrip(db: Queryable, driverId: string): Promise<boolean> {
+  const res = await db.query<{ active: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM trip.trips WHERE driver_id = $1 AND status = ANY($2::trip.trip_status[])
+     ) AS active`,
+    [driverId, ACTIVE_TRIP_STATUSES],
+  );
+  return res.rows[0].active;
+}
