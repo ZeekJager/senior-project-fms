@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { asyncHandler } from '../../../shared/http/async-handler';
+import { etagFor, ifMatchVersion } from '../../../shared/http/etag';
 import { pageMeta } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authenticated, authorize } from '../../auth';
@@ -43,6 +44,7 @@ export function driverRouter(service: DriverService): Router {
       res
         .status(201)
         .location(`/api/v1/drivers/${driver.id}`)
+        .set('ETag', etagFor(driver.version))
         .json({ data: driver, meta: { request_id: req.correlationId } });
     }),
   );
@@ -61,7 +63,8 @@ export function driverRouter(service: DriverService): Router {
     '/drivers/:driverId',
     authorize('driver:read'),
     asyncHandler(async (req, res) => {
-      res.json({ data: await service.get(caller(req), driverId(req)), meta: { request_id: req.correlationId } });
+      const driver = await service.get(caller(req), driverId(req));
+      res.set('ETag', etagFor(driver.version)).json({ data: driver, meta: { request_id: req.correlationId } });
     }),
   );
 
@@ -70,8 +73,18 @@ export function driverRouter(service: DriverService): Router {
     authorize('driver:write'),
     asyncHandler(async (req, res) => {
       const id = driverId(req);
-      const driver = await service.update(caller(req), id, parseInput(driverUpdateBody, req.body));
-      res.json({ data: driver, meta: { request_id: req.correlationId } });
+      const expected = ifMatchVersion(req.get('If-Match'));
+      const driver = await service.update(caller(req), id, parseInput(driverUpdateBody, req.body), expected);
+      res.set('ETag', etagFor(driver.version)).json({ data: driver, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  router.post(
+    '/drivers/:driverId/reinstate',
+    authorize('driver:write'),
+    asyncHandler(async (req, res) => {
+      const driver = await service.reinstate(caller(req), driverId(req));
+      res.set('ETag', etagFor(driver.version)).json({ data: driver, meta: { request_id: req.correlationId } });
     }),
   );
 

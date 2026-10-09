@@ -51,7 +51,7 @@ describe('POST /drivers', () => {
 
     const res = await api.post(
       '/drivers',
-      driverBody(user, depot, { license_number: ' aa  12345 ', license_category: 'dry_cargo_1', hire_date: '2024-02-01', emergency_phone: '+251 911 234567' }),
+      driverBody(user, depot, { license_number: ' aa  12345 ', license_categories: ['CE', 'B'], hire_date: '2024-02-01', emergency_phone: '+251 911 234567' }),
       cookie,
     );
 
@@ -63,7 +63,7 @@ describe('POST /drivers', () => {
       email: user.email,
       depot_id: depot.public_id,
       license_number: 'AA 12345',
-      license_category: 'dry_cargo_1',
+      license_categories: ['B', 'CE'],
       license_expiry: '2030-06-30',
       hire_date: '2024-02-01',
       emergency_phone: '+251 911 234567',
@@ -249,11 +249,11 @@ describe('PATCH /drivers/{id}', () => {
     const retired = await createDriver({ depot: a, is_active: false });
     const cookie = await signIn(['depot_admin'], a);
 
-    expect((await api.patch(`/drivers/${db.driver.public_id}`, { license_category: 'automobile' }, cookie)).status).toBe(404);
+    expect((await api.patch(`/drivers/${db.driver.public_id}`, { license_categories: ['B'] }, cookie)).status).toBe(404);
     const move = await api.patch(`/drivers/${da.driver.public_id}`, { depot_id: b.public_id }, cookie);
     expect(move.status).toBe(400);
     expect(move.body.error.details).toEqual([{ field: 'depot_id', reason: 'references_missing_record' }]);
-    const old = await api.patch(`/drivers/${retired.driver.public_id}`, { license_category: 'automobile' }, cookie);
+    const old = await api.patch(`/drivers/${retired.driver.public_id}`, { license_categories: ['B'] }, cookie);
     expect(old.status).toBe(409);
     expect(old.body.error.code).toBe('CONFLICT_INVALID_STATE_TRANSITION');
     const fixed = await api.patch(`/drivers/${da.driver.public_id}`, { user_id: randomUUID() }, cookie);
@@ -411,7 +411,7 @@ describe('checkDriverEligibility (enhancement 1)', () => {
     const depot = await createDepot();
     const truck = await createVehicle({ depot, vehicle_type: 'truck' });
     const car = await createVehicle({ depot, vehicle_type: 'car' });
-    const { driver } = await createDriver({ depot, license_category: 'automobile' });
+    const { driver } = await createDriver({ depot, license_categories: ['B'] });
 
     expect(await checkDriverEligibility(driver.id, at, { vehicleId: car.id })).toEqual({ eligible: true, reasons: [] });
     expect(await checkDriverEligibility(driver.id, at, { vehicleId: truck.id })).toEqual({
@@ -471,5 +471,92 @@ describe('licence expiry warnings (enhancement 2)', () => {
     await job.run(new Date());
     const again = received.filter((e) => [in30.driver.public_id, in7.driver.public_id].includes(e.payload.driver_id));
     expect(again.map((e) => e.id).sort()).toEqual(firstIds);
+  });
+});
+
+describe('POST /drivers/{id}/reinstate (enhancement 4)', () => {
+  test('a retired driver becomes active again with one audit row and an event; reinstating twice changes nothing', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const { driver } = await createDriver({ depot });
+    await api.delete(`/drivers/${driver.public_id}`, cookie);
+
+    const received: DomainEvent[] = [];
+    const off = eventBus.subscribe('DriverReinstated', (e) => void received.push(e));
+    try {
+      const res = await api.post(`/drivers/${driver.public_id}/reinstate`, {}, cookie);
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ id: driver.public_id, status: 'active' });
+      expect(await auditRows(res)).toEqual([{ action: 'UPDATE', entity_type: 'fleet.drivers' }]);
+      expect(ids(await api.get(`/drivers?depot_id=${depot.public_id}`, cookie))).toContain(driver.public_id);
+
+      const again = await api.post(`/drivers/${driver.public_id}/reinstate`, {}, cookie);
+      expect(again.status).toBe(200);
+      expect(await auditRows(again)).toEqual([]);
+      expect(received.map((e) => e.payload.driver_id)).toEqual([driver.public_id]);
+    } finally {
+      off();
+    }
+  });
+
+  test('another depot is 404; a dispatcher (no driver:write) is 403', async () => {
+    const [a, b] = [await createDepot(), await createDepot()];
+    const { driver } = await createDriver({ depot: b, is_active: false });
+    expect((await api.post(`/drivers/${driver.public_id}/reinstate`, {}, await signIn(['depot_admin'], a))).status).toBe(404);
+    expect((await api.post(`/drivers/${driver.public_id}/reinstate`, {}, await signIn(['dispatcher'], b))).status).toBe(403);
+  });
+});
+
+describe('DriverUpdated and DriverTransferred (enhancement 5)', () => {
+  test('a licence change publishes DriverUpdated; a depot move DriverTransferred; both in one PATCH publish both', async () => {
+    const [a, b] = [await createDepot(), await createDepot()];
+    const { driver, user } = await createDriver({ depot: a });
+    const cookie = await signIn(['fleet_manager']);
+    const received: DomainEvent[] = [];
+    const offs = ['DriverUpdated', 'DriverTransferred'].map((t) => eventBus.subscribe(t, (e) => void received.push(e)));
+    try {
+      await api.patch(`/drivers/${driver.public_id}`, { license_expiry: '2031-01-31', license_categories: ['B'], depot_id: b.public_id }, cookie);
+      expect(received.map((e) => e.type)).toEqual(['DriverUpdated', 'DriverTransferred']);
+      expect(received[0].payload).toEqual({
+        driver_id: driver.public_id,
+        user_id: user.public_id,
+        depot_id: b.public_id,
+        changed_fields: ['license_categories', 'license_expiry'],
+      });
+      expect(received[1].payload).toMatchObject({ from_depot_id: a.public_id, to_depot_id: b.public_id });
+
+      received.length = 0;
+      await api.patch(`/drivers/${driver.public_id}`, { depot_id: b.public_id }, cookie); // already there
+      expect(received).toEqual([]);
+    } finally {
+      offs.forEach((off) => off());
+    }
+  });
+});
+
+describe('If-Match on PATCH /drivers/{id} (enhancement 6)', () => {
+  test('the ETag is the version; a stale If-Match is 409 CONFLICT_CONCURRENT_MODIFICATION', async () => {
+    const [a, b] = [await createDepot(), await createDepot()];
+    const { driver } = await createDriver({ depot: a });
+    const cookie = await signIn(['fleet_manager']);
+
+    const read = await api.get(`/drivers/${driver.public_id}`, cookie);
+    expect(read.headers.etag).toBe('"0"');
+    expect(read.body.data.version).toBe(0);
+
+    const first = await api.patch(`/drivers/${driver.public_id}`, { license_categories: ['B'] }, cookie).set('If-Match', '"0"');
+    expect(first.status).toBe(200);
+    expect(first.headers.etag).toBe('"1"');
+
+    const stale = await api.patch(`/drivers/${driver.public_id}`, { license_categories: ['C'] }, cookie).set('If-Match', '"0"');
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('CONFLICT_CONCURRENT_MODIFICATION');
+
+    // A depot move changes only the account, but still moves the driver's version on.
+    const moved = await api.patch(`/drivers/${driver.public_id}`, { depot_id: b.public_id }, cookie).set('If-Match', '"1"');
+    expect(moved.headers.etag).toBe('"2"');
+
+    expect((await api.patch(`/drivers/${driver.public_id}`, { license_categories: [] }, cookie).set('If-Match', 'v2')).status).toBe(400);
+    expect((await api.patch(`/drivers/${driver.public_id}`, { license_categories: [] }, cookie)).status).toBe(200); // no If-Match: allowed
   });
 });

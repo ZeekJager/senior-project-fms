@@ -10,12 +10,13 @@ export interface DriverRow {
   publicId: string;
   userId: string;
   licenseNumber: string;
-  licenseCategory: LicenseCategory | null;
+  licenseCategories: LicenseCategory[];
   licenseExpiry: string;
   licenseStatus: LicenseStatus;
   hireDate: string | null;
   emergencyPhone: string | null;
   isActive: boolean;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -48,10 +49,12 @@ export interface DriverListFilter {
 export interface DriverWrite {
   user_id?: string;
   license_number?: string;
-  license_category?: LicenseCategory | null;
+  license_categories?: LicenseCategory[];
   license_expiry?: string;
   hire_date?: string | null;
   emergency_phone?: string | null;
+  /** Set only by reinstatement. */
+  is_active?: boolean;
 }
 
 // Today's date where the fleet operates. The zone and the day count are code
@@ -63,9 +66,9 @@ const LICENSE_STATUS_SQL = `CASE WHEN d.license_expiry < ${TODAY} THEN 'expired'
 
 const ROW_COLUMNS = `
          d.id, d.public_id AS "publicId", d.user_id AS "userId", d.license_number AS "licenseNumber",
-         d.license_category AS "licenseCategory", d.license_expiry::text AS "licenseExpiry",
+         d.license_categories AS "licenseCategories", d.license_expiry::text AS "licenseExpiry",
          ${LICENSE_STATUS_SQL} AS "licenseStatus",
-         d.hire_date::text AS "hireDate", d.emergency_phone AS "emergencyPhone", d.is_active AS "isActive",
+         d.hire_date::text AS "hireDate", d.emergency_phone AS "emergencyPhone", d.is_active AS "isActive", d.version,
          d.created_at AS "createdAt", d.updated_at AS "updatedAt"`;
 
 const ROW_SQL = `SELECT ${ROW_COLUMNS} FROM fleet.drivers d`;
@@ -160,9 +163,9 @@ export class DriverRepository extends Repository {
     db: Queryable,
     driverId: string,
     at: Date,
-  ): Promise<{ userId: string; isActive: boolean; licenseValid: boolean; licenseCategory: LicenseCategory | null } | null> {
-    const res = await db.query<{ userId: string; isActive: boolean; licenseValid: boolean; licenseCategory: LicenseCategory | null }>(
-      `SELECT d.user_id AS "userId", d.is_active AS "isActive", d.license_category AS "licenseCategory",
+  ): Promise<{ userId: string; isActive: boolean; licenseValid: boolean; licenseCategories: LicenseCategory[] } | null> {
+    const res = await db.query<{ userId: string; isActive: boolean; licenseValid: boolean; licenseCategories: LicenseCategory[] }>(
+      `SELECT d.user_id AS "userId", d.is_active AS "isActive", d.license_categories AS "licenseCategories",
               d.license_expiry >= ($2::timestamptz AT TIME ZONE $3)::date AS "licenseValid"
          FROM fleet.drivers d
         WHERE d.id = $1`,
@@ -193,6 +196,15 @@ export class DriverRepository extends Repository {
 
   update(ctx: MutationContext, id: string, data: DriverWrite, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'fleet.drivers', 'UPDATE', id, { ...data }, client);
+  }
+
+  /**
+   * Bumps the driver's version (via its trigger) when only the account
+   * changed (a depot move), so an If-Match taken before the move is refused.
+   * Not audited: no driver data changes; the account change is audited.
+   */
+  async touch(client: PoolClient, id: string): Promise<void> {
+    await client.query('UPDATE fleet.drivers SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [id]);
   }
 
   /** Soft retirement: `is_active = FALSE`, one audited change. Trips and attendance keep pointing at the row. */

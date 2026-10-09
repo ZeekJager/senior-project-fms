@@ -56,13 +56,14 @@ export interface LockedVehicle {
   fuelType: FuelType;
   fuelEfficiencyMlPerKm: number | null;
   odometerKm: number;
+  version: number;
 }
 
 const VIEW_SQL = `
   SELECT v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
          v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.status, v.maintenance_flag,
          v.health_score, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
-         v.created_at, v.updated_at
+         v.version, v.created_at, v.updated_at
     FROM fleet.vehicles v
     JOIN fleet.depots d ON d.id = v.depot_id`;
 
@@ -147,7 +148,8 @@ export class VehicleRepository extends Repository {
     const clause = scopeClause(scope, 'v.depot_id', 2);
     const res = await client.query<LockedVehicle>(
       `SELECT v.id, v.depot_id AS "depotId", v.is_active AS "isActive", v.fuel_type AS "fuelType",
-              v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm"
+              v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm",
+              v.version
          FROM fleet.vehicles v
         WHERE v.public_id = $1 AND ${clause.sql}
           FOR UPDATE`,

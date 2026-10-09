@@ -20,6 +20,8 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 012 | `document`, `api` (+ cross-cutting) | API-contract alignment: public UUIDs, documents, idempotency keys, trip overlap constraints, telemetry de-duplication |
 | 013 | (grants) | Runtime privileges for the `fms_app` role; audit table stays INSERT/SELECT only |
 | 014 | `auth` | Session families on `refresh_sessions` for refresh-token rotation and reuse detection (FMS-05) |
+| 015 | `fleet` | `drivers.license_categories TEXT[]` of European licence categories (AM ... DE), replacing the free-text `license_category` (FMS-16) |
+| 016 | `fleet` | `version` on `vehicles` and `drivers`, bumped by trigger, for optimistic concurrency (If-Match / ETag) (FMS-16) |
 
 ## Important
 

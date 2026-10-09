@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
 import { createEvent, deterministicEventId } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
+import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { UserAccount } from '../../auth';
@@ -29,7 +30,7 @@ export interface DriverCreate {
   /** The user account's public id. */
   user_id: string;
   license_number: string;
-  license_category?: LicenseCategory | null;
+  license_categories?: LicenseCategory[];
   license_expiry: string;
   hire_date?: string | null;
   emergency_phone?: string | null;
@@ -66,6 +67,7 @@ export interface DriverServiceDeps {
     | 'insert'
     | 'update'
     | 'retire'
+    | 'touch'
   >;
   /** A vehicle's type, for licence-class checks. */
   vehicles: { typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> };
@@ -172,22 +174,62 @@ export class DriverService {
     return view;
   }
 
-  async update(caller: Caller, driverId: string, patch: DriverUpdate): Promise<DriverView> {
-    const { drivers, users } = this.deps;
-    return drivers.inTransaction(async (client) => {
+  /**
+   * PATCH /drivers/{id}. `expectedVersion` (from If-Match): refused with 409
+   * CONFLICT_CONCURRENT_MODIFICATION if the driver changed since. Publishes
+   * DriverUpdated when licence or contact fields change and DriverTransferred
+   * when the home depot changes.
+   */
+  async update(caller: Caller, driverId: string, patch: DriverUpdate, expectedVersion: number | null = null): Promise<DriverView> {
+    const { drivers, users, depots } = this.deps;
+    const { view, changedFields, transfer } = await drivers.inTransaction(async (client) => {
       const row = await this.lockInScope(client, caller, driverId);
+      if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
       if (!row.isActive) throw driverRetired();
 
       const ctx = mutationContext(caller);
       const data = toColumns(patch);
-      if (Object.keys(data).length > 0) await drivers.update(ctx, row.id, data, client);
+      const fields = Object.keys(data).sort();
+      if (fields.length > 0) await drivers.update(ctx, row.id, data, client);
+
+      let moved: { from: string | null; to: string } | null = null;
       if (patch.depot_id !== undefined) {
         const depotId = await this.depotInScope(client, patch.depot_id, depotScope(caller.user));
         const [account] = await users.findByIds(client, [row.userId]);
-        if (account.depotId !== depotId) await users.setDepot(client, ctx, row.userId, depotId);
+        if (account.depotId !== depotId) {
+          await users.setDepot(client, ctx, row.userId, depotId);
+          if (fields.length === 0) await drivers.touch(client, row.id);
+          const from = account.depotId === null ? null : ((await depots.publicIds(client, [account.depotId])).get(account.depotId) ?? null);
+          moved = { from, to: patch.depot_id };
+        }
       }
-      return (await this.views(client, [await drivers.findById(client, row.id)]))[0];
+      const updated = (await this.views(client, [await drivers.findById(client, row.id)]))[0];
+      return { view: updated, changedFields: fields, transfer: moved };
     });
+
+    if (changedFields.length > 0) await this.publish(caller, DRIVER_EVENTS.updated, view, { changed_fields: changedFields });
+    if (transfer) {
+      await this.publish(caller, DRIVER_EVENTS.transferred, view, { from_depot_id: transfer.from, to_depot_id: transfer.to });
+    }
+    return view;
+  }
+
+  /**
+   * POST /drivers/{id}/reinstate: a retired driver becomes active again, with
+   * their history, in one audited change. Reinstating an active driver
+   * changes nothing. The account's status is not touched: a disabled account
+   * still makes the driver ineligible.
+   */
+  async reinstate(caller: Caller, driverId: string): Promise<DriverView> {
+    const { drivers } = this.deps;
+    const { view, changed } = await drivers.inTransaction(async (client) => {
+      const row = await this.lockInScope(client, caller, driverId);
+      if (row.isActive) return { view: (await this.views(client, [row]))[0], changed: false };
+      await drivers.update(mutationContext(caller), row.id, { is_active: true }, client);
+      return { view: (await this.views(client, [await drivers.findById(client, row.id)]))[0], changed: true };
+    });
+    if (changed) await this.publish(caller, DRIVER_EVENTS.reinstated, view);
+    return view;
   }
 
   /**
@@ -230,8 +272,8 @@ export class DriverService {
     if (vehicleId !== undefined) {
       const vehicleType = await this.deps.vehicles.typeOf(db, vehicleId);
       if (vehicleType === null) reasons.push('vehicle_not_found');
-      else if (own.licenseCategory === null) reasons.push('license_category_missing');
-      else if (!categoryAllows(own.licenseCategory, vehicleType)) reasons.push('license_category_not_valid_for_vehicle');
+      else if (own.licenseCategories.length === 0) reasons.push('license_category_missing');
+      else if (!categoryAllows(own.licenseCategories, vehicleType)) reasons.push('license_category_not_valid_for_vehicle');
     }
     return { eligible: reasons.length === 0, reasons };
   }
@@ -287,12 +329,13 @@ export class DriverService {
         phone: account.phone,
         depot_id: account.depotId === null ? null : (depots.get(account.depotId) ?? null),
         license_number: r.licenseNumber,
-        license_category: r.licenseCategory,
+        license_categories: r.licenseCategories,
         license_expiry: r.licenseExpiry,
         license_status: r.licenseStatus,
         hire_date: r.hireDate,
         emergency_phone: r.emergencyPhone,
         status: r.isActive ? 'active' : 'retired',
+        version: r.version,
         created_at: r.createdAt,
         updated_at: r.updatedAt,
       };
@@ -317,8 +360,8 @@ export class DriverService {
     return depotId;
   }
 
-  private publish(caller: Caller, type: string, view: DriverView): Promise<void> {
-    const payload = { driver_id: view.id, user_id: view.user_id, depot_id: view.depot_id };
+  private publish(caller: Caller, type: string, view: DriverView, extra: Record<string, unknown> = {}): Promise<void> {
+    const payload = { driver_id: view.id, user_id: view.user_id, depot_id: view.depot_id, ...extra };
     return this.deps.events.publish([createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId })]);
   }
 }
@@ -331,7 +374,7 @@ function mutationContext(caller: Caller): MutationContext {
 function toColumns(input: DriverUpdate): DriverWrite {
   const data: DriverWrite = {};
   if (input.license_number !== undefined) data.license_number = input.license_number;
-  if (input.license_category !== undefined) data.license_category = input.license_category;
+  if (input.license_categories !== undefined) data.license_categories = input.license_categories;
   if (input.license_expiry !== undefined) data.license_expiry = input.license_expiry;
   if (input.hire_date !== undefined) data.hire_date = input.hire_date;
   if (input.emergency_phone !== undefined) data.emergency_phone = input.emergency_phone;

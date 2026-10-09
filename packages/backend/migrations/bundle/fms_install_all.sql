@@ -1711,3 +1711,37 @@ ALTER TABLE auth.refresh_sessions
 CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_family
     ON auth.refresh_sessions(family_id)
     WHERE revoked_at IS NULL;
+
+-- ===== 015_driver_license_categories.sql =====
+ALTER TABLE fleet.drivers
+    ADD COLUMN IF NOT EXISTS license_categories TEXT[] NOT NULL DEFAULT '{}';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'fleet' AND table_name = 'drivers' AND column_name = 'license_category') THEN
+        UPDATE fleet.drivers
+           SET license_categories = ARRAY[upper(trim(license_category))]
+         WHERE upper(trim(license_category)) IN
+               ('AM','A1','A2','A','B1','B','BE','C1','C1E','C','CE','D1','D1E','D','DE');
+        ALTER TABLE fleet.drivers DROP COLUMN license_category;
+    END IF;
+END $$;
+
+ALTER TABLE fleet.drivers DROP CONSTRAINT IF EXISTS chk_driver_license_categories;
+ALTER TABLE fleet.drivers
+    ADD CONSTRAINT chk_driver_license_categories CHECK (
+        license_categories <@ ARRAY['AM','A1','A2','A','B1','B','BE','C1','C1E','C','CE','D1','D1E','D','DE']::TEXT[]
+    );
+
+-- ===== 016_fleet_row_versions.sql =====
+ALTER TABLE fleet.vehicles ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE fleet.drivers  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE TRIGGER trg_fleet_vehicles_version
+    BEFORE UPDATE ON fleet.vehicles
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+CREATE OR REPLACE TRIGGER trg_fleet_drivers_version
+    BEFORE UPDATE ON fleet.drivers
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();

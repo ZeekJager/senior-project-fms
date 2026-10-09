@@ -47,20 +47,24 @@ describe('driverCreateBody', () => {
   });
 });
 
-describe('license_category', () => {
-  test('is one of the Ethiopian licence classes, or null', () => {
-    expect(parseInput(driverCreateBody, { ...valid, license_category: 'public_2' }).license_category).toBe('public_2');
-    expect(parseInput(driverCreateBody, { ...valid, license_category: null }).license_category).toBeNull();
-    expect(rejection(driverCreateBody, { ...valid, license_category: 'C' })).toMatchObject({
+describe('license_categories', () => {
+  test('European categories, deduplicated and in licence order', () => {
+    expect(parseInput(driverCreateBody, { ...valid, license_categories: ['CE', 'B', 'C', 'B'] }).license_categories).toEqual(['B', 'C', 'CE']);
+    expect(parseInput(driverCreateBody, { ...valid, license_categories: [] }).license_categories).toEqual([]);
+  });
+
+  test('anything else is VALIDATION_INVALID_ENUM', () => {
+    expect(rejection(driverCreateBody, { ...valid, license_categories: ['B', 'automobile'] })).toMatchObject({
       code: 'VALIDATION_INVALID_ENUM',
-      details: [{ field: 'license_category', reason: 'invalid_enum' }],
+      details: [{ field: 'license_categories.1', reason: 'invalid_enum' }],
     });
+    expect(rejection(driverCreateBody, { ...valid, license_categories: 'B' }).code).toBe('VALIDATION_FAILED');
   });
 });
 
 describe('driverUpdateBody', () => {
   test('any non-empty subset; user_id cannot change', () => {
-    expect(parseInput(driverUpdateBody, { license_category: null })).toEqual({ license_category: null });
+    expect(parseInput(driverUpdateBody, { license_categories: [] })).toEqual({ license_categories: [] });
     expect(rejection(driverUpdateBody, {}).details).toEqual([{ reason: 'empty_update' }]);
     expect(rejection(driverUpdateBody, { user_id: UUID }).details).toContainEqual({ field: 'user_id', reason: 'not_writable' });
   });

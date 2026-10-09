@@ -33,12 +33,13 @@ const row = (over: Partial<DriverRow> = {}): DriverRow => ({
   publicId: DRIVER,
   userId: '20',
   licenseNumber: 'AA 1',
-  licenseCategory: null,
+  licenseCategories: [],
   licenseExpiry: '2030-01-01',
   licenseStatus: 'valid',
   hireDate: null,
   emergencyPhone: null,
   isActive: true,
+  version: 0,
   createdAt: new Date(),
   updatedAt: new Date(),
   ...over,
@@ -49,7 +50,7 @@ interface HarnessOptions {
   account?: UserAccount;
   activeTrip?: boolean;
   activeAssignment?: boolean;
-  licence?: { isActive?: boolean; licenseValid?: boolean; licenseCategory?: DriverRow['licenseCategory'] } | null;
+  licence?: { isActive?: boolean; licenseValid?: boolean; licenseCategories?: DriverRow['licenseCategories'] } | null;
   vehicleType?: VehicleType | null;
 }
 
@@ -75,10 +76,11 @@ function harness(options: HarnessOptions = {}) {
       licenceAt: async () =>
         options.licence === null
           ? null
-          : { userId: acct.id, isActive: true, licenseValid: true, licenseCategory: 'dry_cargo_1', ...options.licence },
+          : { userId: acct.id, isActive: true, licenseValid: true, licenseCategories: ['B', 'C'], ...options.licence },
       insert: async () => (calls.push('insert'), { id: '7' }),
       update: async (_c, _i, data) => (calls.push(`update:${Object.keys(data).join(',')}`), { id: '7' }),
       retire: async (_c, id) => (calls.push(`retire:${id}`), { id }),
+      touch: async (_c, id) => void calls.push(`touch:${id}`),
     },
     vehicles: { typeOf: async () => (options.vehicleType === undefined ? 'truck' : options.vehicleType) },
     users: {
@@ -160,7 +162,7 @@ describe('checkEligibility', () => {
   test('eligible: active driver and account, valid licence, class covers the vehicle', async () => {
     expect(await harness().service.checkEligibility(db, '7', at, '99')).toEqual({ eligible: true, reasons: [] });
     // Without a vehicle the class is not checked.
-    expect(await harness({ licence: { licenseCategory: null } }).service.checkEligibility(db, '7', at)).toEqual({ eligible: true, reasons: [] });
+    expect(await harness({ licence: { licenseCategories: [] } }).service.checkEligibility(db, '7', at)).toEqual({ eligible: true, reasons: [] });
   });
 
   test('lists every reason at once', async () => {
@@ -172,8 +174,8 @@ describe('checkEligibility', () => {
   });
 
   test.each([
-    [{ licence: { licenseCategory: 'automobile' as const } }, 'license_category_not_valid_for_vehicle'],
-    [{ licence: { licenseCategory: null } }, 'license_category_missing'],
+    [{ licence: { licenseCategories: ['B' as const] } }, 'license_category_not_valid_for_vehicle'],
+    [{ licence: { licenseCategories: [] } }, 'license_category_missing'],
     [{ vehicleType: null }, 'vehicle_not_found'],
   ])('with a vehicle: %j -> %s', async (opts, reason) => {
     expect(await harness(opts).service.checkEligibility(db, '7', at, '99')).toEqual({ eligible: false, reasons: [reason] });

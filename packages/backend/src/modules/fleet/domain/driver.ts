@@ -2,32 +2,49 @@ import { AppError } from '../../../shared/errors/app-error';
 import type { VehicleType } from './vehicle';
 
 /**
- * Ethiopian driving licence classes, as stored in fleet.drivers.license_category.
- * ASSUMPTION to confirm with the client: the classes and which of our vehicle
- * types each allows (vehicle_type does not tell a light from a heavy truck, so
- * every cargo class allows `truck`). Change this one table if they differ.
+ * European driving licence categories (EU Directive 2006/126/EC), in the
+ * order a licence lists them, and which of our vehicle types each allows.
+ * A driver holds several (fleet.drivers.license_categories, e.g. B and CE);
+ * a vehicle is allowed if any of them allows it.
+ *
+ * vehicle_type is coarser than the categories: it does not tell a 7.5 t truck
+ * (C1) from a 40 t one (C), or a minibus (D1) from a coach (D), so each of
+ * those allows the whole type. `other` (special machinery) has no EU
+ * category; B1 (quadricycles) is the closest. Change this one table if the
+ * client's rules differ.
  */
 export const LICENSE_CATEGORY_VEHICLE_TYPES = {
-  motorcycle: ['motorcycle'],
-  automobile: ['car', 'suv'],
-  public_1: ['car', 'suv', 'van'],
-  public_2: ['car', 'suv', 'van', 'bus'],
-  public_3: ['car', 'suv', 'van', 'bus'],
-  dry_cargo_1: ['car', 'suv', 'van', 'truck'],
-  dry_cargo_2: ['car', 'suv', 'van', 'truck'],
-  dry_cargo_3: ['car', 'suv', 'van', 'truck'],
-  liquid_cargo_1: ['car', 'suv', 'van', 'truck'],
-  liquid_cargo_2: ['car', 'suv', 'van', 'truck'],
-  special: ['other'],
+  AM: ['motorcycle'],
+  A1: ['motorcycle'],
+  A2: ['motorcycle'],
+  A: ['motorcycle'],
+  B1: ['other'],
+  B: ['car', 'suv', 'van'],
+  BE: ['car', 'suv', 'van'],
+  C1: ['truck'],
+  C1E: ['truck'],
+  C: ['truck'],
+  CE: ['truck'],
+  D1: ['bus'],
+  D1E: ['bus'],
+  D: ['bus'],
+  DE: ['bus'],
 } as const satisfies Record<string, readonly VehicleType[]>;
 
 export type LicenseCategory = keyof typeof LICENSE_CATEGORY_VEHICLE_TYPES;
 export const LICENSE_CATEGORIES = Object.keys(LICENSE_CATEGORY_VEHICLE_TYPES) as [LicenseCategory, ...LicenseCategory[]];
 
-/** Whether a licence class allows driving a vehicle type. */
-export function categoryAllows(category: string, vehicleType: VehicleType): boolean {
-  const allowed: readonly string[] | undefined = LICENSE_CATEGORY_VEHICLE_TYPES[category as LicenseCategory];
-  return allowed?.includes(vehicleType) ?? false;
+/** Whether any of a driver's categories allows driving a vehicle type. */
+export function categoryAllows(categories: readonly string[], vehicleType: VehicleType): boolean {
+  return categories.some((c) => {
+    const allowed: readonly string[] | undefined = LICENSE_CATEGORY_VEHICLE_TYPES[c as LicenseCategory];
+    return allowed?.includes(vehicleType) ?? false;
+  });
+}
+
+/** Categories without duplicates, in the order a licence lists them (AM ... DE). */
+export function normalizeCategories(categories: readonly LicenseCategory[]): LicenseCategory[] {
+  return LICENSE_CATEGORIES.filter((c) => categories.includes(c));
 }
 
 /** A licence within this many days of expiry is `expiring_soon`. */
@@ -68,7 +85,8 @@ export interface DriverView {
   phone: string | null;
   depot_id: string | null;
   license_number: string;
-  license_category: LicenseCategory | null;
+  /** European categories held, in licence order; empty when not recorded. */
+  license_categories: LicenseCategory[];
   /** `YYYY-MM-DD`. */
   license_expiry: string;
   /** From the expiry and today's date in Addis Ababa; `expiring_soon` within EXPIRING_SOON_DAYS. */
@@ -76,6 +94,8 @@ export interface DriverView {
   hire_date: string | null;
   emergency_phone: string | null;
   status: 'active' | 'retired';
+  /** Bumped on every change, a depot move included; also the ETag. Send it back in `If-Match` to refuse a stale PATCH. */
+  version: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -83,7 +103,10 @@ export interface DriverView {
 /** Event types this module publishes for drivers (CONVENTIONS.md, Events). */
 export const DRIVER_EVENTS = {
   registered: 'DriverRegistered',
+  updated: 'DriverUpdated',
+  transferred: 'DriverTransferred',
   retired: 'DriverRetired',
+  reinstated: 'DriverReinstated',
   licenseExpiring: 'DriverLicenseExpiring',
 } as const;
 

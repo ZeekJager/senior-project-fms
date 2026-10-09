@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { asyncHandler } from '../../../shared/http/async-handler';
+import { etagFor, ifMatchVersion } from '../../../shared/http/etag';
 import { pageMeta } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
@@ -42,6 +43,7 @@ export function vehicleRouter(service: VehicleService): Router {
       res
         .status(201)
         .location(`/api/v1/vehicles/${vehicle.id}`)
+        .set('ETag', etagFor(vehicle.version))
         .json({ data: vehicle, meta: { request_id: req.correlationId } });
     }),
   );
@@ -50,7 +52,8 @@ export function vehicleRouter(service: VehicleService): Router {
     '/vehicles/:vehicleId',
     authorize('vehicle:read'),
     asyncHandler(async (req, res) => {
-      res.json({ data: await service.get(caller(req), vehicleId(req)), meta: { request_id: req.correlationId } });
+      const vehicle = await service.get(caller(req), vehicleId(req));
+      res.set('ETag', etagFor(vehicle.version)).json({ data: vehicle, meta: { request_id: req.correlationId } });
     }),
   );
 
@@ -59,8 +62,9 @@ export function vehicleRouter(service: VehicleService): Router {
     authorize('vehicle:write'),
     asyncHandler(async (req, res) => {
       const id = vehicleId(req);
-      const vehicle = await service.update(caller(req), id, parseInput(vehicleUpdateBody, req.body));
-      res.json({ data: vehicle, meta: { request_id: req.correlationId } });
+      const expected = ifMatchVersion(req.get('If-Match'));
+      const vehicle = await service.update(caller(req), id, parseInput(vehicleUpdateBody, req.body), expected);
+      res.set('ETag', etagFor(vehicle.version)).json({ data: vehicle, meta: { request_id: req.correlationId } });
     }),
   );
 
