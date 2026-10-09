@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import { OPERATING_TIME_ZONE } from '../domain/driver';
+import { EXPIRING_SOON_DAYS, OPERATING_TIME_ZONE, type LicenseCategory, type LicenseStatus } from '../domain/driver';
 
 /** A fleet.drivers row. Dates are `YYYY-MM-DD` text, never JS Dates, so no time zone shifts them. */
 export interface DriverRow {
@@ -10,8 +10,9 @@ export interface DriverRow {
   publicId: string;
   userId: string;
   licenseNumber: string;
-  licenseCategory: string | null;
+  licenseCategory: LicenseCategory | null;
   licenseExpiry: string;
+  licenseStatus: LicenseStatus;
   hireDate: string | null;
   emergencyPhone: string | null;
   isActive: boolean;
@@ -38,6 +39,7 @@ export interface DriverListFilter {
   status?: 'active' | 'retired';
   /** `YYYY-MM-DD`: licences that expire before this date (already expired included). */
   licenseExpiringBefore?: string;
+  licenseStatus?: LicenseStatus;
   sort_by: DriverSortKey;
   sort_order: 'asc' | 'desc';
 }
@@ -46,18 +48,27 @@ export interface DriverListFilter {
 export interface DriverWrite {
   user_id?: string;
   license_number?: string;
-  license_category?: string | null;
+  license_category?: LicenseCategory | null;
   license_expiry?: string;
   hire_date?: string | null;
   emergency_phone?: string | null;
 }
 
-const ROW_SQL = `
-  SELECT d.id, d.public_id AS "publicId", d.user_id AS "userId", d.license_number AS "licenseNumber",
+// Today's date where the fleet operates. The zone and the day count are code
+// constants, never input.
+const TODAY = `(CURRENT_TIMESTAMP AT TIME ZONE '${OPERATING_TIME_ZONE}')::date`;
+const LICENSE_STATUS_SQL = `CASE WHEN d.license_expiry < ${TODAY} THEN 'expired'
+              WHEN d.license_expiry <= ${TODAY} + ${EXPIRING_SOON_DAYS} THEN 'expiring_soon'
+              ELSE 'valid' END`;
+
+const ROW_COLUMNS = `
+         d.id, d.public_id AS "publicId", d.user_id AS "userId", d.license_number AS "licenseNumber",
          d.license_category AS "licenseCategory", d.license_expiry::text AS "licenseExpiry",
+         ${LICENSE_STATUS_SQL} AS "licenseStatus",
          d.hire_date::text AS "hireDate", d.emergency_phone AS "emergencyPhone", d.is_active AS "isActive",
-         d.created_at AS "createdAt", d.updated_at AS "updatedAt"
-    FROM fleet.drivers d`;
+         d.created_at AS "createdAt", d.updated_at AS "updatedAt"`;
+
+const ROW_SQL = `SELECT ${ROW_COLUMNS} FROM fleet.drivers d`;
 
 const containsPattern = (term: string) => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
@@ -85,6 +96,12 @@ export class DriverRepository extends Repository {
     return res.rows[0];
   }
 
+  /** The driver profile of a user account (internal user id), if any. */
+  async findByUserId(db: Queryable, userId: string): Promise<DriverRow | null> {
+    const res = await db.query<DriverRow>(`${ROW_SQL} WHERE d.user_id = $1`, [userId]);
+    return res.rows[0] ?? null;
+  }
+
   /** Reads and row-locks a driver for a write in the same transaction. */
   async lockForWrite(client: PoolClient, publicId: string): Promise<DriverRow | null> {
     const res = await client.query<DriverRow>(`${ROW_SQL} WHERE d.public_id = $1 FOR UPDATE`, [publicId]);
@@ -108,6 +125,7 @@ export class DriverRepository extends Repository {
       );
     }
     if (filter.licenseExpiringBefore) where.push(`d.license_expiry < ${add(filter.licenseExpiringBefore)}::date`);
+    if (filter.licenseStatus) where.push(`${LICENSE_STATUS_SQL} = ${add(filter.licenseStatus)}`);
 
     const whereSql = where.join(' AND ');
     const count = await db.query<{ total: number }>(`SELECT count(*)::int AS total FROM fleet.drivers d WHERE ${whereSql}`, params);
@@ -137,16 +155,36 @@ export class DriverRepository extends Repository {
     return res.rows[0].active;
   }
 
-  /** The driver's own part of eligibility at `at`: not retired, licence valid on that local date. */
-  async licensedAt(db: Queryable, driverId: string, at: Date): Promise<{ userId: string; eligible: boolean } | null> {
-    const res = await db.query<{ userId: string; eligible: boolean }>(
-      `SELECT d.user_id AS "userId",
-              d.is_active AND d.license_expiry >= ($2::timestamptz AT TIME ZONE $3)::date AS eligible
+  /** The driver's own facts for eligibility at `at`: retired or not, licence valid on that local date, its class. */
+  async licenceAt(
+    db: Queryable,
+    driverId: string,
+    at: Date,
+  ): Promise<{ userId: string; isActive: boolean; licenseValid: boolean; licenseCategory: LicenseCategory | null } | null> {
+    const res = await db.query<{ userId: string; isActive: boolean; licenseValid: boolean; licenseCategory: LicenseCategory | null }>(
+      `SELECT d.user_id AS "userId", d.is_active AS "isActive", d.license_category AS "licenseCategory",
+              d.license_expiry >= ($2::timestamptz AT TIME ZONE $3)::date AS "licenseValid"
          FROM fleet.drivers d
         WHERE d.id = $1`,
       [driverId, at.toISOString(), OPERATING_TIME_ZONE],
     );
     return res.rows[0] ?? null;
+  }
+
+  /**
+   * Active drivers whose licence expires exactly `daysLeft` days after `at`'s
+   * date in Addis Ababa (one of them per row, with the count), for the daily
+   * expiry warning.
+   */
+  async expiringIn(db: Queryable, daysLeft: readonly number[], at: Date): Promise<(DriverRow & { daysLeft: number })[]> {
+    const res = await db.query<DriverRow & { daysLeft: number }>(
+      `SELECT ${ROW_COLUMNS}, (d.license_expiry - ($2::timestamptz AT TIME ZONE $3)::date) AS "daysLeft"
+         FROM fleet.drivers d
+        WHERE d.is_active AND (d.license_expiry - ($2::timestamptz AT TIME ZONE $3)::date) = ANY($1::int[])
+        ORDER BY d.id`,
+      [daysLeft, at.toISOString(), OPERATING_TIME_ZONE],
+    );
+    return res.rows;
   }
 
   insert(ctx: MutationContext, data: DriverWrite, client: PoolClient): Promise<Row> {

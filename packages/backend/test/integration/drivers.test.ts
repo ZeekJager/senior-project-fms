@@ -3,7 +3,7 @@ import request, { type Response } from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
-import { isDriverEligible } from '../../src/modules/fleet';
+import { checkDriverEligibility, fleetModule, isDriverEligible } from '../../src/modules/fleet';
 import type { DomainEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
@@ -51,7 +51,7 @@ describe('POST /drivers', () => {
 
     const res = await api.post(
       '/drivers',
-      driverBody(user, depot, { license_number: ' aa  12345 ', license_category: 'C', hire_date: '2024-02-01', emergency_phone: '+251 911 234567' }),
+      driverBody(user, depot, { license_number: ' aa  12345 ', license_category: 'dry_cargo_1', hire_date: '2024-02-01', emergency_phone: '+251 911 234567' }),
       cookie,
     );
 
@@ -63,7 +63,7 @@ describe('POST /drivers', () => {
       email: user.email,
       depot_id: depot.public_id,
       license_number: 'AA 12345',
-      license_category: 'C',
+      license_category: 'dry_cargo_1',
       license_expiry: '2030-06-30',
       hire_date: '2024-02-01',
       emergency_phone: '+251 911 234567',
@@ -249,11 +249,11 @@ describe('PATCH /drivers/{id}', () => {
     const retired = await createDriver({ depot: a, is_active: false });
     const cookie = await signIn(['depot_admin'], a);
 
-    expect((await api.patch(`/drivers/${db.driver.public_id}`, { license_category: 'B' }, cookie)).status).toBe(404);
+    expect((await api.patch(`/drivers/${db.driver.public_id}`, { license_category: 'automobile' }, cookie)).status).toBe(404);
     const move = await api.patch(`/drivers/${da.driver.public_id}`, { depot_id: b.public_id }, cookie);
     expect(move.status).toBe(400);
     expect(move.body.error.details).toEqual([{ field: 'depot_id', reason: 'references_missing_record' }]);
-    const old = await api.patch(`/drivers/${retired.driver.public_id}`, { license_category: 'B' }, cookie);
+    const old = await api.patch(`/drivers/${retired.driver.public_id}`, { license_category: 'automobile' }, cookie);
     expect(old.status).toBe(409);
     expect(old.body.error.code).toBe('CONFLICT_INVALID_STATE_TRANSITION');
     const fixed = await api.patch(`/drivers/${da.driver.public_id}`, { user_id: randomUUID() }, cookie);
@@ -351,5 +351,125 @@ describe('driver events', () => {
 
     expect(received.map((e) => e.type)).toEqual(['DriverRegistered', 'DriverRetired']);
     expect(received[0].payload).toEqual({ driver_id: created.body.data.id, user_id: user.public_id, depot_id: depot.public_id });
+  });
+});
+
+/** A date `days` from today in Addis Ababa, `YYYY-MM-DD` (the date the API judges licences by). */
+function addisDate(days: number): string {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Addis_Ababa' }).format(new Date());
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+describe('license_status (enhancement 2)', () => {
+  test('every driver shows valid, expiring_soon (within 30 days) or expired, and the list filters on it', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['fleet_manager']);
+    const [expired, soon, valid] = [
+      await createDriver({ depot, license_expiry: addisDate(-1) }),
+      await createDriver({ depot, license_expiry: addisDate(30) }),
+      await createDriver({ depot, license_expiry: addisDate(31) }),
+    ];
+
+    const statusOf = async (d: { driver: Record<string, unknown> }) =>
+      (await api.get(`/drivers/${d.driver.public_id}`, cookie)).body.data.license_status;
+    expect([await statusOf(expired), await statusOf(soon), await statusOf(valid)]).toEqual(['expired', 'expiring_soon', 'valid']);
+
+    expect(ids(await api.get(`/drivers?depot_id=${depot.public_id}&license_status=expiring_soon`, cookie))).toEqual([soon.driver.public_id]);
+    expect(ids(await api.get(`/drivers?depot_id=${depot.public_id}&license_status=expired`, cookie))).toEqual([expired.driver.public_id]);
+  });
+});
+
+describe('GET /drivers/me (enhancement 3)', () => {
+  test("a driver reads their own profile, though they cannot list drivers", async () => {
+    const depot = await createDepot();
+    const user = await createUser({ roles: ['driver'], depot, password: PASSWORD });
+    const { rows } = await pool.query(
+      "INSERT INTO fleet.drivers (user_id, license_number, license_expiry) VALUES ($1, $2, '2030-01-01') RETURNING public_id",
+      [user.id, licence()],
+    );
+    const login = await request(app).post('/api/v1/auth/login').send({ email: user.email, password: PASSWORD });
+    const cookie = (login.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
+
+    const me = await api.get('/drivers/me', cookie);
+    expect(me.status).toBe(200);
+    expect(me.body.data).toMatchObject({ id: rows[0].public_id, user_id: user.public_id, depot_id: depot.public_id, license_status: 'valid' });
+    expect((await api.get('/drivers', cookie)).status).toBe(403);
+  });
+
+  test('a signed-in user who is not a driver gets 404; no session gets 401', async () => {
+    expect((await api.get('/drivers/me', await signIn(['dispatcher'], await createDepot()))).status).toBe(404);
+    expect((await api.get('/drivers/me')).status).toBe(401);
+  });
+});
+
+describe('checkDriverEligibility (enhancement 1)', () => {
+  const at = new Date('2026-06-01T08:00:00Z');
+
+  test('the licence class must cover the vehicle type', async () => {
+    const depot = await createDepot();
+    const truck = await createVehicle({ depot, vehicle_type: 'truck' });
+    const car = await createVehicle({ depot, vehicle_type: 'car' });
+    const { driver } = await createDriver({ depot, license_category: 'automobile' });
+
+    expect(await checkDriverEligibility(driver.id, at, { vehicleId: car.id })).toEqual({ eligible: true, reasons: [] });
+    expect(await checkDriverEligibility(driver.id, at, { vehicleId: truck.id })).toEqual({
+      eligible: false,
+      reasons: ['license_category_not_valid_for_vehicle'],
+    });
+  });
+
+  test('every reason is reported, and isDriverEligible agrees', async () => {
+    const depot = await createDepot();
+    const truck = await createVehicle({ depot, vehicle_type: 'truck' });
+    const { driver, user } = await createDriver({ depot, license_expiry: '2026-01-31', is_active: false });
+    await pool.query("UPDATE auth.users SET status = 'locked' WHERE id = $1", [user.id]);
+
+    expect(await checkDriverEligibility(driver.id, at, { vehicleId: truck.id })).toEqual({
+      eligible: false,
+      reasons: ['driver_retired', 'account_not_active', 'license_expired', 'license_category_missing'],
+    });
+    expect(await isDriverEligible(driver.id, at)).toBe(false);
+    expect(await checkDriverEligibility('999999999', at)).toEqual({ eligible: false, reasons: ['driver_not_found'] });
+  });
+});
+
+describe('licence expiry warnings (enhancement 2)', () => {
+  const received: DomainEvent[] = [];
+  let off: () => void = () => {};
+  beforeAll(() => {
+    off = eventBus.subscribe('DriverLicenseExpiring', (e) => void received.push(e));
+  });
+  beforeEach(() => {
+    received.length = 0;
+  });
+  afterAll(() => off());
+
+  test('the daily job warns 30 and 7 days before expiry, once per fact', async () => {
+    const depot = await createDepot();
+    const in30 = await createDriver({ depot, license_expiry: addisDate(30) });
+    const in7 = await createDriver({ depot, license_expiry: addisDate(7) });
+    await createDriver({ depot, license_expiry: addisDate(8) });
+    await createDriver({ depot, license_expiry: addisDate(7), is_active: false });
+
+    const job = fleetModule.jobs!.find((j) => j.name === 'driver-licence-expiry-warnings')!;
+    await job.run(new Date());
+    const mine = received.filter((e) => [in30.driver.public_id, in7.driver.public_id].includes(e.payload.driver_id));
+    expect(mine.map((e) => e.payload.days_left).sort()).toEqual([30, 7]);
+    expect(mine.find((e) => e.payload.days_left === 7)!.payload).toEqual({
+      driver_id: in7.driver.public_id,
+      user_id: in7.user.public_id,
+      depot_id: depot.public_id,
+      license_expiry: addisDate(7),
+      days_left: 7,
+    });
+
+    // A rerun the same day publishes the same event ids, so consumers process each fact once.
+    const firstIds = mine.map((e) => e.id).sort();
+    received.length = 0;
+    await job.run(new Date());
+    const again = received.filter((e) => [in30.driver.public_id, in7.driver.public_id].includes(e.payload.driver_id));
+    expect(again.map((e) => e.id).sort()).toEqual(firstIds);
   });
 });

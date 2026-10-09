@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { pageQuery } from '../../../shared/http/pagination';
-import { OPERATING_TIME_ZONE, normalizeLicense } from '../domain/driver';
+import { LICENSE_CATEGORIES, LICENSE_STATUSES, OPERATING_TIME_ZONE, normalizeLicense } from '../domain/driver';
 import { DRIVER_SORT_COLUMNS, type DriverSortKey } from '../infrastructure/driver.repository';
 
 /** Today's date in Addis Ababa, `YYYY-MM-DD`. */
@@ -29,7 +29,8 @@ const phone = z.string().trim().regex(/^\+?[0-9][0-9 ()-]{5,29}$/, 'A phone numb
  */
 const writable = {
   license_number: licenseNumber,
-  license_category: z.string().trim().min(1).max(50).nullable().optional(),
+  // An Ethiopian licence class (LICENSE_CATEGORY_VEHICLE_TYPES); it decides which vehicle types the driver may drive.
+  license_category: z.enum(LICENSE_CATEGORIES).nullable().optional(),
   license_expiry: date,
   hire_date: date
     .refine((d) => d <= today(), { message: 'Cannot be in the future.', params: { reason: 'in_future' } })
@@ -55,6 +56,7 @@ export const driverListQuery = z.object({
   ...pageQuery,
   depot_id: z.uuid().optional(),
   license_expiring_before: date.optional(),
+  license_status: z.enum(LICENSE_STATUSES).optional(),
   search: z
     .string()
     .trim()

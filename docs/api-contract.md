@@ -221,8 +221,9 @@ Vehicle rules (FMS-15):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /drivers` | List/search drivers | `driver:read` | `depot_id,license_expiring_before,search` -> `Driver[]` |
+| `GET /drivers` | List/search drivers | `driver:read` | `depot_id,license_expiring_before,license_status,search,status` -> `Driver[]` |
 | `POST /drivers` | Create driver | `driver:write` | `user_id,license_number,license_expiry,depot_id` -> `Driver` |
+| `GET /drivers/me` | The caller's own driver profile (driver PWA) | Authenticated | `Driver`; `404` if the caller is not a driver |
 | `GET /drivers/{driver_id}` | Get driver | `driver:read` | `Driver` |
 | `PATCH /drivers/{driver_id}` | Update driver | `driver:write` | `DriverUpdate` -> `Driver` |
 | `DELETE /drivers/{driver_id}` | Retire driver | `driver:delete` | `204`. Soft retire; preserve historical references; `409 CONFLICT_DRIVER_IN_USE` if in use |
@@ -238,15 +239,16 @@ A driver's `depot_id` is their home depot, stored once on the driver's user acco
 
 Driver rules (FMS-16):
 
-- **`Driver`:** `id`, `user_id`, `full_name`, `email`, `phone`, `depot_id`, `license_number`, `license_category`, `license_expiry` (`YYYY-MM-DD`), `hire_date`, `emergency_phone`, `status` (`active` or `retired`), `created_at`, `updated_at`. Name, email and phone are the user account's and change through user administration, not here. Licence and phone are personal data: every driver endpoint needs `driver:read` or more.
+- **`Driver`:** `id`, `user_id`, `full_name`, `email`, `phone`, `depot_id`, `license_number`, `license_category`, `license_expiry` (`YYYY-MM-DD`), `license_status` (`valid`, `expiring_soon` within 30 days, or `expired`, by today's date in Addis Ababa), `hire_date`, `emergency_phone`, `status` (`active` or `retired`), `created_at`, `updated_at`. Name, email and phone are the user account's and change through user administration, not here. Licence and phone are personal data: every driver endpoint needs `driver:read` or more.
 - **`POST /drivers`:** `user_id` must be an active account with the `driver` role, in the caller's depots (or without a depot yet); otherwise `400 VALIDATION_FAILED` on `user_id` with `references_missing_record`, `account_not_active` or `not_a_driver`. Also required: `license_number`, `license_expiry`, `depot_id`; optional `license_category`, `hire_date` (not in the future), `emergency_phone`. A second driver for the same account is `409 CONFLICT_DUPLICATE` on `user_id`.
 - **Licence number** is stored trimmed, upper case, single-spaced; a duplicate is `409 CONFLICT_DUPLICATE_LICENSE` whatever its case or spacing.
+- **`license_category`** is an Ethiopian licence class: `motorcycle`, `automobile`, `public_1`, `public_2`, `public_3`, `dry_cargo_1`, `dry_cargo_2`, `dry_cargo_3`, `liquid_cargo_1`, `liquid_cargo_2`, `special` (anything else is `400 VALIDATION_INVALID_ENUM`). Which vehicle types each class may drive is one table in the fleet module (`LICENSE_CATEGORY_VEHICLE_TYPES`); it is an assumption to confirm with the client.
 - **`PATCH /drivers/{id}`:** any non-empty subset of the licence fields, `emergency_phone` and `depot_id`; `user_id` is fixed. A retired driver cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`).
 - **Depot scope:** as for vehicles. A driver whose account is outside the caller's depots is `404`; a `depot_id` outside them is `400 references_missing_record`.
 - **Retirement** sets `is_active = false` (one audit row), keeps trips and attendance, and leaves the user account as it is. It is refused with `409 CONFLICT_DRIVER_IN_USE` while the driver is on an `assigned` or `en_route` trip or has an active vehicle assignment. Retiring a retired driver returns `204` and changes nothing.
 - **List:** `license_expiring_before=YYYY-MM-DD` returns licences expiring before that date (already expired included). `search` matches name, email or licence number. `status` (`active` default, or `retired`), `page`/`page_size` as §18, `sort_by` `license_number` (default), `license_expiry`, `hire_date` or `created_at`.
-- **Eligibility** (for trip assignment): the fleet module's `isDriverEligible(driverId, at)` is true when the driver is not retired, the account is active, and the licence is valid on `at`'s date in Addis Ababa.
-- **Events:** `DriverRegistered` and `DriverRetired`, with `driver_id`, `user_id` and `depot_id` (public ids). Attendance `status` is one of `present`, `absent`, `on_leave`, `late`, `sick`, `other`; the recording user is taken from the session.
+- **Eligibility** (for trip assignment): the fleet module's `checkDriverEligibility(driverId, at, { vehicleId })` returns `{ eligible, reasons }`. Reasons: `driver_not_found`, `driver_retired`, `account_not_active`, `license_expired` (on `at`'s date in Addis Ababa), and with a vehicle `license_category_missing`, `license_category_not_valid_for_vehicle` or `vehicle_not_found`. Assignment should return them in its `409` details so the dispatcher sees why. `isDriverEligible` is the yes/no shortcut.
+- **Events:** `DriverRegistered` and `DriverRetired`, with `driver_id`, `user_id` and `depot_id` (public ids). `DriverLicenseExpiring` (with `license_expiry` and `days_left`) is published by a daily job (06:00 Addis Ababa) 30 and 7 days before a licence expires; its event id is fixed per driver, expiry and day count, so a rerun repeats the id instead of a new fact. Attendance `status` is one of `present`, `absent`, `on_leave`, `late`, `sick`, `other`; the recording user is taken from the session.
 
 ### 6.4 DVIR
 

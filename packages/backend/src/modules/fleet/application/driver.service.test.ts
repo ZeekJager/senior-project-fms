@@ -5,6 +5,7 @@ import type { DomainEvent } from '../../../shared/events/domain-event';
 import { InProcessEventBus } from '../../../shared/events/in-process-event-bus';
 import type { RequestUser } from '../../../types/express';
 import type { UserAccount } from '../../auth';
+import type { VehicleType } from '../domain/vehicle';
 import type { DriverRow } from '../infrastructure/driver.repository';
 import type { Caller } from './caller';
 import { DriverService, type DriverServiceDeps } from './driver.service';
@@ -34,6 +35,7 @@ const row = (over: Partial<DriverRow> = {}): DriverRow => ({
   licenseNumber: 'AA 1',
   licenseCategory: null,
   licenseExpiry: '2030-01-01',
+  licenseStatus: 'valid',
   hireDate: null,
   emergencyPhone: null,
   isActive: true,
@@ -42,7 +44,16 @@ const row = (over: Partial<DriverRow> = {}): DriverRow => ({
   ...over,
 });
 
-function harness(options: { row?: DriverRow | null; account?: UserAccount; activeTrip?: boolean; activeAssignment?: boolean; licensed?: boolean } = {}) {
+interface HarnessOptions {
+  row?: DriverRow | null;
+  account?: UserAccount;
+  activeTrip?: boolean;
+  activeAssignment?: boolean;
+  licence?: { isActive?: boolean; licenseValid?: boolean; licenseCategory?: DriverRow['licenseCategory'] } | null;
+  vehicleType?: VehicleType | null;
+}
+
+function harness(options: HarnessOptions = {}) {
   const calls: string[] = [];
   const published: DomainEvent[] = [];
   const events = new InProcessEventBus(() => {});
@@ -56,14 +67,20 @@ function harness(options: { row?: DriverRow | null; account?: UserAccount; activ
       inTransaction: (fn) => fn({} as PoolClient),
       findByPublicId: async () => current,
       findById: async () => current ?? row(),
+      findByUserId: async () => current,
+      expiringIn: async () => [],
       lockForWrite: async () => current,
       list: async () => ({ rows: [], total: 0 }),
       hasActiveAssignment: async () => options.activeAssignment ?? false,
-      licensedAt: async () => ({ userId: acct.id, eligible: options.licensed ?? true }),
+      licenceAt: async () =>
+        options.licence === null
+          ? null
+          : { userId: acct.id, isActive: true, licenseValid: true, licenseCategory: 'dry_cargo_1', ...options.licence },
       insert: async () => (calls.push('insert'), { id: '7' }),
       update: async (_c, _i, data) => (calls.push(`update:${Object.keys(data).join(',')}`), { id: '7' }),
       retire: async (_c, id) => (calls.push(`retire:${id}`), { id }),
     },
+    vehicles: { typeOf: async () => (options.vehicleType === undefined ? 'truck' : options.vehicleType) },
     users: {
       findByPublicId: async () => acct,
       findByIds: async () => [acct],
@@ -136,11 +153,33 @@ describe('create rules', () => {
   });
 });
 
-describe('isEligible', () => {
-  test('needs both the licence and an active account', async () => {
-    const at = new Date();
-    expect(await harness().service.isEligible({} as PoolClient, '7', at)).toBe(true);
-    expect(await harness({ licensed: false }).service.isEligible({} as PoolClient, '7', at)).toBe(false);
-    expect(await harness({ account: account({ status: 'suspended' }) }).service.isEligible({} as PoolClient, '7', at)).toBe(false);
+describe('checkEligibility', () => {
+  const db = {} as PoolClient;
+  const at = new Date();
+
+  test('eligible: active driver and account, valid licence, class covers the vehicle', async () => {
+    expect(await harness().service.checkEligibility(db, '7', at, '99')).toEqual({ eligible: true, reasons: [] });
+    // Without a vehicle the class is not checked.
+    expect(await harness({ licence: { licenseCategory: null } }).service.checkEligibility(db, '7', at)).toEqual({ eligible: true, reasons: [] });
+  });
+
+  test('lists every reason at once', async () => {
+    const h = harness({ licence: { isActive: false, licenseValid: false }, account: account({ status: 'suspended' }) });
+    expect(await h.service.checkEligibility(db, '7', at)).toEqual({
+      eligible: false,
+      reasons: ['driver_retired', 'account_not_active', 'license_expired'],
+    });
+  });
+
+  test.each([
+    [{ licence: { licenseCategory: 'automobile' as const } }, 'license_category_not_valid_for_vehicle'],
+    [{ licence: { licenseCategory: null } }, 'license_category_missing'],
+    [{ vehicleType: null }, 'vehicle_not_found'],
+  ])('with a vehicle: %j -> %s', async (opts, reason) => {
+    expect(await harness(opts).service.checkEligibility(db, '7', at, '99')).toEqual({ eligible: false, reasons: [reason] });
+  });
+
+  test('an unknown driver', async () => {
+    expect(await harness({ licence: null }).service.checkEligibility(db, '404', at)).toEqual({ eligible: false, reasons: ['driver_not_found'] });
   });
 });

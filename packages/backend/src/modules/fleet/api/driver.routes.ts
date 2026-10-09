@@ -2,7 +2,7 @@ import { Router, type Request } from 'express';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { pageMeta } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
-import { authorize } from '../../auth';
+import { authenticated, authorize } from '../../auth';
 import type { Caller } from '../application/caller';
 import type { DriverService } from '../application/driver.service';
 import { driverNotFound } from '../domain/driver';
@@ -44,6 +44,16 @@ export function driverRouter(service: DriverService): Router {
         .status(201)
         .location(`/api/v1/drivers/${driver.id}`)
         .json({ data: driver, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // Registered before /drivers/:driverId, which would otherwise take "me" as an id.
+  // Any signed-in user: drivers do not hold driver:read, but may see their own profile.
+  router.get(
+    '/drivers/me',
+    authenticated(),
+    asyncHandler(async (req, res) => {
+      res.json({ data: await service.me(caller(req)), meta: { request_id: req.correlationId } });
     }),
   );
 

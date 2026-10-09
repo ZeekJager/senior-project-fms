@@ -1,19 +1,26 @@
 import type { PoolClient } from 'pg';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent } from '../../../shared/events/domain-event';
+import { createEvent, deterministicEventId } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { UserAccount } from '../../auth';
 import {
   DRIVER_EVENTS,
+  EXPIRY_WARNING_DAYS,
+  categoryAllows,
   driverDepotNotFound,
   driverInUse,
   driverNotFound,
   driverRetired,
   unknownDriverAccount,
+  type DriverEligibility,
   type DriverView,
+  type EligibilityReason,
+  type LicenseCategory,
+  type LicenseStatus,
 } from '../domain/driver';
+import type { VehicleType } from '../domain/vehicle';
 import type { DriverListFilter, DriverRepository, DriverRow, DriverSortKey, DriverWrite } from '../infrastructure/driver.repository';
 import type { Caller } from './caller';
 
@@ -22,7 +29,7 @@ export interface DriverCreate {
   /** The user account's public id. */
   user_id: string;
   license_number: string;
-  license_category?: string | null;
+  license_category?: LicenseCategory | null;
   license_expiry: string;
   hire_date?: string | null;
   emergency_phone?: string | null;
@@ -37,6 +44,7 @@ export interface DriverListQuery {
   page_size: number;
   depot_id?: string;
   license_expiring_before?: string;
+  license_status?: LicenseStatus;
   search?: string;
   status?: 'active' | 'retired';
   sort_by: DriverSortKey;
@@ -46,8 +54,21 @@ export interface DriverListQuery {
 export interface DriverServiceDeps {
   drivers: Pick<
     DriverRepository,
-    'inTransaction' | 'findByPublicId' | 'findById' | 'lockForWrite' | 'list' | 'hasActiveAssignment' | 'licensedAt' | 'insert' | 'update' | 'retire'
+    | 'inTransaction'
+    | 'findByPublicId'
+    | 'findById'
+    | 'findByUserId'
+    | 'lockForWrite'
+    | 'list'
+    | 'hasActiveAssignment'
+    | 'licenceAt'
+    | 'expiringIn'
+    | 'insert'
+    | 'update'
+    | 'retire'
   >;
+  /** A vehicle's type, for licence-class checks. */
+  vehicles: { typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> };
   /** The auth module's user directory (through its index.ts). */
   users: {
     findByPublicId(db: Queryable, publicId: string): Promise<UserAccount | null>;
@@ -93,6 +114,7 @@ export class DriverService {
         userIds: depotIds === null ? null : await users.idsMatching(client, { depotIds }),
         status: query.status,
         licenseExpiringBefore: query.license_expiring_before,
+        licenseStatus: query.license_status,
         sort_by: query.sort_by,
         sort_order: query.sort_order,
       };
@@ -111,6 +133,18 @@ export class DriverService {
       const view = row && (await this.views(client, [row]))[0];
       if (!view || !(await this.inScope(client, caller, row.userId))) throw driverNotFound();
       return view;
+    });
+  }
+
+  /** GET /drivers/me: the caller's own driver profile, whatever their permissions; 404 if they are not a driver. */
+  async me(caller: Caller): Promise<DriverView> {
+    const { drivers } = this.deps;
+    const userId = caller.user.id;
+    if (userId === null) throw driverNotFound();
+    return drivers.inTransaction(async (client) => {
+      const row = await drivers.findByUserId(client, userId);
+      if (!row) throw driverNotFound();
+      return (await this.views(client, [row]))[0];
     });
   }
 
@@ -177,16 +211,64 @@ export class DriverService {
   }
 
   /**
-   * Whether a driver (internal id) may be dispatched at `at`: the driver is
-   * not retired, the licence is valid on that date in Addis Ababa, and the
-   * user account is active. For the trip module, through fleet's index.ts;
-   * pass the caller's transaction client to read in the same transaction.
+   * Whether a driver (internal id) may be dispatched at `at`, and if not, every
+   * reason why: retired, account not active, licence expired on that date in
+   * Addis Ababa, and, given a vehicle, a licence class that does not cover its
+   * type. For the trip module through fleet's index.ts; pass the caller's
+   * transaction client to read in the same transaction.
    */
-  async isEligible(db: Queryable, driverId: string, at: Date): Promise<boolean> {
-    const own = await this.deps.drivers.licensedAt(db, driverId, at);
-    if (!own?.eligible) return false;
+  async checkEligibility(db: Queryable, driverId: string, at: Date, vehicleId?: string): Promise<DriverEligibility> {
+    const reasons: EligibilityReason[] = [];
+    const own = await this.deps.drivers.licenceAt(db, driverId, at);
+    if (!own) return { eligible: false, reasons: ['driver_not_found'] };
+
+    if (!own.isActive) reasons.push('driver_retired');
     const [account] = await this.deps.users.findByIds(db, [own.userId]);
-    return account?.status === 'active';
+    if (account?.status !== 'active') reasons.push('account_not_active');
+    if (!own.licenseValid) reasons.push('license_expired');
+
+    if (vehicleId !== undefined) {
+      const vehicleType = await this.deps.vehicles.typeOf(db, vehicleId);
+      if (vehicleType === null) reasons.push('vehicle_not_found');
+      else if (own.licenseCategory === null) reasons.push('license_category_missing');
+      else if (!categoryAllows(own.licenseCategory, vehicleType)) reasons.push('license_category_not_valid_for_vehicle');
+    }
+    return { eligible: reasons.length === 0, reasons };
+  }
+
+  /**
+   * The daily licence-expiry warning: publishes DriverLicenseExpiring for each
+   * active driver whose licence expires EXPIRY_WARNING_DAYS (30 and 7) days
+   * after `now`'s date in Addis Ababa. The event id is derived from the
+   * driver, expiry date and day count, so a rerun the same day (a restart, a
+   * second server) repeats an id that consumers already processed.
+   */
+  async publishExpiringLicences(now: Date): Promise<number> {
+    const { drivers, events } = this.deps;
+    const due = await drivers.inTransaction(async (client) => {
+      const rows = await drivers.expiringIn(client, EXPIRY_WARNING_DAYS, now);
+      const views = await this.views(client, rows);
+      return rows.map((row, i) => ({ row, view: views[i] }));
+    });
+
+    const correlationId = deterministicEventId(`licence-expiry-run:${now.toISOString()}`);
+    await events.publish(
+      due.map(({ row, view }) =>
+        createEvent(
+          DRIVER_EVENTS.licenseExpiring,
+          {
+            driver_id: view.id,
+            user_id: view.user_id,
+            depot_id: view.depot_id,
+            license_expiry: view.license_expiry,
+            days_left: row.daysLeft,
+          },
+          { actor: null, correlationId },
+          { id: deterministicEventId(`${DRIVER_EVENTS.licenseExpiring}:${view.id}:${view.license_expiry}:${row.daysLeft}`) },
+        ),
+      ),
+    );
+    return due.length;
   }
 
   /** Rows to API views: the account and depot parts come from the auth module and fleet.depots. */
@@ -207,6 +289,7 @@ export class DriverService {
         license_number: r.licenseNumber,
         license_category: r.licenseCategory,
         license_expiry: r.licenseExpiry,
+        license_status: r.licenseStatus,
         hire_date: r.hireDate,
         emergency_phone: r.emergencyPhone,
         status: r.isActive ? 'active' : 'retired',

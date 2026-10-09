@@ -3,7 +3,7 @@ import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { FuelType, VehicleStatus, VehicleView } from '../domain/vehicle';
+import type { FuelType, VehicleStatus, VehicleType, VehicleView } from '../domain/vehicle';
 import { resolveDepotInScope } from './depot.queries';
 
 /** Columns a list can be sorted by, and the SQL behind each. */
@@ -154,6 +154,12 @@ export class VehicleRepository extends Repository {
       [publicId, ...clause.params],
     );
     return res.rows[0] ?? null;
+  }
+
+  /** A vehicle's type by internal id, or null if there is no such vehicle (used by driver eligibility). */
+  async typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> {
+    const res = await db.query<{ vehicle_type: VehicleType }>('SELECT vehicle_type FROM fleet.vehicles WHERE id = $1', [vehicleId]);
+    return res.rows[0]?.vehicle_type ?? null;
   }
 
   /** True while a driver holds an active assignment to the vehicle (fleet.driver_vehicle_assignments). */

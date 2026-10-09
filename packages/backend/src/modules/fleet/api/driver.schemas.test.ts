@@ -47,6 +47,17 @@ describe('driverCreateBody', () => {
   });
 });
 
+describe('license_category', () => {
+  test('is one of the Ethiopian licence classes, or null', () => {
+    expect(parseInput(driverCreateBody, { ...valid, license_category: 'public_2' }).license_category).toBe('public_2');
+    expect(parseInput(driverCreateBody, { ...valid, license_category: null }).license_category).toBeNull();
+    expect(rejection(driverCreateBody, { ...valid, license_category: 'C' })).toMatchObject({
+      code: 'VALIDATION_INVALID_ENUM',
+      details: [{ field: 'license_category', reason: 'invalid_enum' }],
+    });
+  });
+});
+
 describe('driverUpdateBody', () => {
   test('any non-empty subset; user_id cannot change', () => {
     expect(parseInput(driverUpdateBody, { license_category: null })).toEqual({ license_category: null });
