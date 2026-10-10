@@ -1,4 +1,8 @@
+export { ConfirmDialog } from './ConfirmDialog'
+export { DataTable, type Column, type Pagination, type SortState } from './DataTable'
 export { formatMinor, parseDecimal } from './decimal'
+export { EmptyState } from './EmptyState'
+export { ErrorBoundary, ErrorState, errorDetails } from './ErrorBoundary'
 export { FuelDisplay } from './FuelDisplay'
 export { FuelInput } from './FuelInput'
 export { MoneyDisplay } from './MoneyDisplay'

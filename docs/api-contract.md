@@ -196,6 +196,8 @@ The audit trail is read-only through the API. There is no create, update or dele
 | `GET /depots/{depot_id}` | Get depot | `depot:read` | `Depot` |
 | `PATCH /depots/{depot_id}` | Update depot | `depot:write` | `DepotUpdate` -> `Depot` |
 
+`GET /depots` is in place (FMS-18, for depot filters and pickers); the writes are FMS-20. It returns the live depots in the caller's depot scope, by name, as `{ id, name, code, location }`: an admin, fleet manager, fleet owner or compliance officer sees every depot, anyone else only their home depot. Paged like every list (§18). A driver has no `depot:read`: `403`.
+
 ### 6.2 Vehicles
 
 | Method + path | Purpose | Auth / permission | Request / response |
@@ -216,6 +218,7 @@ Vehicle rules (FMS-15):
 - **Depot scope:** reads and writes cover the caller's depots only (`depotScope`). A vehicle outside it is `404`; a `depot_id` outside it, on create or `PATCH`, is `400 VALIDATION_FAILED` with `reason: "references_missing_record"`, the same as an unknown depot.
 - **Retirement:** `DELETE` sets `status = retired` and `is_active = false` (one audit row) and returns `204`. It is refused with `409 CONFLICT_VEHICLE_IN_USE` while the vehicle is on an `assigned` or `en_route` trip or has an active driver assignment. Retiring a retired vehicle returns `204` and changes nothing. A retired vehicle is left out of `GET /vehicles` unless `status=retired` is asked for, can still be read by id, and cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`). Its plate stays taken.
 - **List:** `page` from 1, `page_size` default 25, capped at 100. `search` matches registration number, VIN, make or model (case-insensitive, wildcards literal). `sort_by`: `registration_number` (default), `make`, `model`, `year`, `odometer_km`, `health_score`, `created_at`, `updated_at`; `sort_order` `asc` (default) or `desc`.
+- **Current trip:** every `Vehicle` carries `current_trip`: the trip it is on now (`assigned` or `en_route`; en route first, then the earliest scheduled), as `{ id, status, origin, destination, scheduled_start }`, or `null`. Read only; it comes from the trip module (FMS-18).
 - **Events:** `VehicleRegistered`, `VehicleUpdated` (with `changed_fields`) and `VehicleRetired`, each with `vehicle_id` and `depot_id` (public ids).
 - **Concurrency:** `version` and `ETag` / `If-Match` as described under the driver rules (§6.3).
 
@@ -316,6 +319,7 @@ Documents are used for operational attachments such as registration records, lic
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
 | `POST /documents` | Upload document | `document:write` | `multipart/form-data`; jpeg/png/pdf; max 10 MB -> `201 Document` |
+| `GET /documents?owner_type=&owner_id=` | List an owner's documents | `document:read` | Up to 100 owner ids, comma-separated -> `Document[]` |
 | `GET /documents/{document_id}` | Get document access | `document:read` | Returns metadata + time-limited signed URL |
 | `GET /documents/{document_id}/content` | Download the file | Signed URL (no session) | `?expires=&signature=` from `url` -> the file |
 | `DELETE /documents/{document_id}` | Retire/delete document | `document:delete` | 204; subject to retention policy |
@@ -325,6 +329,7 @@ Document rules (FMS-17):
 - **Upload form:** the file is the `file` part (one file); the other parts are `owner_type` (`vehicle` or `driver`), `owner_id` (the owner's public id), `document_type` (`registration`, `licence`, `insurance`, `maintenance_invoice`, `inspection_evidence`, `incident_photo`, `dvir_attachment`, `fuel_receipt`, `other`) and, optionally, `expires_on` (the document's own expiry, e.g. an insurance end date) and `retain_until` (how long the file must be kept), both `YYYY-MM-DD`. Any other part is `400 VALIDATION_FAILED` (`reason: "not_writable"`); a body that is not readable multipart is `400` with `field: "body"`, `reason: "malformed_multipart"`.
 - **File checks:** the type is judged from the file's first bytes, not its name or the declared `Content-Type`: JPEG, PNG or PDF, anything else (a `.txt` renamed `.pdf`, say) is `415 UNSUPPORTED_MEDIA_TYPE`. A file over 10 MB is `413 PAYLOAD_TOO_LARGE`; the server stops reading at the limit. The stored `content_type`, `size_bytes` and `sha256` are computed by the server.
 - **Owner:** the caller must be able to read the owner. A vehicle needs `vehicle:read` and the vehicle's depot in the caller's scope; a driver needs `driver:read` and the driver's home depot in scope, or to be that driver (a driver uploads and reads their own licence). An owner the caller cannot read, or that does not exist, is `400 VALIDATION_FAILED` with `field: "owner_id"`, `reason: "references_missing_record"`. The same rule decides reads and deletes: a document whose owner is out of scope is `404`, as if it did not exist.
+- **Listing:** `GET /documents?owner_type=vehicle&owner_id=a,b,c` returns the live documents of those owners (one page of a vehicle or driver list: 1 to 100 ids), soonest `expires_on` first, then newest; without `url` (ask `GET /documents/{id}` for a link). Owners the caller cannot read are left out, as if they had none, so the answer reveals nothing about them. Not paged: the owner count bounds it (FMS-18).
 - **`Document`:** `id`, `owner_type`, `owner_id`, `document_type`, `original_filename` (the name only, without directories or control characters), `content_type`, `size_bytes`, `sha256`, `expires_on`, `retain_until`, `uploaded_by` (user public id), `uploaded_at`. `GET /documents/{document_id}` adds `url` and `url_expires_at`. Where the file is stored is never returned.
 - **Signed URL:** `url` is valid for one hour and needs no session, so it can go in an `<img>` or a download link; it names one document and an expiry, signed with HMAC-SHA256 on the server. A link past its expiry is `401 AUTH_TOKEN_EXPIRED`; a changed or missing signature or expiry is `401 AUTH_TOKEN_INVALID`; a link to a deleted document is `404`. The file is sent with its sniffed `Content-Type`, `Content-Disposition: inline` with the original name, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. Fetch a fresh link from `GET /documents/{document_id}` when one expires.
 - **Storage:** files are stored under random keys, outside any web root: on local disk in development (`STORAGE_DRIVER=local`, `STORAGE_LOCAL_DIR`), in S3-compatible object storage elsewhere (`STORAGE_DRIVER=s3`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, optional `S3_ENDPOINT` for MinIO and `S3_REGION`). A file is never overwritten.
@@ -533,6 +538,14 @@ Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING
   "health_score": 87,
   "depot_id": "uuid",
   "odometer_km": 128450.5,
+  "current_trip": {
+    "id": "uuid",
+    "status": "en_route",
+    "origin": "Addis Ababa",
+    "destination": "Adama",
+    "scheduled_start": "2026-10-05T07:30:00Z"
+  },
+  "version": 3,
   "created_at": "2026-10-05T07:00:00Z",
   "updated_at": "2026-10-05T07:00:00Z"
 }

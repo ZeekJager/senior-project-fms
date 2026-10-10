@@ -42,10 +42,13 @@ export interface DocumentUpload {
 export type DocumentWithUrl = DocumentView & { url: string; url_expires_at: Date };
 
 export interface DocumentServiceDeps {
-  documents: Pick<DocumentRepository, 'inTransaction' | 'findLive' | 'findById' | 'insert' | 'softDelete'>;
+  documents: Pick<DocumentRepository, 'inTransaction' | 'findLive' | 'findById' | 'listForOwners' | 'insert' | 'softDelete'>;
   storage: DocumentStorage;
   urls: DocumentUrlSigner;
-  vehicles: { findRef(db: Queryable, by: { publicId: string } | { id: string }, scope: Scope): Promise<{ id: string; publicId: string } | null> };
+  vehicles: {
+    findRef(db: Queryable, by: { publicId: string } | { id: string }, scope: Scope): Promise<{ id: string; publicId: string } | null>;
+    findRefs(db: Queryable, publicIds: readonly string[], scope: Scope): Promise<{ id: string; publicId: string }[]>;
+  };
   drivers: {
     findByPublicId(db: Queryable, publicId: string): Promise<DriverRow | null>;
     findById(db: Queryable, id: string): Promise<DriverRow | null>;
@@ -138,6 +141,21 @@ export class DocumentService {
   }
 
   /**
+   * GET /documents?owner_type=&owner_id=a,b: the live documents of the listed
+   * owners, soonest expiry first. Owners the caller cannot read are left out,
+   * as if they had no documents, so the answer reveals nothing about them.
+   */
+  async list(caller: Caller, ownerType: DocumentOwnerType, ownerIds: readonly string[]): Promise<DocumentView[]> {
+    const { documents } = this.deps;
+    return documents.inTransaction(async (client) => {
+      const owners = await this.readableOwners(client, caller, ownerType, [...new Set(ownerIds)]);
+      const publicIds = new Map(owners.map((o) => [o.id, o.publicId]));
+      const rows = await documents.listForOwners(client, ownerType, [...publicIds.keys()]);
+      return this.views(client, rows, (row) => publicIds.get(row.ownerId)!);
+    });
+  }
+
+  /**
    * GET /documents/{id}/content: the bytes, for a valid unexpired signed
    * link. No session is needed; the signature is the permission, checked
    * when the link was issued.
@@ -197,12 +215,39 @@ export class DocumentService {
     return account && depotInScope(depotScope(user), account.depotId) ? { id: driver.id, publicId: driver.publicId } : null;
   }
 
+  /** The owners among `publicIds` the caller may read (see readableOwner); one query for vehicles. */
+  private async readableOwners(
+    db: Queryable,
+    caller: Caller,
+    ownerType: DocumentOwnerType,
+    publicIds: readonly string[],
+  ): Promise<{ id: string; publicId: string }[]> {
+    if (ownerType === 'vehicle') {
+      if (!caller.user.permissions.includes('vehicle:read')) return [];
+      return this.deps.vehicles.findRefs(db, publicIds, depotScope(caller.user));
+    }
+    const owners: { id: string; publicId: string }[] = [];
+    for (const publicId of publicIds) {
+      const owner = await this.readableOwner(db, caller, ownerType, { publicId });
+      if (owner) owners.push(owner);
+    }
+    return owners;
+  }
+
   private async view(db: Queryable, row: DocumentRow, ownerPublicId: string): Promise<DocumentView> {
-    const [uploader] = await this.deps.users.findByIds(db, [row.uploadedBy]);
-    return {
+    const [view] = await this.views(db, [row], () => ownerPublicId);
+    return view;
+  }
+
+  /** Views of several rows, with one lookup of their uploaders. */
+  private async views(db: Queryable, rows: DocumentRow[], ownerPublicId: (row: DocumentRow) => string): Promise<DocumentView[]> {
+    if (rows.length === 0) return [];
+    const uploaders = await this.deps.users.findByIds(db, [...new Set(rows.map((r) => r.uploadedBy))]);
+    const uploaderPublicIds = new Map(uploaders.map((u) => [u.id, u.publicId]));
+    return rows.map((row) => ({
       id: row.publicId,
       owner_type: row.ownerType,
-      owner_id: ownerPublicId,
+      owner_id: ownerPublicId(row),
       document_type: row.documentType,
       original_filename: row.originalFilename,
       content_type: row.contentType,
@@ -210,9 +255,9 @@ export class DocumentService {
       sha256: row.sha256,
       expires_on: row.expiresOn,
       retain_until: row.retainUntil,
-      uploaded_by: uploader.publicId,
+      uploaded_by: uploaderPublicIds.get(row.uploadedBy)!,
       uploaded_at: row.uploadedAt,
-    };
+    }));
   }
 }
 

@@ -22,6 +22,18 @@ const uploadFields = z.strictObject({
   retain_until: date.optional(),
 });
 
+/** Most owners one GET /documents names: a page of the vehicle or driver list. */
+const MAX_LIST_OWNERS = 100;
+
+/** GET /documents: one owner type, and up to 100 owner ids separated by commas. */
+const listQuery = z.object({
+  owner_type: z.enum(DOCUMENT_OWNER_TYPES),
+  owner_id: z
+    .string()
+    .transform((s) => s.split(',').map((id) => id.trim()))
+    .pipe(z.array(z.uuid()).min(1).max(MAX_LIST_OWNERS)),
+});
+
 const contentQuery = z.object({ expires: z.string().optional(), signature: z.string().optional() });
 
 // Streams the multipart body and stops reading as soon as the file passes
@@ -78,6 +90,15 @@ export function documentRouter(service: DocumentService): Router {
       const fields = parseInput(uploadFields, req.body);
       const document = await service.upload(caller(req), { ...fields, file: { bytes: req.file.buffer, originalName: req.file.originalname } });
       res.status(201).location(`/api/v1/documents/${document.id}`).json({ data: document, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  router.get(
+    '/documents',
+    authorize('document:read'),
+    asyncHandler(async (req, res) => {
+      const { owner_type, owner_id } = parseInput(listQuery, req.query);
+      res.json({ data: await service.list(caller(req), owner_type, owner_id), meta: { request_id: req.correlationId } });
     }),
   );
 

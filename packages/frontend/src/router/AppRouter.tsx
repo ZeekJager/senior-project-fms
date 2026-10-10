@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { RoleGate } from '@/components/RoleGate'
 import { useAuth } from '@/context/AuthContext'
@@ -12,26 +13,6 @@ import { portals } from './routes'
 // production build `import.meta.env.DEV` is false, so the import is dropped
 // and the page is not in the bundle.
 const UiExamples = import.meta.env.DEV ? lazy(() => import('@/pages/dev/UiExamples')) : null
-
-function Shell() {
-  const { session, logout } = useAuth()
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-        <span className="font-semibold text-fms-primary">Fleet Management System</span>
-        <span className="flex items-center gap-4">
-          <span>{session?.user.full_name}</span>
-          <button type="button" onClick={() => void logout()} className="underline">
-            Sign out
-          </button>
-        </span>
-      </header>
-      <main className="p-6">
-        <Outlet />
-      </main>
-    </div>
-  )
-}
 
 function Home() {
   const { session } = useAuth()
@@ -53,7 +34,7 @@ export function AppRouter() {
         />
       )}
       <Route element={<ProtectedRoute />}>
-        <Route element={<Shell />}>
+        <Route element={<AppShell />}>
           <Route index element={<Home />} />
           {portals
             .flatMap((portal) => portal.routes)

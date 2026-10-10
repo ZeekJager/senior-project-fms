@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth, type PermissionRule } from '@/context/AuthContext'
 
 interface RoleGateProps {
-  /** A permission code from /auth/me, or a list of which any one is enough. Never a role name. */
-  permission: string | readonly string[]
+  /** A permission code from /auth/me, a list of which any one is enough, or `{ all: [...] }`. Never a role name. */
+  permission: PermissionRule
   children: ReactNode
 }
 

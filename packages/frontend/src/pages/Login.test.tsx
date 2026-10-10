@@ -226,14 +226,14 @@ describe('Login screen', () => {
 
     it('announces errors through live regions that exist before the error does', async () => {
       const user = await openLogin()
-      const emailRegion = document.getElementById('login-email-error')
+      const emailRegion = document.getElementById('login-email-message')
       expect(emailRegion).toHaveAttribute('aria-live', 'polite')
       expect(screen.getByRole('alert')).toBeEmptyDOMElement()
 
       await submit(user)
 
       // Same elements, now filled: assistive technology announces the change.
-      expect(document.getElementById('login-email-error')).toBe(emailRegion)
+      expect(document.getElementById('login-email-message')).toBe(emailRegion)
       expect(emailRegion).toHaveTextContent('Enter your email.')
       expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter your email.')
     })

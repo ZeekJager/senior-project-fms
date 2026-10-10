@@ -9,6 +9,15 @@ export type VehicleType = (typeof VEHICLE_TYPES)[number];
 export type FuelType = (typeof FUEL_TYPES)[number];
 export type VehicleStatus = (typeof VEHICLE_STATUSES)[number];
 
+/** The trip a vehicle is on now: assigned or en route (public ids only). */
+export interface VehicleTrip {
+  id: string;
+  status: 'assigned' | 'en_route';
+  origin: string | null;
+  destination: string | null;
+  scheduled_start: Date | null;
+}
+
 /** A vehicle as the API returns it (api-contract §16.1). Public ids only. */
 export interface VehicleView {
   id: string;
@@ -25,6 +34,8 @@ export interface VehicleView {
   health_score: number | null;
   depot_id: string;
   odometer_km: number;
+  /** The assigned or en-route trip, if any (en route first). */
+  current_trip: VehicleTrip | null;
   /** Bumped on every change; also the ETag. Send it back in `If-Match` to refuse a stale PATCH. */
   version: number;
   created_at: Date;

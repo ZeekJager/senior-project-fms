@@ -24,6 +24,7 @@ function harness(options: { insertFails?: boolean; ownerVisible?: boolean } = {}
     documents: {
       inTransaction: (fn) => fn({} as PoolClient),
       findLive: async () => null,
+      listForOwners: async () => [],
       findById: async () => {
         throw new Error('not used');
       },
@@ -41,7 +42,10 @@ function harness(options: { insertFails?: boolean; ownerVisible?: boolean } = {}
       remove: async (key) => void storage.removed.push(key),
     },
     urls: new DocumentUrlSigner('unit-test-signing-key-at-least-32-characters'),
-    vehicles: { findRef: async () => (options.ownerVisible === false ? null : { id: '7', publicId: VEHICLE }) },
+    vehicles: {
+      findRef: async () => (options.ownerVisible === false ? null : { id: '7', publicId: VEHICLE }),
+      findRefs: async () => [],
+    },
     drivers: { findByPublicId: async () => null, findById: async () => null },
     users: { findByIds: async () => [] },
     events: new InProcessEventBus(() => {}),

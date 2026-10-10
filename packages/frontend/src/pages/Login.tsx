@@ -1,5 +1,7 @@
+import { BarChart3, Clock3, ShieldCheck, Truck } from 'lucide-react'
 import { useRef, useState, type FormEvent } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
+import { Button, TextField } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { ApiError } from '@/lib/api/errors'
 import { homePathFor, safeRedirect } from '@/router/redirect'
@@ -22,15 +24,6 @@ const EMAIL_FORMAT_MESSAGE = 'Enter a valid email address, like name@example.com
 // lets through that the API still rejects comes back as VALIDATION_FAILED
 // and is shown on the field (see onSubmit).
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)*\.[A-Za-z]{2,}$/
-
-function Spinner() {
-  return (
-    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25" />
-      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 /** S-01: the single entry point. Sign in, then back to `?redirect=` or the portal home. */
 export function LoginPage() {
@@ -79,64 +72,81 @@ export function LoginPage() {
     }
   }
 
-  const inputClass = (invalid: boolean) =>
-    `rounded border p-2 ${invalid ? 'border-fms-danger' : 'border-slate-300'} focus:outline focus:outline-2 focus:outline-fms-primary`
-
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-6">
-      <h1 className="text-2xl font-semibold text-fms-primary">Sign in</h1>
-      {params.get('reason') === 'idle' && (
-        <p role="status" className="rounded bg-amber-50 p-3 text-amber-900">
-          You were signed out after 30 minutes of inactivity.
-        </p>
-      )}
-      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="login-email">Email</label>
-          <input
-            id="login-email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            aria-invalid={fieldErrors.email ? true : undefined}
-            aria-describedby="login-email-error"
-            className={inputClass(!!fieldErrors.email)}
-          />
-          {/* Always rendered: a live region must exist before its text changes to be announced. */}
-          <p id="login-email-error" aria-live="polite" className="min-h-5 text-sm text-fms-danger">
-            {fieldErrors.email}
-          </p>
+    <div className="flex min-h-screen">
+      <aside className="relative hidden w-[46%] max-w-[640px] overflow-hidden bg-[#0B0D1A] p-12 text-white lg:flex lg:flex-col">
+        {/* Soft light and a faint grid behind the brand panel. */}
+        <div aria-hidden="true" className="absolute -left-32 -top-32 h-[480px] w-[480px] rounded-full bg-indigo-600/40 blur-[120px]" />
+        <div aria-hidden="true" className="absolute -bottom-40 right-0 h-[420px] w-[420px] rounded-full bg-purple-600/25 blur-[120px]" />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 opacity-[0.07] [background-image:linear-gradient(to_right,white_1px,transparent_1px),linear-gradient(to_bottom,white_1px,transparent_1px)] [background-size:48px_48px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_75%)]"
+        />
+        <div className="relative flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/20 backdrop-blur">
+            <Truck className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <span className="text-sm font-semibold tracking-tight">Fleet Management System</span>
         </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="login-password">Password</label>
-          <input
-            id="login-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            aria-invalid={fieldErrors.password ? true : undefined}
-            aria-describedby="login-password-error"
-            className={inputClass(!!fieldErrors.password)}
-          />
-          <p id="login-password-error" aria-live="polite" className="min-h-5 text-sm text-fms-danger">
-            {fieldErrors.password}
-          </p>
+        <div className="relative mt-auto">
+          <p className="max-w-md text-3xl font-semibold leading-tight tracking-tight">Every vehicle, trip and litre of fuel, in one place.</p>
+          <ul className="mt-10 space-y-4 text-sm text-white/70">
+            <li className="flex items-center gap-3">
+              <Clock3 className="h-4 w-4 text-indigo-300" aria-hidden="true" /> Live fleet status for dispatch decisions
+            </li>
+            <li className="flex items-center gap-3">
+              <BarChart3 className="h-4 w-4 text-indigo-300" aria-hidden="true" /> Fuel reconciliation and maintenance insight
+            </li>
+            <li className="flex items-center gap-3">
+              <ShieldCheck className="h-4 w-4 text-indigo-300" aria-hidden="true" /> Every change recorded in the audit log
+            </li>
+          </ul>
         </div>
-        <p role="alert" className="min-h-6 text-fms-danger">
-          {formError}
-        </p>
-        <button
-          type="submit"
-          disabled={submitting}
-          aria-busy={submitting}
-          className="flex items-center justify-center gap-2 rounded bg-fms-primary p-2 text-white disabled:opacity-60"
-        >
-          {submitting && <Spinner />}
-          {submitting ? 'Signing in…' : 'Sign in'}
-        </button>
-      </form>
-    </main>
+      </aside>
+
+      <main className="flex flex-1 items-center justify-center px-4 py-12 sm:px-6">
+        <div className="w-full max-w-sm animate-scale-in">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand bg-gradient-to-br from-white/20 to-white/0 text-white shadow-glow">
+              <Truck className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <span className="text-sm font-semibold tracking-tight text-ink">Fleet Management System</span>
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">Sign in</h1>
+          <p className="mt-1.5 text-sm text-ink-muted">Use your work email and password.</p>
+          {params.get('reason') === 'idle' && (
+            <p role="status" className="mt-6 rounded-control border border-warning/25 bg-warning-soft px-3.5 py-3 text-sm text-warning">
+              You were signed out after 30 minutes of inactivity.
+            </p>
+          )}
+          <form onSubmit={onSubmit} noValidate className="mt-8">
+            <TextField
+              id="login-email"
+              label="Email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              error={fieldErrors.email}
+            />
+            <TextField
+              id="login-password"
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              error={fieldErrors.password}
+            />
+            <p role="alert" className="mb-4 min-h-6 text-sm text-danger">
+              {formError}
+            </p>
+            <Button type="submit" size="lg" fullWidth loading={submitting}>
+              {submitting ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
+        </div>
+      </main>
+    </div>
   )
 }
