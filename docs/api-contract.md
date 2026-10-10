@@ -194,10 +194,34 @@ Permission codes are the `resource:action` values in the "Auth / permission" col
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /audit-logs` | Search the audit trail (screen S-10) | `audit:read` | `user_id,entity_type,entity_id,correlation_id,from,to` + paging -> `AuditLog[]` |
+| `GET /audit-logs` | Search the audit trail (screen S-10) | `audit:read` | `user_id,entity_type,entity_id,correlation_id,action,result,from,to` + cursor paging -> `AuditLog[]` |
 | `GET /audit` | Legacy-compatible alias | `audit:read` | Same as `GET /audit-logs` |
 
 The audit trail is read-only through the API. There is no create, update or delete endpoint; entries are written by the API in the same transaction as each mutation.
+
+Audit reader rules (FMS-28):
+
+- **Who:** `audit:read`, which admin, fleet owner and compliance officer hold. Migration 025 took it from fleet manager, who now gets `403`, as does a dispatcher.
+- **Order and paging:** newest first, on (`created_at`, row) so rows written in one transaction keep a stable order. `page_size` 1-200 (default 50). `meta.next_cursor` is the `cursor` for the next page, or `null` on the last. A row written while paging is newer than the cursor, so pages never shift, skip or repeat. A cursor that is not one the API issued is `400`, `reason: "invalid_cursor"`.
+- **Filters:**
+  - `user_id`: the actor's public id.
+  - `entity_type`: a schema-qualified table, e.g. `fleet.vehicles`.
+  - `entity_id`: the entity's public id. It matches mutation rows of that entity and, for a user account, its sign-in events and role changes.
+  - `correlation_id`: one request or job run.
+  - `action`, e.g. `UPDATE` or `auth.login_failed`.
+  - `result`: `success`, `denied` or `failed`.
+  - `from` and `to`: an ISO instant, or a date meaning that Addis Ababa day. A `to` date includes its day; `from` must come before `to`.
+  - An unknown `user_id` returns no rows, not `404`.
+- **`AuditLog`:**
+  - `id`: opaque, unique per row.
+  - `occurred_at`: UTC, to the microsecond.
+  - `action` and `result`. `result` is `null` on rows written before FMS-27.
+  - `actor`: `{type: "user", id, full_name, email}`, `{type: "system"}` (a scheduled job) or `{type: "anonymous"}` (e.g. a failed login).
+  - `entity_type` and `entity_id` (public id, when the row carries one).
+  - `correlation_id` and `request_source` (channel, IP, user agent).
+  - `old_values` and `new_values`: internal numeric ids are removed, public ids kept, and money stays in integer minor units (the UI formats ETB).
+  - `details`.
+- Responses are `Cache-Control: no-store`.
 
 ## 6. Fleet Management API
 
@@ -905,6 +929,7 @@ This file is the combined contract (`Fleet_Management_API_Contract_Combined.pdf`
 | 5.1 | Permission codes defined as seeded in `auth.permissions` | Contract and seed used different names |
 | 5.1 | `GET /users/{id}`, `POST /users/{id}/password-reset` and `POST /auth/password` added | Accounts are created without a password; users set their own through a one-time link (FMS-78) |
 | 5.2 | `GET /audit-logs` (+ legacy `GET /audit`) added | Audit Log UI (S-10) had no endpoint |
+| 5.2 | Cursor paging instead of pages; `action` and `result` filters; actors and entities by public id; `audit:read` without fleet manager | Stable order on an append-only trail that grows while it is read; IDs rule; S-10's roles (FMS-28) |
 | 6.2, 6.3 | Vehicle fuel-efficiency requirement; driver depot stored on the user | Required DB columns / single source of depot |
 | 7.2 | `/assign` uses new `trip:assign`; overlap rules apply to every assigning write and are DB-enforced | Drivers need `trip:execute` without assignment rights; concurrent-assignment race |
 | 9.1, 12.2 | `fuel_type`, `incident_type`, `occurred_at` optional with defaults | Required DB columns the requests did not carry |
