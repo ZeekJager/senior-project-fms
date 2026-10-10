@@ -19,6 +19,9 @@ export const STATUSES = [
   'maintenance',
   'retired',
   'decommissioned',
+  // Maintenance work (scheduled, completed and cancelled are shared with trips)
+  'open',
+  'in_progress',
 ] as const
 
 export type Status = (typeof STATUSES)[number]
@@ -58,6 +61,8 @@ export const STATUS_STYLES: Record<Status, StatusStyle> = {
   maintenance: style('orange', 'Maintenance'),
   retired: style('grey', 'Retired'),
   decommissioned: style('red', 'Decommissioned'),
+  open: style('blue', 'Open'),
+  in_progress: style('yellow', 'In progress'),
 }
 
 /** A status as a coloured pill with a dot. The label is always text, so colour is never the only signal. */

@@ -63,6 +63,8 @@ focus only). Never remove an outline without it.
 |---|---|
 | `Button`, `IconButton` | `primary`, `secondary`, `ghost`, `danger`; `sm`/`md`/`lg`; `loading` shows a spinner and sets `aria-busy`. `type` defaults to `button`. An `IconButton` needs a `label` (its accessible name and tooltip) |
 | `TextField`, `SelectField` | Floating label: a real `<label>`, inside the control until there is a value. `error` replaces `hint` in a message line that always exists (a live region), and sets `aria-invalid`. `optional` adds "(optional)"; `trailing` holds a unit or a status icon |
+| `Combobox` | A searchable select (WAI-ARIA combobox): the caller feeds options from the typed text (local filter or API search), optional groups ("Needs maintenance" first), a detail line and a trailing badge per option. Escape closes only the list |
+| `TextAreaField` | The multi-line floating-label field (descriptions, notes) |
 | `FilterSelect` | The filter-bar pill: label, value, an animated listbox. Arrow keys, Home/End, Enter/Space, Escape. Tinted while a filter is applied |
 | `Dialog`, `Drawer` | Portal, focus trap, Escape and backdrop close, scroll lock, focus returned on close. Drawers are floating sheets inset 8px from the edge; use them for forms and detail instead of new pages |
 | `Card`, `Badge`, `Skeleton`, `Spinner` | Surfaces; tinted pills with a dot or icon; shimmering placeholders the size of what they replace |

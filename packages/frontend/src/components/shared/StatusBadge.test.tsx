@@ -17,8 +17,10 @@ describe('StatusBadge colour vocabulary', () => {
         "draft": "grey",
         "en_route": "yellow",
         "flagged": "orange",
+        "in_progress": "yellow",
         "inactive": "grey",
         "maintenance": "orange",
+        "open": "blue",
         "retired": "grey",
         "scheduled": "grey",
       }

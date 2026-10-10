@@ -1,5 +1,5 @@
 import { AlertCircle, ChevronDown } from 'lucide-react'
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { cn } from './cn'
 
 // Floating-label fields. The label sits inside the control like a placeholder
@@ -136,6 +136,41 @@ export const SelectField = forwardRef<HTMLSelectElement, SelectFieldProps>(funct
           {labelText(label, optional)}
         </label>
         <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
+      </div>
+      <Message id={messageId} error={error} hint={hint} />
+    </div>
+  )
+})
+
+export interface TextAreaFieldProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'placeholder'>, Omit<FieldChromeProps, 'id'> {}
+
+/** A multi-line floating-label field (descriptions, notes). */
+export const TextAreaField = forwardRef<HTMLTextAreaElement, TextAreaFieldProps>(function TextAreaField(
+  { label, error, hint, optional, id: idProp, className, rows = 3, ...rest },
+  ref,
+) {
+  const generated = useId()
+  const id = idProp ?? generated
+  const messageId = `${id}-message`
+  return (
+    <div className={className}>
+      <div className="relative">
+        <textarea
+          ref={ref}
+          id={id}
+          rows={rows}
+          placeholder=" "
+          aria-invalid={error ? true : undefined}
+          aria-describedby={messageId}
+          className={cn(CONTROL, controlState(!!error), 'h-auto min-h-[96px] resize-y pt-7 leading-relaxed')}
+          {...rest}
+        />
+        <label
+          htmlFor={id}
+          className="pointer-events-none absolute left-4 top-[22px] select-none text-sm text-ink-subtle transition-all duration-150 ease-smooth peer-focus:top-[15px] peer-focus:-translate-y-1/2 peer-focus:text-xs peer-focus:font-medium peer-focus:text-brand-ink peer-[:not(:placeholder-shown)]:top-[15px] peer-[:not(:placeholder-shown)]:-translate-y-1/2 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:font-medium"
+        >
+          {labelText(label, optional)}
+        </label>
       </div>
       <Message id={messageId} error={error} hint={hint} />
     </div>
