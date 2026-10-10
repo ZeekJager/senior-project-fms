@@ -167,12 +167,26 @@ The browser-facing API uses JWTs stored in Secure, HttpOnly cookies. The access 
 | `POST /auth/refresh` | Rotate/renew session | Refresh cookie | Sets new access/refresh cookies + current user; a reused refresh token revokes its session family |
 | `POST /auth/logout` | Terminate session | Refresh cookie (works after the access token expired) | `204`, clears session cookies |
 | `GET /auth/me` | Current user and permissions | Authenticated | `{user, roles, permissions}` |
-| `GET /users` | User administration | `users:read` | Paged `User[]` |
-| `POST /users` | Create user | `users:write` | `UserCreate` -> `User` |
+| `GET /users` | User administration | `users:read` | Paged `User[]`; `search`, `role`, `status`, `depot_id` |
+| `POST /users` | Create user | `users:write` | `UserCreate` -> `201 User`, `meta.password_setup` |
+| `GET /users/{user_id}` | Get user | `users:read` | `User` |
 | `PATCH /users/{user_id}` | Update user | `users:write` | `UserUpdate` -> `User` |
+| `POST /users/{user_id}/password-reset` | Issue a password link | `users:write` | `201 {token,purpose,expires_at}` |
 | `GET /roles` | List roles/permissions | `roles:read` | `Role[]` |
+| `POST /auth/password` | Set a password with a one-time link | Public (the link is the credential) | `{token,password}` -> `204` |
 
 Cookies, token lifetimes, rotation and the audit events are described in [auth.md](auth.md).
+
+User administration rules (FMS-78):
+
+- **Who:** `users:read` and `roles:read` are held by admin, fleet_manager and compliance_officer; `users:write` by **admin** only, so a fleet manager gets `403` on every write.
+- **`User`:** `id`, `email`, `full_name`, `phone`, `depot_id`, `status`, `roles`, `has_password`, `last_login_at`, `created_at`, `updated_at`. Never a password hash. **`Role`:** `name`, `description`, `permissions`.
+- **Fields:** `email` stored trimmed and lower case, unique (`409 CONFLICT_DUPLICATE`, `field: "email"`). `full_name` 1-255 characters. `roles` 1-10 active role names, each once (`400`, `field: "roles.N"`, `reason: "references_missing_record"` for an unknown one). Depot-scoped roles (dispatcher, driver, technician, depot_admin, finance_clerk) need a `depot_id` (`400`, `reason: "required"`). `status` (PATCH only): `active`, `inactive`, `suspended`, `locked`. Anything else is `not_writable`; there is no password field.
+- **No escalation:** a role can be granted or removed only by someone who holds every permission it carries, and `admin` only by an admin (`403 FORBIDDEN_INSUFFICIENT_ROLE`, `reason: "escalation"`). Editing, deactivating or resetting the password of an account follows the same rule for the roles it already holds: resetting an admin's password is taking the admin over.
+- **Own account:** nobody changes their own roles (`403`, `reason: "own_roles"`) or deactivates themselves (`409 CONFLICT_INVALID_STATE_TRANSITION`). The last active admin cannot lose the role or be deactivated (`409`, `reason: "last_admin"`).
+- **Deactivation:** a `status` other than `active` revokes every refresh session in the same transaction. The user's next request is `403 AUTH_ACCOUNT_DISABLED` and no refresh succeeds.
+- **Passwords:** `POST /users` creates the account without a password and returns a one-time setup link in `meta.password_setup` (`{token, purpose: "setup", expires_at}`, 72 hours), shown once (`Cache-Control: no-store`). `POST /users/{id}/password-reset` issues a new link (`reset`, 1 hour; `setup` if the account has no password yet) and closes older ones. `POST /auth/password` sets the password: 12-128 characters, not containing the email (`400`, `field: "password"`, `reason: "too_short" | "too_long" | "contains_email" | "repeated_character"`). An unknown, used or expired link is `400`, `field: "token"`, `reason: "invalid_or_expired"`. Setting a password ends every session of the user. Only the SHA-256 of a token is stored.
+- **Audit and events:** account writes are audited (`INSERT`/`UPDATE auth.users`, `INSERT auth.password_tokens`); every role change writes `ROLE_CHANGE` on `auth.user_roles` with `old_values.roles` and `new_values.roles`; a password set writes `auth.password_set`. Events: `UserCreated` (`user_id`, `roles`), `UserRoleChanged` (`user_id`, `added`, `removed`), `UserDeactivated` (`user_id`, `status`, `sessions_revoked`), and `UserAccountChanged` when the profile, depot or status changed.
 
 Permission codes are the `resource:action` values in the "Auth / permission" columns of this document, seeded verbatim in `auth.permissions` (see `001_core_identity.sql` for the role grants).
 
@@ -889,6 +903,7 @@ This file is the combined contract (`Fleet_Management_API_Contract_Combined.pdf`
 | 3.5 | Identifiers are each table's `public_id`; enums lowercase; fuel and speed units stated | Schema uses BIGINT keys internally and lowercase enums |
 | 3.6 | Error code catalogue added | Codes the board's Definition of Done requires (`CONFLICT_VEHICLE_IN_USE`, `VALIDATION_FLOAT_IN_MONEY_PATH`, ...) were not listed |
 | 5.1 | Permission codes defined as seeded in `auth.permissions` | Contract and seed used different names |
+| 5.1 | `GET /users/{id}`, `POST /users/{id}/password-reset` and `POST /auth/password` added | Accounts are created without a password; users set their own through a one-time link (FMS-78) |
 | 5.2 | `GET /audit-logs` (+ legacy `GET /audit`) added | Audit Log UI (S-10) had no endpoint |
 | 6.2, 6.3 | Vehicle fuel-efficiency requirement; driver depot stored on the user | Required DB columns / single source of depot |
 | 7.2 | `/assign` uses new `trip:assign`; overlap rules apply to every assigning write and are DB-enforced | Drivers need `trip:execute` without assignment rights; concurrent-assignment race |

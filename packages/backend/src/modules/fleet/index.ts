@@ -132,6 +132,7 @@ export const fleetModule: AppModule = {
 /** Depot lookups other modules need; the auth module uses it for /auth/me. */
 export const depotDirectory: DepotDirectory = {
   publicIdOf: (depotId) => findDepotPublicId(pool, depotId),
+  resolveActive: (publicId, db = pool) => resolveDepotInScope(db, publicId, { kind: 'all' }),
 };
 
 /**

@@ -27,6 +27,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 019 | `fleet`, `auth` | `depots.version` (If-Match on depot writes) and upper-case depot codes; `depot:write` moves from fleet_manager to fleet_owner (FMS-20) |
 | 020 | `maintenance` | `maintenance_records.version` (If-Match) and `completed_by` (FMS-22) |
 | 021 | `maintenance` | `inventory_parts.version` (If-Match), upper-case part numbers, partial index for below-reorder parts (FMS-23) |
+| 022 | `auth` | `password_tokens`: one-time password setup and reset links, SHA-256 of the token only (FMS-78) |
 
 ## Important
 
