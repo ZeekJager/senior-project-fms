@@ -9,9 +9,13 @@
  * - DB_NAME is always the dedicated test database, never the dev database.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export const TEST_DB_NAME = process.env.TEST_DB_NAME ?? 'fms_test';
+
+/** Uploaded document files during tests: a temp folder, emptied by the global setup before and after the run. */
+export const TEST_STORAGE_DIR = path.join(os.tmpdir(), `${TEST_DB_NAME}-documents`);
 
 if (!TEST_DB_NAME.endsWith('_test')) {
   throw new Error(`TEST_DB_NAME must end with "_test" (got "${TEST_DB_NAME}"); tests drop and recreate it.`);
@@ -46,5 +50,8 @@ export function applyTestEnv(): void {
   setDefault('DB_USER', 'fms_app');
   setDefault('DB_PASSWORD', process.env.DB_APP_PASSWORD ?? dotEnv.DB_APP_PASSWORD);
   setDefault('JWT_SECRET', dotEnv.JWT_SECRET);
+  // Always local disk, in a temp folder: tests never write into the repo or a real bucket.
+  process.env.STORAGE_DRIVER = 'local';
+  process.env.STORAGE_LOCAL_DIR = TEST_STORAGE_DIR;
   process.env.DB_NAME = TEST_DB_NAME;
 }

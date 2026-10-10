@@ -2,6 +2,8 @@
 node_modules/
 dist/
 coverage/
+# Uploaded documents in local development (FMS-17)
+packages/backend/storage/
 .env
 .env.*
 !.env.example

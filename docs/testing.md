@@ -29,6 +29,8 @@ Integration tests never use your development database. On every run, the global 
 
 Settings come from your environment, or from the repo-root `.env` that `make env` creates, with host defaults for a running `make dev` stack (`DB_HOST=localhost`, `DB_PORT=5432`). So with the stack up, `npm test` needs no extra setup. To use another server, set `DB_HOST`, `DB_PORT`, `DB_ADMIN_PASSWORD`, `DB_PASSWORD` and `JWT_SECRET`.
 
+Uploaded documents go to local disk in a temporary folder (`STORAGE_DRIVER=local`), cleared before and after each run. The S3 adapter's own test, `test/integration/s3-storage.test.ts`, is skipped unless `S3_TEST_ENDPOINT` points at an S3-compatible server (MinIO, RustFS) with a bucket named `fms-test` (or `S3_TEST_BUCKET`); set `S3_TEST_ACCESS_KEY_ID` and `S3_TEST_SECRET_ACCESS_KEY` too. CI does not run it.
+
 ### Every test is rolled back
 
 Each integration test runs inside one database transaction that is rolled back when the test ends, so nothing it writes survives, audit rows included. The app's own transactions become savepoints inside it, so transactional code behaves as in production.

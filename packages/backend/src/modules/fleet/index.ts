@@ -1,18 +1,24 @@
 import { Router } from 'express';
+import { config } from '../../config';
 import { pool } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
+import { createDocumentStorage } from '../../shared/storage/document-storage';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory } from '../auth';
 import { driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
 import { fleetRouter } from './api/fleet.routes';
 import { vehicleRouter } from './api/vehicle.routes';
+import { DocumentService } from './application/document.service';
+import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
 import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
 import { driverAccounts } from './infrastructure/driver-account.projection';
+import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
@@ -24,13 +30,28 @@ const vehicleService = new VehicleService({
   events: eventBus,
 });
 
+const driverRepository = new DriverRepository(pool);
+
 const driverService = new DriverService({
-  drivers: new DriverRepository(pool),
+  drivers: driverRepository,
   vehicles: { typeOf: (db, vehicleId) => vehicleRepository.typeOf(db, vehicleId) },
   users: userDirectory,
   accounts: driverAccounts,
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds, publicIdByCode: depotPublicIdByCode },
   trips: { driverHasActiveTrip },
+  events: eventBus,
+});
+
+const documentService = new DocumentService({
+  documents: new DocumentRepository(pool),
+  storage: createDocumentStorage(config.storage),
+  urls: new DocumentUrlSigner(config.jwtSecret),
+  vehicles: { findRef: (db, by, scope) => vehicleRepository.findRef(db, by, scope) },
+  drivers: {
+    findByPublicId: (db, id) => driverRepository.findByPublicId(db, id),
+    findById: (db, id) => driverRepository.findById(db, id),
+  },
+  users: userDirectory,
   events: eventBus,
 });
 
@@ -43,6 +64,7 @@ const router = Router();
 router.use(fleetRouter);
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
+router.use(documentRouter(documentService));
 
 export const fleetModule: AppModule = {
   name: 'fleet',
@@ -96,4 +118,5 @@ export type { DriverEligibility, EligibilityReason } from './domain/driver';
 
 /** Event types, for modules that subscribe to them. */
 export { DRIVER_EVENTS } from './domain/driver';
+export { DOCUMENT_EVENTS } from './domain/document';
 export { VEHICLE_EVENTS } from './domain/vehicle';

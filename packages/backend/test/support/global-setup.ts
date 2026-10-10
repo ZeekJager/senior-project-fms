@@ -3,10 +3,11 @@
  * database and apply every migration with the same code `make migrate`
  * uses. Teardown fails the run if any test left rows behind.
  */
+import { rm } from 'node:fs/promises';
 import { Client } from 'pg';
 import { loadMigrationConfig } from '../../src/config/schema';
 import { applyMigrations } from '../../scripts/lib/migrations';
-import { applyTestEnv, TEST_DB_NAME } from './test-env';
+import { applyTestEnv, TEST_DB_NAME, TEST_STORAGE_DIR } from './test-env';
 
 // Every table the migrations create, excluding schema_migrations.
 const COUNT_ROWS_SQL = `
@@ -34,6 +35,7 @@ function connect(database: string): Client {
 
 export default async function setup(): Promise<() => Promise<void>> {
   applyTestEnv();
+  await rm(TEST_STORAGE_DIR, { recursive: true, force: true });
   const admin = connect('postgres');
   try {
     await admin.connect();
@@ -61,6 +63,7 @@ export default async function setup(): Promise<() => Promise<void>> {
   }
 
   return async () => {
+    await rm(TEST_STORAGE_DIR, { recursive: true, force: true });
     const check = connect(TEST_DB_NAME);
     await check.connect();
     try {

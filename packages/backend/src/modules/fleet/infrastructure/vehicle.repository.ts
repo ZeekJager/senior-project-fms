@@ -158,6 +158,17 @@ export class VehicleRepository extends Repository {
     return res.rows[0] ?? null;
   }
 
+  /** Both ids of a vehicle in the caller's scope (retired included), by either id; null when not visible. */
+  async findRef(db: Queryable, by: { publicId: string } | { id: string }, scope: Scope): Promise<{ id: string; publicId: string } | null> {
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const column = 'publicId' in by ? 'v.public_id' : 'v.id';
+    const res = await db.query<{ id: string; publicId: string }>(
+      `SELECT v.id, v.public_id AS "publicId" FROM fleet.vehicles v WHERE ${column} = $1 AND ${clause.sql}`,
+      ['publicId' in by ? by.publicId : by.id, ...clause.params],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** A vehicle's type by internal id, or null if there is no such vehicle (used by driver eligibility). */
   async typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> {
     const res = await db.query<{ vehicle_type: VehicleType }>('SELECT vehicle_type FROM fleet.vehicles WHERE id = $1', [vehicleId]);
