@@ -59,6 +59,16 @@ export interface LockedVehicle {
   version: number;
 }
 
+/** What the maintenance module needs to know about a vehicle (vehicleMaintenance.findInScope). */
+export interface MaintenanceVehicle {
+  id: string;
+  publicId: string;
+  registrationNumber: string;
+  depotId: string;
+  isActive: boolean;
+  maintenanceFlag: boolean;
+}
+
 /** Current trips by vehicle internal id: the trip module's query, passed in through its index.ts. */
 export type ActiveTripLookup = (db: Queryable, vehicleIds: readonly string[]) => Promise<Map<string, VehicleTrip>>;
 
@@ -197,6 +207,51 @@ export class VehicleRepository extends Repository {
       [publicIds, ...clause.params],
     );
     return res.rows;
+  }
+
+  /**
+   * A vehicle in the caller's scope for a maintenance write: both ids, plate,
+   * internal depot and whether it is live. `lock` row-locks it, so two
+   * maintenance writes on one vehicle (and its flag) happen one after the other.
+   */
+  async findForMaintenance(
+    db: Queryable,
+    by: { publicId: string } | { id: string },
+    scope: Scope,
+    lock = false,
+  ): Promise<MaintenanceVehicle | null> {
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const column = 'publicId' in by ? 'v.public_id' : 'v.id';
+    const res = await db.query<MaintenanceVehicle>(
+      `SELECT v.id, v.public_id AS "publicId", v.registration_number AS "registrationNumber", v.depot_id AS "depotId",
+              v.is_active AS "isActive", v.maintenance_flag AS "maintenanceFlag"
+         FROM fleet.vehicles v WHERE ${column} = $1 AND ${clause.sql}${lock ? ' FOR UPDATE' : ''}`,
+      ['publicId' in by ? by.publicId : by.id, ...clause.params],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  /** Public id and plate of vehicles by internal id, for maintenance responses. */
+  async refsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; registrationNumber: string }>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; publicId: string; registrationNumber: string }>(
+      `SELECT id, public_id AS "publicId", registration_number AS "registrationNumber" FROM fleet.vehicles WHERE id = ANY($1::bigint[])`,
+      [ids],
+    );
+    return new Map(res.rows.map((r) => [r.id, { publicId: r.publicId, registrationNumber: r.registrationNumber }]));
+  }
+
+  /** Internal ids of the vehicles in a scope, for other modules' lists; null means every vehicle. */
+  async idsInScope(db: Queryable, scope: Scope): Promise<string[] | null> {
+    if (scope.kind === 'all') return null;
+    const clause = scopeClause(scope, 'v.depot_id', 1);
+    const res = await db.query<{ id: string }>(`SELECT v.id FROM fleet.vehicles v WHERE ${clause.sql}`, clause.params);
+    return res.rows.map((r) => r.id);
+  }
+
+  /** Sets or clears the maintenance flag: one audited change, in the caller's transaction. */
+  setMaintenanceFlag(ctx: MutationContext, id: string, flag: boolean, client: PoolClient): Promise<Row> {
+    return this.mutate(ctx, 'fleet.vehicles', 'UPDATE', id, { maintenance_flag: flag }, client);
   }
 
   /** A vehicle's type by internal id, or null if there is no such vehicle (used by driver eligibility). */
