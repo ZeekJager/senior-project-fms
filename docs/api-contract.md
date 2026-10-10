@@ -249,9 +249,10 @@ Vehicle rules (FMS-15):
 | `POST /driver-vehicle-assignments` | Create driver/vehicle assignment | `assignment:write` | `driver_id,vehicle_id,start_at,end_at` -> `Assignment` |
 | `GET /vehicles/{vehicle_id}/assignments` | Assignment history | `assignment:read` | `Assignment[]` |
 | `GET /drivers/{driver_id}/assignments` | Driver assignment history | `assignment:read` | `Assignment[]` |
-| `GET /attendance` | Attendance history | `attendance:read` | `depot_id,date,driver_id` -> `Attendance[]` |
+| `GET /attendance` | The day's roster | `attendance:read` | `date` (default `today`), `depot_id`, `driver_id`, `status`, `search` -> paged `RosterEntry[]` |
 | `POST /attendance` | Record attendance | `attendance:write` | `driver_id,date,status`; 409 duplicate |
 | `GET /attendance/{attendance_id}` | Attendance detail | `attendance:read` | `Attendance` |
+| `PUT /attendance/{attendance_id}` | Replace status and notes | `attendance:write` | `{status,notes?}` -> `Attendance` |
 | `PATCH /attendance/{attendance_id}` | Update attendance | `attendance:write` | `AttendanceUpdate` -> `Attendance` |
 
 A driver's `depot_id` is their home depot, stored once on the driver's user account (`auth.users.depot_id`). `POST /drivers` and `PATCH /drivers` write it there, and `GET /drivers?depot_id=` filters through it.
@@ -272,6 +273,16 @@ Driver rules (FMS-16):
 - **`POST /drivers/import`:** a CSV (`Content-Type: text/csv`, at most 500 rows, 1 MB) with a header row naming its columns: `email` (the account), `license_number`, `license_expiry`, `depot_code` or `depot_id`, and optional `license_categories` (one cell, separated by spaces, commas, semicolons or bars), `hire_date`, `emergency_phone`. Every row goes through the `POST /drivers` rules, and rows are checked against each other (`duplicate_of_row_<n>`). If any row fails, nothing is saved and the response is `400 VALIDATION_FAILED` with one detail per problem, `field` being `rows.<row>.<column>` (the header is row 1). Success is `201` with `{ created: [{ row, id }] }`; `?dry_run=true` checks everything, saves nothing and returns `200` with `{ valid: <rows> }`.
 - **Eligibility** (for trip assignment): the fleet module's `checkDriverEligibility(driverId, at, { vehicleId })` returns `{ eligible, reasons }`. Reasons: `driver_not_found`, `driver_retired`, `account_not_active`, `license_expired` (on `at`'s date in Addis Ababa), and with a vehicle `license_category_missing`, `license_category_not_valid_for_vehicle` or `vehicle_not_found`. Assignment should return them in its `409` details so the dispatcher sees why. `isDriverEligible` is the yes/no shortcut.
 - **Events:** `DriverRegistered`, `DriverRetired` and `DriverReinstated`, with `driver_id`, `user_id` and `depot_id` (public ids). `DriverUpdated` adds `changed_fields` (licence or contact fields); `DriverTransferred` adds `from_depot_id` and `to_depot_id` (a home-depot move). `DriverLicenseExpiring` (with `license_expiry` and `days_left`) is published by a daily job (06:00 Addis Ababa) 30 and 7 days before a licence expires; its event id is fixed per driver, expiry and day count, so a rerun repeats the id instead of a new fact. Attendance `status` is one of `present`, `absent`, `on_leave`, `late`, `sick`, `other`; the recording user is taken from the session.
+
+Attendance rules (FMS-21):
+
+- **Who:** `attendance:read` reads, `attendance:write` writes: admin, fleet manager and depot admin for the drivers homed in their depots; a dispatcher reads only (`403` on writes). A driver may read and record only their own day. A driver outside the caller's depots is `400 references_missing_record` on `driver_id` (write) or `404` (by id).
+- **Days:** `date` is a calendar day in Addis Ababa; `today` in a query means that. `present`, `absent`, `late` and `sick` are recorded for today or earlier (`400`, `reason: "in_future"`); `on_leave` and `other` can be booked up to 60 days ahead (`too_far_ahead` beyond).
+- **One per driver and day:** a second `POST` is `409 CONFLICT_ATTENDANCE_DUPLICATE`; change the record with `PUT` (status, notes) or `PATCH`. A retired driver is `409 CONFLICT_INVALID_STATE_TRANSITION`. `logged_by` is whoever wrote last; each write is one audit row.
+- **`Attendance`:** `id`, `driver_id`, `date`, `status` (`present`, `absent`, `on_leave`, `late`, `sick`, `other`), `notes` (up to 500), `logged_by`, `logged_by_name`, `created_at`, `updated_at`.
+- **Roster:** `GET /attendance` returns every active driver the caller may see (home depot in scope and still active), by name, each with the day's `attendance` or `null`: `{ driver_id, full_name, email, depot_id, license_status, date, attendance }`. `status=unmarked` lists drivers without a record. Paged (§18); `meta.date` is the day shown.
+- **Dispatch warning:** every `Driver` carries `attendance_today`; `absent`, `on_leave` and `sick` are a warning in dispatch (FMS-33), not a block.
+- **Events:** `AttendanceRecorded` with `attendance_id`, `driver_id`, `date`, `status` and `previous_status` (null on create).
 
 ### 6.4 DVIR
 

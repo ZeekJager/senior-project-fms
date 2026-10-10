@@ -1,6 +1,7 @@
-import { Fuel, Home, LayoutDashboard, Truck, Users, type LucideIcon } from 'lucide-react'
+import { CalendarCheck, Fuel, Home, LayoutDashboard, Truck, Users, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/context/AuthContext'
+import { AttendancePage } from '@/pages/Attendance'
 import { DriversPage } from '@/pages/Drivers'
 import { DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -43,6 +44,14 @@ export const portals: Portal[] = [
         element: <DriversPage />,
         permission: 'driver:read',
         nav: { label: 'Drivers', icon: Users },
+      },
+      {
+        // S-06. Staff with attendance:read (a dispatcher reads, a depot admin also writes);
+        // drivers hold attendance rights for their own day but not driver:read (FMS-21).
+        path: '/attendance',
+        element: <AttendancePage />,
+        permission: { all: ['attendance:read', 'driver:read'] },
+        nav: { label: 'Attendance', icon: CalendarCheck },
       },
       {
         path: '/fuel-reconciliation',

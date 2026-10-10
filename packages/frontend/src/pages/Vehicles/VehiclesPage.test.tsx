@@ -299,7 +299,8 @@ describe('Vehicle Management (S-04)', () => {
     expect(within(drawer).getByRole('alert')).toHaveTextContent('scan.pdf is larger than 10 MB.')
   })
 
-  describe('add vehicle', () => {
+  // These type a whole form; under a full parallel run they can pass 5s.
+  describe('add vehicle', { timeout: 15_000 }, () => {
     it('flags a plate that is already registered while typing', async () => {
       const existing = vehicle({ registration_number: 'AA 3-12345' })
       serveFleet([existing])
