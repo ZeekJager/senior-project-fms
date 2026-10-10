@@ -51,9 +51,6 @@ export function normalizeCategories(categories: readonly LicenseCategory[]): Lic
 /** A licence within this many days of expiry is `expiring_soon`. */
 export const EXPIRING_SOON_DAYS = 30;
 
-/** Days before expiry on which DriverLicenseExpiring is published. */
-export const EXPIRY_WARNING_DAYS = [30, 7] as const;
-
 export type LicenseStatus = 'valid' | 'expiring_soon' | 'expired';
 export const LICENSE_STATUSES: [LicenseStatus, ...LicenseStatus[]] = ['valid', 'expiring_soon', 'expired'];
 
@@ -112,7 +109,6 @@ export const DRIVER_EVENTS = {
   transferred: 'DriverTransferred',
   retired: 'DriverRetired',
   reinstated: 'DriverReinstated',
-  licenseExpiring: 'DriverLicenseExpiring',
 } as const;
 
 /**

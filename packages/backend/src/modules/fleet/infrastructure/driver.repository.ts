@@ -200,17 +200,6 @@ export class DriverRepository extends Repository {
    * date in Addis Ababa (one of them per row, with the count), for the daily
    * expiry warning.
    */
-  async expiringIn(db: Queryable, daysLeft: readonly number[], at: Date): Promise<(DriverRow & { daysLeft: number })[]> {
-    const res = await db.query<DriverRow & { daysLeft: number }>(
-      `SELECT ${ROW_COLUMNS}, (d.license_expiry - ($2::timestamptz AT TIME ZONE $3)::date) AS "daysLeft"
-         FROM fleet.drivers d
-        WHERE d.is_active AND (d.license_expiry - ($2::timestamptz AT TIME ZONE $3)::date) = ANY($1::int[])
-        ORDER BY d.id`,
-      [daysLeft, at.toISOString(), OPERATING_TIME_ZONE],
-    );
-    return res.rows;
-  }
-
   insert(ctx: MutationContext, data: DriverWrite, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'fleet.drivers', 'INSERT', null, { ...data }, client);
   }

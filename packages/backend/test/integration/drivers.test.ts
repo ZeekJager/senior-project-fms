@@ -436,45 +436,6 @@ describe('checkDriverEligibility (enhancement 1)', () => {
   });
 });
 
-describe('licence expiry warnings (enhancement 2)', () => {
-  const received: DomainEvent[] = [];
-  let off: () => void = () => {};
-  beforeAll(() => {
-    off = eventBus.subscribe('DriverLicenseExpiring', (e) => void received.push(e));
-  });
-  beforeEach(() => {
-    received.length = 0;
-  });
-  afterAll(() => off());
-
-  test('the daily job warns 30 and 7 days before expiry, once per fact', async () => {
-    const depot = await createDepot();
-    const in30 = await createDriver({ depot, license_expiry: addisDate(30) });
-    const in7 = await createDriver({ depot, license_expiry: addisDate(7) });
-    await createDriver({ depot, license_expiry: addisDate(8) });
-    await createDriver({ depot, license_expiry: addisDate(7), is_active: false });
-
-    const job = fleetModule.jobs!.find((j) => j.name === 'driver-licence-expiry-warnings')!;
-    await job.run(new Date());
-    const mine = received.filter((e) => [in30.driver.public_id, in7.driver.public_id].includes(e.payload.driver_id));
-    expect(mine.map((e) => e.payload.days_left).sort()).toEqual([30, 7]);
-    expect(mine.find((e) => e.payload.days_left === 7)!.payload).toEqual({
-      driver_id: in7.driver.public_id,
-      user_id: in7.user.public_id,
-      depot_id: depot.public_id,
-      license_expiry: addisDate(7),
-      days_left: 7,
-    });
-
-    // A rerun the same day publishes the same event ids, so consumers process each fact once.
-    const firstIds = mine.map((e) => e.id).sort();
-    received.length = 0;
-    await job.run(new Date());
-    const again = received.filter((e) => [in30.driver.public_id, in7.driver.public_id].includes(e.payload.driver_id));
-    expect(again.map((e) => e.id).sort()).toEqual(firstIds);
-  });
-});
-
 describe('POST /drivers/{id}/reinstate (enhancement 4)', () => {
   test('a retired driver becomes active again with one audit row and an event; reinstating twice changes nothing', async () => {
     const depot = await createDepot();
@@ -633,7 +594,7 @@ describe('driver list from fleet.driver_accounts (enhancement 9)', () => {
 
     // The copy is stale until it is refreshed: the daily job re-syncs every driver.
     const job = fleetModule.jobs!.find((j) => j.name === 'driver-account-sync')!;
-    await job.run(new Date());
+    await job.run({ now: new Date(), correlationId: randomUUID(), runKey: 'test' });
     const byName = await api.get(`/drivers?depot_id=${a.public_id}&sort_by=full_name`, cookie);
     expect(byName.body.data.map((d: { full_name: string }) => d.full_name)).toEqual(['Abebe', 'Zeleke']);
 

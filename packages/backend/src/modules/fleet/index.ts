@@ -19,6 +19,8 @@ import { DepotService } from './application/depot.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
+import { ExpiryService } from './application/expiry.service';
+import { DOCUMENT_EVENTS } from './domain/document';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
 import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
@@ -27,6 +29,7 @@ import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
+import { ExpiryRepository } from './infrastructure/expiry.repository';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
 const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles);
@@ -73,6 +76,22 @@ eventBus.subscribe(USER_EVENTS.accountChanged, async (event) => {
   if (typeof event.payload.user_id === 'string') await driverService.onAccountChanged(event.payload.user_id);
 });
 
+const expiryService = new ExpiryService({
+  db: pool,
+  expiry: new ExpiryRepository(),
+  users: userDirectory,
+  depots: { publicIds: depotPublicIds },
+  events: eventBus,
+});
+
+// A document uploaded already inside the 30-day window is flagged at once,
+// not at the next 07:00 check (FMS-26). The notice table keeps the two from
+// raising it twice.
+eventBus.subscribe(DOCUMENT_EVENTS.uploaded, async (event) => {
+  if (typeof event.payload.document_id !== 'string' || !event.payload.expires_on) return;
+  await expiryService.checkDocuments({ now: new Date(), correlationId: event.correlation_id }, event.payload.document_id);
+});
+
 const attendanceService = new AttendanceService({
   attendance: attendanceRepository,
   drivers: { findByPublicId: (db, id) => driverRepository.findByPublicId(db, id) },
@@ -111,20 +130,22 @@ export const fleetModule: AppModule = {
   router,
   jobs: [
     {
-      // DriverLicenseExpiring 30 and 7 days before a licence expires.
-      name: 'driver-licence-expiry-warnings',
-      hour: 6,
-      run: async (now) => {
-        await driverService.publishExpiringLicences(now);
-      },
+      // DocumentExpiring: amber within 30 days of a document's expiry date, red within 7 (FMS-26).
+      name: 'document-expiry-check',
+      at: '07:00',
+      run: (context) => expiryService.checkDocuments(context),
+    },
+    {
+      // LicenceExpiring: the same levels for driving licences.
+      name: 'licence-expiry-check',
+      at: '07:00',
+      run: (context) => expiryService.checkLicences(context),
     },
     {
       // Re-copies every driver's account fields, repairing any missed UserAccountChanged.
       name: 'driver-account-sync',
-      hour: 3,
-      run: async () => {
-        await driverService.syncAccounts();
-      },
+      at: '03:00',
+      run: async () => ({ synced: await driverService.syncAccounts() }),
     },
   ],
 };
@@ -162,4 +183,5 @@ export { ATTENDANCE_EVENTS } from './domain/attendance';
 export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
 export { DOCUMENT_EVENTS } from './domain/document';
+export { EXPIRY_EVENTS } from './domain/expiry';
 export { VEHICLE_EVENTS } from './domain/vehicle';

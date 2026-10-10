@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent, deterministicEventId } from '../../../shared/events/domain-event';
+import { createEvent } from '../../../shared/events/domain-event';
 import { AppError, validationFailed } from '../../../shared/errors/app-error';
 import { toAppError } from '../../../shared/errors/to-app-error';
 import type { EventBus } from '../../../shared/events/event-bus';
@@ -10,7 +10,6 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { UserAccount } from '../../auth';
 import {
   DRIVER_EVENTS,
-  EXPIRY_WARNING_DAYS,
   categoryAllows,
   driverDepotNotFound,
   driverInUse,
@@ -98,7 +97,7 @@ export interface DriverServiceDeps {
     | 'list'
     | 'hasActiveAssignment'
     | 'licenceAt'
-    | 'expiringIn'
+   
     | 'insert'
     | 'update'
     | 'retire'
@@ -440,41 +439,6 @@ export class DriverService {
       else if (!categoryAllows(own.licenseCategories, vehicleType)) reasons.push('license_category_not_valid_for_vehicle');
     }
     return { eligible: reasons.length === 0, reasons };
-  }
-
-  /**
-   * The daily licence-expiry warning: publishes DriverLicenseExpiring for each
-   * active driver whose licence expires EXPIRY_WARNING_DAYS (30 and 7) days
-   * after `now`'s date in Addis Ababa. The event id is derived from the
-   * driver, expiry date and day count, so a rerun the same day (a restart, a
-   * second server) repeats an id that consumers already processed.
-   */
-  async publishExpiringLicences(now: Date): Promise<number> {
-    const { drivers, events } = this.deps;
-    const due = await drivers.inTransaction(async (client) => {
-      const rows = await drivers.expiringIn(client, EXPIRY_WARNING_DAYS, now);
-      const views = await this.views(client, rows);
-      return rows.map((row, i) => ({ row, view: views[i] }));
-    });
-
-    const correlationId = deterministicEventId(`licence-expiry-run:${now.toISOString()}`);
-    await events.publish(
-      due.map(({ row, view }) =>
-        createEvent(
-          DRIVER_EVENTS.licenseExpiring,
-          {
-            driver_id: view.id,
-            user_id: view.user_id,
-            depot_id: view.depot_id,
-            license_expiry: view.license_expiry,
-            days_left: row.daysLeft,
-          },
-          { actor: null, correlationId },
-          { id: deterministicEventId(`${DRIVER_EVENTS.licenseExpiring}:${view.id}:${view.license_expiry}:${row.daysLeft}`) },
-        ),
-      ),
-    );
-    return due.length;
   }
 
   /** Rows to API views: the account and depot parts come from the auth module and fleet.depots. */
