@@ -1,10 +1,11 @@
-import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Truck, Users, Wrench, type LucideIcon } from 'lucide-react'
+import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Truck, UserCog, Users, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/context/AuthContext'
 import { AttendancePage } from '@/pages/Attendance'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
+import { UsersPage } from '@/pages/Users'
 import { DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { VehiclesPage } from '@/pages/Vehicles'
 
@@ -74,6 +75,14 @@ export const portals: Portal[] = [
         element: <FuelReconciliationPage />,
         permission: 'fuel-anomaly:read',
         nav: { label: 'Fuel reconciliation', icon: Fuel },
+      },
+      {
+        // User and role administration (FMS-78). users:read: admin, fleet manager,
+        // compliance officer read; only admin (users:write) changes accounts.
+        path: '/users',
+        element: <UsersPage />,
+        permission: 'users:read',
+        nav: { label: 'Users & roles', icon: UserCog },
       },
     ],
   },
