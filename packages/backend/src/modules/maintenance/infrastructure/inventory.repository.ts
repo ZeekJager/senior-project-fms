@@ -37,6 +37,8 @@ export interface PartListFilter extends Page {
   scope: Scope;
   depotId?: string;
   belowReorder?: boolean;
+  /** out: none left; low: 1 up to the reorder threshold; ok: above it (as stock_status). */
+  stockStatus?: 'out' | 'low' | 'ok';
   search?: string;
   status: 'active' | 'inactive' | 'all';
   sortBy: 'part_number' | 'name' | 'stock_quantity';
@@ -86,6 +88,9 @@ export class InventoryRepository extends Repository {
     if (f.status !== 'all') where.push(f.status === 'active' ? 'p.is_active' : 'NOT p.is_active');
     if (f.depotId) where.push(`p.depot_id = ${add(f.depotId)}`);
     if (f.belowReorder !== undefined) where.push(f.belowReorder ? 'p.stock_quantity <= p.reorder_threshold' : 'p.stock_quantity > p.reorder_threshold');
+    if (f.stockStatus === 'out') where.push('p.stock_quantity <= 0');
+    if (f.stockStatus === 'low') where.push('p.stock_quantity > 0 AND p.stock_quantity <= p.reorder_threshold');
+    if (f.stockStatus === 'ok') where.push('p.stock_quantity > 0 AND p.stock_quantity > p.reorder_threshold');
     if (f.search) {
       const p = add(containsPattern(f.search));
       where.push(`(p.part_number ILIKE ${p} OR p.name ILIKE ${p})`);

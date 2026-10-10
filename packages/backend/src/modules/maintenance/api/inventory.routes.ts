@@ -65,6 +65,7 @@ const listQuery = z
     depot_id: z.uuid().optional(),
     below_reorder: flag.optional(),
     belowReorder: flag.optional(),
+    stock_status: z.enum(['out', 'low', 'ok']).optional(),
     search: z
       .string()
       .trim()

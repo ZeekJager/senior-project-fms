@@ -152,6 +152,21 @@ describe('GET /inventory', () => {
   });
 });
 
+describe('GET /inventory?stock_status=', () => {
+  test('out, low and ok split parts the way the stock_status field does', async () => {
+    const depot = await createDepot();
+    const admin = await signIn(['admin']);
+    const out = await newPart(admin, depot, { stock_quantity: 0, reorder_threshold: 3 });
+    const low = await newPart(admin, depot, { stock_quantity: 3, reorder_threshold: 3 });
+    const ok = await newPart(admin, depot, { stock_quantity: 4, reorder_threshold: 3 });
+    for (const [status, part] of [['out', out], ['low', low], ['ok', ok]] as const) {
+      const res = await api.get(`/inventory?stock_status=${status}&depot_id=${depot.public_id}&page_size=100`, admin);
+      expect(res.body.data.map((p: { id: string }) => p.id), status).toEqual([part.id]);
+      expect(res.body.data[0].stock_status).toBe(status);
+    }
+  });
+});
+
 describe('PUT /inventory/{id}', () => {
   test('changes the fields sent with If-Match; stock is not writable here', async () => {
     const depot = await createDepot();
