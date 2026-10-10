@@ -41,7 +41,15 @@ Rows are never deleted. A core entity is retired by setting `is_active = FALSE`;
 
 ## Audit
 
-Every mutation writes an `audit.audit_logs` row **in the same transaction** (Definition of Done 5). Use `req.dbMutate(table, action, id, data)` in a request, or `Repository.mutate(ctx, ...)` inside a repository; both call `auditedMutation`. `audit.audit_logs` is append-only: the database refuses `UPDATE`, `DELETE` and `TRUNCATE`. Secrets (`password_hash`, `token_hash`) are redacted from the stored values and passwords are never logged. Authentication events (login, logout, refresh reuse) are audited by the auth module; see `docs/auth.md`.
+Every mutation writes an `audit.audit_logs` row **in the same transaction** (Definition of Done 5). Use `req.dbMutate(table, action, id, data)` in a request, or `Repository.mutate(ctx, ...)` inside a repository; both call `auditedMutation`. `audit.audit_logs` is append-only: the database refuses `UPDATE`, `DELETE` and `TRUNCATE`. Secrets (`password_hash`, `token_hash`) are redacted from the stored values and passwords are never logged. Authentication events (login, logout, refresh reuse) and refused requests (`access.denied`) are audited by the auth module; see `docs/auth.md`.
+
+Every audit row also records (FMS-27, migration 024):
+
+- **`request_source`**: `{channel, ip, user_agent}`. The channel is `web` (the browser app), `pwa` (the installed app, which sends `X-Client-Channel: pwa`), `job` (a scheduled job), `webhook` (a route mounted with `webhookChannel`) or `script` (seed, `user:create`, tests outside a request). Clients can only claim `web` or `pwa`.
+- **`result`**: `success`, `denied` (refused by a rule: a permission, the login throttle, token reuse) or `failed` (attempted and did not work: a wrong password, a job error).
+- **Jobs act as the system**: `user_id` is null, `request_source` is `{channel: "job", actor: "system", job: <name>}`, and `correlation_id` is the run's UUID (see docs/jobs.md). A mutation a job makes passes `{ userId: null, correlationId: context.correlationId }`.
+
+Nothing to pass: `recordAuditEntry` takes the source from the request or job it runs in (`src/shared/infrastructure/request-source.ts`), and the result defaults to `success`. Pass `result` only for denials and failures. The database refuses a new row without either field.
 
 ## Modules
 

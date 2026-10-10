@@ -5,6 +5,7 @@ import { pool } from './db';
 import { auditLogMiddleware } from './middleware/auditLog';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { requestContext } from './middleware/requestContext';
+import { requestSource } from './middleware/requestSource';
 import { requestLogger } from './middleware/requestLogger';
 import { modules as defaultModules } from './modules';
 import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
@@ -31,6 +32,8 @@ export function createApp(options: AppOptions = {}): Express {
   // Unsigned: session cookies hold a signed JWT or an opaque token whose
   // hash is checked against the database.
   app.use(cookieParser());
+  // After the body parsers: they would drop the async context it sets.
+  app.use(requestSource);
   app.use(auditLogMiddleware);
 
   app.use(healthRouter(readinessChecks));

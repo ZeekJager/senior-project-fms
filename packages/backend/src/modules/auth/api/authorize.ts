@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'express';
+import type { Request, RequestHandler } from 'express';
 import { AppError } from '../../../shared/errors/app-error';
 import { withPolicy } from '../../../shared/authz/route-policy';
 import { authenticationRequired } from '../domain/auth-errors';
@@ -16,13 +16,19 @@ const forbidden = () =>
  * signed in without the permission is 403 FORBIDDEN_INSUFFICIENT_ROLE. The
  * check is on permission codes from the database, never on role names.
  */
-export function authorizeWith(authenticate: RequestHandler) {
+export function authorizeWith(authenticate: RequestHandler, onDenied?: (req: Request, codes: readonly string[]) => Promise<void>) {
   return (...codes: [string, ...string[]]): RequestHandler[] => {
     const check: RequestHandler = (req, _res, next) => {
       const user = req.user;
       if (!user || user.id === null) return next(authenticationRequired());
-      if (!codes.some((code) => user.permissions.includes(code))) return next(forbidden());
-      next();
+      if (codes.some((code) => user.permissions.includes(code))) return next();
+      // Audited before the 403 goes out (FMS-27); a failed audit write
+      // still denies, it never lets the request through.
+      if (!onDenied) return next(forbidden());
+      onDenied(req, codes).then(
+        () => next(forbidden()),
+        () => next(forbidden()),
+      );
     };
     return [authenticate, withPolicy(check, { kind: 'permission', codes })];
   };

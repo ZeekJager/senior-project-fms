@@ -15,4 +15,5 @@ export type AuthAuditAction =
   | 'auth.login_throttled'
   | 'auth.logout'
   | 'auth.refresh_reuse_detected'
-  | 'auth.password_set';
+  | 'auth.password_set'
+  | 'access.denied';

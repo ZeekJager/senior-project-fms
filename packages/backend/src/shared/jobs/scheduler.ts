@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import cron from 'node-cron';
-import { recordAuditEntry } from '../infrastructure/audit-log';
+import { recordAuditEntry, type AuditResult } from '../infrastructure/audit-log';
 import type { Queryable } from '../infrastructure/queryable';
+import { jobSource, withRequestSource } from '../infrastructure/request-source';
 import type { JobLock } from './job-lock';
 import { parseAt, type ScheduledJob } from './job';
 
@@ -51,9 +52,15 @@ export function isDue(job: ScheduledJob, now: Date, timeZone: string): boolean {
  * One run of a job, if this instance gets the lock for today. Audited as the
  * system (no user) with a fresh UUID correlation id, which the job also puts
  * on the events it publishes: `job.started`, then `job.succeeded` with the
- * job's result or `job.failed` with the error. Never throws.
+ * job's result or `job.failed` with the error. The whole run, and every
+ * audit row it writes, has the source {channel: job, actor: system} (FMS-27).
+ * Never throws.
  */
-export async function runJob(job: ScheduledJob, deps: SchedulerDeps): Promise<JobOutcome> {
+export function runJob(job: ScheduledJob, deps: SchedulerDeps): Promise<JobOutcome> {
+  return withRequestSource(jobSource(job.name), () => runInContext(job, deps));
+}
+
+async function runInContext(job: ScheduledJob, deps: SchedulerDeps): Promise<JobOutcome> {
   const now = (deps.now ?? (() => new Date()))();
   const runKey = localDateAndTime(now, deps.timeZone).date;
   const correlationId = randomUUID();
@@ -67,9 +74,10 @@ export async function runJob(job: ScheduledJob, deps: SchedulerDeps): Promise<Jo
   });
   if (!claim) return { status: 'skipped' };
 
-  const audit = (action: string, details: Record<string, unknown>) =>
+  const audit = (action: string, details: Record<string, unknown>, result: AuditResult = 'success') =>
     recordAuditEntry(deps.audit, {
       action,
+      result,
       userId: null,
       entityType: 'jobs.job_runs',
       entityId: claim.id,
@@ -87,7 +95,7 @@ export async function runJob(job: ScheduledJob, deps: SchedulerDeps): Promise<Jo
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await deps.lock.fail(claim, error).catch(() => {});
-    await audit('job.failed', { error, duration_ms: Date.now() - started }).catch(() => {});
+    await audit('job.failed', { error, duration_ms: Date.now() - started }, 'failed').catch(() => {});
     return { status: 'failed', correlationId, error };
   }
 }

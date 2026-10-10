@@ -1,8 +1,16 @@
-import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
+import { recordAuditEntry, type AuditResult } from '../../../shared/infrastructure/audit-log';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { AuthAuditAction } from '../domain/auth-policy';
 
 const USER_AGENT_MAX = 512;
+
+/** Authentication events that did not succeed (audit.audit_logs.result, FMS-27); every other one is `success`. */
+const NOT_SUCCESS: Partial<Record<AuthAuditAction, AuditResult>> = {
+  'auth.login_failed': 'failed',
+  'auth.login_throttled': 'denied',
+  'auth.refresh_reuse_detected': 'denied',
+  'access.denied': 'denied',
+};
 
 export interface AuthAuditEvent {
   action: AuthAuditAction;
@@ -16,7 +24,7 @@ export interface AuthAuditEvent {
   details?: Record<string, unknown>;
 }
 
-/** One audit entry per sign-in, sign-out and token-reuse event, through the platform audit writer. */
+/** One audit entry per sign-in, sign-out, token-reuse and denied-access event, through the platform audit writer. */
 export async function writeAuthAudit(db: Queryable, event: AuthAuditEvent): Promise<void> {
   await recordAuditEntry(db, {
     action: event.action,
@@ -25,6 +33,7 @@ export async function writeAuthAudit(db: Queryable, event: AuthAuditEvent): Prom
     entityId: event.subjectId,
     correlationId: event.correlationId,
     ip: event.ip,
+    result: NOT_SUCCESS[event.action] ?? 'success',
     details: { ...event.details, user_agent: event.userAgent?.slice(0, USER_AGENT_MAX) ?? null },
   });
 }

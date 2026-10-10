@@ -29,6 +29,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 021 | `maintenance` | `inventory_parts.version` (If-Match), upper-case part numbers, partial index for below-reorder parts (FMS-23) |
 | 022 | `auth` | `password_tokens`: one-time password setup and reset links, SHA-256 of the token only (FMS-78) |
 | 023 | `jobs`, `fleet` | `jobs.job_runs`: the scheduler's per-day lock and run history; `fleet.expiry_notices`: each document or licence expiry warning raised once per level (FMS-26) |
+| 024 | `audit` | `audit_logs.request_source` (channel, IP, user agent; system actor for jobs) and `result` (success, denied, failed), required on new rows (NOT VALID checks; old rows untouched) (FMS-27) |
 
 ## Important
 

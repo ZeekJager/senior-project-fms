@@ -20,6 +20,17 @@ describe('api client', () => {
     expect(received).toEqual({ a: 1 })
   })
 
+  it('says whether it runs in the browser or installed (the audit channel)', async () => {
+    const channels: (string | null)[] = []
+    server.use(http.get('/api/v1/ping', ({ request }) => (channels.push(request.headers.get('X-Client-Channel')), ok())))
+    await testApi().request('/ping')
+    // jsdom has no matchMedia: give it one that reports the installed app.
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(display-mode: standalone)' }))
+    await testApi().request('/ping')
+    vi.unstubAllGlobals()
+    expect(channels).toEqual(['web', 'pwa'])
+  })
+
   it('maps an error response to ApiError with the envelope fields', async () => {
     server.use(
       http.get('/api/v1/vehicles', () =>

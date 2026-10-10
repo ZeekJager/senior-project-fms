@@ -1882,3 +1882,28 @@ BEGIN
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA jobs TO fms_app;
     END IF;
 END $$;
+
+-- ===== 024_audit_source_and_result.sql =====
+ALTER TABLE audit.audit_logs ADD COLUMN IF NOT EXISTS request_source JSONB;
+ALTER TABLE audit.audit_logs ADD COLUMN IF NOT EXISTS result VARCHAR(20);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_audit_result') THEN
+        ALTER TABLE audit.audit_logs
+            ADD CONSTRAINT chk_audit_result CHECK (result IS NOT NULL AND result IN ('success', 'denied', 'failed')) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_audit_request_source') THEN
+        ALTER TABLE audit.audit_logs
+            ADD CONSTRAINT chk_audit_request_source CHECK (
+                request_source IS NOT NULL
+                AND jsonb_typeof(request_source) = 'object'
+                AND request_source->>'channel' IN ('web', 'pwa', 'job', 'webhook', 'script')
+            ) NOT VALID;
+    END IF;
+END $$;
+
+-- Denied and failed actions, newest first (security review).
+CREATE INDEX IF NOT EXISTS idx_audit_logs_not_success
+    ON audit.audit_logs (created_at DESC)
+    WHERE result IN ('denied', 'failed');
