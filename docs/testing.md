@@ -61,6 +61,8 @@ Without `password`, users get a placeholder hash that never verifies, which skip
 
 Add a factory here when a second test needs the same kind of row.
 
+For a whole dataset rather than a few rows (demos, load tests), use the seed generator: [seed-data.md](seed-data.md).
+
 ## Frontend
 
 Component tests sit next to the component as `*.test.tsx` and run in `jsdom` with [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/). Query the page the way a user sees it (`getByRole`, `getByLabelText`), not by class names.

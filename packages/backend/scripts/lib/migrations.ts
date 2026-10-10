@@ -73,3 +73,41 @@ export async function applyMigrations(
   }
   return result;
 }
+
+/**
+ * Runs the Down section of every applied migration, newest first, in one
+ * transaction, and forgets them in `schema_migrations`: an empty schema,
+ * ready for `applyMigrations`. Local and CI resets only (npm run seed --
+ * --reset); the audit log is dropped with its schema, never truncated.
+ */
+export async function revertMigrations(
+  client: Client,
+  log: (line: string) => void = () => {},
+  migrationsDir: string = findMigrationsDir(),
+): Promise<string[]> {
+  const exists = await client.query("SELECT to_regclass('schema_migrations') IS NOT NULL AS present");
+  if (!exists.rows[0].present) return [];
+  const applied = new Set((await client.query<{ filename: string }>('SELECT filename FROM schema_migrations')).rows.map((r) => r.filename));
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql') && applied.has(f))
+    .sort()
+    .reverse();
+
+  await client.query('BEGIN');
+  try {
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+      const downSql = sql.split(DOWN_MARKER)[1];
+      if (downSql === undefined) throw new Error(`No '-- +migrate Down' marker in ${file}`);
+      log(`[⏪ REVERTING] ${file}`);
+      await client.query(downSql);
+    }
+    await client.query('DELETE FROM schema_migrations');
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  }
+  return files;
+}
