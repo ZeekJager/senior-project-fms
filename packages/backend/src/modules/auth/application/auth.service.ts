@@ -64,7 +64,7 @@ export class AuthService {
     const audit = (e: Pick<AuthAuditEvent, 'action' | 'actorId' | 'subjectId' | 'details'>) =>
       writeAuthAudit(db, { ...e, ...meta });
 
-    const retryAfter = throttle.retryAfter(throttleKey);
+    const retryAfter = await throttle.retryAfter(throttleKey);
     if (retryAfter > 0) {
       await audit({ action: 'auth.login_throttled', actorId: null, subjectId: null, details: { email } });
       throw loginThrottled(retryAfter);
@@ -77,7 +77,7 @@ export class AuthService {
     if (user && hasUsablePassword(user.passwordHash)) passwordOk = await verifyPassword(user.passwordHash, password);
     else await verifyAgainstDummy(password);
     if (!user || !passwordOk) {
-      throttle.recordFailure(throttleKey);
+      await throttle.recordFailure(throttleKey);
       await audit({
         action: 'auth.login_failed',
         actorId: null,
@@ -98,7 +98,7 @@ export class AuthService {
       throw accountDisabled();
     }
 
-    throttle.reset(throttleKey);
+    await throttle.reset(throttleKey);
     const familyId = randomUUID();
     const refreshToken = newRefreshToken();
     const principal = await withTransaction(db, async (client) => {

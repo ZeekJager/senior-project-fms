@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { depotScope } from '../../../shared/authz/scope';
 import { createEvent, type DomainEvent } from '../../../shared/events/domain-event';
+import type { Cache } from '../../../shared/cache/cache';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -44,11 +45,55 @@ export type VehicleUpdate = Partial<VehicleCreate>;
 export interface VehicleServiceDeps {
   vehicles: Pick<
     VehicleRepository,
-    'inTransaction' | 'findView' | 'findViewById' | 'list' | 'resolveDepot' | 'lockForWrite' | 'hasActiveAssignment' | 'insert' | 'update' | 'retire'
+    | 'inTransaction'
+    | 'findView'
+    | 'findViewWithDepot'
+    | 'findViewById'
+    | 'list'
+    | 'resolveDepot'
+    | 'lockForWrite'
+    | 'hasActiveAssignment'
+    | 'insert'
+    | 'update'
+    | 'retire'
   >;
   /** The trip module's answer (through its index.ts): is the vehicle on an assigned or en-route trip? */
   trips: { vehicleHasActiveTrip(db: Queryable, vehicleId: string): Promise<boolean> };
   events: EventBus;
+  /** GET /vehicles/{id} reads through it (FMS-72); writes invalidate after commit. */
+  cache: Cache;
+}
+
+/**
+ * How long a cached vehicle may be served. Writes through this service and
+ * maintenance events invalidate it at once; the TTL bounds what nothing
+ * invalidates yet (its current trip: the trip API, FMS-27+, must invalidate
+ * when it assigns or ends a trip).
+ */
+export const VEHICLE_CACHE_TTL_SECONDS = 60;
+
+interface CachedVehicle {
+  view: VehicleView;
+  /** Internal: checked against the caller's depot scope. */
+  depotId: string;
+}
+
+/** JSON loses Dates: put them back. */
+function reviveVehicle(raw: unknown): CachedVehicle | null {
+  if (raw === null) return null;
+  const entry = raw as CachedVehicle;
+  const view = entry.view;
+  return {
+    depotId: entry.depotId,
+    view: {
+      ...view,
+      created_at: new Date(view.created_at),
+      updated_at: new Date(view.updated_at),
+      current_trip: view.current_trip
+        ? { ...view.current_trip, scheduled_start: view.current_trip.scheduled_start ? new Date(view.current_trip.scheduled_start) : null }
+        : null,
+    },
+  };
 }
 
 /**
@@ -64,11 +109,37 @@ export class VehicleService {
     return vehicles.inTransaction((client) => vehicles.list(client, query, depotScope(caller.user)));
   }
 
+  /**
+   * GET /vehicles/{id}. Fleet-wide and depot-scoped callers read through the
+   * cache (a hit needs no PostgreSQL, the depot scope is checked against the
+   * cached depot); a driver's own-vehicle scope reads PostgreSQL. Out of
+   * scope or unknown: 404 either way.
+   */
   async get(caller: Caller, vehicleId: string): Promise<VehicleView> {
-    const { vehicles } = this.deps;
-    const view = await vehicles.inTransaction((client) => vehicles.findView(client, vehicleId, depotScope(caller.user)));
+    const { vehicles, cache } = this.deps;
+    const scope = depotScope(caller.user);
+    if (scope.kind === 'all' || scope.kind === 'depot') {
+      const entry = await cache.getOrSet(
+        this.cacheKey(vehicleId),
+        VEHICLE_CACHE_TTL_SECONDS,
+        () => vehicles.inTransaction((client) => vehicles.findViewWithDepot(client, vehicleId)),
+        reviveVehicle,
+      );
+      if (!entry || (scope.kind === 'depot' && entry.depotId !== scope.depotId)) throw vehicleNotFound();
+      return entry.view;
+    }
+    const view = await vehicles.inTransaction((client) => vehicles.findView(client, vehicleId, scope));
     if (!view) throw vehicleNotFound();
     return view;
+  }
+
+  /** Drops a vehicle's cached view; call after the change has committed. */
+  async invalidate(vehicleId: string): Promise<void> {
+    await this.deps.cache.delete(this.cacheKey(vehicleId));
+  }
+
+  private cacheKey(vehicleId: string): string {
+    return this.deps.cache.key('fleet', 'vehicle', vehicleId);
   }
 
   async create(caller: Caller, input: VehicleCreate): Promise<VehicleView> {
@@ -110,6 +181,7 @@ export class VehicleService {
       return vehicles.findViewById(client, current.id);
     });
 
+    await this.invalidate(view.id);
     await this.publish(caller, VEHICLE_EVENTS.updated, {
       vehicle_id: view.id,
       depot_id: view.depot_id,
@@ -143,7 +215,10 @@ export class VehicleService {
       return vehicles.findViewById(client, current.id);
     });
 
-    if (retired) await this.publish(caller, VEHICLE_EVENTS.retired, { vehicle_id: retired.id, depot_id: retired.depot_id });
+    if (retired) {
+      await this.invalidate(retired.id);
+      await this.publish(caller, VEHICLE_EVENTS.retired, { vehicle_id: retired.id, depot_id: retired.depot_id });
+    }
   }
 
   /** A depot the caller may put vehicles in, or 400: an unknown depot and one outside the scope look the same. */

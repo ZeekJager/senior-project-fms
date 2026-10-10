@@ -9,12 +9,15 @@ import { requestSource } from './middleware/requestSource';
 import { requestLogger } from './middleware/requestLogger';
 import { modules as defaultModules } from './modules';
 import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
-import { healthRouter, type ReadinessCheck } from './shared/http/health';
+import { cache } from './shared/cache';
+import { healthRouter, type OptionalDependency, type ReadinessCheck } from './shared/http/health';
 import type { AppModule } from './shared/module';
 
 export interface AppOptions {
   /** Dependencies `/health/ready` checks. Defaults to the database. */
   readinessChecks?: Record<string, ReadinessCheck>;
+  /** Reported by /health/ready but never a reason for 503 (Redis). Defaults to the app's cache. */
+  optionalDependencies?: Record<string, OptionalDependency>;
   /** The modules to mount. Defaults to every module; tests pass their own routes. */
   modules?: AppModule[];
 }
@@ -36,7 +39,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(requestSource);
   app.use(auditLogMiddleware);
 
-  app.use(healthRouter(readinessChecks));
+  app.use(healthRouter(readinessChecks, undefined, options.optionalDependencies ?? { redis: cache }));
 
   for (const mod of options.modules ?? defaultModules) {
     if (mod.router) app.use('/api/v1', mod.router);

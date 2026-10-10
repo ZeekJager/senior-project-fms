@@ -6,6 +6,7 @@ import { InProcessEventBus } from '../../../shared/events/in-process-event-bus';
 import type { RequestUser } from '../../../types/express';
 import type { VehicleView } from '../domain/vehicle';
 import type { LockedVehicle } from '../infrastructure/vehicle.repository';
+import { NoCache } from '../../../shared/cache/cache';
 import { VehicleService, type Caller, type VehicleServiceDeps } from './vehicle.service';
 
 const VEHICLE = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
@@ -41,6 +42,7 @@ function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?:
     inTransaction: (fn) => fn({} as PoolClient),
     findView: async () => view,
     findViewById: async () => view,
+    findViewWithDepot: async () => ({ view, depotId: '5' }),
     list: async () => ({ items: [], total: 0 }),
     resolveDepot: async (_db, publicId) => (publicId === DEPOT_PUBLIC ? '5' : null),
     lockForWrite: async () => locked,
@@ -59,7 +61,7 @@ function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?:
     },
   };
   const trips = { vehicleHasActiveTrip: async () => options.activeTrip ?? false };
-  return { service: new VehicleService({ vehicles, trips, events }), calls, published };
+  return { service: new VehicleService({ vehicles, trips, events, cache: new NoCache() }), calls, published };
 }
 
 async function codeOf(promise: Promise<unknown>): Promise<string> {

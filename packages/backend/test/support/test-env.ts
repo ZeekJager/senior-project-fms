@@ -50,6 +50,12 @@ export function applyTestEnv(): void {
   setDefault('DB_USER', 'fms_app');
   setDefault('DB_PASSWORD', process.env.DB_APP_PASSWORD ?? dotEnv.DB_APP_PASSWORD);
   setDefault('JWT_SECRET', dotEnv.JWT_SECRET);
+  // Redis (FMS-72) only when REDIS_HOST is given (CI sets it; the dev stack's
+  // Redis is not published to the host). Test keys live under their own prefix.
+  if (process.env.REDIS_HOST) {
+    setDefault('REDIS_PASSWORD', dotEnv.REDIS_PASSWORD);
+    setDefault('REDIS_KEY_PREFIX', 'fms-test');
+  }
   // Always local disk, in a temp folder: tests never write into the repo or a real bucket.
   process.env.STORAGE_DRIVER = 'local';
   process.env.STORAGE_LOCAL_DIR = TEST_STORAGE_DIR;

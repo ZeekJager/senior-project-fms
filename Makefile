@@ -1,6 +1,7 @@
 .PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed
 
-# Create .env from .env.example with generated secrets (keeps an existing .env).
+# Create .env from .env.example with generated secrets. An existing .env keeps
+# its values and gains any key added to .env.example since (e.g. REDIS_PASSWORD).
 # Uses local Node if present, otherwise a throwaway Node container.
 env:
 	@if command -v node >/dev/null 2>&1; then node scripts/init-env.mjs; \
@@ -13,11 +14,11 @@ env:
 # --renew-anon-volumes: each container's node_modules lives in an anonymous
 # volume, which Compose otherwise carries over from the old container, so
 # packages added since the last run would be missing ("Cannot find module").
-dev: .env
+dev: env
 	docker-compose up --build --renew-anon-volumes
 
 # Run in detached mode (background)
-dev-bg: .env
+dev-bg: env
 	docker-compose up -d --build --renew-anon-volumes
 
 # Stop the application

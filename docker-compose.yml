@@ -28,7 +28,26 @@ services:
       timeout: 5s
       retries: 10
 
-  # 2. Node.js Backend API
+  # 2. Redis (FMS-72): cache, login throttle, job locks. Password-protected
+  # and not published to the host: only containers on this network reach it.
+  # A cache, not a store: nothing is saved to disk, and keys (all with a
+  # TTL) are evicted least-recently-used under memory pressure.
+  redis:
+    image: redis:7.4-alpine
+    container_name: fms_redis
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --save '' --appendonly no --maxmemory 128mb --maxmemory-policy volatile-lru
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to add it to .env}"
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 3. Node.js Backend API
   backend:
     build:
       context: ./packages/backend
@@ -60,8 +79,12 @@ services:
       JWT_SECRET: "${JWT_SECRET:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       STORAGE_DRIVER: local
       STORAGE_LOCAL_DIR: /app/storage
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to add it to .env}"
     healthcheck:
-      # 200 only when the API can reach PostgreSQL (GET /health/ready).
+      # 200 when the API can reach PostgreSQL (GET /health/ready); a Redis
+      # outage shows as "degraded" but keeps it healthy.
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health/ready >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
@@ -70,8 +93,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Started, not healthy: the API runs without Redis (direct reads).
+      redis:
+        condition: service_started
 
-  # 3. React Frontend (Vite)
+  # 4. React Frontend (Vite)
   frontend:
     build:
       context: ./packages/frontend
@@ -90,7 +116,7 @@ services:
     depends_on:
       - backend
 
-  # 4. Python AI Service
+  # 5. Python AI Service
   ai-service:
     build:
       context: ./packages/ai-service

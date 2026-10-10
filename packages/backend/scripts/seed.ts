@@ -17,6 +17,7 @@ import { parseArgs } from 'node:util';
 import { Client } from 'pg';
 import { loadMigrationConfig } from '../src/config/schema';
 import { pool } from '../src/db';
+import { cache, closeRedis } from '../src/shared/cache';
 import { applyMigrations, revertMigrations } from './lib/migrations';
 import { runSeed } from './seed/apply';
 import type { ProfileName } from './seed/plan';
@@ -69,7 +70,9 @@ async function reset(): Promise<void> {
 async function main(): Promise<void> {
   const opts = options();
   if (opts.reset) await reset();
-  if (!opts.seedAfter) return pool.end();
+  // A rebuilt database has new ids: nothing cached from the old one applies.
+  if (opts.reset) await cache.invalidate('*');
+  if (!opts.seedAfter) return void (await Promise.all([pool.end(), closeRedis()]));
 
   const generated = !process.env.FMS_SEED_PASSWORD;
   const password = process.env.FMS_SEED_PASSWORD || generatePassword();
@@ -83,7 +86,7 @@ async function main(): Promise<void> {
     if (generated) console.log(`Their password (shown once; set FMS_SEED_PASSWORD to choose it): ${password}`);
     console.log(`fingerprint ${summary.fingerprint}`);
   } finally {
-    await pool.end();
+    await Promise.all([pool.end(), closeRedis()]);
   }
 }
 

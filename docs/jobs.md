@@ -29,7 +29,7 @@ Every trigger first claims the run in `jobs.job_runs`, keyed on (job, local day)
 
 The row is also the run history: status, attempts, instance, correlation id, start and finish times, the result or the error.
 
-The lock sits behind the `JobLock` interface. FMS-72 can move it to Redis; the run history stays in PostgreSQL.
+With Redis (FMS-72), a lease taken first (`SET NX PX` on `fms:lock:job:<job>:<day>`) decides which instance runs. The losers stop without a PostgreSQL round trip. The winner still claims the `jobs.job_runs` row, which stays the durable once-a-day guarantee: a Redis restart forgets leases, not runs. Without Redis, the PostgreSQL claim alone does both (`RedisJobLock` wraps `PostgresJobLock` behind the `JobLock` interface).
 
 ## Audit
 
