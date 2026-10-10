@@ -108,21 +108,22 @@ describe('composition root', () => {
     expect(res.body.status).toBe('ok');
   });
 
-  test('fleet module route POST /api/v1/test-audit is mounted, audited and needs depot:write', async () => {
+  test('fleet module route POST /api/v1/depots is mounted, audited and needs depot:write', async () => {
     const app = createApp();
 
-    const anonymous = await request(app).post('/api/v1/test-audit');
+    const anonymous = await request(app).post('/api/v1/depots').send({ name: 'X', location: 'Y' });
     expect(anonymous.status).toBe(401);
 
     const driver = await createUser({ roles: ['driver'], password: 'Correct-Horse-7' });
     const driverCookie = await loginCookie(app, driver.email as string);
-    expect((await request(app).post('/api/v1/test-audit').set('Cookie', driverCookie)).status).toBe(403);
+    expect((await request(app).post('/api/v1/depots').set('Cookie', driverCookie).send({ name: 'X', location: 'Y' })).status).toBe(403);
 
     const admin = await createUser({ roles: ['admin'], password: 'Correct-Horse-7' });
-    const res = await request(app).post('/api/v1/test-audit').set('Cookie', await loginCookie(app, admin.email as string));
-    expect(res.status).toBe(200);
-    expect(res.body.deleted.is_active).toBe(false);
-    const rows = await auditRows(res.body.correlationId);
-    expect(rows).toHaveLength(2);
+    const res = await request(app)
+      .post('/api/v1/depots')
+      .set('Cookie', await loginCookie(app, admin.email as string))
+      .send({ name: 'Audit Depot', location: 'Addis Ababa' });
+    expect(res.status).toBe(201);
+    expect(await auditRows(res.headers['x-request-id'] as string)).toHaveLength(1);
   });
 });

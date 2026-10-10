@@ -10,14 +10,15 @@ import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, veh
 import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
-import { fleetRouter } from './api/fleet.routes';
 import { vehicleRouter } from './api/vehicle.routes';
+import { DepotService } from './application/depot.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
-import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, listDepots, resolveDepotInScope } from './infrastructure/depot.queries';
+import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
+import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
@@ -65,9 +66,10 @@ eventBus.subscribe(USER_EVENTS.accountChanged, async (event) => {
   if (typeof event.payload.user_id === 'string') await driverService.onAccountChanged(event.payload.user_id);
 });
 
+const depotService = new DepotService({ depots: new DepotRepository(pool), users: userDirectory, events: eventBus });
+
 const router = Router();
-router.use(fleetRouter);
-router.use(depotRouter({ list: (scope, page) => listDepots(pool, scope, page) }));
+router.use(depotRouter(depotService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));
@@ -123,6 +125,7 @@ export async function isDriverEligible(driverId: string, at: Date, db: Queryable
 export type { DriverEligibility, EligibilityReason } from './domain/driver';
 
 /** Event types, for modules that subscribe to them. */
+export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
 export { DOCUMENT_EVENTS } from './domain/document';
 export { VEHICLE_EVENTS } from './domain/vehicle';

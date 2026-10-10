@@ -42,14 +42,14 @@ describe('error envelope', () => {
   });
 
   test('malformed JSON returns 400 VALIDATION_FAILED', async () => {
-    const res = await request(app).post('/api/v1/test-audit').set('Content-Type', 'application/json').send('{"a":');
+    const res = await request(app).post('/api/v1/depots').set('Content-Type', 'application/json').send('{"a":');
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_FAILED');
     expect(res.body.error.details).toEqual([{ reason: 'malformed_json' }]);
   });
 
   test('a body over 1 MB returns 413 PAYLOAD_TOO_LARGE', async () => {
-    const res = await request(app).post('/api/v1/test-audit').send({ blob: 'x'.repeat(1_100_000) });
+    const res = await request(app).post('/api/v1/depots').send({ blob: 'x'.repeat(1_100_000) });
     expect(res.status).toBe(413);
     expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
   });

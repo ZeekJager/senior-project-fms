@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   const created = await withTransaction(pool, async (client) => {
     let depotId: string | null = null;
     if (values.depot) {
-      const depot = await client.query<{ id: string }>('SELECT id FROM fleet.depots WHERE code = $1', [values.depot]);
+      const depot = await client.query<{ id: string }>('SELECT id FROM fleet.depots WHERE code = upper(btrim($1))', [values.depot]);
       if (!depot.rows[0]) throw new Error(`No depot with code '${values.depot}'`);
       depotId = depot.rows[0].id;
     }

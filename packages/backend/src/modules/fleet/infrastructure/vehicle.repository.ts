@@ -121,6 +121,8 @@ export class VehicleRepository extends Repository {
     where.push(clause.sql);
     params.push(...clause.params);
 
+    // A deleted depot's vehicles stay in the database but leave every list (FMS-20).
+    where.push('d.is_active');
     // Retired vehicles leave the default list; asking for a status shows that status, retired included.
     where.push(query.status ? `v.status = ${add(query.status)}` : 'v.is_active');
     if (query.depot_id) where.push(`d.public_id = ${add(query.depot_id)}`);

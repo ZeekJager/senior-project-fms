@@ -138,6 +138,8 @@ export class DriverRepository extends Repository {
     const scope = scopeClause(filter.scope, 'a.depot_id', 1);
     where.push(scope.sql);
     params.push(...scope.params);
+    // Drivers homed in a deleted depot leave every list, like its vehicles (FMS-20).
+    where.push('NOT EXISTS (SELECT 1 FROM fleet.depots dep WHERE dep.id = a.depot_id AND NOT dep.is_active)');
     // Retired drivers leave the default list; status=retired lists them.
     where.push(filter.status === 'retired' ? 'NOT d.is_active' : 'd.is_active');
     if (filter.depotId) where.push(`a.depot_id = ${add(filter.depotId)}`);

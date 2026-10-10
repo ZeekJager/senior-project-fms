@@ -191,12 +191,24 @@ The audit trail is read-only through the API. There is no create, update or dele
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /depots` | List depots | `depot:read` | Paged `Depot[]` |
-| `POST /depots` | Create depot | `depot:write` | `{name,location,...}` -> `Depot` |
-| `GET /depots/{depot_id}` | Get depot | `depot:read` | `Depot` |
-| `PATCH /depots/{depot_id}` | Update depot | `depot:write` | `DepotUpdate` -> `Depot` |
+| `GET /depots` | List depots | Authenticated | Paged `Depot[]`; `status`, `in_scope`, `search` |
+| `POST /depots` | Create depot | `depot:write` | `{name,location,...}` -> `201 Depot`; `Idempotency-Key` |
+| `GET /depots/{depot_id}` | Get depot | Authenticated | `Depot` |
+| `PATCH /depots/{depot_id}` | Update depot | `depot:write` | `DepotUpdate` -> `Depot`; `If-Match` |
+| `PUT /depots/{depot_id}` | Replace depot | `depot:write` | `DepotCreate` -> `Depot`; `If-Match` |
+| `DELETE /depots/{depot_id}` | Delete depot (soft) | `depot:write` | `204`; `409 CONFLICT_DEPOT_NOT_EMPTY` |
+| `POST /depots/{depot_id}/reactivate` | Restore a deleted depot | `depot:write` | `Depot` |
 
-`GET /depots` is in place (FMS-18, for depot filters and pickers); the writes are FMS-20. It returns the live depots in the caller's depot scope, by name, as `{ id, name, code, location }`: an admin, fleet manager, fleet owner or compliance officer sees every depot, anyone else only their home depot. Paged like every list (§18). A driver has no `depot:read`: `403`.
+Depot rules (FMS-20):
+
+- **Who:** every signed-in user reads depots (lists filter by them). Only `depot:write` writes, which **admin and fleet_owner** hold (migration 019 moved it from fleet_manager, who now gets `403`).
+- **`Depot`:** `id`, `name`, `code`, `location`, `address`, `city`, `country`, `timezone`, `latitude`, `longitude`, `capacity`, `is_active`, `version`, `created_at`, `updated_at`.
+- **Fields:** `name` and `location` required (1-255 characters). `code` optional, letters, digits and hyphens, stored trimmed and upper case, unique (`409 CONFLICT_DUPLICATE`, `field: "code"`). `timezone` an IANA zone (`Africa/Addis_Ababa`). `latitude` and `longitude` both or neither (`400`, `reason: "coordinates_pair"`). `capacity` a whole number of vehicles. `is_active` and anything else is `not_writable`.
+- **List:** live depots by name, every depot by default; `in_scope=true` narrows to the caller's depot scope (a depot admin's own), which the screens' depot pickers use. `status=inactive|all` lists deleted depots too and needs `depot:write` (`403` otherwise). `search` matches name, code, location or city.
+- **Read:** a deleted depot is `404` except to `depot:write`.
+- **PATCH and PUT:** `PATCH` changes the fields sent; `PUT` replaces the depot, clearing optional fields it leaves out. Both take `If-Match` (`409 CONFLICT_CONCURRENT_MODIFICATION` when stale). A deleted depot cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`); reactivate it first.
+- **Delete:** soft (`is_active = false`, one audit row, `204`; deleting a deleted depot is `204` and changes nothing). Refused with `409 CONFLICT_DEPOT_NOT_EMPTY` while the depot has active vehicles, drivers or user accounts; `details` names which (`field: "vehicles" | "drivers" | "users"`, `reason: "still_active"`) and the message gives the counts. A deleted depot's vehicles and drivers stay in the database but leave `GET /vehicles` and `GET /drivers`, whatever the status filter, and nothing new can be put in it. A vehicle or driver write and a delete share-lock the depot row, so they cannot race.
+- **Events:** `DepotCreated`, `DepotUpdated` (with `changed_fields`), `DepotDeactivated` and `DepotReactivated`, each with `depot_id`.
 
 ### 6.2 Vehicles
 
