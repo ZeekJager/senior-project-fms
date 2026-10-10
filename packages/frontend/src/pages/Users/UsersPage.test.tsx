@@ -205,7 +205,7 @@ describe('Users and roles', () => {
   it('renders nothing for a driver', async () => {
     signedInAs(driver)
     renderApp('/users')
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
   })
 })

@@ -38,7 +38,7 @@ export function LoginPage() {
   const inFlight = useRef(false)
 
   if (status === 'authenticated' && session) {
-    return <Navigate to={safeRedirect(params.get('redirect'), homePathFor(session.roles))} replace />
+    return <Navigate to={safeRedirect(params.get('redirect'), homePathFor(session))} replace />
   }
 
   async function onSubmit(event: FormEvent) {

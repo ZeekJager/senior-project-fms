@@ -380,7 +380,7 @@ describe('Vehicle Management (S-04)', () => {
     signedInAs(driver)
     renderApp('/vehicles')
 
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
     expect(screen.queryByText(/denied|forbidden|not allowed/i)).not.toBeInTheDocument()
   })

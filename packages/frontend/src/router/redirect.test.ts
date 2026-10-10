@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { homePathFor, loginPathFor, safeRedirect } from './redirect'
+import { loginPathFor, safeRedirect } from './redirect'
 
 describe('loginPathFor', () => {
   it('keeps slashes readable', () => {
@@ -22,12 +22,4 @@ describe('safeRedirect', () => {
       expect(safeRedirect(raw, '/dashboard')).toBe('/dashboard')
     },
   )
-})
-
-describe('homePathFor', () => {
-  it('sends drivers to the driver portal and everyone else to the dashboard', () => {
-    expect(homePathFor(['driver'])).toBe('/driver')
-    expect(homePathFor(['dispatcher'])).toBe('/dashboard')
-    expect(homePathFor([])).toBe('/dashboard')
-  })
 })

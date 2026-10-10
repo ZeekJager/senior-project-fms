@@ -24,7 +24,7 @@ describe('RoleGate', () => {
     signedInAs(currentUser(['driver'], ['trip:execute']))
     const { container } = renderApp('/dashboard', { children: <div data-testid="slot">{gated('fuel-anomaly:write')}</div> })
 
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByTestId('slot')).toBeEmptyDOMElement()
     expect(container.querySelector('button[disabled]')).toBeNull()
   })
@@ -39,7 +39,7 @@ describe('RoleGate', () => {
   it('with { all } needs every permission, so one of them is not enough', async () => {
     signedInAs(currentUser(['driver'], ['vehicle:read']))
     renderApp('/dashboard', { children: <div data-testid="slot">{gated({ all: ['vehicle:read', 'depot:read'] })}</div> })
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByTestId('slot')).toBeEmptyDOMElement()
   })
 
@@ -54,7 +54,7 @@ describe('RoleGate', () => {
     signedInAs(currentUser(['admin'], []))
     renderApp('/dashboard', { children: <div data-testid="slot">{gated('users:write')}</div> })
 
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByTestId('slot')).toBeEmptyDOMElement()
   })
 })

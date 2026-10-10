@@ -1,12 +1,12 @@
-import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Truck, UserCog, Users, Wrench, type LucideIcon } from 'lucide-react'
+import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Radar, Route, Truck, UserCog, Users, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
-import type { PermissionRule } from '@/context/AuthContext'
+import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
+import { CommandCenterPage, DashboardPage, DispatchPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { UsersPage } from '@/pages/Users'
-import { DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { VehiclesPage } from '@/pages/Vehicles'
 
 export interface AppRoute {
@@ -14,23 +14,30 @@ export interface AppRoute {
   element: ReactElement
   /** Permission code(s) from /auth/me: one, any of a list, or `{ all: [...] }`. Omit for any signed-in user. */
   permission?: PermissionRule
-  /** Shown in the sidebar when set (and the user holds the permission). */
+  /** Shown in the menu when set and the user holds the permission. */
   nav?: { label: string; icon: LucideIcon }
 }
 
+export type PortalId = 'fleet' | 'command' | 'admin' | 'driver'
+
 export interface Portal {
+  id: PortalId
+  /** The menu section heading. */
   name: string
   routes: AppRoute[]
 }
 
 /**
- * The route table, one entry per portal. Permissions are the codes seeded in
- * auth.permissions (migration 001), the same ones the API enforces. A new
- * screen is a line here.
+ * The route table: the four portals of the architecture (§6, §7), each a
+ * menu section. Permissions are the codes seeded in auth.permissions, the
+ * same ones the API enforces; the menu shows a link only to a user who holds
+ * its permission, and a section only when it has such a link (FMS-114). A
+ * new screen is a line here.
  */
 export const portals: Portal[] = [
   {
-    name: 'staff',
+    id: 'fleet',
+    name: 'Fleet management',
     routes: [
       { path: '/dashboard', element: <DashboardPage />, nav: { label: 'Dashboard', icon: LayoutDashboard } },
       {
@@ -76,6 +83,22 @@ export const portals: Portal[] = [
         permission: 'fuel-anomaly:read',
         nav: { label: 'Fuel reconciliation', icon: Fuel },
       },
+    ],
+  },
+  {
+    id: 'command',
+    name: 'Command center',
+    routes: [
+      // S-07, the dispatcher's home. trip:assign: admin, fleet manager, dispatcher.
+      { path: '/dispatch', element: <DispatchPage />, permission: 'trip:assign', nav: { label: 'Dispatch', icon: Route } },
+      // S-16. command:read: admin, fleet manager, dispatcher, depot admin, fleet owner.
+      { path: '/command-center', element: <CommandCenterPage />, permission: 'command:read', nav: { label: 'Live map', icon: Radar } },
+    ],
+  },
+  {
+    id: 'admin',
+    name: 'Administration',
+    routes: [
       {
         // User and role administration (FMS-78). users:read: admin, fleet manager,
         // compliance officer read; only admin (users:write) changes accounts.
@@ -87,7 +110,8 @@ export const portals: Portal[] = [
     ],
   },
   {
-    name: 'driver',
+    id: 'driver',
+    name: 'Driver',
     routes: [{ path: '/driver', element: <DriverHomePage />, permission: 'trip:execute', nav: { label: 'My day', icon: Home } }],
   },
 ]
