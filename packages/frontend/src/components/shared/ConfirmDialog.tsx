@@ -50,6 +50,7 @@ export function ConfirmDialog({ open, onClose, title, message, action, onConfirm
             onChange={(e) => setTyped(e.target.value)}
             autoComplete="off"
             spellCheck={false}
+            hint={typed && !matches ? `Not a match yet: type ${requireTyping} exactly, capitals and spaces included.` : undefined}
           />
         )}
         <div role="alert" className={error ? (requireTyping !== undefined ? 'mt-1' : 'mt-4') : undefined}>

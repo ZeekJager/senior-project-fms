@@ -204,6 +204,7 @@ export function InventoryPage() {
 
         <DataTable
           caption="Spare parts"
+          rowHeight="stacked"
           columns={columns}
           data={list.data?.parts}
           rowKey={(p) => p.id}

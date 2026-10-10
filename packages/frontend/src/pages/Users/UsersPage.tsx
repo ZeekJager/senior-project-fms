@@ -259,6 +259,7 @@ export function UsersPage() {
 
         <DataTable
           caption="Users"
+          rowHeight="stacked"
           columns={columns}
           data={list.data?.users}
           rowKey={(u) => u.id}

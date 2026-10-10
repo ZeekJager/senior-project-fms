@@ -47,13 +47,34 @@ The badge always shows its label as text, so colour is never the only signal.
 
 ## Tables, states and dialogs
 
-Built with the vehicle screen (FMS-18) on the design system (`docs/design-system.md`), to the FMS-67 spec:
+Built with the vehicle screen (FMS-18) on the design system (`docs/design-system.md`), and completed to the FMS-67 spec (SE-111). Examples of every state are on `/dev/ui`.
 
 | Component | Props | Notes |
 |---|---|---|
-| `DataTable` | `columns`, `data`, `rowKey`, `caption`, `isLoading`, `isEmpty`, `error`, `onRetry`, `emptyState`, `pagination`, `sort` | Fixed layout (no sideways scroll on a desktop); every row, real or skeleton, is 64px, so nothing shifts when data arrives. Columns can hide below a breakpoint. Page-number paging, as the API pages (§18) |
+| `DataTable` | `columns`, `data`, `rowKey`, `caption`, `isLoading`, `isEmpty`, `error`, `onRetry`, `emptyState`, `pagination`, `sort`, `rowHeight` | Fixed layout (no sideways scroll on a desktop). Columns can hide below a breakpoint |
 | `EmptyState` | `icon`, `heading`, `description`, `action` | One heading, a short why, the next step |
-| `ErrorBoundary` / `ErrorState` | `resetKey` / `error`, `onRetry` | Shows the error code and the correlation id (`ApiError.requestId`) with "Copy error details". The app shell wraps every screen in one, reset on navigation |
-| `ConfirmDialog` | `open`, `onClose`, `title`, `message`, `action`, `onConfirm`, `requireTyping`, `error`, `busy` | With `requireTyping`, confirm stays disabled until the text matches exactly. `error` shows inside the dialog, never as a toast |
+| `ErrorBoundary` / `ErrorState` | `resetKey`, `onReset` / `error`, `onRetry` | Shows the error code and the request id (`ApiError.requestId`: the API's `meta.request_id`, the audit log's `correlation_id`), with "Copy error details". The app shell wraps every screen in one, reset on navigation. "Try again" calls `onReset` first (refetch, clear bad state), then renders the children again |
+| `ConfirmDialog` | `open`, `onClose`, `title`, `message`, `action`, `onConfirm`, `requireTyping`, `error`, `busy` | With `requireTyping` (e.g. `DELETE`, a plate), confirm stays disabled until the text matches exactly, and a hint under the field says so. `error` shows inside the dialog, never as a toast |
+| `useCursorPages` | | The cursors of the pages seen, for cursor paging: `cursor`, `pageIndex`, `next(cursor)`, `previous()`, `reset()` (on new filters) |
 
-Still FMS-67: cursor paging (the API pages by number today).
+### Rows never move when data arrives
+
+Skeleton rows and data rows share one height, so the page does not jump when a load finishes. `rowHeight` sets it:
+
+- `regular` (default) is 64px.
+- `stacked` is 72px on phones and 64px from `sm` up. Use it for tables whose first cell stacks a third line (a badge) on phones: Users and Spare parts do.
+
+In development, `DataTable` warns in the console when data rows come out taller than its loading rows, naming the table. Measured on every list screen at 1440px and 390px (SE-111), the two heights are equal.
+
+### Paging
+
+- Numbered pages, `pagination: { page, pageSize, totalItems, onPageChange }` (api-contract §18). Shows "1–25 of 312" and the page count.
+- Cursor pages, `pagination: { kind: 'cursor', pageIndex, pageSize, hasNext, onNext, onPrevious }`, for APIs that page by cursor (the audit log). Shows "51–100 · more after", with no total.
+
+### Accessibility
+
+- The table has a visually hidden caption and `aria-busy` while loading.
+- Sortable headers are buttons with `aria-sort`, and paging is a labelled `nav` with labelled buttons.
+- A polite live region (no status role, so the toast region keeps it) announces loading, the rows shown ("Drivers: 26–50 of 112.") or "nothing to show". A filter that empties the table is heard, not just seen.
+- `ErrorState` is an alert. Copying the details is announced.
+- Dialogs trap focus, start on the type-to-confirm field when there is one, close on Escape and give focus back on close.

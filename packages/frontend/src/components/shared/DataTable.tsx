@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Card, cn, FilterSelect, IconButton, Skeleton } from '@/components/ui'
 import { ErrorState } from './ErrorBoundary'
 
@@ -28,7 +28,9 @@ export interface Column<T> {
   skeleton?: ReactNode
 }
 
-export interface Pagination {
+/** Numbered pages with a total (most lists, api-contract §18). */
+export interface PagePagination {
+  kind?: 'pages'
   page: number
   pageSize: number
   totalItems: number
@@ -36,6 +38,22 @@ export interface Pagination {
   onPageSizeChange?: (pageSize: number) => void
   pageSizes?: readonly number[]
 }
+
+/**
+ * Cursor pages: previous and next, no total (the audit log, FMS-28). The
+ * caller keeps the cursors; `useCursorPages` does it.
+ */
+export interface CursorPagination {
+  kind: 'cursor'
+  /** 1-based position, for the range shown ("51–100"). */
+  pageIndex: number
+  pageSize: number
+  hasNext: boolean
+  onNext: () => void
+  onPrevious: () => void
+}
+
+export type Pagination = PagePagination | CursorPagination
 
 export interface SortState {
   key: string
@@ -60,10 +78,61 @@ interface DataTableProps<T> {
   sort?: SortState
   /** Rows shown while loading; defaults to the page size (capped at 10). */
   skeletonRows?: number
+  /**
+   * `regular`: 64px rows. `stacked`: 72px on phones, 64px from `sm` up, for
+   * tables whose first cell stacks a third line (a badge) on phones. Real and
+   * placeholder rows always share it, so nothing moves when data arrives.
+   */
+  rowHeight?: RowHeight
 }
 
-/** Every row is 64px, real or placeholder: the 8px grid, and no layout shift when data arrives. */
-const ROW = 'h-16'
+export type RowHeight = 'regular' | 'stacked'
+
+/** On the 8px grid. Written out in full: Tailwind only generates classes it can find as text. */
+const ROW_HEIGHT: Record<RowHeight, string> = {
+  regular: 'h-16',
+  stacked: 'h-[72px] sm:h-16',
+}
+
+/**
+ * Development only: a row taller than its skeleton means content outgrew the
+ * row height, and the page jumps when data arrives. Warns with the caption.
+ */
+function useRowHeightCheck(caption: string, isLoading: boolean, rowCount: number) {
+  const body = useRef<HTMLTableSectionElement>(null)
+  const skeletonHeight = useRef(0)
+  useLayoutEffect(() => {
+    if (!import.meta.env.DEV || !body.current) return
+    const first = body.current.rows[0]
+    if (!first) return
+    const height = first.getBoundingClientRect().height
+    if (isLoading) {
+      skeletonHeight.current = height
+      return
+    }
+    const tallest = Math.max(...Array.from(body.current.rows, (r) => r.getBoundingClientRect().height))
+    if (skeletonHeight.current > 0 && tallest > skeletonHeight.current + 0.5) {
+      console.warn(
+        `DataTable "${caption}": rows are up to ${Math.round(tallest)}px, taller than the ${Math.round(skeletonHeight.current)}px loading rows, so the page jumps when data arrives. Shorten the cell content or set rowHeight="stacked".`,
+      )
+    }
+  }, [caption, isLoading, rowCount])
+  return body
+}
+
+/** What a screen reader hears when the table changes: loading, the rows shown, or none. */
+function statusText(caption: string, isLoading: boolean, error: unknown, empty: boolean, shown: number, pagination?: Pagination): string {
+  if (isLoading) return `Loading ${caption.toLowerCase()}…`
+  if (error) return ''
+  if (empty) return `${caption}: nothing to show.`
+  if (!pagination) return `${caption}: ${shown} ${shown === 1 ? 'row' : 'rows'}.`
+  if (pagination.kind === 'cursor') {
+    const first = (pagination.pageIndex - 1) * pagination.pageSize + 1
+    return `${caption}: ${first}–${first + shown - 1}${pagination.hasNext ? ', more after' : ''}.`
+  }
+  const first = (pagination.page - 1) * pagination.pageSize + 1
+  return `${caption}: ${first}–${first + shown - 1} of ${pagination.totalItems}.`
+}
 
 /**
  * The shared table (FMS-67): fixed layout so wide lists never scroll
@@ -83,14 +152,22 @@ export function DataTable<T>({
   pagination,
   sort,
   skeletonRows,
+  rowHeight = 'regular',
 }: DataTableProps<T>) {
   const rows = data ?? []
+  const ROW = ROW_HEIGHT[rowHeight]
   const empty = isEmpty ?? (!isLoading && !error && rows.length === 0)
   const placeholderCount = skeletonRows ?? Math.min(pagination?.pageSize ?? 8, 10)
   const showBody = !error && !(empty && !isLoading)
+  const body = useRowHeightCheck(caption, isLoading, rows.length)
 
   return (
     <Card className="overflow-hidden">
+      {/* Always present, so changes are announced (a live region added with its text is not).
+          No status role: the page's toast region keeps that, and tests find it by role. */}
+      <p aria-live="polite" aria-atomic="true" data-testid="table-status" className="sr-only">
+        {statusText(caption, isLoading, error, empty, rows.length, pagination)}
+      </p>
       <div className="overflow-x-auto">
         <table className="w-full table-fixed border-collapse text-left" aria-busy={isLoading || undefined}>
           <caption className="sr-only">{caption}</caption>
@@ -102,7 +179,7 @@ export function DataTable<T>({
             </tr>
           </thead>
           {showBody && (
-            <tbody className="divide-y divide-line">
+            <tbody ref={body} className="divide-y divide-line">
               {isLoading
                 ? Array.from({ length: placeholderCount }, (_, i) => (
                     <tr key={`skeleton-${i}`} className={ROW} data-testid="skeleton-row">
@@ -135,7 +212,7 @@ export function DataTable<T>({
       </div>
       {error ? <ErrorState error={error} onRetry={onRetry} heading="We couldn't load this list" /> : null}
       {!error && empty && !isLoading ? emptyState : null}
-      {pagination && !error && !(empty && !isLoading) && <PageControls pagination={pagination} />}
+      {pagination && !error && !(empty && !isLoading) && (pagination.kind === 'cursor' ? <CursorControls pagination={pagination} shown={rows.length} /> : <PageControls pagination={pagination} />)}
     </Card>
   )
 }
@@ -170,7 +247,25 @@ function HeaderCell<T>({ column, sort }: { column: Column<T>; sort?: SortState }
   )
 }
 
-function PageControls({ pagination }: { pagination: Pagination }) {
+function CursorControls({ pagination, shown }: { pagination: CursorPagination; shown: number }) {
+  const { pageIndex, pageSize, hasNext, onNext, onPrevious } = pagination
+  const first = shown === 0 ? 0 : (pageIndex - 1) * pageSize + 1
+  return (
+    <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
+      <p className="tabular text-sm text-ink-muted">
+        <span className="font-medium text-ink">{first.toLocaleString()}</span>–<span className="font-medium text-ink">{(first + shown - (shown ? 1 : 0)).toLocaleString()}</span>
+        {hasNext && <span className="text-ink-subtle"> · more after</span>}
+      </p>
+      <div className="flex items-center gap-2">
+        <span className="tabular hidden px-2 text-sm text-ink-muted sm:inline">Page {pageIndex}</span>
+        <IconButton variant="secondary" label="Previous page" icon={<ChevronLeft />} disabled={pageIndex <= 1} onClick={onPrevious} />
+        <IconButton variant="secondary" label="Next page" icon={<ChevronRight />} disabled={!hasNext} onClick={onNext} />
+      </div>
+    </nav>
+  )
+}
+
+function PageControls({ pagination }: { pagination: PagePagination }) {
   const { page, pageSize, totalItems, onPageChange, onPageSizeChange, pageSizes = [25, 50, 100] } = pagination
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
   const first = totalItems === 0 ? 0 : (page - 1) * pageSize + 1
