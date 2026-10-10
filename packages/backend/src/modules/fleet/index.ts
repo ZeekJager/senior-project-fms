@@ -1,11 +1,13 @@
 import { Router } from 'express';
+import type { PoolClient } from 'pg';
 import { config } from '../../config';
 import { pool } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
 import { createDocumentStorage } from '../../shared/storage/document-storage';
+import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
-import { USER_EVENTS, userDirectory, type DepotDirectory } from '../auth';
+import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
 import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
@@ -87,6 +89,19 @@ router.use(attendanceRouter(attendanceService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));
+
+/**
+ * For the maintenance module (FMS-22): find a vehicle in the caller's scope
+ * (optionally row-locked), name vehicles in responses, list the vehicles of a
+ * scope, and set or clear the maintenance flag inside its transaction.
+ */
+export const vehicleMaintenance = {
+  findInScope: (db: Queryable, by: { publicId: string } | { id: string }, scope: Scope, lock = false) =>
+    vehicleRepository.findForMaintenance(db, by, scope, lock),
+  refsByIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.refsByIds(db, ids),
+  idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
+  setMaintenanceFlag: (client: PoolClient, ctx: MutationContext, id: string, flag: boolean) => vehicleRepository.setMaintenanceFlag(ctx, id, flag, client),
+};
 
 export const fleetModule: AppModule = {
   name: 'fleet',

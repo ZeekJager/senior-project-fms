@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 import { AppError, type ErrorDetail } from '../errors/app-error';
 
 /**
@@ -41,4 +41,32 @@ export function parseInput<S extends z.ZodType>(schema: S, input: unknown): z.in
     throw new AppError(400, 'VALIDATION_INVALID_ENUM', 'A value is not one of the allowed values.', details);
   }
   throw new AppError(400, 'VALIDATION_FAILED', 'The request is invalid.', details);
+}
+
+/** Field names that hold money or fuel amounts, whatever their casing: cost, price, amount, cents, fee, ml. */
+const MONEY_KEY = /(cost|price|amount|cents|fee|_ml$|ml_)/i;
+
+/**
+ * Wraps a body schema so a fractional number in any money-like field is
+ * 400 VALIDATION_FLOAT_IN_MONEY_PATH (api-contract §17), even under a name
+ * the API does not accept: `{"totalCost": 1500.50}` says "use whole cents",
+ * not just "unknown field". Nested objects and arrays are scanned too.
+ */
+export function rejectFractionalMoney<S extends z.ZodType>(schema: S) {
+  return z
+    .unknown()
+    .superRefine((input, ctx) => {
+      const walk = (value: unknown, path: (string | number)[]) => {
+        if (Array.isArray(value)) value.forEach((v, i) => walk(v, [...path, i]));
+        else if (value && typeof value === 'object') {
+          for (const [key, v] of Object.entries(value)) {
+            if (typeof v === 'number' && MONEY_KEY.test(key) && !Number.isInteger(v)) {
+              ctx.addIssue({ code: 'custom', path: [...path, key], message: 'Whole minor units only.', params: { reason: FLOAT_IN_MONEY_PATH } });
+            } else walk(v, [...path, key]);
+          }
+        }
+      };
+      walk(input, []);
+    })
+    .pipe(schema);
 }

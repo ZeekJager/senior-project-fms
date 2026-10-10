@@ -1793,3 +1793,12 @@ INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM auth.roles r, auth.permissions p
  WHERE r.name = 'fleet_owner' AND p.code = 'depot:write'
 ON CONFLICT DO NOTHING;
+
+-- ===== 020_maintenance_records.sql =====
+ALTER TABLE maintenance.maintenance_records ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE maintenance.maintenance_records
+    ADD COLUMN IF NOT EXISTS completed_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE;
+
+CREATE OR REPLACE TRIGGER trg_maintenance_records_version
+    BEFORE UPDATE ON maintenance.maintenance_records
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
