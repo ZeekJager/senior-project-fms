@@ -16,6 +16,7 @@ import {
   driverInUse,
   driverNotFound,
   driverRetired,
+  accountEmailTaken,
   unknownDriverAccount,
   type DriverEligibility,
   type DriverView,
@@ -23,17 +24,25 @@ import {
   type LicenseCategory,
   type LicenseStatus,
 } from '../domain/driver';
-import type { VehicleType } from '../domain/vehicle';
+import type { VehicleTrip, VehicleType } from '../domain/vehicle';
 import type { DriverListFilter, DriverRepository, DriverRow, DriverSortKey, DriverWrite } from '../infrastructure/driver.repository';
 import type { Caller } from './caller';
 
 /** Accounts re-read from the auth module per query when re-syncing. */
 const SYNC_BATCH = 500;
 
+/** A new account to create with the driver (POST /drivers with `account`). */
+export interface NewDriverAccount {
+  full_name: string;
+  email: string;
+  phone?: string | null;
+}
+
 /** Fields of POST /drivers, after validation and normalization. */
 export interface DriverCreate {
-  /** The user account's public id. */
-  user_id: string;
+  /** The user account's public id; or `account` for a new one. */
+  user_id?: string;
+  account?: NewDriverAccount;
   license_number: string;
   license_categories?: LicenseCategory[];
   license_expiry: string;
@@ -43,7 +52,7 @@ export interface DriverCreate {
   depot_id: string;
 }
 
-export type DriverUpdate = Partial<Omit<DriverCreate, 'user_id'>>;
+export type DriverUpdate = Partial<Omit<DriverCreate, 'user_id' | 'account'>>;
 
 /** One row of a CSV import, its fields already validated (see api/driver-import.ts). */
 export interface DriverImportRow {
@@ -52,7 +61,7 @@ export interface DriverImportRow {
   /** The driver's account, by email. */
   email: string;
   depot: { code: string } | { id: string };
-  licence: Omit<DriverCreate, 'user_id' | 'depot_id'>;
+  licence: Omit<DriverCreate, 'user_id' | 'account' | 'depot_id'>;
 }
 
 /** A problem with an import row, reported as `rows.<row>.<field>`. */
@@ -108,14 +117,22 @@ export interface DriverServiceDeps {
     findByEmail(db: Queryable, email: string): Promise<UserAccount | null>;
     findByIds(db: Queryable, ids: readonly string[]): Promise<UserAccount[]>;
     setDepot(client: PoolClient, ctx: MutationContext, userId: string, depotId: string): Promise<void>;
+    createDriverAccount(
+      client: PoolClient,
+      ctx: MutationContext,
+      account: { email: string; fullName: string; phone: string | null; depotId: string },
+    ): Promise<UserAccount>;
   };
   depots: {
     resolveInScope(db: Queryable, publicId: string, scope: Scope): Promise<string | null>;
     publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>>;
     publicIdByCode(db: Queryable, code: string): Promise<string | null>;
   };
-  /** The trip module's answer: is the driver on an assigned or en-route trip? */
-  trips: { driverHasActiveTrip(db: Queryable, driverId: string): Promise<boolean> };
+  /** The trip module's answers: is the driver on an assigned or en-route trip, and which? */
+  trips: {
+    driverHasActiveTrip(db: Queryable, driverId: string): Promise<boolean>;
+    activeTripsForDrivers(db: Queryable, driverIds: readonly string[]): Promise<Map<string, VehicleTrip>>;
+  };
   events: EventBus;
 }
 
@@ -200,8 +217,25 @@ export class DriverService {
     });
   }
 
+  /**
+   * POST /drivers. With `account`, the driver's user account is created in
+   * the same transaction (driver role, home depot, no password), so a refused
+   * licence leaves no account behind.
+   */
   async create(caller: Caller, input: DriverCreate): Promise<DriverView> {
-    const view = await this.deps.drivers.inTransaction((client) => this.register(client, caller, input));
+    const view = await this.deps.drivers.inTransaction(async (client) => {
+      if (!input.account) return this.register(client, caller, input);
+      const { users } = this.deps;
+      const depotId = await this.depotInScope(client, input.depot_id, depotScope(caller.user));
+      if (await users.findByEmail(client, input.account.email)) throw accountEmailTaken();
+      const account = await users.createDriverAccount(client, mutationContext(caller), {
+        email: input.account.email,
+        fullName: input.account.full_name,
+        phone: input.account.phone ?? null,
+        depotId,
+      });
+      return this.register(client, caller, { ...input, account: undefined, user_id: account.publicId });
+    });
     await this.publish(caller, DRIVER_EVENTS.registered, view);
     return view;
   }
@@ -284,7 +318,7 @@ export class DriverService {
   private async register(client: PoolClient, caller: Caller, input: DriverCreate): Promise<DriverView> {
     const { drivers, users } = this.deps;
     const scope = depotScope(caller.user);
-    const account = await users.findByPublicId(client, input.user_id);
+    const account = input.user_id === undefined ? null : await users.findByPublicId(client, input.user_id);
     // An account in another depot looks like no account at all.
     if (!account || (account.depotId !== null && !depotInScope(scope, account.depotId))) {
       throw unknownDriverAccount('references_missing_record');
@@ -445,6 +479,7 @@ export class DriverService {
     const accounts = new Map((await this.deps.users.findByIds(db, rows.map((r) => r.userId))).map((a) => [a.id, a]));
     const depotIds = [...new Set([...accounts.values()].map((a) => a.depotId).filter((d): d is string => d !== null))];
     const depots = await this.deps.depots.publicIds(db, depotIds);
+    const trips = await this.deps.trips.activeTripsForDrivers(db, rows.map((r) => r.id));
 
     return rows.map((r) => {
       const account = accounts.get(r.userId)!;
@@ -462,6 +497,7 @@ export class DriverService {
         hire_date: r.hireDate,
         emergency_phone: r.emergencyPhone,
         status: r.isActive ? 'active' : 'retired',
+        current_trip: trips.get(r.id) ?? null,
         version: r.version,
         created_at: r.createdAt,
         updated_at: r.updatedAt,

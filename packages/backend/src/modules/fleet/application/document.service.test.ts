@@ -46,7 +46,7 @@ function harness(options: { insertFails?: boolean; ownerVisible?: boolean } = {}
       findRef: async () => (options.ownerVisible === false ? null : { id: '7', publicId: VEHICLE }),
       findRefs: async () => [],
     },
-    drivers: { findByPublicId: async () => null, findById: async () => null },
+    drivers: { findByPublicId: async () => null, findByPublicIds: async () => [], findById: async () => null },
     users: { findByIds: async () => [] },
     events: new InProcessEventBus(() => {}),
   };

@@ -14,7 +14,7 @@ import { REFRESH_TOKEN_TTL_SECONDS } from '../domain/auth-policy';
 import type { DepotDirectory } from '../domain/depot-directory';
 import { writeAuthAudit, type AuthAuditEvent } from '../infrastructure/auth-audit';
 import type { AuthUserRepository, Principal, UserProfile } from '../infrastructure/auth-user.repository';
-import { verifyAgainstDummy, verifyPassword } from '../infrastructure/password-hasher';
+import { hasUsablePassword, verifyAgainstDummy, verifyPassword } from '../infrastructure/password-hasher';
 import type { SessionRepository } from '../infrastructure/session.repository';
 import type { LoginThrottle } from './login-throttle';
 import { hashRefreshToken, newRefreshToken, type TokenService } from './token.service';
@@ -72,7 +72,9 @@ export class AuthService {
 
     const user = await users.findCredentialsByEmail(db, email);
     let passwordOk = false;
-    if (user) passwordOk = await verifyPassword(user.passwordHash, password);
+    // An unknown email and an account without a password cost the same as a
+    // wrong password, so the timing tells nothing about either.
+    if (user && hasUsablePassword(user.passwordHash)) passwordOk = await verifyPassword(user.passwordHash, password);
     else await verifyAgainstDummy(password);
     if (!user || !passwordOk) {
       throttle.recordFailure(throttleKey);

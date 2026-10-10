@@ -51,6 +51,7 @@ export interface DocumentServiceDeps {
   };
   drivers: {
     findByPublicId(db: Queryable, publicId: string): Promise<DriverRow | null>;
+    findByPublicIds(db: Queryable, publicIds: readonly string[]): Promise<DriverRow[]>;
     findById(db: Queryable, id: string): Promise<DriverRow | null>;
   };
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<UserAccount[]> };
@@ -226,12 +227,16 @@ export class DocumentService {
       if (!caller.user.permissions.includes('vehicle:read')) return [];
       return this.deps.vehicles.findRefs(db, publicIds, depotScope(caller.user));
     }
-    const owners: { id: string; publicId: string }[] = [];
-    for (const publicId of publicIds) {
-      const owner = await this.readableOwner(db, caller, ownerType, { publicId });
-      if (owner) owners.push(owner);
-    }
-    return owners;
+    // Drivers: the same rule as readableOwner, with one query for the drivers and one for their accounts.
+    const { user } = caller;
+    const drivers = await this.deps.drivers.findByPublicIds(db, publicIds);
+    const mayRead = user.permissions.includes('driver:read');
+    const accounts = mayRead ? await this.deps.users.findByIds(db, drivers.map((d) => d.userId)) : [];
+    const depotOf = new Map(accounts.map((a) => [a.id, a.depotId]));
+    const scope = depotScope(user);
+    return drivers
+      .filter((d) => d.userId === user.id || (mayRead && depotOf.has(d.userId) && depotInScope(scope, depotOf.get(d.userId)!)))
+      .map((d) => ({ id: d.id, publicId: d.publicId }));
   }
 
   private async view(db: Queryable, row: DocumentRow, ownerPublicId: string): Promise<DocumentView> {

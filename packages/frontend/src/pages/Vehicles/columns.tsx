@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, 
 import { Link } from 'react-router-dom'
 import { StatusBadge, type Column } from '@/components/shared'
 import { Badge, cn, IconButton, Skeleton } from '@/components/ui'
-import type { DocumentHealth } from './documents'
+import type { DocumentHealth } from '@/features/documents/expiry'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
 
 const TYPE_ICONS: Record<VehicleType, LucideIcon> = {

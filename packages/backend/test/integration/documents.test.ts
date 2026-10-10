@@ -317,3 +317,22 @@ describe('DELETE /documents/{id}', () => {
     expect((await request(app).delete(`/api/v1/documents/${id}`).set('Cookie', await signIn(['fleet_manager'], await createDepot()))).status).toBe(204);
   });
 });
+
+describe('GET /documents (drivers)', () => {
+  test('lists a page of driver documents: in-scope drivers for driver:read, all for an unscoped role', async () => {
+    const depot = await createDepot();
+    const other = await createDepot();
+    const { driver: mine } = await createDriver({ depot });
+    const { driver: theirs } = await createDriver({ depot: other });
+    const admin = await signIn(['admin']);
+    const driverDoc = (driver: Record<string, unknown>) => ({ owner_type: 'driver', owner_id: String(driver.public_id), document_type: 'licence' });
+    const a = await upload(admin, driverDoc(mine), { bytes: PDF, name: 'mine.pdf' });
+    await upload(admin, driverDoc(theirs), { bytes: PDF, name: 'theirs.pdf' });
+    const query = `/api/v1/documents?owner_type=driver&owner_id=${mine.public_id},${theirs.public_id}`;
+
+    const res = await request(app).get(query).set('Cookie', await signIn(['depot_admin'], depot));
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((d: { id: string }) => d.id)).toEqual([a.body.data.id]);
+    expect((await request(app).get(query).set('Cookie', await signIn(['fleet_manager']))).body.data).toHaveLength(2);
+  });
+});

@@ -1,4 +1,4 @@
-import type { VehicleDocument } from './types'
+import type { OwnedDocument } from './types'
 
 /** Expiring "soon" means within this many days (FMS-18: amber badge). */
 export const EXPIRY_WARNING_DAYS = 30
@@ -36,8 +36,8 @@ export interface DocumentHealth {
   expiring: number
 }
 
-/** Counts per vehicle id, for the documents column. */
-export function documentHealth(documents: readonly VehicleDocument[], on: string = today()): Map<string, DocumentHealth> {
+/** Counts per owner id, for a list's documents column. */
+export function documentHealth(documents: readonly OwnedDocument[], on: string = today()): Map<string, DocumentHealth> {
   const health = new Map<string, DocumentHealth>()
   for (const doc of documents) {
     const entry = health.get(doc.owner_id) ?? { total: 0, expired: 0, expiring: 0 }

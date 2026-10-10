@@ -6,7 +6,7 @@ import { createDocumentStorage } from '../../shared/storage/document-storage';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory } from '../auth';
-import { activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
 import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
@@ -39,7 +39,7 @@ const driverService = new DriverService({
   users: userDirectory,
   accounts: driverAccounts,
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds, publicIdByCode: depotPublicIdByCode },
-  trips: { driverHasActiveTrip },
+  trips: { driverHasActiveTrip, activeTripsForDrivers },
   events: eventBus,
 });
 
@@ -53,6 +53,7 @@ const documentService = new DocumentService({
   },
   drivers: {
     findByPublicId: (db, id) => driverRepository.findByPublicId(db, id),
+    findByPublicIds: (db, ids) => driverRepository.findByPublicIds(db, ids),
     findById: (db, id) => driverRepository.findById(db, id),
   },
   users: userDirectory,

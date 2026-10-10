@@ -2,7 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 import { vehicleQuery, type VehicleFilters } from './filters'
-import type { Depot, DocumentType, Vehicle, VehicleDocument } from './types'
+import type { Vehicle } from './types'
 
 // Server state for the vehicles screen. Every write invalidates what it can
 // have changed, so the table, the counts and the documents stay in step.
@@ -12,9 +12,6 @@ const keys = {
   list: (filters: VehicleFilters) => ['vehicles', 'list', filters] as const,
   counts: (depotId: string) => ['vehicles', 'counts', depotId] as const,
   plate: (plate: string) => ['vehicles', 'plate', plate] as const,
-  depots: ['depots'] as const,
-  documents: ['documents'] as const,
-  documentsFor: (ids: readonly string[]) => ['documents', 'vehicles', ids] as const,
 }
 
 export function useVehicles(filters: VehicleFilters) {
@@ -58,26 +55,6 @@ export function useFleetCounts(depotId: string) {
   }
 }
 
-/** Depots in the caller's scope, for the filter and the form. One page of 100 covers any real fleet. */
-export function useDepots() {
-  const { api } = useAuth()
-  return useQuery({
-    queryKey: keys.depots,
-    queryFn: () => api.request<Depot[]>('/depots?page_size=100'),
-    staleTime: 5 * 60_000,
-  })
-}
-
-/** Live documents of the vehicles on this page, in one request. */
-export function useVehicleDocuments(vehicleIds: readonly string[], enabled: boolean) {
-  const { api } = useAuth()
-  return useQuery({
-    queryKey: keys.documentsFor(vehicleIds),
-    queryFn: () => api.request<VehicleDocument[]>(`/documents?owner_type=vehicle&owner_id=${vehicleIds.join(',')}`),
-    enabled: enabled && vehicleIds.length > 0,
-  })
-}
-
 /**
  * Is this plate already registered? Searches the API and compares the
  * normalized plate exactly. Only vehicles in the caller's scope are visible,
@@ -115,7 +92,7 @@ function useInvalidate() {
   return () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: keys.vehicles }),
-      queryClient.invalidateQueries({ queryKey: keys.documents }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
     ])
 }
 
@@ -145,39 +122,5 @@ export function useDecommissionVehicle() {
   return useMutation({
     mutationFn: (id: string) => api.request<void>(`/vehicles/${id}`, { method: 'DELETE' }),
     onSuccess: invalidate,
-  })
-}
-
-export function useUploadDocument() {
-  const { api } = useAuth()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ vehicleId, file, documentType, expiresOn }: { vehicleId: string; file: File; documentType: DocumentType; expiresOn: string }) => {
-      const form = new FormData()
-      form.set('owner_type', 'vehicle')
-      form.set('owner_id', vehicleId)
-      form.set('document_type', documentType)
-      if (expiresOn) form.set('expires_on', expiresOn)
-      form.set('file', file, file.name)
-      return api.request<VehicleDocument>('/documents', { method: 'POST', formData: form })
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.documents }),
-  })
-}
-
-export function useDeleteDocument() {
-  const { api } = useAuth()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => api.request<void>(`/documents/${id}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.documents }),
-  })
-}
-
-/** A fresh signed link (valid one hour) to open a document's file. */
-export function useDocumentLink() {
-  const { api } = useAuth()
-  return useMutation({
-    mutationFn: (id: string) => api.request<VehicleDocument & { url: string }>(`/documents/${id}`),
   })
 }

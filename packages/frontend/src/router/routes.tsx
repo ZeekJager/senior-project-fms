@@ -1,6 +1,7 @@
-import { Fuel, Home, LayoutDashboard, Truck, type LucideIcon } from 'lucide-react'
+import { Fuel, Home, LayoutDashboard, Truck, Users, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/context/AuthContext'
+import { DriversPage } from '@/pages/Drivers'
 import { DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { VehiclesPage } from '@/pages/Vehicles'
 
@@ -35,6 +36,13 @@ export const portals: Portal[] = [
         element: <VehiclesPage />,
         permission: { all: ['vehicle:read', 'depot:read'] },
         nav: { label: 'Vehicles', icon: Truck },
+      },
+      {
+        // S-05. driver:read is staff-only: drivers see their own profile at /drivers/me instead (FMS-19).
+        path: '/drivers',
+        element: <DriversPage />,
+        permission: 'driver:read',
+        nav: { label: 'Drivers', icon: Users },
       },
       {
         path: '/fuel-reconciliation',

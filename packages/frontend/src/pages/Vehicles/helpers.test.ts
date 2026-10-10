@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { daysBetween, documentHealth, expiryState, formatDate } from './documents'
+import { daysBetween, documentHealth, expiryState, formatDate } from '@/features/documents/expiry'
+import type { OwnedDocument } from '@/features/documents/types'
 import { readFilters, vehicleQuery, writeFilters } from './filters'
-import type { Vehicle, VehicleDocument } from './types'
+import type { Vehicle } from './types'
 import { changedFields, formFromVehicle, validateVehicleForm, type VehicleFormValues } from './vehicleForm'
 
 describe('expiryState', () => {
@@ -22,7 +23,7 @@ describe('expiryState', () => {
   })
 
   it('summarises a vehicle by its worst documents', () => {
-    const doc = (owner: string, expires: string | null) => ({ owner_id: owner, expires_on: expires }) as VehicleDocument
+    const doc = (owner: string, expires: string | null) => ({ owner_id: owner, expires_on: expires }) as OwnedDocument
     const health = documentHealth([doc('a', '2026-10-01'), doc('a', '2026-10-20'), doc('a', null), doc('b', '2027-06-01')], on)
     expect(health.get('a')).toEqual({ total: 3, expired: 1, expiring: 1 })
     expect(health.get('b')).toEqual({ total: 1, expired: 0, expiring: 0 })

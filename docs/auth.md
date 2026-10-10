@@ -136,3 +136,5 @@ docker exec -it fms_backend npm run user:create -- --email d@fms.local --name "D
 ```
 
 The password is generated and printed once, or taken from `FMS_USER_PASSWORD` if set. Passwords are hashed with argon2id (19 MiB, 2 passes, 1 lane; the OWASP minimum).
+
+Drivers added from the Drivers screen (`POST /drivers` with `account`, FMS-19) get an account **without a password**: the stored value is a marker that is not a hash (`UNSET_HASH`), so no password matches it. Login treats it like an unknown email, including running a dummy hash so the response time gives nothing away. Until user administration can set or reset passwords, give such a driver a password with the CLI flow above (or a direct update in development).

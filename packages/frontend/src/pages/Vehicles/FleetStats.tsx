@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, Truck, Wrench } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
+import { StatCard, StatShare } from '@/components/shared/StatCard'
 import { cn, Skeleton } from '@/components/ui'
 import type { VehicleFilters } from './filters'
 
@@ -59,7 +60,7 @@ export function FleetStats({ counts, isLoading, filters, onSelect }: FleetStatsP
         tone="success"
         pressed={focus === 'active'}
         onClick={() => onSelect('active')}
-        footer={<Share value={percent(counts.active, counts.total)} tone="success" caption="of the fleet available" />}
+        footer={<StatShare value={percent(counts.active, counts.total)} tone="success" caption="of the fleet available" />}
       />
       <StatCard
         label="In maintenance"
@@ -69,7 +70,7 @@ export function FleetStats({ counts, isLoading, filters, onSelect }: FleetStatsP
         tone="orange"
         pressed={focus === 'maintenance'}
         onClick={() => onSelect('maintenance')}
-        footer={<Share value={percent(counts.maintenance, counts.total)} tone="orange" caption="of the fleet in the workshop" />}
+        footer={<StatShare value={percent(counts.maintenance, counts.total)} tone="orange" caption="of the fleet in the workshop" />}
       />
       <StatCard
         label="Maintenance flagged"
@@ -79,83 +80,9 @@ export function FleetStats({ counts, isLoading, filters, onSelect }: FleetStatsP
         tone="warning"
         pressed={focus === 'flagged'}
         onClick={() => onSelect('flagged')}
-        footer={<Share value={percent(counts.flagged, counts.total)} tone="warning" caption="need a technician's look" />}
+        footer={<StatShare value={percent(counts.flagged, counts.total)} tone="warning" caption="need a technician's look" />}
       />
     </section>
-  )
-}
-
-type Tone = 'brand' | 'success' | 'orange' | 'warning'
-
-const ICON_TONE: Record<Tone, string> = {
-  brand: 'bg-brand-soft text-brand-ink ring-brand/20',
-  success: 'bg-success-soft text-success ring-success/20',
-  orange: 'bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-400/10 dark:text-orange-300 dark:ring-orange-400/25',
-  warning: 'bg-warning-soft text-warning ring-warning/25',
-}
-
-const BAR_TONE: Record<Tone, string> = {
-  brand: 'bg-brand',
-  success: 'bg-emerald-500',
-  orange: 'bg-orange-500',
-  warning: 'bg-amber-400',
-}
-
-interface StatCardProps {
-  label: string
-  value: number | undefined
-  isLoading: boolean
-  icon: ReactNode
-  tone: Tone
-  pressed: boolean
-  onClick: () => void
-  footer: ReactNode
-}
-
-function StatCard({ label, value, isLoading, icon, tone, pressed, onClick, footer }: StatCardProps) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={cn(
-        'focus-ring group relative flex flex-col overflow-hidden rounded-card border bg-surface p-4 text-left shadow-card sm:p-5',
-        'transition-all duration-200 ease-smooth hover:-translate-y-0.5 hover:shadow-elevated',
-        pressed ? 'border-brand/40 ring-1 ring-brand/25' : 'border-line hover:border-line-strong',
-      )}
-    >
-      {/* A faint sheen from the corner; stronger on the card that drives the table. */}
-      <span
-        aria-hidden="true"
-        className={cn(
-          'pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full bg-brand/10 blur-3xl transition-opacity duration-300',
-          pressed ? 'opacity-100' : 'opacity-0 group-hover:opacity-60',
-        )}
-      />
-      <span className="flex items-center justify-between">
-        <span className="text-[13px] font-medium leading-tight text-ink-muted sm:text-sm">{label}</span>
-        <span className={cn('hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset sm:flex [&_svg]:h-[18px] [&_svg]:w-[18px]', ICON_TONE[tone])}>
-          {icon}
-        </span>
-      </span>
-      <span className="tabular mt-2 text-2xl font-semibold tracking-tight text-ink sm:mt-3 sm:text-3xl">
-        {isLoading || value === undefined ? <Skeleton className="h-9 w-16" /> : value.toLocaleString()}
-      </span>
-      <span className="mt-3 block sm:mt-4">{footer}</span>
-    </button>
-  )
-}
-
-function Share({ value, tone, caption }: { value: number; tone: Tone; caption: string }) {
-  return (
-    <span className="block">
-      <span className="block h-1.5 overflow-hidden rounded-full bg-surface-sunken">
-        <span className={cn('block h-full rounded-full transition-[width] duration-700 ease-smooth', BAR_TONE[tone])} style={{ width: `${value}%` }} />
-      </span>
-      <span className="mt-2 block text-xs text-ink-subtle">
-        <span className="tabular font-medium text-ink-muted">{value}%</span> <span className="hidden sm:inline">{caption}</span>
-      </span>
-    </span>
   )
 }
 

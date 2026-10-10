@@ -4,18 +4,21 @@ import { EmptyState } from '@/components/shared'
 import { Badge, Button, cn, Drawer, IconButton, SelectField, Skeleton, TextField, useToast, type BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
 import { useDeleteDocument, useDocumentLink, useUploadDocument } from './api'
-import { ACCEPTED_UPLOAD_TYPES, MAX_UPLOAD_BYTES, expiryState, formatBytes, formatDate, type ExpiryState } from './documents'
-import { DOCUMENT_TYPES, DOCUMENT_TYPE_LABELS, type DocumentType, type Vehicle, type VehicleDocument } from './types'
+import { ACCEPTED_UPLOAD_TYPES, MAX_UPLOAD_BYTES, expiryState, formatBytes, formatDate, type ExpiryState } from './expiry'
+import { DOCUMENT_TYPES, DOCUMENT_TYPE_LABELS, type DocumentOwner, type DocumentType, type OwnedDocument } from './types'
 
 interface DocumentsDrawerProps {
-  vehicle: Vehicle | null
-  documents: VehicleDocument[]
+  /** The vehicle or driver whose documents are shown; null when closed. */
+  owner: DocumentOwner | null
+  documents: OwnedDocument[]
   isLoading: boolean
   onClose: () => void
   /** A file chosen with the row's + button, ready to upload. */
   stagedFile: File | null
   canUpload: boolean
   canDelete: boolean
+  /** Preselected in the upload form: registration for vehicles, licence for drivers. */
+  defaultType?: DocumentType
 }
 
 const UPLOAD_ERRORS: Record<string, string> = {
@@ -23,18 +26,20 @@ const UPLOAD_ERRORS: Record<string, string> = {
   PAYLOAD_TOO_LARGE: 'That file is larger than 10 MB.',
 }
 
-/** Registration, insurance and other papers of one vehicle, with their expiry, and an upload form. */
-export function DocumentsDrawer({ vehicle, documents, isLoading, onClose, stagedFile, canUpload, canDelete }: DocumentsDrawerProps) {
-  const own = vehicle ? documents.filter((d) => d.owner_id === vehicle.id) : []
+/** The papers of one vehicle or driver (registration, insurance, licence), with their expiry, and an upload form. */
+export function DocumentsDrawer({ owner, documents, isLoading, onClose, stagedFile, canUpload, canDelete, defaultType }: DocumentsDrawerProps) {
+  const own = owner ? documents.filter((d) => d.owner_id === owner.id) : []
   return (
     <Drawer
-      open={vehicle !== null}
+      open={owner !== null}
       onClose={onClose}
-      title={`Documents · ${vehicle?.registration_number ?? ''}`}
+      title={`Documents · ${owner?.label ?? ''}`}
       description="Expired papers show red; those expiring within 30 days amber."
     >
       <div className="space-y-8">
-        {canUpload && vehicle && <UploadForm key={`${vehicle.id}-${stagedFile?.name ?? ''}`} vehicle={vehicle} initialFile={stagedFile} />}
+        {canUpload && owner && (
+          <UploadForm key={`${owner.id}-${stagedFile?.name ?? ''}`} owner={owner} initialFile={stagedFile} defaultType={defaultType ?? 'registration'} />
+        )}
         <section aria-labelledby="documents-on-file">
           <h3 id="documents-on-file" className="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">
             On file
@@ -80,7 +85,7 @@ export function ExpiryBadge({ expiresOn }: { expiresOn: string | null }) {
   )
 }
 
-function DocumentRow({ doc, canDelete }: { doc: VehicleDocument; canDelete: boolean }) {
+function DocumentRow({ doc, canDelete }: { doc: OwnedDocument; canDelete: boolean }) {
   const link = useDocumentLink()
   const remove = useDeleteDocument()
   const { toast } = useToast()
@@ -159,13 +164,13 @@ function checkFile(file: File): string | null {
   return null
 }
 
-function UploadForm({ vehicle, initialFile }: { vehicle: Vehicle; initialFile: File | null }) {
+function UploadForm({ owner, initialFile, defaultType }: { owner: DocumentOwner; initialFile: File | null; defaultType: DocumentType }) {
   const upload = useUploadDocument()
   const { toast } = useToast()
   const inputId = useId()
   const fileInput = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(initialFile)
-  const [documentType, setDocumentType] = useState<DocumentType>('registration')
+  const [documentType, setDocumentType] = useState<DocumentType>(defaultType)
   const [expiresOn, setExpiresOn] = useState('')
   const [error, setError] = useState<string | null>(initialFile ? checkFile(initialFile) : null)
   const [dragging, setDragging] = useState(false)
@@ -192,8 +197,8 @@ function UploadForm({ vehicle, initialFile }: { vehicle: Vehicle; initialFile: F
     const problem = checkFile(file)
     if (problem) return setError(problem)
     try {
-      await upload.mutateAsync({ vehicleId: vehicle.id, file, documentType, expiresOn })
-      toast({ title: 'Document uploaded', description: `${DOCUMENT_TYPE_LABELS[documentType]} added to ${vehicle.registration_number}.` })
+      await upload.mutateAsync({ ownerType: owner.type, ownerId: owner.id, file, documentType, expiresOn })
+      toast({ title: 'Document uploaded', description: `${DOCUMENT_TYPE_LABELS[documentType]} added to ${owner.label}.` })
       setFile(null)
       setExpiresOn('')
       setError(null)
