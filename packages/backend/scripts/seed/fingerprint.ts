@@ -27,6 +27,9 @@ const QUERIES: Record<string, string> = {
                  ORDER BY v.registration_number, r.description, r.completed_at NULLS LAST, r.scheduled_at NULLS LAST, r.total_cost_cents`,
   attendance: `SELECT dr.license_number, a.attendance_date::text, a.status FROM fleet.driver_attendance a
                  JOIN fleet.drivers dr ON dr.id = a.driver_id ORDER BY dr.license_number, a.attendance_date`,
+  documents: `SELECT v.registration_number, doc.document_type, doc.original_filename, doc.content_type, doc.size_bytes, doc.sha256, doc.expires_on::text
+                FROM document.documents doc JOIN fleet.vehicles v ON doc.owner_type = 'vehicle' AND v.id = doc.owner_id
+               ORDER BY v.registration_number, doc.document_type`,
   routes: `SELECT r.name, d.code AS depot, r.distance_km, r.estimated_duration_seconds FROM trip.routes r
              JOIN fleet.depots d ON d.id = r.depot_id ORDER BY d.code, r.name`,
   trips: `SELECT r.name AS route, v.registration_number, dr.license_number, t.status, t.scheduled_start, t.scheduled_end,
