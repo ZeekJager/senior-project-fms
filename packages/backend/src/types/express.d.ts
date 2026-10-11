@@ -1,4 +1,5 @@
 import type { DbMutate } from '../middleware/auditLog';
+import type { RequestSource } from '../shared/infrastructure/request-source';
 
 /**
  * The caller. Anonymous until the auth module's `authenticate` middleware
@@ -22,6 +23,8 @@ declare global {
       correlationId: string;
       user?: RequestUser;
       dbMutate: DbMutate;
+      /** Set by middleware/requestSource.ts: channel, IP and user agent, for audit rows. */
+      requestSource?: RequestSource;
     }
   }
 }

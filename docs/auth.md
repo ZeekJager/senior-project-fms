@@ -65,16 +65,19 @@ The IP is Express's `req.ip`. Behind a reverse proxy it is the proxy's address u
 
 ## Audit
 
-Every login attempt writes an `audit.audit_logs` row with the IP (`ip_address`) and user agent (`details.user_agent`):
+Every login attempt writes an `audit.audit_logs` row. Like every audit row (FMS-27, CONVENTIONS.md Audit), it records where the attempt came from in `request_source` (channel, IP, user agent; the IP also in `ip_address`) and how it ended in `result`. The user agent is also kept in `details.user_agent`.
 
-| `action` | `user_id` (actor) | `entity_id` (account) | `details` |
-|---|---|---|---|
-| `auth.login_succeeded` | the user | the user | |
-| `auth.login_failed` | null | the account, if the email exists | `email`, `reason` (`invalid_credentials` or `account_disabled`), `status` |
-| `auth.login_throttled` | null | null | `email` |
-| `auth.logout` | the user | the user | |
-| `auth.refresh_reuse_detected` | null | the user | `session_family_id` |
-| `auth.password_set` | the user | the user | `purpose` (`setup` or `reset`), `sessions_revoked` |
+| `action` | `result` | `user_id` (actor) | `entity_id` (account) | `details` |
+|---|---|---|---|---|
+| `auth.login_succeeded` | `success` | the user | the user | |
+| `auth.login_failed` | `failed` | null | the account, if the email exists | `email`, `reason` (`invalid_credentials` or `account_disabled`), `status` |
+| `auth.login_throttled` | `denied` | null | null | `email` |
+| `auth.logout` | `success` | the user | the user | |
+| `auth.refresh_reuse_detected` | `denied` | null | the user | `session_family_id` |
+| `auth.password_set` | `success` | the user | the user | `purpose` (`setup` or `reset`), `sessions_revoked` |
+| `access.denied` | `denied` | the user | the user | `method`, `route` (the pattern, e.g. `/api/v1/users/:userId`), `required` (the permission codes) |
+
+`access.denied` is written for every request a signed-in user is refused with `403 FORBIDDEN_INSUFFICIENT_ROLE` (reads included), before the response goes out. An anonymous request (`401`) writes nothing. Role changes are `ROLE_CHANGE` rows on `auth.user_roles` ([api-contract.md](api-contract.md) §5.1). Permission grants change only through migrations.
 
 Passwords are never logged or audited. `auditedMutation` redacts `password_hash` and `token_hash` in `old_values`/`new_values`.
 

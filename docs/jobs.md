@@ -33,7 +33,7 @@ The lock sits behind the `JobLock` interface. FMS-72 can move it to Redis; the r
 
 ## Audit
 
-Each run writes `job.started`, then `job.succeeded` (with the result and duration) or `job.failed` (with the error). Both entries go to `audit.audit_logs` with no user (the system), entity `jobs.job_runs`, and the run's UUID as correlation id. The events a run publishes carry the same correlation id, with `actor: null`.
+Each run writes `job.started`, then `job.succeeded` (with the result and duration) or `job.failed` (with the error, `result: failed`). Both entries go to `audit.audit_logs` with no user (the system), entity `jobs.job_runs`, and the run's UUID as correlation id. The whole run executes with the request source `{channel: "job", actor: "system", job: <name>}`, so every audit row it writes, including any mutation, records the system actor (FMS-27). The events a run publishes carry the same correlation id, with `actor: null`.
 
 ## Jobs today
 

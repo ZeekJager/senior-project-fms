@@ -15,6 +15,7 @@ import type { DepotDirectory } from './domain/depot-directory';
 import { AuthUserRepository } from './infrastructure/auth-user.repository';
 import { SessionRepository } from './infrastructure/session.repository';
 import { UserAdminRepository } from './infrastructure/user-admin.repository';
+import { writeAuthAudit } from './infrastructure/auth-audit';
 
 let depotDirectory: DepotDirectory | null = null;
 
@@ -59,7 +60,18 @@ export const authenticate = authenticateWith(authService);
  * `authorize(...)`, `authenticated()` or `publicRoute()`; the app refuses to
  * start otherwise (docs/auth.md, Authorization).
  */
-export const authorize = authorizeWith(authenticate);
+export const authorize = authorizeWith(authenticate, (req, codes) =>
+  writeAuthAudit(pool, {
+    action: 'access.denied',
+    actorId: req.user?.id ?? null,
+    subjectId: req.user?.id ?? null,
+    correlationId: req.correlationId,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+    // The route pattern, not the URL: no ids or query strings in the trail.
+    details: { method: req.method, route: `${req.baseUrl}${(req.route as { path?: string } | undefined)?.path ?? req.path}`, required: codes },
+  }),
+);
 
 /** Any signed-in user, no particular permission. */
 export const authenticated = authenticatedWith(authenticate);

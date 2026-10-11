@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, CircleSlash, Palmtree, RotateCcw, UserCheck } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Badge, cn, Spinner } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
 import { STATUS_LABELS, TOGGLE_STATUSES, type AttendanceStatus, type RosterEntry } from './api'
@@ -52,6 +52,14 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
   const [justSaved, setJustSaved] = useState(false)
   const shown = pending ?? entry.attendance?.status ?? null
 
+  // The "saved" tick fades after 1.6 s; the timer is cleared if the card
+  // unmounts first (day or depot changed), so it never updates a gone card.
+  useEffect(() => {
+    if (!justSaved) return
+    const timer = window.setTimeout(() => setJustSaved(false), 1600)
+    return () => window.clearTimeout(timer)
+  }, [justSaved])
+
   async function choose(status: AttendanceStatus) {
     if (!canWrite || status === shown || pending) return
     setPending(status)
@@ -59,7 +67,6 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
     try {
       await onMark(entry, status)
       setJustSaved(true)
-      window.setTimeout(() => setJustSaved(false), 1600)
     } catch (err) {
       setError((err instanceof ApiError && ERRORS[err.code]) || 'Could not save. Try again.')
     } finally {

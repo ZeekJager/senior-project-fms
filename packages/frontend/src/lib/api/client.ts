@@ -42,6 +42,14 @@ export interface ApiClient {
 }
 
 /**
+ * `pwa` when the app runs installed (standalone), else `web`: the server
+ * records it as the audit row's channel (FMS-27).
+ */
+export function clientChannel(): 'web' | 'pwa' {
+  return typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)').matches ? 'pwa' : 'web'
+}
+
+/**
  * The API client. The access and refresh tokens live in HttpOnly cookies
  * that page scripts cannot read, so the client holds no token: it sends
  * cookies with each request and, on `401 AUTH_TOKEN_EXPIRED` or
@@ -59,7 +67,12 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     const res = await fetchImpl(`${API_BASE}${path}`, {
       credentials: 'same-origin',
       ...init,
-      headers: { Accept: 'application/json', ...(json === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },
+      headers: {
+        Accept: 'application/json',
+        'X-Client-Channel': clientChannel(),
+        ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...headers,
+      },
       body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
     })
     if (!res.ok) throw await toApiError(res)
