@@ -167,6 +167,26 @@ jobs:
           if grep -q "RUNNING" "$RUNNER_TEMP/second-run.log"; then echo "Second run re-applied a migration"; exit 1; fi
         env:
           DB_NAME: fms_runner_check
+      # FMS-113: the budget dataset on the database the runner just built,
+      # through the API as the app role. Twice with the same seed (the second
+      # after --reset): 200 vehicles, 300 drivers, 1,000 trips and the same
+      # fingerprint both times. NODE_ENV=production must be refused.
+      - name: Seed the budget dataset twice
+        run: |
+          set -euo pipefail
+          export DB_PASSWORD="$DB_APP_PASSWORD" FMS_SEED_PASSWORD="$DB_APP_PASSWORD"
+          seed() { npm run -s seed -w fms-backend -- --size=budget --seed=42 --anchor=2026-10-01 "$@" | tee -a "$RUNNER_TEMP/seed.log"; }
+          seed
+          seed --reset
+          counts=$(psql -d fms_runner_check -At -c "select (select count(*) from fleet.vehicles) || '/' || (select count(*) from fleet.drivers) || '/' || (select count(*) from trip.trips)")
+          if [ "$counts" != "200/300/1000" ]; then echo "Budget profile created $counts vehicles/drivers/trips"; exit 1; fi
+          runs=$(grep -c '^fingerprint ' "$RUNNER_TEMP/seed.log")
+          distinct=$(grep '^fingerprint ' "$RUNNER_TEMP/seed.log" | sort -u | wc -l)
+          if [ "$runs" != "2" ] || [ "$distinct" != "1" ]; then echo "Two runs with the same seed produced different data"; exit 1; fi
+          if NODE_ENV=production npm run -s seed -w fms-backend -- --size=small; then echo "The seed ran with NODE_ENV=production"; exit 1; fi
+        env:
+          DB_NAME: fms_runner_check
+          DB_USER: fms_app
 
   docker:
     name: docker-stack

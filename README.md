@@ -38,6 +38,7 @@ We have wrapped the complex Docker commands into simple `make` commands:
 - `make clean` - Stop all services **and wipe the database**.
 - `make db-shell` - Open an interactive psql terminal inside the database container.
 - `make backend-shell` - Open a terminal inside the Node.js backend.
+- `make seed` - **Wipe** the dev database and fill it with repeatable demo data (`SIZE=budget` for 200 vehicles, 300 drivers, 1,000 trips; see [docs/seed-data.md](docs/seed-data.md)).
 - `docker exec -it fms_backend npm run user:create -- --email admin@fms.local --name "Admin" --role admin` - Create a user who can sign in (prints a generated password once; see [docs/auth.md](docs/auth.md)).
 
 ## 📚 Project Documentation

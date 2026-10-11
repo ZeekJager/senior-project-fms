@@ -1,4 +1,4 @@
-.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate
+.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed
 
 # Create .env from .env.example with generated secrets (keeps an existing .env).
 # Uses local Node if present, otherwise a throwaway Node container.
@@ -53,3 +53,10 @@ ai-shell:
 # Run all pending database migrations
 migrate:
 	docker exec fms_backend npm run migrate
+
+# Rebuild the database and fill it with demo data (docs/seed-data.md).
+# Deletes everything in the dev database first. SIZE=small|budget, SEED=<n>.
+SIZE ?= small
+SEED ?= 20261007
+seed:
+	docker exec -e FMS_SEED_PASSWORD fms_backend npm run seed -- --reset --size=$(SIZE) --seed=$(SEED)
