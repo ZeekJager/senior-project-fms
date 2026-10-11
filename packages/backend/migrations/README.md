@@ -25,6 +25,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 017 | `fleet` | `driver_accounts`: the fleet module's copy of drivers' name, email, depot and account status, so the driver list filters and sorts in one query (FMS-16) |
 | 018 | `document` | `documents.expires_on`: a document's own expiry date (registration, licence, insurance), indexed for live documents, for expiry warnings (FMS-17) |
 | 019 | `fleet`, `auth` | `depots.version` (If-Match on depot writes) and upper-case depot codes; `depot:write` moves from fleet_manager to fleet_owner (FMS-20) |
+| 020 | `maintenance` | `maintenance_records.version` (If-Match) and `completed_by` (FMS-22) |
 
 ## Important
 

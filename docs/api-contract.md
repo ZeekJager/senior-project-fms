@@ -392,12 +392,23 @@ Document rules (FMS-17):
 | `POST /maintenance` | Legacy-compatible maintenance create | `maintenance:write` | `vehicle_id,description,labour_hours,cost_cents`; activates maintenance flag |
 | `GET /maintenance-records` | Canonical maintenance list | `maintenance:read` | Paged `MaintenanceRecord[]` |
 | `POST /maintenance-records` | Canonical maintenance create | `maintenance:write` | `MaintenanceRecordCreate` -> `MaintenanceRecord` |
-| `PATCH /maintenance-records/{id}` | Update maintenance | `maintenance:write` | `MaintenanceRecordUpdate` -> `MaintenanceRecord` |
+| `GET /maintenance-records/{id}` | Maintenance detail | `maintenance:read` | `MaintenanceRecord` (also `/maintenance/{id}`) |
+| `PATCH /maintenance-records/{id}` | Update maintenance | `maintenance:write` | `MaintenanceRecordUpdate` -> `MaintenanceRecord`; `PUT` too (also `/maintenance/{id}`) |
 | `POST /maintenance-records/{id}/complete` | Complete work | `maintenance:execute` | Completion metadata; clears maintenance flag when applicable |
 | `GET /inventory` | Legacy-compatible inventory search | `inventory:read` | `depot_id,below_reorder` -> `InventoryPart[]` |
 | `GET /inventory/parts` | Canonical inventory search | `inventory:read` | Paged `InventoryPart[]` |
 | `POST /inventory/{part_id}/adjust` | Compatibility stock adjustment | `inventory:write` | Creates inventory movement; resulting stock cannot be negative |
 | `POST /inventory/movements` | Record stock movement | `inventory:write` | `InventoryMovement` -> `InventoryMovement` |
+
+Maintenance rules (FMS-22):
+
+- **Paths:** `/maintenance` and `/maintenance-records` are the same API (list, create, read, `PUT`/`PATCH`, `POST .../complete`). Reads need `maintenance:read`; writes `maintenance:write` (technician, depot admin, fleet manager, admin; a dispatcher gets `403`); `POST .../complete` needs `maintenance:execute` (technician, fleet manager, admin). Records are limited to vehicles in the caller's depot scope (`404` otherwise).
+- **Create:** `vehicle_id`, `description`, `labour_hours` (at most two decimals) and `total_cost_cents` (whole cents) are required; optional `parts` (`[{part_id, quantity, unit_cost_cents}]`, each part once), `maintenance_type` (default `corrective`), `status` (`scheduled`, `open` (default) or `in_progress`), `priority`, `scheduled_at`, `odometer_km`, `workshop`, `notes`. A fractional number in **any** money-like field (`total_cost_cents`, `unit_cost_cents`, or a stray `totalCost`/`price`/`amount`) is `400 VALIDATION_FLOAT_IN_MONEY_PATH`. A vehicle outside the caller's depots is `400 references_missing_record`; a retired one `409`.
+- **Maintenance flag:** creating a record sets the vehicle's `maintenance_flag` in the same transaction. Completing (`completed_at`, `status: completed` or `POST .../complete`) or cancelling it clears the flag in the same transaction, unless other work on the vehicle is still `scheduled`, `open` or `in_progress`. Writes lock the vehicle row, so two completions cannot race the flag. Completed and cancelled records cannot change (`409`).
+- **Parts:** each part used is taken off `inventory_parts.stock_quantity`, listed on the record at the cost charged, and written to the inventory ledger (`consumption`, referencing the record). A part must be stocked (`400 references_missing_record`) and shared or in the vehicle's depot (`part_in_other_depot`). Stock never goes below zero (FMS-23): a repair that uses more than the stock record holds is still saved in full, stock stops at 0, and `meta.warnings` includes `{ warning: "LOW_STOCK", part_id, part_number, stock_quantity, shortfall }`. A total below the parts' cost adds `{ warning: "COST_BELOW_PARTS", ... }`.
+- **Completion:** `completed_at` is not in the future (5 minutes' clock skew allowed) nor before `started_at`; `completed_by` is the caller. `status: in_progress` sets `started_at`.
+- **`MaintenanceRecord`:** `id`, `vehicle_id`, `registration_number`, `maintenance_type`, `description`, `status`, `priority`, `scheduled_at`, `started_at`, `completed_at`, `odometer_km`, `labour_hours`, `total_cost_cents`, `parts_cost_cents`, `workshop`, `notes`, `completed_by`, `parts[]`, `version` (ETag; `If-Match` on `PUT`/`PATCH`), `created_at`, `updated_at`. Lists are newest first (`sort_order=asc` for oldest), filterable by `vehicle_id`, `status`, `open`, `maintenance_type`.
+- **Events:** `MaintenanceRecordOpened`, `MaintenanceRecordUpdated` (with `changed_fields`) and `MaintenanceRecordCompleted`, each with `maintenance_record_id`, `vehicle_id` and `maintenance_flag_cleared`.
 
 ### 10.2 Predictive maintenance
 
