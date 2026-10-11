@@ -4,6 +4,7 @@ import {
   ConfirmDialog,
   DataTable,
   EmptyState,
+  ErrorBoundary,
   FuelDisplay,
   FuelInput,
   MoneyDisplay,
@@ -22,6 +23,13 @@ export default function UiExamples() {
   const [litres, setLitres] = useState<number | null>(23500)
   const [filter, setFilter] = useState('')
   const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [page, setPage] = useState(1)
+  const [crash, setCrash] = useState(false)
+  const pageRows = Array.from({ length: 5 }, (_, i) => {
+    const n = (page - 1) * 5 + i + 1
+    return { id: String(n), plate: `AA 3-${String(10000 + n)}`, status: n % 4 === 0 ? 'Maintenance' : 'Active' }
+  })
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-10 p-6 sm:p-10">
@@ -170,14 +178,49 @@ export default function UiExamples() {
           error={new ApiError(503, 'SERVICE_UNAVAILABLE', 'down', [], 'req-example')}
           onRetry={() => {}}
         />
+        <DataTable
+          caption="Paging example"
+          columns={[
+            { key: 'plate', header: 'Vehicle', cell: (r: { plate: string }) => <span className="font-semibold">{r.plate}</span> },
+            { key: 'status', header: 'Status', cell: (r: { status: string }) => <Badge tone={r.status === 'Active' ? 'success' : 'warning'}>{r.status}</Badge> },
+          ]}
+          data={pageRows}
+          rowKey={(r) => r.id}
+          isLoading={false}
+          pagination={{ page, pageSize: 5, totalItems: 23, onPageChange: setPage }}
+        />
         <Card>
           <EmptyState icon={<Truck />} heading="No vehicles registered for this depot" description="Add the first vehicle to start tracking it." />
         </Card>
-        <div>
+        <Card>
+          <ErrorBoundary onReset={() => setCrash(false)}>
+            {crash ? <Crash /> : (
+              <div className="flex items-center justify-between gap-4 p-5">
+                <p className="text-sm text-ink-muted">A render error inside an ErrorBoundary shows the error state instead of a blank page.</p>
+                <Button variant="secondary" onClick={() => setCrash(true)}>
+                  Throw a render error
+                </Button>
+              </div>
+            )}
+          </ErrorBoundary>
+        </Card>
+        <div className="flex flex-wrap gap-2">
           <Button variant="danger" onClick={() => setConfirming(true)}>
             Open confirm dialog
           </Button>
+          <Button variant="secondary" onClick={() => setDeleting(true)}>
+            Type-to-confirm: DELETE
+          </Button>
         </div>
+        <ConfirmDialog
+          open={deleting}
+          onClose={() => setDeleting(false)}
+          title="Delete 23 archived records?"
+          message="This cannot be undone."
+          action="Delete records"
+          requireTyping="DELETE"
+          onConfirm={() => setDeleting(false)}
+        />
         <ConfirmDialog
           open={confirming}
           onClose={() => setConfirming(false)}
@@ -190,4 +233,9 @@ export default function UiExamples() {
       </section>
     </main>
   )
+}
+
+/** Throws while rendering, for the ErrorBoundary example: an API error, so the request id shows. */
+function Crash(): never {
+  throw new ApiError(500, 'INTERNAL_SERVER_ERROR', 'Example failure', [], '7f3c2a10-5b1e-4c8e-9d2a-3e4f5a6b7c8d')
 }

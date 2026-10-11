@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, Copy, RotateCcw } from 'lucide-react'
-import { Component, useState, type ErrorInfo, type ReactNode } from 'react'
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
 import { Button, cn } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
 
@@ -26,14 +26,21 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
   const details = errorDetails(error)
   const [copied, setCopied] = useState(false)
 
+  // "Copied" reverts after 2 s; the timer is cleared if the state unmounts
+  // first (retry succeeded, page left), so it never updates a gone component.
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
   async function copy() {
-    const text = [`Error: ${details.code}`, `Message: ${details.message}`, details.requestId && `Correlation ID: ${details.requestId}`]
+    const text = [`Error: ${details.code}`, `Message: ${details.message}`, details.requestId && `Request ID: ${details.requestId}`]
       .filter(Boolean)
       .join('\n')
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
     } catch {
       // Clipboard blocked (insecure origin, permissions): the details stay visible to copy by hand.
     }
@@ -53,7 +60,8 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
         <dd className="text-ink">{details.code}</dd>
         {details.requestId && (
           <>
-            <dt className="text-ink-subtle">Correlation ID</dt>
+            {/* The API's meta.request_id and X-Request-Id; the audit log's correlation_id. */}
+            <dt className="text-ink-subtle">Request ID</dt>
             <dd className="break-all text-ink">{details.requestId}</dd>
           </>
         )}
@@ -72,6 +80,10 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
           {copied ? 'Copied' : 'Copy error details'}
         </Button>
       </div>
+      {/* The button's new label is not announced; this is. */}
+      <p aria-live="polite" className="sr-only">
+        {copied ? 'Error details copied.' : ''}
+      </p>
     </div>
   )
 }
@@ -80,6 +92,8 @@ interface ErrorBoundaryProps {
   children: ReactNode
   /** Changing this (e.g. the route) clears a caught error. */
   resetKey?: unknown
+  /** Called by "Try again" before the children render again: put right what failed (refetch, clear bad state). */
+  onReset?: () => void
 }
 
 /** Catches render errors below it and shows ErrorState instead of a blank screen. */
@@ -100,7 +114,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, { error: unknow
 
   render() {
     if (this.state.error) {
-      return <ErrorState error={this.state.error} onRetry={() => this.setState({ error: null })} />
+      return (
+        <ErrorState
+          error={this.state.error}
+          onRetry={() => {
+            this.props.onReset?.()
+            this.setState({ error: null })
+          }}
+        />
+      )
     }
     return this.props.children
   }
