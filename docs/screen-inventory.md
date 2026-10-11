@@ -5,6 +5,7 @@ All screens must handle 5 states: Loading (Skeleton), Empty, Error (Boundary), S
 | ID   | Name | Route | Allowed Roles | Description |
 |---|---|---|---|---|
 | S-01 | Login | `/login` | All | Single entry point. Displays generic auth errors. |
+| S-01a | Set Password | `/set-password#token=…` | Public (one-time link) | Choose a first or new password from an invitation or reset link (FMS-78). The token stays in the fragment and is removed from the address bar. |
 | S-04 | Vehicle Dashboard | `/vehicles` | Admin, Fleet Mgr, Dispatcher, Depot Admin | Data table with status badges and inline decommissioning. |
 | S-05 | Driver Dashboard | `/drivers` | Admin, Fleet Mgr, Dispatcher, Depot Admin | Displays driver license status. Red 'EXPIRED' badges. |
 | S-06 | Attendance UI | `/attendance` | Admin, Depot Admin, Fleet Mgr | Grid toggle (present/absent/on_leave) per driver. |
@@ -21,3 +22,4 @@ All screens must handle 5 states: Loading (Skeleton), Empty, Error (Boundary), S
 | S-17 | Notification Inbox | `(Global Panel)` | All | Bell icon drop-down showing real-time alerts. |
 | S-18 | Analytics Dashboard | `/analytics` | Admin, Fleet Owner, Fleet Mgr | KPI bands and charts for fleet health/costs (cached data). |
 | S-19 | Predictive Maintenance UI | `/maintenance/ai-health` | Admin, Fleet Mgr, Tech | Shows AI health score (0-100) and top contributing risk factors. |
+| S-20 | Users and Roles | `/users` | Admin (write); Fleet Mgr, Compliance (read) | Account directory with role and status filters. Invite users (one-time setup link), change roles within your own permissions, deactivate (signs the user out at once), issue reset links, browse role permissions (FMS-78). |

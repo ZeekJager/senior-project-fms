@@ -1816,3 +1816,22 @@ UPDATE maintenance.inventory_parts SET part_number = upper(btrim(part_number))
 CREATE INDEX IF NOT EXISTS idx_inventory_parts_below_reorder
     ON maintenance.inventory_parts(depot_id)
     WHERE is_active AND stock_quantity <= reorder_threshold;
+
+-- ===== 022_user_administration.sql =====
+CREATE TABLE IF NOT EXISTS auth.password_tokens (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    purpose     VARCHAR(10) NOT NULL,
+    token_hash  CHAR(64) NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    created_by  BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_password_token_purpose CHECK (purpose IN ('setup', 'reset')),
+    CONSTRAINT chk_password_token_expiry CHECK (expires_at > created_at)
+);
+
+-- The open tokens of a user: issuing a new one closes the older ones.
+CREATE INDEX IF NOT EXISTS idx_password_tokens_open
+    ON auth.password_tokens(user_id)
+    WHERE used_at IS NULL;

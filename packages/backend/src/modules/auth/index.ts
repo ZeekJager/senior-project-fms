@@ -1,15 +1,20 @@
+import { Router } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
+import { eventBus } from '../../shared/events/event-bus';
 import type { AppModule } from '../../shared/module';
 import { authRouter } from './api/auth.routes';
 import { authenticateWith } from './api/authenticate';
 import { authenticatedWith, authorizeWith } from './api/authorize';
+import { userAdminRouter } from './api/user-admin.routes';
 import { AuthService } from './application/auth.service';
+import { UserAdminService } from './application/user-admin.service';
 import { InMemoryLoginThrottle } from './application/login-throttle';
 import { TokenService } from './application/token.service';
 import type { DepotDirectory } from './domain/depot-directory';
 import { AuthUserRepository } from './infrastructure/auth-user.repository';
 import { SessionRepository } from './infrastructure/session.repository';
+import { UserAdminRepository } from './infrastructure/user-admin.repository';
 
 let depotDirectory: DepotDirectory | null = null;
 
@@ -21,18 +26,24 @@ export function provideDepotDirectory(directory: DepotDirectory): void {
   depotDirectory = directory;
 }
 
+/** Fleet's depot lookup, through the connection provideDepotDirectory makes. */
+function depots(): DepotDirectory {
+  if (!depotDirectory) throw new Error('auth: no DepotDirectory provided; src/modules/index.ts connects the fleet module');
+  return depotDirectory;
+}
+
+const depotLookup: DepotDirectory = {
+  publicIdOf: (depotId) => depots().publicIdOf(depotId),
+  resolveActive: (publicId, db) => depots().resolveActive(publicId, db),
+};
+
 const authService = new AuthService({
   db: pool,
   users: new AuthUserRepository(),
   sessions: new SessionRepository(),
   tokens: new TokenService(config.jwtSecret),
   throttle: new InMemoryLoginThrottle(),
-  depots: {
-    publicIdOf(depotId) {
-      if (!depotDirectory) throw new Error('auth: no DepotDirectory provided; src/modules/index.ts connects the fleet module');
-      return depotDirectory.publicIdOf(depotId);
-    },
-  },
+  depots: depotLookup,
 });
 
 /**
@@ -67,6 +78,20 @@ export { userDirectory, type UserAccount } from './infrastructure/user-directory
  * that keep a copy (fleet.driver_accounts) refresh it.
  */
 export const USER_EVENTS = { accountChanged: 'UserAccountChanged' } as const;
+/** UserCreated, UserRoleChanged, UserDeactivated (FMS-78): payloads carry the user's public id. */
+export { USER_ADMIN_EVENTS } from './domain/user-admin';
 export type { DepotDirectory } from './domain/depot-directory';
 
-export const authModule: AppModule = { name: 'auth', router: authRouter(authService, authenticate) };
+const userAdminService = new UserAdminService({
+  db: pool,
+  users: new UserAdminRepository(),
+  depots: depotLookup,
+  events: eventBus,
+  accountChangedEvent: USER_EVENTS.accountChanged,
+});
+
+const router = Router();
+router.use(authRouter(authService, authenticate));
+router.use(userAdminRouter(userAdminService, authorize));
+
+export const authModule: AppModule = { name: 'auth', router };

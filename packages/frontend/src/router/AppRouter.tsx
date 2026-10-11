@@ -6,6 +6,7 @@ import { RoleGate } from '@/components/RoleGate'
 import { useAuth } from '@/context/AuthContext'
 import { LoginPage } from '@/pages/Login'
 import { NotFoundPage } from '@/pages/placeholders'
+import { SetPasswordPage } from '@/pages/SetPassword'
 import { homePathFor } from './redirect'
 import { portals } from './routes'
 
@@ -23,6 +24,8 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public: the one-time link in the fragment is the credential (FMS-78). */}
+      <Route path="/set-password" element={<SetPasswordPage />} />
       {UiExamples && (
         <Route
           path="/dev/ui"

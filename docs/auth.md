@@ -10,6 +10,7 @@ Card: FMS-05 (SE-41). Code: `packages/backend/src/modules/auth/`. Contract: [api
 | `POST /api/v1/auth/refresh` | refresh cookie | `200` + new cookies, body = current user | `401 AUTH_TOKEN_INVALID` / `AUTH_TOKEN_EXPIRED` / `AUTH_TOKEN_REVOKED`, `403 AUTH_ACCOUNT_DISABLED`; cookies are cleared |
 | `POST /api/v1/auth/logout` | refresh cookie (optional) | `204`, cookies cleared | none |
 | `GET /api/v1/auth/me` | access cookie | `200`, body = current user | `401 AUTH_TOKEN_INVALID` / `AUTH_TOKEN_EXPIRED` / `AUTH_TOKEN_REVOKED`, `403 AUTH_ACCOUNT_DISABLED` |
+| `POST /api/v1/auth/password` | `{token, password}` (a one-time link) | `204`; every session of the user ends | `400 VALIDATION_FAILED` (`token`: `invalid_or_expired`; `password`: `too_short`, `too_long`, `contains_email`, `repeated_character`) |
 
 The "current user" body:
 
@@ -73,6 +74,7 @@ Every login attempt writes an `audit.audit_logs` row with the IP (`ip_address`) 
 | `auth.login_throttled` | null | null | `email` |
 | `auth.logout` | the user | the user | |
 | `auth.refresh_reuse_detected` | null | the user | `session_family_id` |
+| `auth.password_set` | the user | the user | `purpose` (`setup` or `reset`), `sessions_revoked` |
 
 Passwords are never logged or audited. `auditedMutation` redacts `password_hash` and `token_hash` in `old_values`/`new_values`.
 
@@ -128,7 +130,11 @@ db.query(`SELECT ... FROM fleet.vehicles v WHERE v.public_id = $1 AND ${scope.sq
 
 ## Creating a user
 
-There is no user administration API yet (`POST /users` is a later card). Create users from the backend container:
+An admin creates accounts with `POST /api/v1/users` (FMS-78; rules in [api-contract.md](api-contract.md) §5.1). The account has no password. The response carries a one-time setup link (`meta.password_setup.token`, valid 72 hours, shown once). The admin passes it to the user, who sets a password with `POST /api/v1/auth/password`. `POST /api/v1/users/{id}/password-reset` issues a new link (1 hour) when a user forgets their password or the setup link expired. Only the SHA-256 of a link is stored (`auth.password_tokens`); issuing a new one closes the older ones, and setting a password ends every session of the user.
+
+Roles are granted and removed through `PATCH /api/v1/users/{id}`. Nobody can grant a role carrying a permission they lack, only an admin can grant `admin`, nobody changes their own roles, and a status other than `active` revokes the user's sessions at once.
+
+For the first admin of an empty database, or from a script, create users from the backend container:
 
 ```bash
 docker exec -it fms_backend npm run user:create -- --email admin@fms.local --name "Admin" --role admin
@@ -137,4 +143,4 @@ docker exec -it fms_backend npm run user:create -- --email d@fms.local --name "D
 
 The password is generated and printed once, or taken from `FMS_USER_PASSWORD` if set. Passwords are hashed with argon2id (19 MiB, 2 passes, 1 lane; the OWASP minimum).
 
-Drivers added from the Drivers screen (`POST /drivers` with `account`, FMS-19) get an account **without a password**: the stored value is a marker that is not a hash (`UNSET_HASH`), so no password matches it. Login treats it like an unknown email, including running a dummy hash so the response time gives nothing away. Until user administration can set or reset passwords, give such a driver a password with the CLI flow above (or a direct update in development).
+Drivers added from the Drivers screen (`POST /drivers` with `account`, FMS-19) get an account **without a password**: the stored value is a marker that is not a hash (`UNSET_HASH`), so no password matches it. Login treats it like an unknown email, including running a dummy hash so the response time gives nothing away. An admin gives such a driver a password with `POST /users/{id}/password-reset`, which issues a setup link for an account without one.

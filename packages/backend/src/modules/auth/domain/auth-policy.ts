@@ -14,4 +14,5 @@ export type AuthAuditAction =
   | 'auth.login_failed'
   | 'auth.login_throttled'
   | 'auth.logout'
-  | 'auth.refresh_reuse_detected';
+  | 'auth.refresh_reuse_detected'
+  | 'auth.password_set';
