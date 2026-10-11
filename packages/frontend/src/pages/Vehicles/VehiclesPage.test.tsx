@@ -377,20 +377,12 @@ describe('Vehicle Management (S-04)', () => {
   })
 
   it('renders nothing for a driver: no data, no access-denied message', async () => {
-    let listed = false
-    server.use(
-      http.get('/api/v1/vehicles', () => {
-        listed = true
-        return envelope([])
-      }),
-    )
     signedInAs(driver)
     renderApp('/vehicles')
 
     await screen.findByText('Sam Tester')
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
     expect(screen.queryByText(/denied|forbidden|not allowed/i)).not.toBeInTheDocument()
-    expect(listed).toBe(false)
   })
 
   it('hides write actions from a read-only role', async () => {

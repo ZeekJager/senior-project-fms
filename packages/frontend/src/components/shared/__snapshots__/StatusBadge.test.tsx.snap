@@ -122,5 +122,25 @@ exports[`StatusBadge colour vocabulary > renders the colour classes for each sta
     />
     Decommissioned
   </span>
+  <span
+    class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-300 dark:ring-blue-400/25"
+    data-status="open"
+  >
+    <span
+      aria-hidden="true"
+      class="h-1.5 w-1.5 rounded-full bg-current"
+    />
+    Open
+  </span>
+  <span
+    class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset bg-yellow-50 text-yellow-800 ring-yellow-600/25 dark:bg-yellow-400/10 dark:text-yellow-300 dark:ring-yellow-400/25"
+    data-status="in_progress"
+  >
+    <span
+      aria-hidden="true"
+      class="h-1.5 w-1.5 rounded-full bg-current"
+    />
+    In progress
+  </span>
 </div>
 `;

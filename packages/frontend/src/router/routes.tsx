@@ -1,8 +1,9 @@
-import { CalendarCheck, Fuel, Home, LayoutDashboard, Truck, Users, type LucideIcon } from 'lucide-react'
+import { CalendarCheck, Fuel, Home, LayoutDashboard, Truck, Users, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/context/AuthContext'
 import { AttendancePage } from '@/pages/Attendance'
 import { DriversPage } from '@/pages/Drivers'
+import { MaintenancePage } from '@/pages/Maintenance'
 import { DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { VehiclesPage } from '@/pages/Vehicles'
 
@@ -52,6 +53,13 @@ export const portals: Portal[] = [
         element: <AttendancePage />,
         permission: { all: ['attendance:read', 'driver:read'] },
         nav: { label: 'Attendance', icon: CalendarCheck },
+      },
+      {
+        // S-08. Technicians log repairs; depot admins and fleet managers also read and write (FMS-24).
+        path: '/maintenance',
+        element: <MaintenancePage />,
+        permission: 'maintenance:read',
+        nav: { label: 'Repair log', icon: Wrench },
       },
       {
         path: '/fuel-reconciliation',

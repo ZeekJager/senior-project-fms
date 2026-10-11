@@ -8,5 +8,5 @@ const MESSAGES = {
 
 /** A money field. `value`/`onChange` are integer Ethiopian cents: typing "149.99" emits 14999. */
 export function MoneyInput(props: DecimalInputProps) {
-  return <DecimalInput {...props} decimals={2} unitLabel="ETB, up to 2 decimal places" messages={MESSAGES} />
+  return <DecimalInput {...props} decimals={2} unitLabel="ETB, up to 2 decimal places" unitShort="ETB" messages={MESSAGES} />
 }

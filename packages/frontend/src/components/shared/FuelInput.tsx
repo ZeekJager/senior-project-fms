@@ -8,5 +8,5 @@ const MESSAGES = {
 
 /** A fuel volume field in litres. `value`/`onChange` are integer millilitres: typing "23.5" emits 23500. */
 export function FuelInput(props: DecimalInputProps) {
-  return <DecimalInput {...props} decimals={3} unitLabel="Litres, up to 3 decimal places" messages={MESSAGES} />
+  return <DecimalInput {...props} decimals={3} unitLabel="Litres, up to 3 decimal places" unitShort="L" messages={MESSAGES} />
 }

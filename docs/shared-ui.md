@@ -8,7 +8,7 @@ Money is stored as integer Ethiopian cents and fuel as integer millilitres (api-
 |---|---|---|
 | `MoneyDisplay` | `amountMinorUnits` (cents), `unit="ETB"` | `ETB 1,234.50`, right-aligned, tabular digits |
 | `FuelDisplay` | `amountMinorUnits` (ml), `unit="L"`, `decimals` 2 or 3 | 23500 ml is `23.50 L`. Litres is the assumed default until the unit setting exists (SE-75) |
-| `MoneyInput` | `label`, `value` (cents or null), `onChange(cents or null)`, `required`, `error`, `disabled`, `name` | Typing `149.99` emits `14999`; at most 2 decimals |
+| `MoneyInput` | `label`, `value` (cents or null), `onChange(cents or null)`, `required`, `error`, `disabled`, `name`, `hint`, `hideLabel` | Typing `149.99` emits `14999`; at most 2 decimals. Floating-label look with `ETB` inside the field (FMS-24) |
 | `FuelInput` | same, millilitres | Typing `23.5` emits `23500`; at most 3 decimals |
 | `StatusBadge` | `status` | One colour per status; see below |
 
@@ -35,6 +35,8 @@ Money is stored as integer Ethiopian cents and fuel as integer millilitres (api-
 | `active` (vehicle) | green |
 | `inactive`, `retired` (vehicle) | grey |
 | `maintenance` (vehicle) | orange |
+| `open` (maintenance) | blue |
+| `in_progress` (maintenance) | yellow |
 | `decommissioned` (vehicle) | red |
 
 The badge always shows its label as text, so colour is never the only signal.
