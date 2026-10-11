@@ -176,7 +176,7 @@ describe('Attendance roll call (S-06)', () => {
   it('renders nothing for a driver', async () => {
     signedInAs(driverRole)
     renderApp('/attendance')
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
   })
 

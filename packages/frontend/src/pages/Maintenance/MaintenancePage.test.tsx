@@ -203,7 +203,7 @@ describe('Technician repair log (S-08)', () => {
   it('renders nothing for a driver', async () => {
     signedInAs(driver)
     renderApp('/maintenance')
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
   })
 })

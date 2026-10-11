@@ -17,7 +17,7 @@ const UiExamples = import.meta.env.DEV ? lazy(() => import('@/pages/dev/UiExampl
 
 function Home() {
   const { session } = useAuth()
-  return <Navigate to={homePathFor(session?.roles ?? [])} replace />
+  return <Navigate to={homePathFor(session ?? { roles: [], permissions: [] })} replace />
 }
 
 export function AppRouter() {

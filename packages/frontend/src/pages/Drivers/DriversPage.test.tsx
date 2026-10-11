@@ -132,7 +132,7 @@ describe('Driver Management (S-05)', () => {
     )
     signedInAs(driverRole)
     renderApp('/drivers')
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
     expect(listed).toBe(false)
   })

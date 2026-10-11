@@ -1,10 +1,4 @@
-const DEFAULT_HOME = '/dashboard'
-const DRIVER_HOME = '/driver'
-
-/** The portal a user lands in when no destination was asked for. */
-export function homePathFor(roles: readonly string[]): string {
-  return roles.includes('driver') ? DRIVER_HOME : DEFAULT_HOME
-}
+export { homePathFor } from './navigation'
 
 /** `/login?redirect=<attempted url>`. Slashes stay readable (`/login?redirect=/dashboard`); `?`, `&` and `#` are escaped. */
 export function loginPathFor(attempted: string): string {

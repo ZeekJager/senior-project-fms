@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useNavigate } from 'react-router-dom'
 import { api as defaultApi, type ApiClient } from '@/lib/api/client'
 import { useIdleTimeout } from '@/hooks/useIdleTimeout'
+import { permits, type PermissionRule } from '@/lib/permissions'
 
 /** Sign out after this long without input (SRS session policy). */
 export const IDLE_TIMEOUT_MS = 30 * 60 * 1000
@@ -36,8 +37,7 @@ export interface AuthContextValue {
   api: ApiClient
 }
 
-/** A permission code, a list of which any one is enough, or `{ all }` of which every one is needed. */
-export type PermissionRule = string | readonly string[] | { all: readonly string[] }
+export type { PermissionRule } from '@/lib/permissions'
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
@@ -120,17 +120,7 @@ export function AuthProvider({ children, api = defaultApi, idleTimeoutMs = IDLE_
 
   useIdleTimeout(status === 'authenticated', idleTimeoutMs, () => void logout({ reason: 'idle' }))
 
-  const hasPermission = useCallback(
-    (permission: PermissionRule) => {
-      if (!session) return false
-      if (typeof permission === 'object' && 'all' in permission) {
-        return permission.all.every((code) => session.permissions.includes(code))
-      }
-      const wanted = typeof permission === 'string' ? [permission] : permission
-      return wanted.some((code) => session.permissions.includes(code))
-    },
-    [session],
-  )
+  const hasPermission = useCallback((permission: PermissionRule) => (session ? permits(session.permissions, permission) : false), [session])
 
   const value = useMemo(
     () => ({ status, session, login, logout, hasPermission, api }),

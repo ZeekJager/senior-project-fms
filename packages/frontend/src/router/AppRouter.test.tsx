@@ -105,7 +105,7 @@ describe('RoleGate on routes', () => {
     signedInAs(driver)
     renderApp('/fuel-reconciliation')
 
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(location()).toBe('/fuel-reconciliation')
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()

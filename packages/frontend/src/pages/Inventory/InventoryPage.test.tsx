@@ -158,7 +158,7 @@ describe('Spare parts console (S-09)', () => {
   it('renders nothing for a driver', async () => {
     signedInAs(driver)
     renderApp('/inventory')
-    await screen.findByText('Sam Tester')
+    await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
   })
 
