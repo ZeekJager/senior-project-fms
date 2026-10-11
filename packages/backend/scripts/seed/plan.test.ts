@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { CATEGORY_FOR } from './catalog';
 import { assertNotProduction } from './guard';
+import { sniffContentType } from '../../src/modules/fleet/domain/document';
+import { placeholderPdf } from './pdf';
 import { anchorMidnight, buildPlan } from './plan';
 
 const ANCHOR = '2026-10-01';
@@ -70,6 +72,34 @@ describe('buildPlan', () => {
   test('nothing the API would refuse: hire dates and attendance not after the anchor', () => {
     expect(budget.drivers.every((d) => d.hire_date <= ANCHOR)).toBe(true);
     expect(budget.attendance.every((a) => a.date <= ANCHOR)).toBe(true);
+  });
+
+  test('every vehicle has insurance and registration; some expire within 30 days and some within 7', () => {
+    const daysLeft = (expires: string) => Math.round((anchorMidnight(expires) - anchorMidnight(ANCHOR)) / 86_400_000);
+    for (const [name, plan] of [
+      ['budget', budget],
+      ['small', buildPlan('small', 20261007, ANCHOR)],
+    ] as const) {
+      expect(plan.documents, name).toHaveLength(plan.vehicles.length * 2);
+      plan.vehicles.forEach((_, i) => {
+        expect(plan.documents.filter((d) => d.vehicle === i).map((d) => d.document_type).sort()).toEqual(['insurance', 'registration']);
+      });
+      const days = plan.documents.map((d) => daysLeft(d.expires_on));
+      expect(days.every((n) => n >= 0 && n <= 365), `${name}: none expired, none beyond a year`).toBe(true);
+      expect(days.some((n) => n <= 7), `${name}: a red one`).toBe(true);
+      expect(days.some((n) => n > 7 && n <= 30), `${name}: an amber one`).toBe(true);
+      expect(days.filter((n) => n > 30).length / days.length, `${name}: most valid for months`).toBeGreaterThan(0.75);
+    }
+  });
+});
+
+describe('placeholderPdf', () => {
+  test('is a PDF the upload accepts, and the same text gives the same bytes', () => {
+    const pdf = placeholderPdf('Insurance certificate AA 3-10001 (demo), valid until 2026-10-05');
+    expect(sniffContentType(pdf)).toBe('application/pdf');
+    expect(pdf.toString('latin1')).toContain('\\(demo\\)');
+    expect(pdf.toString('latin1').trimEnd().endsWith('%%EOF')).toBe(true);
+    expect(placeholderPdf('Insurance certificate AA 3-10001 (demo), valid until 2026-10-05').equals(pdf)).toBe(true);
   });
 });
 

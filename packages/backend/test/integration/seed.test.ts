@@ -13,16 +13,18 @@ describe('seed generator', () => {
   test('the small profile writes every kind of data through the API, audited', { timeout: 120_000 }, async () => {
     const summary = await runSeed(OPTIONS);
     fingerprints.push(summary.fingerprint);
-    expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 16, maintenance_records: 20 });
+    expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 16, maintenance_records: 20, vehicle_documents: 48 });
     expect(summary.counts.electric_vehicles).toBeGreaterThan(0);
     expect(summary.counts.fuel_logs).toBeGreaterThan(0);
+    expect(summary.counts.documents_expiring_amber).toBeGreaterThan(0);
+    expect(summary.counts.documents_expiring_red).toBeGreaterThan(0);
     expect(summary.logins.map((l) => l.role)).toEqual(expect.arrayContaining(['admin', 'fleet_manager', 'dispatcher', 'driver']));
 
     // Every row has its audit entry: written by the services, or by auditedMutation for trips.
     const audited = await pool.query<{ entity_type: string; n: number }>(
-      "SELECT entity_type, count(*)::int AS n FROM audit.audit_logs WHERE action = 'INSERT' AND entity_type IN ('fleet.vehicles', 'fleet.drivers', 'trip.trips') GROUP BY 1",
+      "SELECT entity_type, count(*)::int AS n FROM audit.audit_logs WHERE action = 'INSERT' AND entity_type IN ('fleet.vehicles', 'fleet.drivers', 'trip.trips', 'document.documents') GROUP BY 1",
     );
-    expect(Object.fromEntries(audited.rows.map((r) => [r.entity_type, r.n]))).toEqual({ 'fleet.vehicles': 24, 'fleet.drivers': 30, 'trip.trips': 80 });
+    expect(Object.fromEntries(audited.rows.map((r) => [r.entity_type, r.n]))).toEqual({ 'fleet.vehicles': 24, 'fleet.drivers': 30, 'trip.trips': 80, 'document.documents': 48 });
 
     // The accounts it lists can sign in.
     expect(await canSignIn(SEED_ADMIN_EMAIL)).toBe(true);

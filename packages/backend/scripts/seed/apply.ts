@@ -7,6 +7,7 @@ import { withTransaction } from '../../src/shared/infrastructure/transaction';
 import { SeedApi } from './api-client';
 import { fingerprint } from './fingerprint';
 import { assertNotProduction } from './guard';
+import { placeholderPdf } from './pdf';
 import { buildPlan, type ProfileName, type SeedPlan } from './plan';
 
 export interface SeedOptions {
@@ -69,7 +70,7 @@ export async function runSeed(options: SeedOptions): Promise<SeedSummary> {
     await api.close();
   }
 
-  const counts = await countRows();
+  const counts = await countRows(options.anchor);
   const logins = [{ role: 'admin', email: SEED_ADMIN_EMAIL }, ...plan.staff.filter((s, i) => plan.staff.findIndex((x) => x.role === s.role) === i).map((s) => ({ role: s.role, email: s.email })), { role: 'driver', email: plan.drivers[0].email }];
   return { counts, fingerprint: await fingerprint(pool), logins };
 }
@@ -194,6 +195,18 @@ async function writeThroughApi(api: SeedApi, plan: SeedPlan, password: string, l
   }
   log(`attendance records: ${plan.attendance.length}`);
 
+  // Each upload is checked for expiry at once (DocumentUploaded), so with the
+  // default anchor (today) the amber and red papers raise their warnings now.
+  for (const doc of plan.documents) {
+    const vehicle = plan.vehicles[doc.vehicle];
+    await api.upload(
+      '/documents',
+      { owner_type: 'vehicle', owner_id: vehicles[doc.vehicle], document_type: doc.document_type, expires_on: doc.expires_on },
+      { bytes: placeholderPdf(`${doc.document_type === 'insurance' ? 'Insurance certificate' : 'Vehicle registration'} ${vehicle.registration_number}, valid until ${doc.expires_on}`), filename: doc.original_filename },
+    );
+  }
+  log(`vehicle documents: ${plan.documents.length}`);
+
   return { depots, vehicles, drivers };
 }
 
@@ -272,7 +285,8 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
   });
 }
 
-async function countRows(): Promise<Record<string, number>> {
+/** What the seed wrote; the expiring documents are counted from `anchor` (YYYY-MM-DD), the dataset's today. */
+async function countRows(anchor: string): Promise<Record<string, number>> {
   const res = await pool.query<Record<string, number>>(`
     SELECT (SELECT count(*) FROM fleet.depots)::int AS depots,
            (SELECT count(*) FROM auth.users)::int AS users,
@@ -286,6 +300,11 @@ async function countRows(): Promise<Record<string, number>> {
            (SELECT count(*) FROM fuel.fuel_logs)::int AS fuel_logs,
            (SELECT count(*) FROM maintenance.maintenance_records)::int AS maintenance_records,
            (SELECT count(*) FROM maintenance.inventory_parts)::int AS spare_parts,
-           (SELECT count(*) FROM fleet.driver_attendance)::int AS attendance`);
+           (SELECT count(*) FROM fleet.driver_attendance)::int AS attendance,
+           (SELECT count(*) FROM document.documents WHERE owner_type = 'vehicle' AND deleted_at IS NULL)::int AS vehicle_documents,
+           (SELECT count(*) FROM document.documents WHERE expires_on - $1::date BETWEEN 8 AND 30)::int AS documents_expiring_amber,
+           (SELECT count(*) FROM document.documents WHERE expires_on - $1::date BETWEEN 0 AND 7)::int AS documents_expiring_red`,
+    [anchor],
+  );
   return res.rows[0];
 }

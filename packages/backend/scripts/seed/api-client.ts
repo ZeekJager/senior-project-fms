@@ -67,6 +67,21 @@ export class SeedApi {
     return { data: json?.data as T, meta: json?.meta ?? {} };
   }
 
+  /** A multipart/form-data POST: `fields` as text parts plus the file in the "file" part (POST /documents). */
+  async upload<T = Record<string, unknown>>(path: string, fields: Record<string, string>, file: { bytes: Buffer; filename: string }, retried = false): Promise<{ data: T; meta: Record<string, unknown> }> {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(fields)) form.append(name, value);
+    form.append('file', new Blob([new Uint8Array(file.bytes)]), file.filename);
+    const res = await fetch(this.base + path, { method: 'POST', headers: { cookie: this.cookie }, body: form });
+    if (res.status === 401 && !retried && this.credentials) {
+      await this.signIn(this.credentials.email, this.credentials.password);
+      return this.upload<T>(path, fields, file, true);
+    }
+    const json = (await res.json().catch(() => null)) as { data: T; meta: Record<string, unknown> } | null;
+    if (!res.ok) throw new SeedApiError(res.status, json, `POST ${path}`);
+    return { data: json?.data as T, meta: json?.meta ?? {} };
+  }
+
   post<T = Record<string, unknown>>(path: string, body: unknown) {
     return this.call<T>('POST', path, body);
   }

@@ -116,6 +116,14 @@ export interface PlannedMaintenance {
   workshop: string;
 }
 
+/** A vehicle paper uploaded through POST /documents; its expiry drives the expiry warnings (FMS-26). */
+export interface PlannedDocument {
+  vehicle: number;
+  document_type: 'insurance' | 'registration';
+  expires_on: string;
+  original_filename: string;
+}
+
 export interface PlannedAttendance {
   driver: number;
   date: string;
@@ -173,6 +181,7 @@ export interface SeedPlan {
   parts: PlannedPart[];
   maintenance: PlannedMaintenance[];
   attendance: PlannedAttendance[];
+  documents: PlannedDocument[];
   routes: PlannedRoute[];
   trips: PlannedTrip[];
   fuelLogs: PlannedFuelLog[];
@@ -478,5 +487,29 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     });
   }
 
-  return { profile: profileName, seed, anchor, depots, staff, vehicles, drivers, parts, maintenance, attendance, routes, trips, fuelLogs };
+  // Insurance and registration for every vehicle, drawn last so nothing above
+  // changes. Most run for months; some expire within 30 days (amber) or 7
+  // (red) of the anchor, so the expiry warnings have something to show. At
+  // least one of each, even in the small profile.
+  const documents: PlannedDocument[] = [];
+  const expiringDay = { red: () => rng.int(0, 7), amber: () => rng.int(8, 30), valid: () => rng.int(45, 365) };
+  vehicles.forEach((v, vehicle) => {
+    for (const document_type of ['insurance', 'registration'] as const) {
+      const kind = rng.weighted({ red: 4, amber: 8, valid: 88 });
+      documents.push({
+        vehicle,
+        document_type,
+        expires_on: dateOf(at(expiringDay[kind](), 12)),
+        original_filename: `${document_type}-${v.registration_number.replace(/\s+/g, '-')}.pdf`,
+      });
+    }
+  });
+  const daysLeft = (d: PlannedDocument) => Math.round((anchorMidnight(d.expires_on) - midnight) / DAY);
+  for (const level of ['red', 'amber'] as const) {
+    const inLevel = (d: PlannedDocument) => (level === 'red' ? daysLeft(d) <= 7 : daysLeft(d) > 7 && daysLeft(d) <= 30);
+    const valid = documents.find((d) => daysLeft(d) > 30);
+    if (!documents.some(inLevel) && valid) valid.expires_on = dateOf(at(expiringDay[level](), 12));
+  }
+
+  return { profile: profileName, seed, anchor, depots, staff, vehicles, drivers, parts, maintenance, attendance, documents, routes, trips, fuelLogs };
 }

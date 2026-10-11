@@ -13,8 +13,11 @@
 // First: refuses in production and sets the log level, before anything below loads the config.
 import './seed/env';
 import { randomBytes } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { Client } from 'pg';
+import { config } from '../src/config';
 import { loadMigrationConfig } from '../src/config/schema';
 import { pool } from '../src/db';
 import { cache, closeRedis } from '../src/shared/cache';
@@ -64,6 +67,13 @@ async function reset(): Promise<void> {
     console.log(`✔ Rebuilt ${db.database}: reverted ${reverted.length} and applied ${applied.length} migrations.`);
   } finally {
     await client.end();
+  }
+  // The rebuilt database has no documents, so their files are orphans: local
+  // storage drops them (every key starts with documents/); a bucket is left alone.
+  if (config.storage.driver === 'local') {
+    await rm(path.join(config.storage.localDir, 'documents'), { recursive: true, force: true });
+  } else {
+    console.log('  Document files in the S3 bucket were left in place; the rebuilt database no longer references them.');
   }
 }
 
