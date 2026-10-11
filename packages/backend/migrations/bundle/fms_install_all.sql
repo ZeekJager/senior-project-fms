@@ -1907,3 +1907,15 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_not_success
     ON audit.audit_logs (created_at DESC)
     WHERE result IN ('denied', 'failed');
+
+-- ===== 025_audit_reader.sql =====
+CREATE INDEX IF NOT EXISTS idx_audit_logs_recent
+    ON audit.audit_logs (created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_public
+    ON audit.audit_logs ((COALESCE(new_values->>'public_id', old_values->>'public_id')), created_at DESC, id DESC);
+
+DELETE FROM auth.role_permissions rp
+ USING auth.roles r, auth.permissions p
+ WHERE rp.role_id = r.id AND rp.permission_id = p.id
+   AND r.name = 'fleet_manager' AND p.code = 'audit:read';
