@@ -1,4 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
+import type { AttendanceStatus } from './attendance';
 import type { VehicleTrip, VehicleType } from './vehicle';
 
 /**
@@ -96,6 +97,8 @@ export interface DriverView {
   status: 'active' | 'retired';
   /** The assigned or en-route trip, if any (en route first). */
   current_trip: VehicleTrip | null;
+  /** Today's attendance (Addis Ababa), or null if not recorded: absent, on leave or sick is a dispatch warning (FMS-21, FMS-33). */
+  attendance_today: AttendanceStatus | null;
   /** Bumped on every change, a depot move included; also the ETag. Send it back in `If-Match` to refuse a stale PATCH. */
   version: number;
   created_at: Date;

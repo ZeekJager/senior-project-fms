@@ -104,6 +104,7 @@ function harness(options: HarnessOptions = {}) {
       publicIdByCode: async () => DEPOT_A,
     },
     trips: { driverHasActiveTrip: async () => options.activeTrip ?? false, activeTripsForDrivers: async () => new Map() },
+    attendance: { statusOn: async () => new Map() },
     events,
   };
   return { service: new DriverService(deps), calls, published };

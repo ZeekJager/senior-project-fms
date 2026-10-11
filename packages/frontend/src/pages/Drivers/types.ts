@@ -41,6 +41,8 @@ export interface Driver {
   emergency_phone: string | null
   status: 'active' | 'retired'
   current_trip: DriverTrip | null
+  /** Today's attendance, or null if not recorded yet (FMS-21). */
+  attendance_today: 'present' | 'absent' | 'on_leave' | 'late' | 'sick' | 'other' | null
   version: number
   created_at: string
   updated_at: string

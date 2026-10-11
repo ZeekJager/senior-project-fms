@@ -7,10 +7,12 @@ import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory } from '../auth';
 import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
 import { vehicleRouter } from './api/vehicle.routes';
+import { AttendanceService } from './application/attendance.service';
 import { DepotService } from './application/depot.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
@@ -18,6 +20,7 @@ import { DriverService } from './application/driver.service';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
 import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
+import { AttendanceRepository } from './infrastructure/attendance.repository';
 import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
@@ -33,6 +36,7 @@ const vehicleService = new VehicleService({
 });
 
 const driverRepository = new DriverRepository(pool);
+const attendanceRepository = new AttendanceRepository(pool);
 
 const driverService = new DriverService({
   drivers: driverRepository,
@@ -41,6 +45,7 @@ const driverService = new DriverService({
   accounts: driverAccounts,
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds, publicIdByCode: depotPublicIdByCode },
   trips: { driverHasActiveTrip, activeTripsForDrivers },
+  attendance: { statusOn: (db, ids, date) => attendanceRepository.statusOn(db, ids, date) },
   events: eventBus,
 });
 
@@ -66,10 +71,19 @@ eventBus.subscribe(USER_EVENTS.accountChanged, async (event) => {
   if (typeof event.payload.user_id === 'string') await driverService.onAccountChanged(event.payload.user_id);
 });
 
+const attendanceService = new AttendanceService({
+  attendance: attendanceRepository,
+  drivers: { findByPublicId: (db, id) => driverRepository.findByPublicId(db, id) },
+  users: userDirectory,
+  depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
+  events: eventBus,
+});
+
 const depotService = new DepotService({ depots: new DepotRepository(pool), users: userDirectory, events: eventBus });
 
 const router = Router();
 router.use(depotRouter(depotService));
+router.use(attendanceRouter(attendanceService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));
@@ -125,6 +139,7 @@ export async function isDriverEligible(driverId: string, at: Date, db: Queryable
 export type { DriverEligibility, EligibilityReason } from './domain/driver';
 
 /** Event types, for modules that subscribe to them. */
+export { ATTENDANCE_EVENTS } from './domain/attendance';
 export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
 export { DOCUMENT_EVENTS } from './domain/document';

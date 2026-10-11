@@ -24,6 +24,7 @@ import {
   type LicenseCategory,
   type LicenseStatus,
 } from '../domain/driver';
+import { operatingToday, type AttendanceStatus } from '../domain/attendance';
 import type { VehicleTrip, VehicleType } from '../domain/vehicle';
 import type { DriverListFilter, DriverRepository, DriverRow, DriverSortKey, DriverWrite } from '../infrastructure/driver.repository';
 import type { Caller } from './caller';
@@ -133,6 +134,8 @@ export interface DriverServiceDeps {
     driverHasActiveTrip(db: Queryable, driverId: string): Promise<boolean>;
     activeTripsForDrivers(db: Queryable, driverIds: readonly string[]): Promise<Map<string, VehicleTrip>>;
   };
+  /** Today's attendance of each driver (internal ids). */
+  attendance: { statusOn(db: Queryable, driverIds: readonly string[], date: string): Promise<Map<string, AttendanceStatus>> };
   events: EventBus;
 }
 
@@ -480,6 +483,7 @@ export class DriverService {
     const depotIds = [...new Set([...accounts.values()].map((a) => a.depotId).filter((d): d is string => d !== null))];
     const depots = await this.deps.depots.publicIds(db, depotIds);
     const trips = await this.deps.trips.activeTripsForDrivers(db, rows.map((r) => r.id));
+    const attendance = await this.deps.attendance.statusOn(db, rows.map((r) => r.id), operatingToday());
 
     return rows.map((r) => {
       const account = accounts.get(r.userId)!;
@@ -498,6 +502,7 @@ export class DriverService {
         emergency_phone: r.emergencyPhone,
         status: r.isActive ? 'active' : 'retired',
         current_trip: trips.get(r.id) ?? null,
+        attendance_today: attendance.get(r.id) ?? null,
         version: r.version,
         created_at: r.createdAt,
         updated_at: r.updatedAt,
