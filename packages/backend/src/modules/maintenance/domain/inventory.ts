@@ -3,6 +3,7 @@ import { AppError } from '../../../shared/errors/app-error';
 /** How the inventory screen (FMS-28) colours a part: out of stock, at or below its reorder point, fine. */
 export type StockStatus = 'out' | 'low' | 'ok';
 
+/** Must match the stock_status filter in InventoryRepository.list. */
 export function stockStatus(stock: number, reorderThreshold: number): StockStatus {
   if (stock <= 0) return 'out';
   if (stock <= reorderThreshold) return 'low';

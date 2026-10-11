@@ -37,6 +37,7 @@ export interface PartListQuery {
   page_size: number;
   depot_id?: string;
   below_reorder?: boolean;
+  stock_status?: 'out' | 'low' | 'ok';
   search?: string;
   status: 'active' | 'inactive' | 'all';
   sort_by: 'part_number' | 'name' | 'stock_quantity';
@@ -79,6 +80,7 @@ export class InventoryService {
         scope,
         depotId,
         belowReorder: query.below_reorder,
+        stockStatus: query.stock_status,
         search: query.search,
         status: query.status,
         sortBy: query.sort_by,

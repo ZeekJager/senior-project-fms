@@ -1,8 +1,9 @@
-import { CalendarCheck, Fuel, Home, LayoutDashboard, Truck, Users, Wrench, type LucideIcon } from 'lucide-react'
+import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Truck, Users, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/context/AuthContext'
 import { AttendancePage } from '@/pages/Attendance'
 import { DriversPage } from '@/pages/Drivers'
+import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -60,6 +61,13 @@ export const portals: Portal[] = [
         element: <MaintenancePage />,
         permission: 'maintenance:read',
         nav: { label: 'Repair log', icon: Wrench },
+      },
+      {
+        // S-09. inventory:read: admin, fleet manager, depot admin, technician (FMS-25).
+        path: '/inventory',
+        element: <InventoryPage />,
+        permission: 'inventory:read',
+        nav: { label: 'Spare parts', icon: Boxes },
       },
       {
         path: '/fuel-reconciliation',
