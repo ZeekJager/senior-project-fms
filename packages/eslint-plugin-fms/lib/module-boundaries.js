@@ -26,9 +26,10 @@ const PLATFORM_SCHEMAS = ['shared'];
 
 /**
  * Owned by platform code in src/shared, not by a module: `api` holds the
- * Idempotency-Key table. Modules never query it directly.
+ * Idempotency-Key table, `jobs` the scheduler's run history and locks.
+ * Modules never query them directly.
  */
-const PLATFORM_OWNED_SCHEMAS = ['api'];
+const PLATFORM_OWNED_SCHEMAS = ['api', 'jobs'];
 
 // Both separators, whatever the platform running the linter: a Windows path
 // linted on Linux (or the reverse) must still be recognised. Splitting on

@@ -69,7 +69,6 @@ function harness(options: HarnessOptions = {}) {
       findByPublicId: async () => current,
       findById: async () => current ?? row(),
       findByUserId: async () => current,
-      expiringIn: async () => [],
       lockForWrite: async () => current,
       list: async () => ({ rows: [], total: 0 }),
       hasActiveAssignment: async () => options.activeAssignment ?? false,
