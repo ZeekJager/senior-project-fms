@@ -33,6 +33,12 @@ const appSchema = z
     S3_BUCKET: z.string().trim().min(1).optional(),
     S3_ACCESS_KEY_ID: z.string().trim().min(1).optional(),
     S3_SECRET_ACCESS_KEY: z.string().trim().min(1).optional(),
+    // Redis (FMS-72): cache, login throttle, job locks. Optional outside
+    // production: without it the API reads PostgreSQL directly.
+    REDIS_HOST: z.string().trim().min(1).optional(),
+    REDIS_PORT: port.default(6379),
+    REDIS_PASSWORD: z.string().min(1).optional(),
+    REDIS_KEY_PREFIX: z.string().trim().regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and hyphens').default('fms'),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -40,7 +46,11 @@ const appSchema = z
         if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: 'is required when STORAGE_DRIVER=s3' });
       }
     }
+    if (env.REDIS_HOST && !env.REDIS_PASSWORD) {
+      ctx.addIssue({ code: 'custom', path: ['REDIS_PASSWORD'], message: 'is required when REDIS_HOST is set' });
+    }
     if (env.NODE_ENV !== 'production') return;
+    if (!env.REDIS_HOST) ctx.addIssue({ code: 'custom', path: ['REDIS_HOST'], message: 'is required in production' });
     for (const key of ['DB_PASSWORD', 'JWT_SECRET'] as const) {
       if (env[key].includes(PLACEHOLDER)) {
         ctx.addIssue({ code: 'custom', path: [key], message: `still contains the '${PLACEHOLDER}' placeholder` });
@@ -69,6 +79,16 @@ export interface AppConfig {
   db: DbConfig;
   jwtSecret: string;
   storage: StorageConfig;
+  /** Null when REDIS_HOST is not set (development and tests may run without Redis). */
+  redis: RedisConfig | null;
+}
+
+export interface RedisConfig {
+  host: string;
+  port: number;
+  password: string;
+  /** First segment of every key: `fms:fleet:vehicle:<id>` (CONVENTIONS.md, Redis). */
+  keyPrefix: string;
 }
 
 export type StorageConfig =
@@ -109,6 +129,7 @@ export function loadAppConfig(env: Env): AppConfig {
     logLevel: e.LOG_LEVEL,
     db: { host: e.DB_HOST, port: e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
     jwtSecret: e.JWT_SECRET,
+    redis: e.REDIS_HOST ? { host: e.REDIS_HOST, port: e.REDIS_PORT, password: e.REDIS_PASSWORD!, keyPrefix: e.REDIS_KEY_PREFIX } : null,
     storage:
       e.STORAGE_DRIVER === 's3'
         ? {

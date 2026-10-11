@@ -112,6 +112,23 @@ export class VehicleRepository extends Repository {
     return view ?? null;
   }
 
+  /**
+   * Any vehicle by public id, with its depot's internal id: what the vehicle
+   * cache stores, so a later read can check the caller's depot scope without
+   * PostgreSQL. The depot id stays on the server (in Redis), never in a response.
+   */
+  async findViewWithDepot(db: Queryable, publicId: string): Promise<{ view: VehicleView; depotId: string } | null> {
+    const res = await db.query<VehicleRow & { internal_depot_id: string }>(
+      `${VIEW_SQL.replace('SELECT v.id AS internal_id,', 'SELECT v.id AS internal_id, v.depot_id AS internal_depot_id,')} WHERE v.public_id = $1`,
+      [publicId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    const { internal_depot_id: depotId, ...rest } = row;
+    const [view] = await this.withTrips(db, [rest]);
+    return { view, depotId };
+  }
+
   /** By internal id, without a scope: for re-reading a row the caller has just written. */
   async findViewById(db: Queryable, id: string): Promise<VehicleView> {
     const res = await db.query<VehicleRow>(`${VIEW_SQL} WHERE v.id = $1`, [id]);

@@ -106,7 +106,8 @@ describe('health', () => {
   test('ready is 200 with the database reachable', async () => {
     const res = await request(createApp()).get('/health/ready');
     expect(res.status).toBe(200);
-    expect(res.body.checks).toEqual({ database: 'ok' });
+    // Redis is optional (FMS-72): ok when configured (CI), disabled when not.
+    expect(res.body.checks).toEqual({ database: 'ok', redis: process.env.REDIS_HOST ? 'ok' : 'disabled' });
   });
 
   test('ready is 503 when the database check fails', async () => {

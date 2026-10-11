@@ -10,6 +10,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { pool } from '../src/db';
+import { closeRedis } from '../src/shared/cache';
 import { hashPassword } from '../src/modules/auth';
 import { auditedMutation } from '../src/shared/infrastructure/audited-mutation';
 import { withTransaction } from '../src/shared/infrastructure/transaction';
@@ -66,4 +67,4 @@ main()
     console.error(`[❌ FAILED] ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   })
-  .finally(() => pool.end());
+  .finally(() => Promise.all([pool.end(), closeRedis()]));

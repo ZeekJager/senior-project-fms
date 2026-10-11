@@ -153,6 +153,23 @@ Modules react to each other through events. Status: until FMS-73 (Sprint 3) brin
 - Endpoints marked `Idempotency-Key` in the contract must honour it: add `idempotent()` (`src/shared/http/idempotency.ts`) after `authorize(...)`. It stores the first successful response and replays it to retries (api-contract §19).
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 
+## Redis
+
+Redis (FMS-72) holds the cache, the shared login throttle and job leases. It is **never the system of record**. Every use has a PostgreSQL or in-process fallback: if Redis is down, the API serves from PostgreSQL, throttles logins per process, and locks jobs in `jobs.job_runs`. `/health/ready` then reports `redis: "degraded"` and stays `200`.
+
+- **Keys:** `<prefix>:<namespace>:<module>:<entity>:<id>`, lowercase, `:`-separated. The prefix is `REDIS_KEY_PREFIX` (default `fms`; tests use `fms-test`).
+  - `cache`: `fms:cache:fleet:vehicle:<public_id>` (`cache.key('fleet', 'vehicle', id)`).
+  - `throttle`: `fms:throttle:login:<sha256>` (`redisKey('throttle', ...)`).
+  - `lock`: `fms:lock:job:<job>:<day>` (`redisKey('lock', ...)`).
+  - Public ids in keys, never internal ids. Never an email, name or other personal data: hash it, as the throttle does.
+- **Every key has a TTL.** Redis evicts by least-recent use among keys with a TTL (`volatile-lru`) and saves nothing to disk.
+- **Caching a read:** `cache.getOrSet(key, ttlSeconds, loader, revive?)` from `src/shared/cache`.
+  - Pass `revive` to restore what JSON loses (Dates).
+  - Cache what is the same for every caller, and check the caller's scope against the cached value. The vehicle cache stores the depot with the view, so a depot user's read needs no PostgreSQL.
+  - Keep the TTL short (seconds to a minute).
+- **Invalidating:** after the write has committed, `cache.delete(key)` (or `cache.invalidate('fleet:vehicle:*')`). Deleting inside the transaction lets a concurrent read re-cache the old row before the commit. A change made inside another module's transaction invalidates on that module's event, which is published after commit: fleet drops a vehicle on the maintenance events. After an outage every instance drops the whole cache namespace, because invalidations sent while Redis was down were lost.
+- **Scripts** that import the app close the connection at the end (`closeRedis()`), or the process never exits.
+
 ## SQL
 
 No ORM. Raw, **parameterised** SQL only: values go in `$1, $2, ...` placeholders, never concatenated or interpolated into the query string.

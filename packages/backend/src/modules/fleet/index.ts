@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { PoolClient } from 'pg';
 import { config } from '../../config';
 import { pool } from '../../db';
+import { cache } from '../../shared/cache';
 import { eventBus } from '../../shared/events/event-bus';
 import { createDocumentStorage } from '../../shared/storage/document-storage';
 import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
@@ -38,7 +39,18 @@ const vehicleService = new VehicleService({
   vehicles: vehicleRepository,
   trips: { vehicleHasActiveTrip },
   events: eventBus,
+  cache,
 });
+
+// The maintenance module sets and clears the maintenance flag inside its
+// own transaction; its events come after commit, so the cached vehicle is
+// dropped only once the change is visible. By name: fleet cannot import the
+// maintenance module, which imports fleet.
+for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted']) {
+  eventBus.subscribe(type, async (event) => {
+    if (typeof event.payload.vehicle_id === 'string') await vehicleService.invalidate(event.payload.vehicle_id);
+  });
+}
 
 const driverRepository = new DriverRepository(pool);
 const attendanceRepository = new AttendanceRepository(pool);

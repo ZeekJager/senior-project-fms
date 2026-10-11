@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
+import { redis, redisKey } from '../../shared/cache';
 import { eventBus } from '../../shared/events/event-bus';
 import type { AppModule } from '../../shared/module';
 import { authRouter } from './api/auth.routes';
@@ -9,10 +10,11 @@ import { authenticatedWith, authorizeWith } from './api/authorize';
 import { userAdminRouter } from './api/user-admin.routes';
 import { AuthService } from './application/auth.service';
 import { UserAdminService } from './application/user-admin.service';
-import { InMemoryLoginThrottle } from './application/login-throttle';
+import { InMemoryLoginThrottle, ResilientLoginThrottle } from './application/login-throttle';
 import { TokenService } from './application/token.service';
 import type { DepotDirectory } from './domain/depot-directory';
 import { AuthUserRepository } from './infrastructure/auth-user.repository';
+import { RedisLoginThrottle } from './infrastructure/redis-login-throttle';
 import { SessionRepository } from './infrastructure/session.repository';
 import { UserAdminRepository } from './infrastructure/user-admin.repository';
 import { writeAuthAudit } from './infrastructure/auth-audit';
@@ -43,7 +45,11 @@ const authService = new AuthService({
   users: new AuthUserRepository(),
   sessions: new SessionRepository(),
   tokens: new TokenService(config.jwtSecret),
-  throttle: new InMemoryLoginThrottle(),
+  // Shared across instances in Redis; per process while Redis is down (FMS-72).
+  throttle: new ResilientLoginThrottle(
+    redis ? new RedisLoginThrottle(redis, (hashed) => redisKey('throttle', 'login', hashed)) : null,
+    new InMemoryLoginThrottle(),
+  ),
   depots: depotLookup,
 });
 

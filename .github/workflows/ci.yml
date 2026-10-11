@@ -64,13 +64,15 @@ jobs:
       # the admin password under its own variable name, so it gets two names.
       - name: Generate per-run secrets
         run: |
-          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET; do
+          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET REDIS_PASSWORD; do
             value=$(openssl rand -hex 32)
             echo "::add-mask::$value"
             for name in $names; do echo "$name=$value" >> "$GITHUB_ENV"; done
           done
       - name: Start PostgreSQL
         run: sh scripts/ci/start-postgres.sh
+      - name: Start Redis
+        run: sh scripts/ci/start-redis.sh
       # The app role is cluster-wide, as in the dev stack. The test run then
       # creates and migrates its own fms_test database (test/support).
       - name: Create app role
@@ -79,6 +81,7 @@ jobs:
         run: DB_PASSWORD="$DB_APP_PASSWORD" npm run test:coverage -w fms-backend
         env:
           DB_USER: fms_app
+          REDIS_HOST: localhost
       - name: Upload coverage report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

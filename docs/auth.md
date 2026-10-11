@@ -59,7 +59,7 @@ Card: FMS-09 (SE-45). Code: `packages/frontend/src/{context,router,components,li
 
 ## Login throttling
 
-After 5 failed logins for the same email from the same IP within 15 minutes, further attempts get `429 RATE_LIMITED` until the oldest failure is 15 minutes old. Wrong passwords and unknown emails both count; a successful login resets the count. The counter is in memory per API process (`InMemoryLoginThrottle`), behind the `LoginThrottle` interface so FMS-72 can move it to Redis when the API runs on several instances.
+After 5 failed logins for the same email from the same IP within 15 minutes, further attempts get `429 RATE_LIMITED` until the oldest failure is 15 minutes old. Wrong passwords and unknown emails both count; a successful login resets the count. The counter lives in Redis (FMS-72), so every API instance shares it. Each account and IP pair is one sorted set of failure times, under a hashed key, so no email is stored in Redis. While Redis is unreachable each process counts in memory (`ResilientLoginThrottle` falls back to `InMemoryLoginThrottle`), so logins are still throttled.
 
 The IP is Express's `req.ip`. Behind a reverse proxy it is the proxy's address until `trust proxy` is configured for that deployment.
 
