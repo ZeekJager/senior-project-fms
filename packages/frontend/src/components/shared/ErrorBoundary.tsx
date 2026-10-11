@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, Copy, RotateCcw } from 'lucide-react'
-import { Component, useState, type ErrorInfo, type ReactNode } from 'react'
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
 import { Button, cn } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
 
@@ -26,6 +26,14 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
   const details = errorDetails(error)
   const [copied, setCopied] = useState(false)
 
+  // "Copied" reverts after 2 s; the timer is cleared if the state unmounts
+  // first (retry succeeded, page left), so it never updates a gone component.
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
   async function copy() {
     const text = [`Error: ${details.code}`, `Message: ${details.message}`, details.requestId && `Request ID: ${details.requestId}`]
       .filter(Boolean)
@@ -33,7 +41,6 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
     } catch {
       // Clipboard blocked (insecure origin, permissions): the details stay visible to copy by hand.
     }
