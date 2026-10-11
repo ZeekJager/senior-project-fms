@@ -103,6 +103,9 @@ export const vehicleMaintenance = {
   setMaintenanceFlag: (client: PoolClient, ctx: MutationContext, id: string, flag: boolean) => vehicleRepository.setMaintenanceFlag(ctx, id, flag, client),
 };
 
+/** For other modules: depots by public id in a caller's scope (share-locked), and public ids by internal id. */
+export const depotRefs = { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds };
+
 export const fleetModule: AppModule = {
   name: 'fleet',
   router,

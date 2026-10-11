@@ -45,6 +45,7 @@ export interface LockedPart {
   depotId: string | null;
   isActive: boolean;
   stockQuantity: number;
+  reorderThreshold: number;
 }
 
 export interface RecordListFilter extends Page {
@@ -165,7 +166,7 @@ export class MaintenanceRepository extends Repository {
     if (publicIds.length === 0) return [];
     const res = await client.query<LockedPart>(
       `SELECT id, public_id AS "publicId", part_number AS "partNumber", depot_id AS "depotId", is_active AS "isActive",
-              stock_quantity AS "stockQuantity"
+              stock_quantity AS "stockQuantity", reorder_threshold AS "reorderThreshold"
          FROM maintenance.inventory_parts
         WHERE public_id = ANY($1::uuid[])
         ORDER BY id

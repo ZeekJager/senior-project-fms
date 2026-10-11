@@ -1802,3 +1802,17 @@ ALTER TABLE maintenance.maintenance_records
 CREATE OR REPLACE TRIGGER trg_maintenance_records_version
     BEFORE UPDATE ON maintenance.maintenance_records
     FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+-- ===== 021_inventory_parts.sql =====
+ALTER TABLE maintenance.inventory_parts ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE TRIGGER trg_maintenance_inventory_parts_version
+    BEFORE UPDATE ON maintenance.inventory_parts
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+UPDATE maintenance.inventory_parts SET part_number = upper(btrim(part_number))
+ WHERE part_number <> upper(btrim(part_number));
+
+CREATE INDEX IF NOT EXISTS idx_inventory_parts_below_reorder
+    ON maintenance.inventory_parts(depot_id)
+    WHERE is_active AND stock_quantity <= reorder_threshold;

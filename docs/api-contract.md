@@ -398,6 +398,10 @@ Document rules (FMS-17):
 | `GET /inventory` | Legacy-compatible inventory search | `inventory:read` | `depot_id,below_reorder` -> `InventoryPart[]` |
 | `GET /inventory/parts` | Canonical inventory search | `inventory:read` | Paged `InventoryPart[]` |
 | `POST /inventory/{part_id}/adjust` | Compatibility stock adjustment | `inventory:write` | Creates inventory movement; resulting stock cannot be negative |
+| `POST /inventory` | Create part | `inventory:write` | `InventoryPartCreate` -> `201 InventoryPart` |
+| `GET /inventory/{part_id}` | Part detail | `inventory:read` | `InventoryPart` |
+| `PUT /inventory/{part_id}` | Update part | `inventory:write` | Fields sent (not stock) -> `InventoryPart`; `If-Match` |
+| `GET /inventory/{part_id}/movements` | A part's stock ledger | `inventory:read` | Paged `InventoryMovement[]` |
 | `POST /inventory/movements` | Record stock movement | `inventory:write` | `InventoryMovement` -> `InventoryMovement` |
 
 Maintenance rules (FMS-22):
@@ -409,6 +413,15 @@ Maintenance rules (FMS-22):
 - **Completion:** `completed_at` is not in the future (5 minutes' clock skew allowed) nor before `started_at`; `completed_by` is the caller. `status: in_progress` sets `started_at`.
 - **`MaintenanceRecord`:** `id`, `vehicle_id`, `registration_number`, `maintenance_type`, `description`, `status`, `priority`, `scheduled_at`, `started_at`, `completed_at`, `odometer_km`, `labour_hours`, `total_cost_cents`, `parts_cost_cents`, `workshop`, `notes`, `completed_by`, `parts[]`, `version` (ETag; `If-Match` on `PUT`/`PATCH`), `created_at`, `updated_at`. Lists are newest first (`sort_order=asc` for oldest), filterable by `vehicle_id`, `status`, `open`, `maintenance_type`.
 - **Events:** `MaintenanceRecordOpened`, `MaintenanceRecordUpdated` (with `changed_fields`) and `MaintenanceRecordCompleted`, each with `maintenance_record_id`, `vehicle_id` and `maintenance_flag_cleared`.
+
+Inventory rules (FMS-23):
+
+- **Who:** `inventory:read` / `inventory:write`: admin, fleet manager, depot admin, technician. A driver (or dispatcher) gets `403` on every inventory endpoint. A depot-scoped caller sees their depots' parts plus shared stock (`depot_id: null`); creating or changing shared stock needs a fleet-wide role (`403` otherwise).
+- **`InventoryPart`:** `id`, `part_number` (trimmed, upper case, unique: `409 CONFLICT_DUPLICATE`), `name`, `description`, `depot_id`, `unit_cost_cents` (whole cents, else `VALIDATION_FLOAT_IN_MONEY_PATH`), `stock_quantity`, `reorder_threshold` (the "reorder level"), `below_reorder` (`stock_quantity <= reorder_threshold`), `stock_status` (`out` at 0, `low` at or below the threshold, `ok`), `is_active`, `version`, `created_at`, `updated_at`.
+- **List:** `below_reorder=true` (or `belowReorder=true`) returns only parts at or below their threshold. Also `depot_id`, `search` (part number, name), `status` (`active` default, `inactive`, `all`), `sort_by` (`part_number`, `name`, `stock_quantity`), `sort_order`.
+- **Stock changes** only through the ledger: opening stock on create (`purchase`), `POST /inventory/{id}/adjust` (`adjustment`) and repairs (`consumption`, FMS-22). Stock is `CHECK (stock_quantity >= 0)`.
+- **Adjust:** `{ quantity, reason }`: a non-zero whole number (positive in, negative out) and a reason (3-500 characters). One that would make stock negative is `409 CONFLICT_INSUFFICIENT_STOCK` and changes nothing. Each adjustment writes an audit row with the old and new `stock_quantity`, and a ledger line with the reason. `PUT` cannot set stock (`not_writable`).
+- **Events:** `InventoryPartCreated`, `InventoryPartUpdated` (`changed_fields`), `InventoryStockAdjusted` (`quantity_delta`, `stock_quantity`, `reason`), and `InventoryReorderNeeded` when stock falls to or below the threshold from above it, by an adjustment or a repair.
 
 ### 10.2 Predictive maintenance
 

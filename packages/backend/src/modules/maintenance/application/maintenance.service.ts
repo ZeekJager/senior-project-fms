@@ -23,7 +23,8 @@ import {
   type MaintenanceType,
   type MaintenanceWarning,
 } from '../domain/maintenance';
-import type { MaintenanceRepository, RecordRow, RecordWrite } from '../infrastructure/maintenance.repository';
+import { INVENTORY_EVENTS } from '../domain/inventory';
+import type { LockedPart, MaintenanceRepository, RecordRow, RecordWrite } from '../infrastructure/maintenance.repository';
 
 /** Who is asking, for scope, audit and events. */
 export interface Caller {
@@ -98,6 +99,7 @@ export interface MaintenanceServiceDeps {
     setMaintenanceFlag(client: PoolClient, ctx: MutationContext, id: string, flag: boolean): Promise<unknown>;
   };
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
+  depots: { publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>> };
   events: EventBus;
   now?: () => Date;
 }
@@ -196,8 +198,10 @@ export class MaintenanceService {
       );
 
       const warnings: MaintenanceWarning[] = [];
+      const reorder: (LockedPart & { depotPublicId: string | null })[] = [];
       for (const use of uses) {
         const part = locked.get(use.part_id)!;
+        const before = part.stockQuantity;
         const { stock, shortfall } = await records.consumePart(ctx, client, {
           recordId: row.id as string,
           part,
@@ -207,6 +211,7 @@ export class MaintenanceService {
           performedBy: caller.user.id,
         });
         part.stockQuantity = stock;
+        if (before > part.reorderThreshold && stock <= part.reorderThreshold) reorder.push({ ...part, depotPublicId: null });
         if (shortfall > 0) {
           warnings.push({ warning: 'LOW_STOCK', part_id: part.publicId, part_number: part.partNumber, stock_quantity: stock, shortfall });
         }
@@ -217,11 +222,22 @@ export class MaintenanceService {
       if (record.total_cost_cents < record.parts_cost_cents) {
         warnings.push({ warning: 'COST_BELOW_PARTS', total_cost_cents: record.total_cost_cents, parts_cost_cents: record.parts_cost_cents });
       }
-      return { record, warnings };
+      const depotIds = await this.deps.depots.publicIds(client, [...new Set(reorder.flatMap((p) => (p.depotId ? [p.depotId] : [])))]);
+      return { record, warnings, reorder: reorder.map((p) => ({ ...p, depotPublicId: p.depotId ? (depotIds.get(p.depotId) ?? null) : null })) };
     });
 
     await this.publish(caller, MAINTENANCE_EVENTS.opened, { maintenance_record_id: result.record.id, vehicle_id: result.record.vehicle_id });
-    return result;
+    for (const p of result.reorder) {
+      // Same event as a manual adjustment that crosses the reorder point (FMS-23).
+      await this.publish(caller, INVENTORY_EVENTS.reorderNeeded, {
+        part_id: p.publicId,
+        part_number: p.partNumber,
+        depot_id: p.depotPublicId,
+        stock_quantity: p.stockQuantity,
+        reorder_threshold: p.reorderThreshold,
+      });
+    }
+    return { record: result.record, warnings: result.warnings };
   }
 
   /**
