@@ -7,7 +7,7 @@ const token = (name) => `rgb(var(--c-${name}) / <alpha-value>)`
 
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
-  darkMode: 'media',
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       colors: {
@@ -33,6 +33,7 @@ export default {
           soft: token('brand-soft'),
           ink: token('brand-ink'),
         },
+        side: { DEFAULT: token('side'), line: token('side-line'), ink: token('side-ink') },
         overlay: token('overlay'),
         success: { DEFAULT: token('success'), soft: token('success-soft') },
         warning: { DEFAULT: token('warning'), soft: token('warning-soft') },
@@ -53,17 +54,16 @@ export default {
         '2xs': ['0.75rem', { lineHeight: '1rem' }],
       },
       borderRadius: {
-        // Controls 12px, cards 16px, sheets 20px.
-        control: '12px',
-        card: '16px',
-        sheet: '20px',
+        // Controls 8px, cards 12px, sheets 16px.
+        control: '8px',
+        card: '12px',
+        sheet: '16px',
       },
       boxShadow: {
-        soft: '0 1px 2px rgb(var(--shadow) / 0.05), 0 1px 3px rgb(var(--shadow) / 0.07)',
-        card: '0 1px 2px rgb(var(--shadow) / 0.04), 0 4px 16px -4px rgb(var(--shadow) / 0.09)',
-        elevated: '0 24px 48px -12px rgb(var(--shadow) / 0.24), 0 8px 16px -8px rgb(var(--shadow) / 0.10)',
-        glow: '0 8px 24px -8px rgb(var(--c-brand) / 0.55)',
-        focus: '0 0 0 4px rgb(var(--c-brand) / 0.18)',
+        soft: '0 1px 2px rgb(var(--shadow) / 0.06)',
+        card: '0 1px 2px rgb(var(--shadow) / 0.04)',
+        elevated: '0 16px 40px -12px rgb(var(--shadow) / 0.28), 0 4px 12px -4px rgb(var(--shadow) / 0.12)',
+        focus: '0 0 0 3px rgb(var(--c-brand) / 0.25)',
       },
       transitionTimingFunction: {
         smooth: 'cubic-bezier(0.2, 0.8, 0.2, 1)',

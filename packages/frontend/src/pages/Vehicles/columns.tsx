@@ -39,7 +39,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       sortKey: 'registration_number',
       cell: (v) => (
         <div className="flex min-w-0 items-center gap-3">
-          <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line sm:flex">
+          <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-control bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line sm:flex">
             {(() => {
               const Icon = TYPE_ICONS[v.vehicle_type]
               return <Icon className="h-4 w-4" aria-hidden="true" />
@@ -67,7 +67,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       ),
       skeleton: (
         <div className="flex items-center gap-3">
-          <Skeleton className="hidden h-9 w-9 rounded-xl sm:block" />
+          <Skeleton className="hidden h-9 w-9 rounded-control sm:block" />
           <div className="space-y-2">
             <Skeleton className="h-3.5 w-24" />
             <Skeleton className="h-3 w-32" />

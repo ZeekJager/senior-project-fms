@@ -41,7 +41,7 @@ function currentFocus(f: VehicleFilters): Focus | null {
 export function FleetStats({ counts, isLoading, filters, onSelect }: FleetStatsProps) {
   const focus = currentFocus(filters)
   return (
-    <section aria-label="Fleet summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+    <section aria-label="Fleet summary" className="stat-strip">
       <StatCard
         label="Total vehicles"
         value={counts.total}

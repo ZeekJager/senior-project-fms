@@ -1,4 +1,4 @@
-import { Building2, IdCard, Plus, Search, ShieldCheck, Users, X } from 'lucide-react'
+import { Building2, IdCard, Plus, Search, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
@@ -116,20 +116,16 @@ export function DriversPage() {
   const scopeName = filters.depotId ? depotMap.get(filters.depotId)?.name : depots.data?.length === 1 ? depots.data[0].name : null
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <ShieldCheck className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Compliance
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Drivers</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-ink-muted">
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Drivers</h1>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">
             Licence and document health for every driver{scopeName ? ` in ${scopeName}` : ' across your depots'}, soonest expiry first.
           </p>
         </div>
         <RoleGate permission="driver:write">
-          <Button size="lg" leadingIcon={<Plus className="h-4 w-4" />} onClick={openCreate} className="self-start sm:self-auto">
+          <Button leadingIcon={<Plus className="h-4 w-4" />} onClick={openCreate} className="self-start sm:self-auto">
             Add driver
           </Button>
         </RoleGate>
@@ -137,7 +133,11 @@ export function DriversPage() {
 
       <LicenceStats counts={licences.counts} isLoading={licences.isLoading} filters={filters} onSelect={(licence) => update({ licence, retired: false })} />
 
-      <section aria-label="Driver list" className="space-y-4">
+      <section aria-label="Driver list" className="space-y-0">
+
+        <DataTable
+
+          toolbar={
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <div className="relative flex-1 lg:max-w-md">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
@@ -147,11 +147,11 @@ export function DriversPage() {
               placeholder="Search name, email or licence number"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-10 text-sm text-ink shadow-soft transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
+              className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
             />
             {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
             {(depots.data?.length ?? 0) > 1 && (
               <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />
             )}
@@ -173,14 +173,14 @@ export function DriversPage() {
               aria-checked={filters.retired}
               onClick={() => update({ retired: !filters.retired })}
               className={cn(
-                'focus-ring inline-flex h-10 items-center gap-2.5 rounded-control border px-3.5 text-sm shadow-soft transition-all duration-150 ease-smooth',
+                'focus-ring inline-flex h-9 items-center gap-2.5 rounded-control border px-3.5 text-sm  transition-all duration-150 ease-smooth',
                 filters.retired ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
               )}
             >
               <span className={cn('relative h-4 w-7 rounded-full transition-colors duration-200', filters.retired ? 'bg-brand' : 'bg-line-strong')} aria-hidden="true">
                 <span
                   className={cn(
-                    'absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white shadow-soft transition-transform duration-200 ease-smooth',
+                    'absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white  transition-transform duration-200 ease-smooth',
                     filters.retired ? 'translate-x-3.5' : 'translate-x-0.5',
                   )}
                 />
@@ -195,7 +195,7 @@ export function DriversPage() {
           </div>
         </div>
 
-        <DataTable
+          }
           caption="Drivers"
           columns={columns}
           data={drivers}

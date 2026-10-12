@@ -99,7 +99,7 @@ function Modal({ open, onClose, title, description, children, placement, initial
   return createPortal(
     <div className={cn('fixed inset-0 z-50', placement === 'center' && 'flex items-center justify-center')}>
       <div
-        className="fixed inset-0 animate-fade-in bg-overlay/40 backdrop-blur-[3px]"
+        className="fixed inset-0 animate-fade-in bg-overlay/40"
         aria-hidden="true"
         onMouseDown={onClose}
       />

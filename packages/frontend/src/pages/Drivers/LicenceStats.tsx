@@ -27,7 +27,7 @@ export function LicenceStats({
 }) {
   const current = filters.retired ? null : filters.licence
   return (
-    <section aria-label="Licence summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+    <section aria-label="Licence summary" className="stat-strip">
       <StatCard
         label="Active drivers"
         value={counts.total}

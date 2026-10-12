@@ -30,22 +30,6 @@ function initials(name: string): string {
   return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?'
 }
 
-// Avatar tints, picked from the name so a driver keeps their colour.
-const AVATAR_TINTS = [
-  'from-indigo-500 to-violet-500',
-  'from-sky-500 to-indigo-500',
-  'from-emerald-500 to-teal-500',
-  'from-amber-500 to-orange-500',
-  'from-rose-500 to-pink-500',
-  'from-fuchsia-500 to-purple-500',
-]
-
-function tintFor(name: string): string {
-  let h = 0
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  return AVATAR_TINTS[h % AVATAR_TINTS.length]
-}
-
 /**
  * The licence badge, from the API's licence_status (computed in Addis Ababa
  * time): red EXPIRED, amber EXPIRING SOON within 30 days, green otherwise.
@@ -85,10 +69,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       cell: (d) => (
         <div className="flex min-w-0 items-center gap-3">
           <div
-            className={cn(
-              'hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-xs font-semibold text-white sm:flex',
-              tintFor(d.full_name),
-            )}
+            className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink sm:flex"
             aria-hidden="true"
           >
             {initials(d.full_name)}

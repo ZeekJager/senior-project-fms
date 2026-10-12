@@ -49,7 +49,7 @@ export function NotificationBell({ className }: { className?: string }) {
             Notifications
           </h2>
           <div className="flex flex-col items-center px-2 py-8 text-center">
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-sunken text-ink-subtle">
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-card bg-surface-sunken text-ink-subtle">
               <BellOff className="h-5 w-5" aria-hidden="true" />
             </div>
             <p className="text-sm font-medium text-ink">You&apos;re all caught up</p>

@@ -199,7 +199,7 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
                         aria-pressed={on}
                         onClick={() => toggleCategory(c)}
                         className={cn(
-                          'focus-ring h-8 min-w-[44px] rounded-[10px] border px-2.5 text-xs font-semibold transition-all duration-150 ease-smooth',
+                          'focus-ring h-8 min-w-[44px] rounded-control border px-2.5 text-xs font-semibold transition-all duration-150 ease-smooth',
                           on
                             ? 'border-brand/40 bg-brand-soft text-brand-ink shadow-soft'
                             : 'border-line-strong bg-surface text-ink-muted hover:border-ink-subtle/50 hover:text-ink',

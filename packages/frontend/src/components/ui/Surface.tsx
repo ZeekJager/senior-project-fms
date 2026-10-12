@@ -13,7 +13,7 @@ export function Skeleton({ className }: { className?: string }) {
       aria-hidden="true"
       className={cn('relative block overflow-hidden rounded-md bg-surface-sunken', className)}
     >
-      <span className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/50 to-transparent dark:via-white/[0.06]" />
+      <span className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-surface to-transparent opacity-70" />
     </span>
   )
 }

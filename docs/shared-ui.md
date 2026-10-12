@@ -61,8 +61,8 @@ Built with the vehicle screen (FMS-18) on the design system (`docs/design-system
 
 Skeleton rows and data rows share one height, so the page does not jump when a load finishes. `rowHeight` sets it:
 
-- `regular` (default) is 64px.
-- `stacked` is 72px on phones and 64px from `sm` up. Use it for tables whose first cell stacks a third line (a badge) on phones: Users and Spare parts do.
+- `regular` (default) is 56px.
+- `stacked` is 72px on phones and 56px from `sm` up. Use it for tables whose first cell stacks a third line (a badge) on phones: Users and Spare parts do.
 
 In development, `DataTable` warns in the console when data rows come out taller than its loading rows, naming the table. Measured on every list screen at 1440px and 390px (SE-111), the two heights are equal.
 

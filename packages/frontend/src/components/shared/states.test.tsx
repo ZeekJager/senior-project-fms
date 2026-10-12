@@ -30,9 +30,9 @@ describe('DataTable', () => {
 
   it('rowHeight="stacked" gives real and loading rows the same taller height on phones', () => {
     const { rerender } = render(<DataTable caption="People" columns={columns} data={undefined} rowKey={(r) => r.id} isLoading rowHeight="stacked" />)
-    expect(screen.getAllByTestId('skeleton-row')[0]).toHaveClass('h-[72px]', 'sm:h-16')
+    expect(screen.getAllByTestId('skeleton-row')[0]).toHaveClass('h-[72px]', 'sm:h-14')
     rerender(<DataTable caption="People" columns={columns} data={[{ id: '1', name: 'Abebe' }]} rowKey={(r) => r.id} isLoading={false} rowHeight="stacked" />)
-    expect(screen.getByText('Abebe').closest('tr')).toHaveClass('h-[72px]', 'sm:h-16')
+    expect(screen.getByText('Abebe').closest('tr')).toHaveClass('h-[72px]', 'sm:h-14')
   })
 
   it('warns in development when data rows come out taller than the loading rows (the page would jump)', () => {

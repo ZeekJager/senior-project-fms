@@ -4,24 +4,27 @@
 
 /*
  * Design tokens (docs/design-system.md). Each colour is "R G B" so Tailwind
- * can add opacity (`bg-brand/10`). Text/background pairs meet WCAG AA:
- * ink-subtle on surface is the lowest pair, about 4.9:1 light and 6:1 dark.
+ * can add opacity (`bg-brand/10`). Neutrals lean slightly toward the indigo
+ * accent so the whole UI reads as one family. Text/background pairs meet
+ * WCAG AA. The theme is `data-theme` on <html>, set before first paint by
+ * the script in index.html and changed by ThemeToggle; with no script the
+ * system setting applies.
  */
 @layer base {
   :root {
     color-scheme: light;
-    --c-canvas: 246 247 249;
+    --c-canvas: 246 247 251;
     --c-surface: 255 255 255;
-    --c-surface-muted: 249 250 251;
-    --c-surface-sunken: 242 244 247;
-    --c-line: 228 231 236;
-    --c-line-strong: 208 213 221;
-    --c-ink: 16 24 40;
-    --c-ink-muted: 71 84 103;
-    --c-ink-subtle: 102 112 133;
-    --c-brand: 79 70 229;
-    --c-brand-strong: 67 56 202;
-    --c-brand-soft: 238 242 255;
+    --c-surface-muted: 249 250 253;
+    --c-surface-sunken: 240 242 248;
+    --c-line: 225 229 240;
+    --c-line-strong: 201 207 224;
+    --c-ink: 19 23 41;
+    --c-ink-muted: 65 72 98;
+    --c-ink-subtle: 96 103 130;
+    --c-brand: 67 56 202;
+    --c-brand-strong: 55 48 163;
+    --c-brand-soft: 238 240 255;
     --c-brand-ink: 67 56 202;
     --c-success: 6 118 71;
     --c-success-soft: 236 253 243;
@@ -29,30 +32,67 @@
     --c-warning-soft: 255 250 235;
     --c-danger: 180 35 24;
     --c-danger-soft: 254 243 242;
-    --c-danger-solid: 217 45 32;
+    --c-danger-solid: 205 40 28;
     --c-info: 23 92 211;
     --c-info-soft: 239 248 255;
-    --c-neutral: 52 64 84;
-    --c-neutral-soft: 242 244 247;
-    --c-overlay: 16 24 40;
-    --shadow: 16 24 40;
+    --c-neutral: 52 60 84;
+    --c-neutral-soft: 240 242 248;
+    --c-overlay: 19 23 41;
+    --c-side: 17 20 43;
+    --c-side-line: 38 42 78;
+    --c-side-ink: 196 201 228;
+    --shadow: 19 23 41;
   }
 
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --c-canvas: 11 13 20;
+    --c-surface: 18 21 31;
+    --c-surface-muted: 23 27 39;
+    --c-surface-sunken: 14 16 24;
+    --c-line: 37 42 59;
+    --c-line-strong: 54 60 82;
+    --c-ink: 238 240 248;
+    --c-ink-muted: 178 184 204;
+    --c-ink-subtle: 140 147 170;
+    --c-brand: 79 70 229;
+    --c-brand-strong: 99 102 241;
+    --c-brand-soft: 28 30 66;
+    --c-brand-ink: 165 180 252;
+    --c-success: 71 205 137;
+    --c-success-soft: 10 41 28;
+    --c-warning: 253 176 34;
+    --c-warning-soft: 46 31 6;
+    --c-danger: 249 112 102;
+    --c-danger-soft: 52 17 15;
+    --c-danger-solid: 205 40 28;
+    --c-info: 83 177 253;
+    --c-info-soft: 11 36 64;
+    --c-neutral: 205 213 223;
+    --c-neutral-soft: 30 35 48;
+    --c-overlay: 0 0 0;
+    --c-side: 10 12 26;
+    --c-side-line: 30 34 62;
+    --c-side-ink: 178 184 212;
+    --shadow: 0 0 0;
+  }
+
+  /* No script, no stored choice: follow the system. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme]) {
       color-scheme: dark;
-      --c-canvas: 10 12 17;
-      --c-surface: 18 21 28;
-      --c-surface-muted: 22 26 34;
-      --c-surface-sunken: 14 17 23;
-      --c-line: 35 40 52;
-      --c-line-strong: 50 57 71;
-      --c-ink: 242 244 247;
-      --c-ink-muted: 180 188 200;
-      --c-ink-subtle: 141 150 167;
-      --c-brand: 88 80 236;
+      --c-canvas: 11 13 20;
+      --c-surface: 18 21 31;
+      --c-surface-muted: 23 27 39;
+      --c-surface-sunken: 14 16 24;
+      --c-line: 37 42 59;
+      --c-line-strong: 54 60 82;
+      --c-ink: 238 240 248;
+      --c-ink-muted: 178 184 204;
+      --c-ink-subtle: 140 147 170;
+      --c-brand: 79 70 229;
       --c-brand-strong: 99 102 241;
-      --c-brand-soft: 31 30 72;
+      --c-brand-soft: 28 30 66;
       --c-brand-ink: 165 180 252;
       --c-success: 71 205 137;
       --c-success-soft: 10 41 28;
@@ -60,12 +100,15 @@
       --c-warning-soft: 46 31 6;
       --c-danger: 249 112 102;
       --c-danger-soft: 52 17 15;
-      --c-danger-solid: 217 45 32;
+      --c-danger-solid: 205 40 28;
       --c-info: 83 177 253;
       --c-info-soft: 11 36 64;
       --c-neutral: 205 213 223;
-      --c-neutral-soft: 30 35 46;
+      --c-neutral-soft: 30 35 48;
       --c-overlay: 0 0 0;
+      --c-side: 10 12 26;
+      --c-side-line: 30 34 62;
+      --c-side-ink: 178 184 212;
       --shadow: 0 0 0;
     }
   }
@@ -74,20 +117,21 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    scrollbar-color: rgb(var(--c-line-strong)) transparent;
   }
 
   body {
     @apply bg-canvas font-sans text-sm text-ink;
-    font-feature-settings: 'cv11', 'ss01', 'ss03';
-    /* Soft light from the top corners; fixed so it does not scroll with long tables. */
-    background-image:
-      radial-gradient(1100px 520px at 0% -10%, rgb(var(--c-brand) / 0.07), transparent 60%),
-      radial-gradient(900px 480px at 100% -15%, rgb(147 51 234 / 0.05), transparent 60%);
-    background-attachment: fixed;
+    font-feature-settings: 'cv11', 'ss01';
   }
 
   ::selection {
-    background: rgb(var(--c-brand) / 0.18);
+    background: rgb(var(--c-brand) / 0.2);
+  }
+
+  input,
+  textarea {
+    caret-color: rgb(var(--c-brand));
   }
 
   /* Native date pickers follow the theme. */
@@ -95,12 +139,34 @@
     opacity: 0.6;
     cursor: pointer;
   }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-line-strong));
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
 }
 
 @layer components {
-  /* The one focus style: a soft brand halo, keyboard focus only. */
+  /* A row of figures in one panel: cells separated by hairlines (screens' summary strip). */
+  .stat-strip {
+    @apply grid grid-cols-2 overflow-hidden rounded-card border border-line bg-surface xl:grid-cols-4;
+  }
+  .stat-strip > * {
+    margin: 0 -1px -1px 0;
+    border-style: solid;
+    border-color: rgb(var(--c-line));
+    border-width: 0 1px 1px 0;
+  }
+
+  /* The one focus style: a crisp brand ring, keyboard focus only. */
   .focus-ring {
-    @apply outline-none focus-visible:ring-4 focus-visible:ring-brand/20;
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-surface;
   }
 
   .tabular {

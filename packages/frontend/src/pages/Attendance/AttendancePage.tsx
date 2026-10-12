@@ -1,4 +1,4 @@
-import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, CircleSlash, ClipboardList, Palmtree, Search, UserCheck, Users } from 'lucide-react'
+import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, CircleSlash, Palmtree, Search, UserCheck, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState, StatCard, StatShare } from '@/components/shared'
@@ -104,14 +104,10 @@ export function AttendancePage() {
   const statusFilter = (s: RosterFilters['status']) => update({ status: filters.status === s ? '' : s })
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 border-b border-line pb-5 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <ClipboardList className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Daily roll call
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Attendance</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Attendance</h1>
           <p className="mt-1.5 text-sm text-ink-muted">
             {longDate(filters.date)}
             {isToday && <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand-ink">Today</span>}
@@ -139,7 +135,7 @@ export function AttendancePage() {
         </nav>
       </header>
 
-      <section aria-label="Day summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <section aria-label="Day summary" className="stat-strip">
         <StatCard
           label="Present"
           value={counts.present}
@@ -195,7 +191,7 @@ export function AttendancePage() {
               className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-4 text-sm text-ink shadow-soft placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
             {(depots.data?.length ?? 0) > 1 && (
               <FilterSelect
                 label="Depot"

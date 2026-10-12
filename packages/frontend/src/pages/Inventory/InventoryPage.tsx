@@ -137,24 +137,24 @@ export function InventoryPage() {
   const filtered = Boolean(filters.search || filters.depotId || filters.lowOnly || filters.status)
 
   return (
-    <div className="space-y-8">
-      <header>
-        <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-          <Boxes className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-          Workshop stores
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Spare parts</h1>
-        <p className="mt-1.5 max-w-xl text-sm text-ink-muted">Live stock counts. Out-of-stock and low parts are flagged so they are reordered before a repair waits.</p>
+    <div className="space-y-6">
+      <header className="border-b border-line pb-5">
+        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Spare parts</h1>
+        <p className="mt-1 max-w-xl text-sm text-ink-muted">Live stock counts. Out-of-stock and low parts are flagged so they are reordered before a repair waits.</p>
       </header>
 
-      <section aria-label="Stock summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <section aria-label="Stock summary" className="stat-strip">
         <StatCard label="Parts tracked" value={stock.counts.total} isLoading={stock.isLoading} icon={<Boxes />} tone="brand" pressed={!filters.status && !filters.lowOnly} onClick={() => update({ status: '', lowOnly: false })} footer={<StatShare value={pct(stock.counts.ok)} tone="brand" caption="well stocked" />} />
         <StatCard label="Out of stock" value={stock.counts.out} isLoading={stock.isLoading} icon={<PackageX />} tone="danger" pressed={filters.status === 'out'} onClick={() => statusFilter('out')} footer={<StatShare value={pct(stock.counts.out)} tone="danger" caption="reorder now" />} />
         <StatCard label="Low" value={stock.counts.low} isLoading={stock.isLoading} icon={<PackageMinus />} tone="warning" pressed={filters.status === 'low'} onClick={() => statusFilter('low')} footer={<StatShare value={pct(stock.counts.low)} tone="warning" caption="at or below reorder level" />} />
         <StatCard label="OK" value={stock.counts.ok} isLoading={stock.isLoading} icon={<PackageCheck />} tone="success" pressed={filters.status === 'ok'} onClick={() => statusFilter('ok')} footer={<StatShare value={pct(stock.counts.ok)} tone="success" caption="above reorder level" />} />
       </section>
 
-      <section aria-label="Parts" className="space-y-4">
+      <section aria-label="Parts" className="space-y-0">
+
+        <DataTable
+
+          toolbar={
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <div className="relative flex-1 lg:max-w-md">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
@@ -164,11 +164,11 @@ export function InventoryPage() {
               placeholder="Search part name or number"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-10 text-sm text-ink shadow-soft placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
+              className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
             />
             {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
             {(depots.data?.length ?? 0) > 1 && (
               <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={[{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]} onChange={(depotId) => update({ depotId })} />
             )}
@@ -178,12 +178,12 @@ export function InventoryPage() {
               aria-checked={filters.lowOnly}
               onClick={() => update({ lowOnly: !filters.lowOnly, status: '' })}
               className={cn(
-                'focus-ring inline-flex h-10 items-center gap-2.5 rounded-control border px-3.5 text-sm shadow-soft transition-all duration-150 ease-smooth',
+                'focus-ring inline-flex h-9 items-center gap-2.5 rounded-control border px-3.5 text-sm  transition-all duration-150 ease-smooth',
                 filters.lowOnly ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
               )}
             >
               <span className={cn('relative h-4 w-7 rounded-full transition-colors duration-200', filters.lowOnly ? 'bg-brand' : 'bg-line-strong')} aria-hidden="true">
-                <span className={cn('absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white shadow-soft transition-transform duration-200 ease-smooth', filters.lowOnly ? 'translate-x-3.5' : 'translate-x-0.5')} />
+                <span className={cn('absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white  transition-transform duration-200 ease-smooth', filters.lowOnly ? 'translate-x-3.5' : 'translate-x-0.5')} />
               </span>
               Show low stock only
             </button>
@@ -202,7 +202,7 @@ export function InventoryPage() {
           </div>
         </div>
 
-        <DataTable
+          }
           caption="Spare parts"
           rowHeight="stacked"
           columns={columns}

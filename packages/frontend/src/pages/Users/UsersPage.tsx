@@ -104,7 +104,7 @@ export function UsersPage() {
         <div className="flex min-w-0 items-center gap-3">
           <span
             aria-hidden="true"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand/90 to-purple-500/90 text-xs font-semibold text-white shadow-soft ring-2 ring-surface"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink"
           >
             {initials(u.full_name)}
           </span>
@@ -175,17 +175,13 @@ export function UsersPage() {
   const filtered = Boolean(filters.search || filters.role || filters.status || filters.depotId)
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <UserCog className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Administration
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Users and roles</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-ink-muted">Who can sign in and what they may do. Every role change is recorded in the audit log.</p>
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Users and roles</h1>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">Who can sign in and what they may do. Every role change is recorded in the audit log.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 sm:shrink-0 sm:flex-nowrap">
           {canReadRoles && (
             <Button variant="secondary" leadingIcon={<ShieldCheck className="h-4 w-4" />} onClick={() => setShowRoles(true)}>
               Roles
@@ -199,14 +195,18 @@ export function UsersPage() {
         </div>
       </header>
 
-      <section aria-label="Account summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <section aria-label="Account summary" className="stat-strip">
         <StatCard label="Accounts" value={stats.counts.total} isLoading={stats.isLoading} icon={<UserCog />} tone="brand" pressed={!filters.status} onClick={() => update({ status: '' })} footer={<StatShare value={pct(stats.counts.active)} tone="brand" caption="can sign in" />} />
         <StatCard label="Active" value={stats.counts.active} isLoading={stats.isLoading} icon={<UserCheck />} tone="success" pressed={filters.status === 'active'} onClick={() => statusFilter('active')} footer={<StatShare value={pct(stats.counts.active)} tone="success" caption="of all accounts" />} />
         <StatCard label="Suspended" value={stats.counts.suspended} isLoading={stats.isLoading} icon={<PauseCircle />} tone="warning" pressed={filters.status === 'suspended'} onClick={() => statusFilter('suspended')} footer={<StatShare value={pct(stats.counts.suspended)} tone="warning" caption="temporarily blocked" />} />
         <StatCard label="Deactivated" value={stats.counts.inactive} isLoading={stats.isLoading} icon={<UserX />} tone="danger" pressed={filters.status === 'inactive'} onClick={() => statusFilter('inactive')} footer={<StatShare value={pct(stats.counts.inactive)} tone="danger" caption="no longer sign in" />} />
       </section>
 
-      <section aria-label="Users" className="space-y-4">
+      <section aria-label="Users" className="space-y-0">
+
+        <DataTable
+
+          toolbar={
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <div className="relative flex-1 lg:max-w-md">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
@@ -216,11 +216,11 @@ export function UsersPage() {
               placeholder="Search name or email"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-10 text-sm text-ink shadow-soft placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
+              className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
             />
             {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
             {canReadRoles && (
               <FilterSelect
                 label="Role"
@@ -257,7 +257,7 @@ export function UsersPage() {
           </div>
         </div>
 
-        <DataTable
+          }
           caption="Users"
           rowHeight="stacked"
           columns={columns}

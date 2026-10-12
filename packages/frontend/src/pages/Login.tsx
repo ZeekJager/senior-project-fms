@@ -1,3 +1,4 @@
+import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { BarChart3, Clock3, ShieldCheck, Truck } from 'lucide-react'
 import { useRef, useState, type FormEvent } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
@@ -74,23 +75,27 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="relative hidden w-[46%] max-w-[640px] overflow-hidden bg-[#0B0D1A] p-12 text-white lg:flex lg:flex-col">
-        {/* Soft light and a faint grid behind the brand panel. */}
-        <div aria-hidden="true" className="absolute -left-32 -top-32 h-[480px] w-[480px] rounded-full bg-indigo-600/40 blur-[120px]" />
-        <div aria-hidden="true" className="absolute -bottom-40 right-0 h-[420px] w-[420px] rounded-full bg-purple-600/25 blur-[120px]" />
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 opacity-[0.07] [background-image:linear-gradient(to_right,white_1px,transparent_1px),linear-gradient(to_bottom,white_1px,transparent_1px)] [background-size:48px_48px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_75%)]"
-        />
+      <aside className="relative hidden w-[46%] max-w-[640px] flex-col overflow-hidden bg-side p-12 text-white lg:flex">
+        {/* A route drawn across the panel: stops joined by one line, the product in a picture. */}
+        <svg aria-hidden="true" viewBox="0 0 560 420" className="pointer-events-none absolute inset-x-0 top-24 w-full text-indigo-300" fill="none">
+          <path d="M-10 330 C 90 330, 120 220, 220 220 S 360 120, 450 150 S 540 60, 580 40" stroke="currentColor" strokeOpacity="0.35" strokeWidth="2" strokeDasharray="2 8" strokeLinecap="round" />
+          <g fill="rgb(var(--c-side))" stroke="currentColor" strokeWidth="2">
+            <circle cx="90" cy="318" r="7" />
+            <circle cx="220" cy="220" r="7" />
+            <circle cx="360" cy="146" r="7" />
+            <circle cx="480" cy="128" r="7" />
+          </g>
+          <circle cx="480" cy="128" r="3" fill="currentColor" />
+        </svg>
         <div className="relative flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/20 backdrop-blur">
+          <div className="flex h-10 w-10 items-center justify-center rounded-control bg-brand">
             <Truck className="h-5 w-5" aria-hidden="true" />
           </div>
           <span className="text-sm font-semibold tracking-tight">Fleet Management System</span>
         </div>
         <div className="relative mt-auto">
-          <p className="max-w-md text-3xl font-semibold leading-tight tracking-tight">Every vehicle, trip and litre of fuel, in one place.</p>
-          <ul className="mt-10 space-y-4 text-sm text-white/70">
+          <p className="max-w-md text-4xl font-semibold leading-[1.1] tracking-tight">Every vehicle, trip and litre of fuel, in one place.</p>
+          <ul className="mt-10 space-y-4 text-sm text-side-ink">
             <li className="flex items-center gap-3">
               <Clock3 className="h-4 w-4 text-indigo-300" aria-hidden="true" /> Live fleet status for dispatch decisions
             </li>
@@ -104,10 +109,13 @@ export function LoginPage() {
         </div>
       </aside>
 
-      <main className="flex flex-1 items-center justify-center px-4 py-12 sm:px-6">
+      <main className="relative flex flex-1 items-center justify-center px-4 py-12 sm:px-6">
+        <div className="absolute right-4 top-4">
+          <ThemeToggle />
+        </div>
         <div className="w-full max-w-sm animate-scale-in">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand bg-gradient-to-br from-white/20 to-white/0 text-white shadow-glow">
+            <div className="flex h-10 w-10 items-center justify-center rounded-control bg-brand text-white">
               <Truck className="h-5 w-5" aria-hidden="true" />
             </div>
             <span className="text-sm font-semibold tracking-tight text-ink">Fleet Management System</span>

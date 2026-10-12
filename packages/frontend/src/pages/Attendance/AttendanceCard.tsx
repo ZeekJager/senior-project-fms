@@ -81,13 +81,13 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
       aria-label={label}
       className={cn(
         'group relative flex flex-col overflow-hidden rounded-card border border-line bg-surface p-4 shadow-card transition-all duration-200 ease-smooth',
-        'before:absolute before:inset-x-0 before:top-0 before:h-1 before:transition-colors hover:-translate-y-0.5 hover:shadow-elevated',
+        'before:absolute before:inset-x-0 before:top-0 before:h-1 before:transition-colors',
         shown ? TINT[shown] : 'before:bg-transparent',
       )}
     >
       <div className="flex items-start gap-3">
         <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-xs font-semibold text-white"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink"
           aria-hidden="true"
         >
           {initials(entry.full_name)}
@@ -128,7 +128,7 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
                 title={blocked ? 'Only leave can be recorded ahead of the day' : undefined}
                 onClick={() => void choose(status)}
                 className={cn(
-                  'focus-ring flex h-9 items-center justify-center gap-1.5 rounded-[10px] text-xs font-semibold transition-all duration-200 ease-smooth [&_svg]:h-3.5 [&_svg]:w-3.5',
+                  'focus-ring flex h-9 items-center justify-center gap-1.5 rounded-control text-xs font-semibold transition-all duration-200 ease-smooth [&_svg]:h-3.5 [&_svg]:w-3.5',
                   on ? TOGGLE[status].on : 'text-ink-muted hover:bg-surface hover:text-ink hover:shadow-soft',
                   'disabled:cursor-not-allowed disabled:opacity-40',
                 )}

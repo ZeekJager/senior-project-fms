@@ -48,7 +48,7 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
 
   return (
     <div role="alert" className={cn('flex flex-col items-center px-6 py-14 text-center', className)}>
-      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-danger-soft text-danger ring-1 ring-inset ring-danger/20">
+      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-card bg-danger-soft text-danger ring-1 ring-inset ring-danger/20">
         <AlertTriangle className="h-6 w-6" aria-hidden="true" />
       </div>
       <h3 className="text-base font-semibold tracking-tight text-ink">{heading}</h3>

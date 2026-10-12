@@ -109,7 +109,7 @@ function DocumentRow({ doc, canDelete }: { doc: OwnedDocument; canDelete: boolea
 
   return (
     <li className="group flex items-center gap-3 rounded-card border border-line bg-surface p-3 shadow-soft transition-all duration-150 hover:border-line-strong hover:shadow-card">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line">
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-control bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line">
         <Icon className="h-5 w-5" aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">

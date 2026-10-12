@@ -151,7 +151,7 @@ export function Combobox<T>({ label, value, onChange, query, onQueryChange, opti
           id={`${id}-list`}
           role="listbox"
           aria-label={label}
-          className="absolute left-0 right-0 top-full z-30 mt-2 max-h-72 animate-pop-in overflow-auto rounded-card border border-line bg-surface/95 p-1.5 shadow-elevated backdrop-blur-xl"
+          className="absolute left-0 right-0 top-full z-30 mt-2 max-h-72 animate-pop-in overflow-auto rounded-card border border-line bg-surface p-1.5 shadow-elevated"
         >
           {options.length === 0 && <li className="px-3 py-2.5 text-sm text-ink-subtle">{loading ? 'Searching…' : emptyText}</li>}
           {options.map((option, index) => {
@@ -171,7 +171,7 @@ export function Combobox<T>({ label, value, onChange, query, onQueryChange, opti
                 onMouseEnter={() => setActive(index)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(option)}
-                className={cn('flex cursor-pointer items-center gap-3 rounded-[10px] px-3 py-2 text-sm text-ink', index === active && 'bg-surface-sunken')}
+                className={cn('flex cursor-pointer items-center gap-3 rounded-control px-3 py-2 text-sm text-ink', index === active && 'bg-surface-sunken')}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{option.label}</span>

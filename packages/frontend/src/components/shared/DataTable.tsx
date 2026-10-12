@@ -76,10 +76,12 @@ interface DataTableProps<T> {
   emptyState?: ReactNode
   pagination?: Pagination
   sort?: SortState
+  /** Search and filters, shown in a bar on top of the same panel as the rows. */
+  toolbar?: ReactNode
   /** Rows shown while loading; defaults to the page size (capped at 10). */
   skeletonRows?: number
   /**
-   * `regular`: 64px rows. `stacked`: 72px on phones, 64px from `sm` up, for
+   * `regular`: 56px rows. `stacked`: 72px on phones, 56px from `sm` up, for
    * tables whose first cell stacks a third line (a badge) on phones. Real and
    * placeholder rows always share it, so nothing moves when data arrives.
    */
@@ -90,8 +92,8 @@ export type RowHeight = 'regular' | 'stacked'
 
 /** On the 8px grid. Written out in full: Tailwind only generates classes it can find as text. */
 const ROW_HEIGHT: Record<RowHeight, string> = {
-  regular: 'h-16',
-  stacked: 'h-[72px] sm:h-16',
+  regular: 'h-14',
+  stacked: 'h-[72px] sm:h-14',
 }
 
 /**
@@ -151,6 +153,7 @@ export function DataTable<T>({
   emptyState,
   pagination,
   sort,
+  toolbar,
   skeletonRows,
   rowHeight = 'regular',
 }: DataTableProps<T>) {
@@ -163,6 +166,7 @@ export function DataTable<T>({
 
   return (
     <Card className="overflow-hidden">
+      {toolbar && <div className="border-b border-line p-3">{toolbar}</div>}
       {/* Always present, so changes are announced (a live region added with its text is not).
           No status role: the page's toast region keeps that, and tests find it by role. */}
       <p aria-live="polite" aria-atomic="true" data-testid="table-status" className="sr-only">
@@ -172,7 +176,7 @@ export function DataTable<T>({
         <table className="w-full table-fixed border-collapse text-left" aria-busy={isLoading || undefined}>
           <caption className="sr-only">{caption}</caption>
           <thead>
-            <tr className="border-b border-line bg-surface-muted/70">
+            <tr className="border-b border-line bg-surface-muted">
               {columns.map((column) => (
                 <HeaderCell key={column.key} column={column} sort={sort} />
               ))}
@@ -191,7 +195,7 @@ export function DataTable<T>({
                     </tr>
                   ))
                 : rows.map((row) => (
-                    <tr key={rowKey(row)} className={cn(ROW, 'group transition-colors duration-150 hover:bg-surface-muted/80')}>
+                    <tr key={rowKey(row)} className={cn(ROW, 'group transition-colors duration-150 hover:bg-surface-muted')}>
                       {columns.map((column) => (
                         <td
                           key={column.key}
@@ -220,7 +224,7 @@ export function DataTable<T>({
 function HeaderCell<T>({ column, sort }: { column: Column<T>; sort?: SortState }) {
   const sorted = sort && column.sortKey === sort.key ? sort.order : null
   const classes = cn(
-    'h-11 px-3 text-xs font-medium uppercase tracking-wide text-ink-subtle',
+    'h-10 px-3 text-xs font-semibold text-ink-muted',
     column.align === 'right' && 'text-right',
     column.hideBelow && HIDE_BELOW[column.hideBelow],
     column.width,
@@ -238,7 +242,7 @@ function HeaderCell<T>({ column, sort }: { column: Column<T>; sort?: SortState }
       <button
         type="button"
         onClick={() => sort.onChange(column.sortKey!)}
-        className="focus-ring -mx-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 uppercase tracking-wide transition-colors hover:text-ink"
+        className="focus-ring -mx-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:text-ink"
       >
         {column.header}
         <Icon className={cn('h-3.5 w-3.5', !sorted && 'opacity-50')} aria-hidden="true" />

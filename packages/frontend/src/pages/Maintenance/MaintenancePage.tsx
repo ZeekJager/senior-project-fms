@@ -102,19 +102,14 @@ export function MaintenancePage() {
   const pct = (n?: number, of?: number) => (n === undefined || !of ? 0 : Math.round((n * 100) / of))
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <Wrench className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Workshop
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Repair log</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-ink-muted">Every repair on every vehicle, with parts and costs. Open work comes first.</p>
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Repair log</h1>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">Every repair on every vehicle, with parts and costs. Open work comes first.</p>
         </div>
         <RoleGate permission="maintenance:write">
           <Button
-            size="lg"
             leadingIcon={<Plus className="h-4 w-4" />}
             onClick={() => {
               setCorrectionOf(null)
@@ -127,7 +122,7 @@ export function MaintenancePage() {
         </RoleGate>
       </header>
 
-      <section aria-label="Workshop summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <section aria-label="Workshop summary" className="stat-strip">
         <StatCard
           label="Open work"
           value={workshop.counts.open}
@@ -172,7 +167,11 @@ export function MaintenancePage() {
         )}
       </section>
 
-      <section aria-label="Repairs" className="space-y-4">
+      <section aria-label="Repairs" className="space-y-0">
+
+        <DataTable
+
+          toolbar={
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
           <div role="tablist" aria-label="Which work" className="inline-flex h-10 shrink-0 items-center gap-1 self-start rounded-control bg-surface-sunken p-1">
             {(['open', 'completed', 'all'] as const).map((v) => (
@@ -184,8 +183,8 @@ export function MaintenancePage() {
                 onClick={() => update({ view: v })}
                 className={
                   filters.view === v
-                    ? 'focus-ring h-8 rounded-[10px] bg-surface px-3.5 text-sm font-medium text-ink shadow-soft'
-                    : 'focus-ring h-8 rounded-[10px] px-3.5 text-sm text-ink-muted transition-colors hover:text-ink'
+                    ? 'focus-ring h-8 rounded-control bg-surface px-3.5 text-sm font-medium text-ink '
+                    : 'focus-ring h-8 rounded-control px-3.5 text-sm text-ink-muted transition-colors hover:text-ink'
                 }
               >
                 {v === 'open' ? 'Open work' : v === 'completed' ? 'Completed' : 'All'}
@@ -193,7 +192,7 @@ export function MaintenancePage() {
             ))}
           </div>
           <Combobox
-            className="lg:w-80"
+            className="lg:w-80 [&>p]:mt-0 [&>p]:min-h-0"
             label="Filter by vehicle"
             hideLabel
             value={vehicleFilter}
@@ -209,7 +208,7 @@ export function MaintenancePage() {
           />
         </div>
 
-        <DataTable
+          }
           caption="Repairs"
           columns={columns}
           data={list.data?.records}

@@ -81,4 +81,45 @@ describe('top bar', () => {
     const header = (await screen.findAllByRole('banner'))[0]
     expect(within(header).getByText('Fleet management')).toBeInTheDocument()
   })
+
+  it('staff and driver top bars both carry the theme toggle', async () => {
+    const user = userEvent.setup()
+    signedInAs(dispatcher)
+    const staff = renderApp('/dispatch')
+    await user.click(await screen.findByRole('button', { name: /Switch to (dark|light) theme/ }))
+    expect(document.documentElement.getAttribute('data-theme')).toMatch(/light|dark/)
+    staff.unmount()
+
+    signedInAs(driver)
+    renderApp('/')
+    expect(await screen.findByRole('button', { name: /Switch to (dark|light) theme/ })).toBeInTheDocument()
+  })
+})
+
+describe('sidebar', () => {
+  it('collapses to an icon rail, keeps every link reachable by name, and remembers the choice', async () => {
+    localStorage.removeItem('fms-sidebar')
+    signedInAs(dispatcher)
+    renderApp('/dispatch')
+    const user = userEvent.setup()
+    const toggle = await screen.findByRole('button', { name: 'Collapse sidebar' })
+    const aside = toggle.closest('aside')!
+    expect(aside).toHaveAttribute('data-collapsed', 'false')
+
+    await user.click(toggle)
+    expect(aside).toHaveAttribute('data-collapsed', 'true')
+    expect(localStorage.getItem('fms-sidebar')).toBe('collapsed')
+    expect(within(aside).getByRole('link', { name: 'Vehicles' })).toBeInTheDocument()
+
+    await user.click(within(aside).getByRole('button', { name: 'Expand sidebar' }))
+    expect(aside).toHaveAttribute('data-collapsed', 'false')
+    expect(localStorage.getItem('fms-sidebar')).toBe('expanded')
+  })
+
+  it('shows the signed-in role under the name', async () => {
+    signedInAs(dispatcher)
+    renderApp('/dispatch')
+    const aside = (await screen.findByRole('button', { name: /sidebar/ })).closest('aside')!
+    expect(within(aside).getByText('Dispatcher')).toBeInTheDocument()
+  })
 })

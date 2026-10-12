@@ -112,7 +112,7 @@ export function FilterSelect<T extends string>({
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={onButtonKeyDown}
         className={cn(
-          'focus-ring inline-flex h-10 items-center gap-2 rounded-control border px-3.5 text-sm shadow-soft transition-all duration-150 ease-smooth',
+          'focus-ring inline-flex h-9 w-full items-center gap-1.5 whitespace-nowrap rounded-control border px-2.5 text-[13px] transition-colors sm:gap-2 sm:px-3 sm:text-sm duration-150 ease-smooth sm:w-auto',
           isSet
             ? 'border-brand/30 bg-brand-soft text-brand-ink hover:border-brand/50'
             : 'border-line-strong bg-surface text-ink-muted hover:border-ink-subtle/50 hover:text-ink',
@@ -121,7 +121,7 @@ export function FilterSelect<T extends string>({
         {icon && <span className="[&_svg]:h-4 [&_svg]:w-4">{icon}</span>}
         <span className="text-ink-subtle">{label}</span>
         <span className={cn('font-medium', isSet ? 'text-brand-ink' : 'text-ink')}>{selected.label}</span>
-        <ChevronDown className={cn('h-4 w-4 transition-transform duration-200 ease-smooth', open && 'rotate-180')} aria-hidden="true" />
+        <ChevronDown className={cn('ml-auto h-4 w-4 transition-transform duration-200 ease-smooth', open && 'rotate-180')} aria-hidden="true" />
       </button>
       {open && (
         <ul
@@ -133,7 +133,7 @@ export function FilterSelect<T extends string>({
           aria-activedescendant={`${id}-opt-${active}`}
           onKeyDown={onListKeyDown}
           className={cn(
-            'absolute z-30 max-h-72 min-w-[220px] animate-pop-in overflow-auto rounded-card border border-line bg-surface/95 p-1.5 shadow-elevated outline-none backdrop-blur-xl',
+            'absolute z-30 max-h-72 min-w-[220px] animate-pop-in overflow-auto rounded-card border border-line bg-surface p-1.5 shadow-elevated outline-none',
             menuPlacement === 'top' ? 'bottom-full right-0 mb-2' : 'left-0 top-full mt-2',
           )}
         >
@@ -146,7 +146,7 @@ export function FilterSelect<T extends string>({
               onMouseEnter={() => setActive(index)}
               onClick={() => choose(index)}
               className={cn(
-                'flex cursor-pointer items-center gap-2.5 rounded-[10px] px-3 py-2 text-sm text-ink transition-colors',
+                'flex cursor-pointer items-center gap-2.5 rounded-control px-3 py-2 text-sm text-ink transition-colors',
                 index === active && 'bg-surface-sunken',
               )}
             >
