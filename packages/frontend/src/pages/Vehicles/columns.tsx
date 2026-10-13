@@ -46,7 +46,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             })()}
           </div>
           <div className="min-w-0">
-            <p className="flex items-center gap-2 truncate font-semibold tracking-wide text-ink">
+            <p className="plate flex items-center gap-2 truncate text-ink">
               {v.registration_number}
               {v.maintenance_flag && (
                 <span title="Flagged for maintenance" className="text-warning">
@@ -79,13 +79,13 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'type',
       header: 'Type',
       width: 'w-[9%]',
-      hideBelow: 'xl',
+      hideBelow: '2xl',
       cell: (v) => <span className="text-ink-muted">{VEHICLE_TYPE_LABELS[v.vehicle_type]}</span>,
     },
     {
       key: 'depot',
       header: 'Depot',
-      width: 'w-[15%]',
+      width: 'w-[17%]',
       hideBelow: 'xl',
       cell: (v) => (
         <span className="flex min-w-0 items-center gap-1.5 text-ink-muted">
@@ -105,7 +105,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     {
       key: 'trip',
       header: 'Current trip',
-      width: 'w-[18%]',
+      width: 'w-[19%]',
       hideBelow: 'lg',
       cell: (v) =>
         v.current_trip ? (

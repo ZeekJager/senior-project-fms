@@ -112,7 +112,7 @@ export function UsersPage() {
             <p className="flex items-center gap-1.5 truncate font-semibold text-ink">
               <span className="truncate">{u.full_name}</span>
               {u.id === session?.user.id && (
-                <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-ink-muted">You</span>
+                <span className="shrink-0 rounded-full bg-surface-sunken px-1.5 py-px text-2xs font-semibold uppercase tracking-wider text-ink-muted">You</span>
               )}
             </p>
             <p className="truncate text-xs text-ink-subtle">{u.email}</p>
@@ -176,7 +176,7 @@ export function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex items-start justify-between gap-3 border-b border-line pb-5 sm:items-center">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Users and roles</h1>
           <p className="mt-1 max-w-xl text-sm text-ink-muted">Who can sign in and what they may do. Every role change is recorded in the audit log.</p>

@@ -142,7 +142,7 @@ describe('Vehicle Management (S-04)', () => {
     await openVehicles()
     await within(table()).findByText(fine.registration_number)
 
-    await user.click(screen.getByRole('switch', { name: 'Maintenance flagged' }))
+    await user.click(screen.getByRole('button', { name: /^Flagged/ }))
 
     await waitFor(() => expect(within(table()).queryByText(fine.registration_number)).not.toBeInTheDocument())
     expect(within(table()).getByText(flagged.registration_number)).toBeInTheDocument()
@@ -150,6 +150,66 @@ describe('Vehicle Management (S-04)', () => {
     expect(api.listQueries().at(-1)?.get('maintenance_flag')).toBe('true')
     // Same app instance throughout: the heading never unmounted.
     expect(screen.getByRole('heading', { name: 'Vehicles' })).toBeInTheDocument()
+  })
+
+  describe('views', () => {
+    it('offers one control for which vehicles: no status dropdown and no flag switch', async () => {
+      serveFleet([vehicle()])
+      await openVehicles()
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+      expect(within(views).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\d*$/, ''))).toEqual(['All', 'Active', 'Flagged', 'Workshop'])
+      expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^Status:/ })).not.toBeInTheDocument()
+    })
+
+    it('shows the count of each view and marks the one that applies', async () => {
+      serveFleet([vehicle({ maintenance_flag: true }), vehicle(), vehicle({ status: 'maintenance' })])
+      await openVehicles()
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+      expect(await within(views).findByRole('button', { name: 'All 3' })).toHaveAttribute('aria-pressed', 'true')
+      expect(within(views).getByRole('button', { name: 'Flagged 1' })).toHaveAttribute('aria-pressed', 'false')
+      expect(within(views).getByRole('button', { name: 'Workshop 1' })).toBeInTheDocument()
+    })
+
+    it('a view filters the table, is kept in the URL and clears back to All', async () => {
+      const idle = vehicle({ status: 'active' })
+      const away = vehicle({ status: 'maintenance' })
+      const api = serveFleet([idle, away])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findByText(idle.registration_number)
+
+      await user.click(screen.getByRole('button', { name: /^Workshop/ }))
+      await waitFor(() => expect(within(table()).queryByText(idle.registration_number)).not.toBeInTheDocument())
+      expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?status=maintenance')
+      expect(api.listQueries().at(-1)?.get('status')).toBe('maintenance')
+      expect(screen.getByRole('button', { name: /^Workshop/ })).toHaveAttribute('aria-pressed', 'true')
+
+      await user.click(screen.getByRole('button', { name: /^All/ }))
+      await within(table()).findByText(idle.registration_number)
+      expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles$/)
+    })
+
+    it('keeps inactive and retired in a menu and applies them', async () => {
+      const gone = vehicle({ status: 'retired' })
+      serveFleet([vehicle(), gone])
+      const user = userEvent.setup()
+      await openVehicles()
+      await user.click(screen.getByRole('button', { name: /^More:/ }))
+      await user.click(screen.getByRole('option', { name: 'Retired' }))
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?status=retired'))
+      await within(table()).findByText(gone.registration_number)
+    })
+
+    it('marks no view when the link combines a status with the flag, and Clear removes both', async () => {
+      serveFleet([vehicle()])
+      const user = userEvent.setup()
+      await openVehicles('/vehicles?status=active&flagged=1')
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+      for (const button of within(views).getAllByRole('button')) expect(button).toHaveAttribute('aria-pressed', 'false')
+      await user.click(screen.getByRole('button', { name: 'Clear' }))
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles$/))
+    })
   })
 
   it('shows skeleton rows while a new filter loads, then the rows', async () => {
@@ -167,8 +227,7 @@ describe('Vehicle Management (S-04)', () => {
         return HttpResponse.json({ data: [v], meta: { page: 1, page_size: 25, total_items: 1, total_pages: 1 } })
       }),
     )
-    await user.click(screen.getByRole('button', { name: /^Status:/ }))
-    await user.click(screen.getByRole('option', { name: 'Maintenance' }))
+    await user.click(screen.getByRole('button', { name: /^Workshop/ }))
 
     expect((await screen.findAllByTestId('skeleton-row')).length).toBeGreaterThan(0)
     release()

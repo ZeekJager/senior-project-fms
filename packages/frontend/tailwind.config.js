@@ -47,11 +47,14 @@ export default {
         'fms-success': token('success'),
       },
       fontFamily: {
-        sans: ['"Inter Variable"', 'Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        // Ethiopic falls back to a system face that has the glyphs (Inter has none).
+        sans: ['"Inter Variable"', 'Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', '"Noto Sans Ethiopic"', 'Nyala', 'sans-serif'],
       },
       fontSize: {
-        // 12px is the smallest text in the app (badges, captions).
+        // Type roles: 2xs 12px uppercase group labels; xs 13px captions, table headers, badges; sm 14px body and data;
+        // plate 15px (the plate role, see .plate); xl and 2xl page titles. Nothing below 12px.
         '2xs': ['0.75rem', { lineHeight: '1rem' }],
+        xs: ['0.8125rem', { lineHeight: '1.125rem' }],
       },
       borderRadius: {
         // Controls 8px, cards 12px, sheets 16px.

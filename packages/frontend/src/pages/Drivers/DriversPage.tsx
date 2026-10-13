@@ -117,7 +117,7 @@ export function DriversPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex items-start justify-between gap-3 border-b border-line pb-5 sm:items-center">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Drivers</h1>
           <p className="mt-1 max-w-xl text-sm text-ink-muted">

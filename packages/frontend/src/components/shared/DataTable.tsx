@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Card, cn, FilterSelect, IconButton, Skeleton } from '@/components/ui'
 import { ErrorState } from './ErrorBoundary'
 
-type Breakpoint = 'sm' | 'md' | 'lg' | 'xl'
+type Breakpoint = 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 
 // Written out in full: Tailwind only generates classes it can find as text.
 const HIDE_BELOW: Record<Breakpoint, string> = {
@@ -11,6 +11,7 @@ const HIDE_BELOW: Record<Breakpoint, string> = {
   md: 'hidden md:table-cell',
   lg: 'hidden lg:table-cell',
   xl: 'hidden xl:table-cell',
+  '2xl': 'hidden 2xl:table-cell',
 }
 
 export interface Column<T> {

@@ -1,8 +1,8 @@
-import { Building2, Plus, Search, SlidersHorizontal, Truck, X } from 'lucide-react'
+import { Building2, Plus, Search, Truck, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { DataTable, EmptyState } from '@/components/shared'
-import { Button, cn, FilterSelect, Spinner } from '@/components/ui'
+import { Button, FilterSelect, Spinner, ViewTabs } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useDepots } from '@/features/depots'
@@ -12,17 +12,26 @@ import { documentHealth } from '@/features/documents/expiry'
 import { useFleetCounts, useVehicles } from './api'
 import { vehicleColumns } from './columns'
 import { DecommissionDialog } from './DecommissionDialog'
-import { FleetStats } from './FleetStats'
 import { hasActiveFilters, readFilters, writeFilters, type VehicleFilters } from './filters'
 import { VehicleFormDrawer } from './VehicleFormDrawer'
 import type { Vehicle, VehicleStatus } from './types'
 
-const STATUS_OPTIONS: { value: VehicleStatus | ''; label: string; dot?: string }[] = [
-  { value: '', label: 'All' },
-  { value: 'active', label: 'Active', dot: 'bg-emerald-500' },
-  { value: 'maintenance', label: 'Maintenance', dot: 'bg-orange-500' },
-  { value: 'inactive', label: 'Inactive', dot: 'bg-slate-400' },
-  { value: 'retired', label: 'Retired', dot: 'bg-slate-300' },
+/** The views of the fleet. "flagged" is the maintenance flag; the rest are statuses. */
+type View = 'all' | 'flagged' | VehicleStatus
+
+/** Which view the URL's filters amount to, or null for a mix (a status and the flag together). */
+function viewOf(f: VehicleFilters): View | null {
+  if (f.flagged) return f.status ? null : 'flagged'
+  return f.status || 'all'
+}
+
+const patchFor = (view: View): Partial<VehicleFilters> =>
+  view === 'all' ? { status: '', flagged: false } : view === 'flagged' ? { status: '', flagged: true } : { status: view, flagged: false }
+
+const MORE_VIEWS: { value: View | ''; label: string }[] = [
+  { value: '', label: 'views' },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'retired', label: 'Retired' },
 ]
 
 /**
@@ -107,7 +116,7 @@ export function VehiclesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex items-start justify-between gap-3 border-b border-line pb-5 sm:items-center">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Vehicles</h1>
           <p className="mt-1 max-w-xl text-sm text-ink-muted">
@@ -121,101 +130,59 @@ export function VehiclesPage() {
         )}
       </header>
 
-      <FleetStats
-        counts={fleet.counts}
-        isLoading={fleet.isLoading}
-        filters={filters}
-        onSelect={(focus) => {
-          if (focus === 'all') update({ status: '', flagged: false })
-          else if (focus === 'flagged') update({ status: '', flagged: !(filters.flagged && !filters.status) })
-          else update({ status: filters.status === focus && !filters.flagged ? '' : focus, flagged: false })
-        }}
-      />
-
       <section aria-label="Vehicle list" className="space-y-0">
 
         <DataTable
 
           toolbar={
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search vehicles"
-              placeholder="Search plate, VIN, make or model"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-            {list.isFetching && searchText && (
-              <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />
-            )}
-          </div>
-          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
-            {showDepotFilter && (
-              <FilterSelect
-                label="Depot"
-                icon={<Building2 />}
-                value={filters.depotId}
-                emptyValue=""
-                options={depotOptions}
-                onChange={(depotId) => update({ depotId })}
-              />
-            )}
-            <FilterSelect
-              label="Status"
-              icon={<SlidersHorizontal />}
-              value={filters.status}
-              emptyValue=""
-              options={STATUS_OPTIONS.map((o) => ({
-                value: o.value,
-                label: o.label,
-                adornment: o.dot ? <span className={cn('h-2 w-2 rounded-full', o.dot)} aria-hidden="true" /> : undefined,
-              }))}
-              onChange={(status) => update({ status })}
-            />
-            <button
-              type="button"
-              role="switch"
-              aria-checked={filters.flagged}
-              onClick={() => update({ flagged: !filters.flagged })}
-              className={cn(
-                'focus-ring inline-flex h-9 items-center gap-2.5 rounded-control border px-3.5 text-sm  transition-all duration-150 ease-smooth',
-                filters.flagged ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
-              )}
-            >
-              <span
-                className={cn(
-                  'relative h-4 w-7 rounded-full transition-colors duration-200',
-                  filters.flagged ? 'bg-brand' : 'bg-line-strong',
-                )}
-                aria-hidden="true"
-              >
-                <span
-                  className={cn(
-                    'absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white  transition-transform duration-200 ease-smooth',
-                    filters.flagged ? 'translate-x-3.5' : 'translate-x-0.5',
-                  )}
-                />
-              </span>
-              Maintenance flagged
-            </button>
-            {filtered && (
-              <Button
-                variant="ghost"
-                leadingIcon={<X className="h-4 w-4" />}
-                onClick={() => {
-                  setSearchText('')
-                  update({ search: '', depotId: '', status: '', flagged: false })
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <ViewTabs
+                label="Vehicle views"
+                value={viewOf(filters)}
+                options={[
+                  { value: 'all', label: 'All', count: fleet.counts.total, isLoading: fleet.isLoading },
+                  { value: 'active', label: 'Active', count: fleet.counts.active, isLoading: fleet.isLoading },
+                  { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading },
+                  { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading },
+                ]}
+                onChange={(view) => update(patchFor(view))}
+                more={{
+                  label: 'More',
+                  value: filters.status === 'inactive' || filters.status === 'retired' ? (filters.status as View) : '',
+                  options: MORE_VIEWS,
+                  onChange: (view) => update(view === '' ? patchFor('all') : patchFor(view)),
                 }}
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
-
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="relative flex-1 sm:w-72 sm:flex-none">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
+                  <input
+                    type="search"
+                    aria-label="Search vehicles"
+                    placeholder="Plate, VIN, make or model"
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
+                  />
+                  {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
+                </div>
+                {showDepotFilter && (
+                  <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />
+                )}
+                {filtered && (
+                  <Button
+                    variant="ghost"
+                    leadingIcon={<X className="h-4 w-4" />}
+                    onClick={() => {
+                      setSearchText('')
+                      update({ search: '', depotId: '', status: '', flagged: false })
+                    }}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
           }
           caption="Vehicles"
           columns={columns}

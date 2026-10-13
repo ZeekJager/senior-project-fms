@@ -63,7 +63,7 @@ export function MaintenancePage() {
       header: 'Vehicle',
       cell: (r) => (
         <div className="min-w-0">
-          <p className="truncate font-semibold tracking-wide text-ink">{r.registration_number}</p>
+          <p className="plate truncate text-ink">{r.registration_number}</p>
           <p className="truncate text-xs text-ink-subtle">{TYPE_LABELS[r.maintenance_type]}</p>
         </div>
       ),
@@ -103,7 +103,7 @@ export function MaintenancePage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex items-start justify-between gap-3 border-b border-line pb-5 sm:items-center">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Repair log</h1>
           <p className="mt-1 max-w-xl text-sm text-ink-muted">Every repair on every vehicle, with parts and costs. Open work comes first.</p>

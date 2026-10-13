@@ -32,11 +32,17 @@ Every text and background pair meets WCAG AA (4.5:1). The weakest pair,
 Colour is never the only signal: badges always carry a label, icons carry
 `aria-label` or sr-only text.
 
-**Type.** Inter (variable, self-hosted via `@fontsource-variable/inter`), 14px
-body. Page titles `text-2xl`/`text-3xl font-semibold tracking-tight`; section
-labels `text-xs font-semibold uppercase tracking-wider text-ink-subtle`;
-numbers in tables and stats use `tabular` (tabular figures). Nothing smaller
-than 12px.
+**Type.** One family, Inter (variable, self-hosted via `@fontsource-variable/inter`), with Ethiopic falling back to Noto Sans Ethiopic or Nyala. Fixed role scale:
+
+| Role | Size | Use |
+|---|---|---|
+| Page title | `text-xl` / `sm:text-2xl`, semibold, tight | One per screen |
+| Plate | 15px, semibold, tabular, slashed zero (`.plate`) | A vehicle registration number, wherever it leads a row |
+| Body and data | 14px (`text-sm`) | Table cells, form values |
+| Caption | 13px (`text-xs`) | Secondary lines, table headers, badges |
+| Group label | 12px (`text-2xs`), uppercase, wide tracking | Sidebar groups, form sections |
+
+Nothing is smaller than 12px. Numbers in tables and stats use `tabular`. In dark mode the body gets a little more tracking and line height (`index.css`), because light text on dark reads tighter.
 
 **Space.** An 8px grid: paddings and gaps in steps of 8 (`2`, `4`, `6`, `8`
 in Tailwind units), with 4px only inside small components. Table rows are
@@ -66,6 +72,7 @@ focus only). Never remove an outline without it.
 | `TextField`, `SelectField` | Floating label: a real `<label>`, inside the control until there is a value. `error` replaces `hint` in a message line that always exists (a live region), and sets `aria-invalid`. `optional` adds "(optional)"; `trailing` holds a unit or a status icon |
 | `Combobox` | A searchable select (WAI-ARIA combobox): the caller feeds options from the typed text (local filter or API search), optional groups ("Needs maintenance" first), a detail line and a trailing badge per option. Escape closes only the list |
 | `TextAreaField` | The multi-line floating-label field (descriptions, notes) |
+| `ViewTabs` | One control for "which rows?": named views with counts (`aria-pressed`), plus an optional menu for rare ones. Use it instead of a stat card, a dropdown and a switch that filter the same thing (Vehicles) |
 | `FilterSelect` | The filter-bar pill: label, value, an animated listbox. Arrow keys, Home/End, Enter/Space, Escape. Tinted while a filter is applied |
 | `Dialog`, `Drawer` | Portal, focus trap, Escape and backdrop close, scroll lock, focus returned on close. Drawers are floating sheets inset 8px from the edge; use them for forms and detail instead of new pages |
 | `Card`, `Badge`, `Skeleton`, `Spinner` | Surfaces; tinted pills with a dot or icon; shimmering placeholders the size of what they replace |

@@ -37,7 +37,7 @@ export function RolesDrawer({ open, onClose }: { open: boolean; onClose: () => v
                       <dt className="font-medium text-ink-muted">{resource}</dt>
                       <dd className="flex flex-wrap gap-1">
                         {actions.map((a) => (
-                          <span key={a} className="rounded-md bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px] text-ink">
+                          <span key={a} className="rounded-md bg-surface-sunken px-1.5 py-0.5 font-mono text-xs text-ink">
                             {a}
                           </span>
                         ))}

@@ -125,6 +125,11 @@
     font-feature-settings: 'cv11', 'ss01';
   }
 
+  :root[data-theme='dark'] body {
+    letter-spacing: 0.006em;
+    line-height: 1.55;
+  }
+
   ::selection {
     background: rgb(var(--c-brand) / 0.2);
   }
@@ -171,6 +176,12 @@
 
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* The plate role: a registration number is the product's identity. Larger than body, tabular, with a slashed zero so 0 and O never read alike (AA 3-20212). */
+  .plate {
+    @apply text-[15px] font-semibold leading-5 tracking-[0.01em];
+    font-variant-numeric: tabular-nums slashed-zero;
   }
 }
 
