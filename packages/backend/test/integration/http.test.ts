@@ -107,7 +107,9 @@ describe('health', () => {
     const res = await request(createApp()).get('/health/ready');
     expect(res.status).toBe(200);
     // Redis is optional (FMS-72): ok when configured (CI), disabled when not.
-    expect(res.body.checks).toEqual({ database: 'ok', redis: process.env.REDIS_HOST ? 'ok' : 'disabled' });
+    expect(res.body.checks).toEqual({ database: 'ok', redis: process.env.REDIS_HOST ? 'ok' : 'disabled', outbox: 'ok' });
+    // The event outbox's lag (FMS-73).
+    expect(res.body.metrics).toEqual({ outbox: { undispatched: 0, unpublished: 0, oldest_pending_seconds: 0, dead_lettered: 0 } });
   });
 
   test('ready is 503 when the database check fails', async () => {

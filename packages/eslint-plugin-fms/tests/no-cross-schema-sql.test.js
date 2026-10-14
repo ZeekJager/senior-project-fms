@@ -76,6 +76,12 @@ tsRuleTester().run('no-cross-schema-sql', rule, {
       code: 'db.query(`SELECT * FROM api.idempotency_keys`);',
       errors: [{ messageId: 'crossSchema', data: { module: 'trip', schema: 'api', owner: 'platform code in src/shared' } }],
     },
+    // Events go through eventBus.publish, never straight into the outbox.
+    {
+      filename: trip,
+      code: "client.query('INSERT INTO events.outbox (event_id) VALUES ($1)', [id]);",
+      errors: [{ messageId: 'crossSchema', data: { module: 'trip', schema: 'events', owner: 'platform code in src/shared' } }],
+    },
     // A module that owns no schema reads nothing directly.
     { filename: commandCenter, code: 'db.query(`SELECT * FROM tracking.vehicle_current_location`);', errors: [{ messageId: 'crossSchema' }] },
   ],

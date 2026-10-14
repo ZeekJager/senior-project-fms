@@ -1,5 +1,5 @@
-import type { Pool } from 'pg';
-import { createEvent, deterministicEventId, type DomainEvent } from '../../../shared/events/domain-event';
+import type { Pool, PoolClient } from 'pg';
+import { aggregateKey, createEvent, deterministicEventId, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { withTransaction } from '../../../shared/infrastructure/transaction';
@@ -26,18 +26,22 @@ export interface ExpiryCheck {
  * Raises DocumentExpiring and LicenceExpiring (FMS-26): amber within 30
  * days of the expiry date, red within 7. A level is raised once per subject
  * and expiry date (fleet.expiry_notices), so re-running a check publishes
- * nothing new. Events are published after the notices commit, with actor
- * null (the system) and ids derived from the fact, so a consumer that sees
- * one twice can drop it.
+ * nothing new. Events go into the outbox with the notices, with actor null
+ * (the system) and ids derived from the fact, so a consumer that sees one
+ * twice can drop it.
  */
 export class ExpiryService {
   constructor(private readonly deps: ExpiryServiceDeps) {}
 
-  /** Every live document, or only `documentId` (the check on DocumentUploaded). */
-  async checkDocuments(check: ExpiryCheck, documentId?: string): Promise<ExpiryRunResult> {
+  /**
+   * Every live document, or only `documentId` (the check on DocumentUploaded,
+   * on that consumer's transaction `tx`).
+   */
+  async checkDocuments(check: ExpiryCheck, documentId?: string, tx?: PoolClient): Promise<ExpiryRunResult> {
     const { db, expiry } = this.deps;
     const today = operatingToday(check.now);
-    const { checked, events } = await withTransaction(db, async (client) => {
+    const run = <T>(fn: (client: PoolClient) => Promise<T>) => (tx ? fn(tx) : withTransaction(db, fn));
+    return run(async (client) => {
       const due = await expiry.documentsDue(client, today, EXPIRY_WINDOW_DAYS, documentId);
       const raised: DomainEvent[] = [];
       for (const doc of due) {
@@ -64,21 +68,23 @@ export class ExpiryService {
               level,
             },
             { actor: null, correlationId: check.correlationId },
-            { id: deterministicEventId(`${EXPIRY_EVENTS.documentExpiring}:${doc.publicId}:${doc.expiresOn}:${level}`) },
+            {
+              id: deterministicEventId(`${EXPIRY_EVENTS.documentExpiring}:${doc.publicId}:${doc.expiresOn}:${level}`),
+              aggregate: aggregateKey('document', doc.publicId),
+            },
           ),
         );
       }
-      return { checked: due.length, events: raised };
+      await this.deps.events.publish(client, raised);
+      return { checked: due.length, raised: raised.length };
     });
-    await this.deps.events.publish(events);
-    return { checked, raised: events.length };
   }
 
   /** Every active driver's licence. */
   async checkLicences(check: ExpiryCheck): Promise<ExpiryRunResult> {
     const { db, expiry, users, depots } = this.deps;
     const today = operatingToday(check.now);
-    const { checked, events } = await withTransaction(db, async (client) => {
+    return withTransaction(db, async (client) => {
       const due = await expiry.licencesDue(client, today, EXPIRY_WINDOW_DAYS);
       const fresh: { licence: (typeof due)[number]; level: 'amber' | 'red' }[] = [];
       for (const licence of due) {
@@ -109,12 +115,14 @@ export class ExpiryService {
             level,
           },
           { actor: null, correlationId: check.correlationId },
-          { id: deterministicEventId(`${EXPIRY_EVENTS.licenceExpiring}:${licence.publicId}:${licence.licenseExpiry}:${level}`) },
+          {
+            id: deterministicEventId(`${EXPIRY_EVENTS.licenceExpiring}:${licence.publicId}:${licence.licenseExpiry}:${level}`),
+            aggregate: aggregateKey('driver', licence.publicId),
+          },
         );
       });
-      return { checked: due.length, events: raised };
+      await this.deps.events.publish(client, raised);
+      return { checked: due.length, raised: raised.length };
     });
-    await this.deps.events.publish(events);
-    return { checked, raised: events.length };
   }
 }

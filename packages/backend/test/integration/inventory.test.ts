@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import request, { type Response } from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createUser, createVehicle, type RoleName } from '../support/factories';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Inventory-Test-1';
@@ -203,15 +202,7 @@ describe('who may use inventory', () => {
 });
 
 describe('reorder events', () => {
-  const seen: DomainEvent[] = [];
-  let off: () => void;
-  beforeAll(() => {
-    off = eventBus.subscribe('InventoryReorderNeeded', (e) => void seen.push(e));
-  });
-  afterAll(() => off());
-  beforeEach(() => {
-    seen.length = 0;
-  });
+  const seen = () => publishedEvents('InventoryReorderNeeded');
 
   test('stock crossing the reorder point publishes InventoryReorderNeeded once, from an adjustment or a repair', async () => {
     const depot = await createDepot();
@@ -220,7 +211,7 @@ describe('reorder events', () => {
     await api.post(`/inventory/${part.id}/adjust`, { quantity: -5, reason: 'Stock take' }, cookie); // 5: still above
     await api.post(`/inventory/${part.id}/adjust`, { quantity: -1, reason: 'Stock take' }, cookie); // 4: crosses
     await api.post(`/inventory/${part.id}/adjust`, { quantity: -1, reason: 'Stock take' }, cookie); // 3: already below
-    expect(seen.map((e) => e.payload)).toEqual([expect.objectContaining({ part_id: part.id, stock_quantity: 4, reorder_threshold: 4 })]);
+    expect((await seen()).map((e) => e.payload)).toEqual([expect.objectContaining({ part_id: part.id, stock_quantity: 4, reorder_threshold: 4 })]);
 
     const other = await newPart(cookie, depot, { stock_quantity: 6, reorder_threshold: 2 });
     const vehicle = await createVehicle({ depot });
@@ -229,7 +220,8 @@ describe('reorder events', () => {
       { vehicle_id: vehicle.public_id, description: 'Pads', labour_hours: 1, total_cost_cents: 10_000, parts: [{ part_id: other.id, quantity: 5, unit_cost_cents: 1000 }] },
       cookie,
     );
-    expect(seen.map((e) => e.payload.part_id)).toEqual([part.id, other.id]);
-    expect(seen[1].payload).toMatchObject({ stock_quantity: 1, depot_id: depot.public_id });
+    const both = await seen();
+    expect(both.map((e) => e.payload.part_id)).toEqual([part.id, other.id]);
+    expect(both[1].payload).toMatchObject({ stock_quantity: 1, depot_id: depot.public_id });
   });
 });

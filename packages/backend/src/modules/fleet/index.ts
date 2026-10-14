@@ -43,11 +43,11 @@ const vehicleService = new VehicleService({
 });
 
 // The maintenance module sets and clears the maintenance flag inside its
-// own transaction; its events come after commit, so the cached vehicle is
-// dropped only once the change is visible. By name: fleet cannot import the
-// maintenance module, which imports fleet.
+// own transaction; its events are delivered after commit, so the cached
+// vehicle is dropped only once the change is visible. By name: fleet cannot
+// import the maintenance module, which imports fleet.
 for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted']) {
-  eventBus.subscribe(type, async (event) => {
+  eventBus.subscribe(type, 'fleet.vehicle-cache', async (event) => {
     if (typeof event.payload.vehicle_id === 'string') await vehicleService.invalidate(event.payload.vehicle_id);
   });
 }
@@ -84,8 +84,8 @@ const documentService = new DocumentService({
 });
 
 // Keep fleet's copy of driver account fields current when another module changes an account.
-eventBus.subscribe(USER_EVENTS.accountChanged, async (event) => {
-  if (typeof event.payload.user_id === 'string') await driverService.onAccountChanged(event.payload.user_id);
+eventBus.subscribe(USER_EVENTS.accountChanged, 'fleet.driver-accounts', async (event, tx) => {
+  if (typeof event.payload.user_id === 'string') await driverService.onAccountChanged(tx, event.payload.user_id);
 });
 
 const expiryService = new ExpiryService({
@@ -99,9 +99,9 @@ const expiryService = new ExpiryService({
 // A document uploaded already inside the 30-day window is flagged at once,
 // not at the next 07:00 check (FMS-26). The notice table keeps the two from
 // raising it twice.
-eventBus.subscribe(DOCUMENT_EVENTS.uploaded, async (event) => {
+eventBus.subscribe(DOCUMENT_EVENTS.uploaded, 'fleet.document-expiry', async (event, tx) => {
   if (typeof event.payload.document_id !== 'string' || !event.payload.expires_on) return;
-  await expiryService.checkDocuments({ now: new Date(), correlationId: event.correlation_id }, event.payload.document_id);
+  await expiryService.checkDocuments({ now: new Date(), correlationId: event.correlation_id }, event.payload.document_id, tx);
 });
 
 const attendanceService = new AttendanceService({

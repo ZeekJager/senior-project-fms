@@ -31,6 +31,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 023 | `jobs`, `fleet` | `jobs.job_runs`: the scheduler's per-day lock and run history; `fleet.expiry_notices`: each document or licence expiry warning raised once per level (FMS-26) |
 | 024 | `audit` | `audit_logs.request_source` (channel, IP, user agent; system actor for jobs) and `result` (success, denied, failed), required on new rows (NOT VALID checks; old rows untouched) (FMS-27) |
 | 025 | `audit`, `auth` | Indexes for the audit reader (newest first on `created_at, id`; entity public id); `audit:read` taken from fleet_manager (admin, fleet owner, compliance officer keep it) (FMS-28) |
+| 026 | `events` | Domain events (FMS-73): `events.outbox`, written in the change's transaction and delivered by the relay (dispatched to consumers, published on Redis; retries and dead letters); `events.processed_events`, each event a consumer has handled. Platform-owned, like `api` and `jobs` |
 
 ## Important
 

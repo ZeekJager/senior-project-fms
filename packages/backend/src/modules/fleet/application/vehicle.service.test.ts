@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { PoolClient } from 'pg';
 import { AppError } from '../../../shared/errors/app-error';
-import type { DomainEvent } from '../../../shared/events/domain-event';
-import { InProcessEventBus } from '../../../shared/events/in-process-event-bus';
+import { RecordingEventBus } from '../../../shared/events/recording-event-bus';
 import type { RequestUser } from '../../../types/express';
 import type { VehicleView } from '../domain/vehicle';
 import type { LockedVehicle } from '../infrastructure/vehicle.repository';
@@ -26,20 +25,15 @@ const view = { id: VEHICLE, depot_id: DEPOT_PUBLIC } as VehicleView;
 /** A service over fakes. `locked` is what the row lock finds (null: not in scope). */
 function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?: boolean; activeAssignment?: boolean } = {}) {
   const calls: string[] = [];
-  const published: DomainEvent[] = [];
-  const events = new InProcessEventBus(() => {});
-  for (const type of ['VehicleRegistered', 'VehicleUpdated', 'VehicleRetired']) {
-    events.subscribe(type, (e) => {
-      published.push(e);
-    });
-  }
+  const events = new RecordingEventBus();
+  const tx = {} as PoolClient;
   const locked =
     options.locked === null
       ? null
       : { id: '7', depotId: '5', isActive: true, fuelType: 'diesel' as const, fuelEfficiencyMlPerKm: 320, odometerKm: 1000, version: 0, ...options.locked };
 
   const vehicles: VehicleServiceDeps['vehicles'] = {
-    inTransaction: (fn) => fn({} as PoolClient),
+    inTransaction: (fn) => fn(tx),
     findView: async () => view,
     findViewById: async () => view,
     findViewWithDepot: async () => ({ view, depotId: '5' }),
@@ -61,7 +55,7 @@ function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?:
     },
   };
   const trips = { vehicleHasActiveTrip: async () => options.activeTrip ?? false };
-  return { service: new VehicleService({ vehicles, trips, events, cache: new NoCache() }), calls, published };
+  return { service: new VehicleService({ vehicles, trips, events, cache: new NoCache() }), calls, published: events.published, events, tx };
 }
 
 async function codeOf(promise: Promise<unknown>): Promise<string> {
@@ -75,9 +69,12 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
 
 describe('retire rule', () => {
   test('an idle vehicle is retired once, attributed, and announced', async () => {
-    const { service, calls, published } = harness();
+    const { service, calls, published, events, tx } = harness();
     await service.retire(caller, VEHICLE);
     expect(calls).toEqual(['retire:7:10']);
+    // In the retirement's transaction (the outbox, FMS-73), ordered per vehicle.
+    expect(events.clients).toEqual([tx]);
+    expect(published[0].aggregate).toBe(`vehicle:${VEHICLE}`);
     expect(published.map((e) => e.type)).toEqual(['VehicleRetired']);
     expect(published[0]).toMatchObject({ actor: depotAdmin.publicId, correlation_id: caller.correlationId, payload: { vehicle_id: VEHICLE } });
   });

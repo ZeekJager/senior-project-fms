@@ -15,7 +15,7 @@ jobs: [{ name: 'document-expiry-check', at: '07:00', run: (context) => expirySer
 - `run(context)` gets `now`, the run's `correlationId` (a fresh UUID) and its `runKey` (the local day). It returns a small result for the history (counts, never personal data).
 - `leaseMs` is optional (default 15 minutes): how long a run may hold the lock before another instance may take it over.
 
-Only the server runs jobs (`src/server.ts`). Tests call `job.run(context)` or `runJob(job, deps)` directly. Scripts never run jobs.
+Only the server runs jobs (`src/server.ts`), with the platform's own (`event-outbox-cleanup`). Tests call `job.run(context)` or `runJob(job, deps)` directly. Scripts never run jobs.
 
 ## Running once across instances
 
@@ -33,7 +33,7 @@ With Redis (FMS-72), a lease taken first (`SET NX PX` on `fms:lock:job:<job>:<da
 
 ## Audit
 
-Each run writes `job.started`, then `job.succeeded` (with the result and duration) or `job.failed` (with the error, `result: failed`). Both entries go to `audit.audit_logs` with no user (the system), entity `jobs.job_runs`, and the run's UUID as correlation id. The whole run executes with the request source `{channel: "job", actor: "system", job: <name>}`, so every audit row it writes, including any mutation, records the system actor (FMS-27). The events a run publishes carry the same correlation id, with `actor: null`.
+Each run writes `job.started`, then `job.succeeded` (with the result and duration) or `job.failed` (with the error, `result: failed`). Both entries go to `audit.audit_logs` with no user (the system), entity `jobs.job_runs`, and the run's UUID as correlation id. The whole run executes with the request source `{channel: "job", actor: "system", job: <name>}`, so every audit row it writes, including any mutation, records the system actor (FMS-27). The events a run publishes carry the same correlation id, with `actor: null`; they go into the outbox with the run's changes (docs/events.md).
 
 ## Jobs today
 
@@ -43,6 +43,7 @@ Each run writes `job.started`, then `job.succeeded` (with the result and duratio
 | `licence-expiry-check` | 07:00 | `LicenceExpiring` for active drivers |
 | `driver-account-sync` | 03:00 | Re-copies drivers' account fields into `fleet.driver_accounts` |
 | `idempotency-key-purge` | 02:00 | Deletes expired `api.idempotency_keys` rows (FMS-87). Platform job (`src/shared/http/idempotency-purge.ts`), added in `src/server.ts` rather than on a module |
+| `event-outbox-cleanup` | 03:30 | Deletes domain events delivered more than 7 days ago, and consumers' records of them; dead letters stay (platform job, `src/shared/events`, FMS-73) |
 
 ## Expiry levels
 

@@ -1,11 +1,10 @@
 import request, { type Response } from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
 import { operatingToday } from '../../src/modules/fleet/domain/attendance';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createDriver, createUser, type RoleName } from '../support/factories';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Attendance-Test-1';
@@ -196,16 +195,6 @@ describe('GET /attendance (the day roster)', () => {
 });
 
 describe('attendance events', () => {
-  const seen: DomainEvent[] = [];
-  let off: () => void;
-  beforeAll(() => {
-    off = eventBus.subscribe('AttendanceRecorded', (e) => void seen.push(e));
-  });
-  afterAll(() => off());
-  beforeEach(() => {
-    seen.length = 0;
-  });
-
   test('create and update each publish AttendanceRecorded with the previous status', async () => {
     const depot = await createDepot();
     const cookie = await signIn(['depot_admin'], depot);
@@ -214,6 +203,7 @@ describe('attendance events', () => {
     await api.put(`/attendance/${created.body.data.id}`, { status: 'on_leave' }, cookie);
     await api.post('/attendance', { driver_id: driver.public_id, date: today, status: 'absent' }, cookie); // 409: nothing
 
+    const seen = await publishedEvents('AttendanceRecorded');
     expect(seen.map((e) => [e.payload.status, e.payload.previous_status])).toEqual([
       ['present', null],
       ['on_leave', 'present'],

@@ -7,10 +7,9 @@ import { createApp } from '../../src/app';
 import { config } from '../../src/config';
 import { pool } from '../../src/db';
 import { DocumentUrlSigner } from '../../src/modules/fleet/application/document-url';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
 import { TEST_STORAGE_DIR } from '../support/test-env';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Document-Test-1';
@@ -159,16 +158,10 @@ describe('POST /documents', () => {
   test('publishes DocumentUploaded with the expiry for FMS-26', async () => {
     const depot = await createDepot();
     const vehicle = await createVehicle({ depot });
-    const received: DomainEvent[] = [];
-    const off = eventBus.subscribe('DocumentUploaded', (e) => void received.push(e));
-    try {
-      const res = await upload(await signIn(['depot_admin'], depot), vehicleDoc(vehicle, { document_type: 'insurance', expires_on: '2027-01-31' }), { bytes: PDF, name: 'i.pdf' });
-      expect(received.map((e) => e.payload)).toEqual([
-        { document_id: res.body.data.id, owner_type: 'vehicle', owner_id: vehicle.public_id, document_type: 'insurance', expires_on: '2027-01-31' },
-      ]);
-    } finally {
-      off();
-    }
+    const res = await upload(await signIn(['depot_admin'], depot), vehicleDoc(vehicle, { document_type: 'insurance', expires_on: '2027-01-31' }), { bytes: PDF, name: 'i.pdf' });
+    expect((await publishedEvents('DocumentUploaded')).map((e) => e.payload)).toEqual([
+      { document_id: res.body.data.id, owner_type: 'vehicle', owner_id: vehicle.public_id, document_type: 'insurance', expires_on: '2027-01-31' },
+    ]);
   });
 });
 

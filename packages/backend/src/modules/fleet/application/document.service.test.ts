@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { describe, expect, test } from 'vitest';
 import { AppError } from '../../../shared/errors/app-error';
-import { InProcessEventBus } from '../../../shared/events/in-process-event-bus';
+import { RecordingEventBus } from '../../../shared/events/recording-event-bus';
 import type { RequestUser } from '../../../types/express';
 import type { Caller } from './caller';
 import { DocumentService, type DocumentServiceDeps } from './document.service';
@@ -48,7 +48,7 @@ function harness(options: { insertFails?: boolean; ownerVisible?: boolean } = {}
     },
     drivers: { findByPublicId: async () => null, findByPublicIds: async () => [], findById: async () => null },
     users: { findByIds: async () => [] },
-    events: new InProcessEventBus(() => {}),
+    events: new RecordingEventBus(),
   };
   return { service: new DocumentService(deps), storage };
 }

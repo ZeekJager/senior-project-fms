@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { depotInScope, depotScope, ownDriverScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
@@ -142,24 +142,25 @@ export class AttendanceService {
         if ((err as { code?: string }).code === '23505') throw attendanceDuplicate();
         throw err;
       }
-      return (await this.views(client, [await attendance.findById(client, row.id as string)]))[0];
+      const created = (await this.views(client, [await attendance.findById(client, row.id as string)]))[0];
+      await this.publish(client, caller, created, null);
+      return created;
     });
-    await this.publish(caller, view, null);
     return view;
   }
 
   /** PUT / PATCH /attendance/{id}: change the status or notes; the caller becomes `logged_by`. */
   async update(caller: Caller, attendanceId: string, patch: AttendanceUpdate): Promise<AttendanceView> {
     const { attendance } = this.deps;
-    const { view, previous } = await attendance.inTransaction(async (client) => {
+    return attendance.inTransaction(async (client) => {
       const row = await attendance.lockForWrite(client, attendanceId);
       if (!row || !(await this.mayAccess(client, caller, row.driverUserId))) throw attendanceNotFound();
       if (patch.status !== undefined) checkAttendanceDate(row.date, patch.status);
       await attendance.update(mutationContext(caller), row.id, { ...patch, logged_by: caller.user.id! }, client);
-      return { view: (await this.views(client, [await attendance.findById(client, row.id)]))[0], previous: row.status };
+      const view = (await this.views(client, [await attendance.findById(client, row.id)]))[0];
+      await this.publish(client, caller, view, row.status);
+      return view;
     });
-    await this.publish(caller, view, previous);
-    return view;
   }
 
   /** The driver a caller may record attendance for: active, in their depots (or themselves, for a driver). */
@@ -198,12 +199,14 @@ export class AttendanceService {
     return new Map(accounts.map((a) => [a.id, a]));
   }
 
-  private publish(caller: Caller, view: AttendanceView, previous: AttendanceStatus | null): Promise<void> {
-    return this.deps.events.publish([
+  /** Into the outbox on the change's transaction (FMS-73); ordered per attendance record. */
+  private publish(client: PoolClient, caller: Caller, view: AttendanceView, previous: AttendanceStatus | null): Promise<void> {
+    return this.deps.events.publish(client, [
       createEvent(
         ATTENDANCE_EVENTS.recorded,
         { attendance_id: view.id, driver_id: view.driver_id, date: view.date, status: view.status, previous_status: previous },
         { actor: caller.user.publicId, correlationId: caller.correlationId },
+        { aggregate: aggregateKey('attendance', view.id) },
       ),
     ]);
   }

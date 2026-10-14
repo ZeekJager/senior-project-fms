@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import request, { type Response } from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Vehicle-Test-1';
@@ -527,20 +526,6 @@ describe('DELETE /vehicles/{id}', () => {
 });
 
 describe('vehicle events', () => {
-  const received: DomainEvent[] = [];
-  let unsubscribe: (() => void)[] = [];
-  beforeAll(() => {
-    unsubscribe = ['VehicleRegistered', 'VehicleUpdated', 'VehicleRetired'].map((type) =>
-      eventBus.subscribe(type, (event) => {
-        received.push(event);
-      }),
-    );
-  });
-  beforeEach(() => {
-    received.length = 0;
-  });
-  afterAll(() => unsubscribe.forEach((u) => u()));
-
   test('register, update and retire each publish one event with the envelope; a failed write publishes nothing', async () => {
     const depot = await createDepot();
     const cookie = await signIn(['depot_admin'], depot);
@@ -550,6 +535,7 @@ describe('vehicle events', () => {
     await api.patch(`/vehicles/${created.body.data.id}`, { model: 'FVR', make: 'Isuzu' }, cookie);
     const retired = await api.delete(`/vehicles/${created.body.data.id}`, cookie);
 
+    const received = await publishedEvents('VehicleRegistered', 'VehicleUpdated', 'VehicleRetired');
     expect(received.map((e) => e.type)).toEqual(['VehicleRegistered', 'VehicleUpdated', 'VehicleRetired']);
     const id = created.body.data.id;
     expect(received[0].payload).toEqual({ vehicle_id: id, depot_id: depot.public_id });
