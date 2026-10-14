@@ -40,21 +40,24 @@ describe('Idempotency-Key on POST /attendance (FMS-87)', () => {
     expect(reused.body.error.code).toBe('CONFLICT_IDEMPOTENCY_KEY_REUSED');
   });
 
-  test('two requests with the same key at once run the handler once', async () => {
+  test('a key whose first request is still running is 409 CONFLICT_IDEMPOTENCY_IN_PROGRESS, and the handler does not run', async () => {
     const depot = await createDepot();
-    const { cookie } = await signIn(depot);
+    const { user, cookie } = await signIn(depot);
     const { driver } = await createDriver({ depot });
     const body = { driver_id: driver.public_id, date: operatingToday(), status: 'present' };
     const key = `k-${randomUUID()}`;
+    // The harness shares one connection per test, so a true race can't run here (docs/testing.md):
+    // a stored in_progress row is what a second request meets while the first is still running.
+    await pool.query(
+      `INSERT INTO api.idempotency_keys (user_id, idempotency_key, request_method, request_path, request_hash, expires_at)
+       VALUES ($1, $2, 'POST', '/api/v1/attendance', repeat('0', 64), now() + interval '1 hour')`,
+      [user.id, key],
+    );
 
-    const [a, b] = await Promise.all([post(cookie, key, body), post(cookie, key, body)]);
-    const created = [a, b].filter((r) => r.status === 201 && r.headers['idempotent-replayed'] !== 'true');
-    expect(created).toHaveLength(1);
-    // The loser either arrived while the first ran (IN_PROGRESS) or just after it finished (a replay).
-    const other = created[0] === a ? b : a;
-    if (other.status === 409) expect(other.body.error.code).toBe('CONFLICT_IDEMPOTENCY_IN_PROGRESS');
-    else expect(other.headers['idempotent-replayed']).toBe('true');
-    expect((await pool.query('SELECT count(*)::int AS n FROM fleet.driver_attendance WHERE driver_id = $1', [driver.id])).rows[0].n).toBe(1);
+    const busy = await post(cookie, key, body);
+    expect(busy.status).toBe(409);
+    expect(busy.body.error.code).toBe('CONFLICT_IDEMPOTENCY_IN_PROGRESS');
+    expect((await pool.query('SELECT count(*)::int AS n FROM fleet.driver_attendance WHERE driver_id = $1', [driver.id])).rows[0].n).toBe(0);
   });
 
   test('keys are per user: another caller may reuse the same key', async () => {
