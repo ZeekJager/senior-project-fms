@@ -8,7 +8,7 @@ import { idempotencyPurgeJob, purgeExpiredIdempotencyKeys } from '../../src/shar
 import { createDepot, createDriver, createUser } from '../support/factories';
 
 const app = createApp();
-const PASSWORD = 'Idempotency-Test-1';
+const PASSWORD = 'Replay-Test-1';
 
 async function signIn(depot: Awaited<ReturnType<typeof createDepot>>) {
   const user = await createUser({ roles: ['depot_admin'], depot, password: PASSWORD });
