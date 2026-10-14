@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../../shared/http/async-handler';
+import { idempotent } from '../../../shared/http/idempotency';
 import { pageMeta, pageQuery } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
@@ -70,6 +71,7 @@ export function attendanceRouter(service: AttendanceService): Router {
   router.post(
     '/attendance',
     authorize('attendance:write'),
+    idempotent(),
     asyncHandler(async (req, res) => {
       const record = await service.create(caller(req), parseInput(createBody, req.body));
       res

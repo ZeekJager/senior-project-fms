@@ -288,7 +288,7 @@ Vehicle rules (FMS-15):
 | `GET /vehicles/{vehicle_id}/assignments` | Assignment history | `assignment:read` | `Assignment[]` |
 | `GET /drivers/{driver_id}/assignments` | Driver assignment history | `assignment:read` | `Assignment[]` |
 | `GET /attendance` | The day's roster | `attendance:read` | `date` (default `today`), `depot_id`, `driver_id`, `status`, `search` -> paged `RosterEntry[]` |
-| `POST /attendance` | Record attendance | `attendance:write` | `driver_id,date,status`; 409 duplicate |
+| `POST /attendance` | Record attendance | `attendance:write` | `driver_id,date,status`; 409 duplicate; `Idempotency-Key` |
 | `GET /attendance/{attendance_id}` | Attendance detail | `attendance:read` | `Attendance` |
 | `PUT /attendance/{attendance_id}` | Replace status and notes | `attendance:write` | `{status,notes?}` -> `Attendance` |
 | `PATCH /attendance/{attendance_id}` | Update attendance | `attendance:write` | `AttendanceUpdate` -> `Attendance` |
@@ -714,7 +714,7 @@ Normal resources use `page`/`page_size`. Server page size is capped. Telemetry h
 
 ## 19. Idempotency and Concurrency
 
-Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
+Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. A retry with the same body gets the stored response again, with `Idempotent-Replayed: true`. Only a 2xx outcome is kept; any other response frees the key. Keys are per user and expire after 24 hours; the daily `idempotency-key-purge` job (02:00) deletes expired rows. The web client sends a UUID key with `api.request(path, { idempotencyKey: true })`, kept across its own token-refresh retry. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
 
 `Idempotency-Key` is optional on the endpoints marked with it. The first request with a key runs; a `2xx` response is stored and replayed to any retry with the same key and body, with the header `Idempotent-Replayed: true`. An error response frees the key, so a corrected retry may reuse it. Keys are per user and kept 24 hours.
 
