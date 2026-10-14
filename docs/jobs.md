@@ -42,6 +42,7 @@ Each run writes `job.started`, then `job.succeeded` (with the result and duratio
 | `document-expiry-check` | 07:00 | `DocumentExpiring` for live documents of active vehicles and drivers |
 | `licence-expiry-check` | 07:00 | `LicenceExpiring` for active drivers |
 | `driver-account-sync` | 03:00 | Re-copies drivers' account fields into `fleet.driver_accounts` |
+| `idempotency-key-purge` | 02:00 | Deletes expired `api.idempotency_keys` rows (FMS-87). Platform job (`src/shared/http/idempotency-purge.ts`), added in `src/server.ts` rather than on a module |
 
 ## Expiry levels
 

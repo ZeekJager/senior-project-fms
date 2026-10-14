@@ -150,7 +150,7 @@ Modules react to each other through events. Status: until FMS-73 (Sprint 3) brin
 - Every endpoint is under **`/api/v1/`**. A breaking change gets `/api/v2/`; additive changes stay in v1.
 - Success body `{ data, meta: { request_id } }`; errors as above. Field names are `snake_case`, enum values lowercase `snake_case` exactly as stored (`en_route`), timestamps ISO 8601 UTC, dates `YYYY-MM-DD`.
 - Cookie-based sessions: tokens are `HttpOnly; Secure; SameSite=Strict` cookies and never appear in a response body or `localStorage` (`docs/auth.md`).
-- Endpoints marked `Idempotency-Key` in the contract must honour it: add `idempotent()` (`src/shared/http/idempotency.ts`) after `authorize(...)`. It stores the first successful response and replays it to retries (api-contract §19).
+- Endpoints marked `Idempotency-Key` in the contract must honour it: add `idempotent()` (`src/shared/http/idempotency.ts`) after `authorize(...)`. It stores the first successful response and replays it to retries (api-contract §19). From the web client, pass `idempotencyKey: true` to `api.request` on those calls. Expired keys are purged daily by `idempotency-key-purge` (`docs/jobs.md`).
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 
 ## Redis

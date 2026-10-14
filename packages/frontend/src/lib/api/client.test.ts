@@ -31,6 +31,42 @@ describe('api client', () => {
     expect(channels).toEqual(['web', 'pwa'])
   })
 
+  describe('idempotencyKey', () => {
+    it('sends no key by default, a fresh UUID for `true`, and a given string as is', async () => {
+      const keys: (string | null)[] = []
+      server.use(http.post('/api/v1/echo', ({ request }) => (keys.push(request.headers.get('Idempotency-Key')), ok())))
+      const api = testApi()
+
+      await api.request('/echo', { method: 'POST', json: {} })
+      await api.request('/echo', { method: 'POST', json: {}, idempotencyKey: true })
+      await api.request('/echo', { method: 'POST', json: {}, idempotencyKey: true })
+      await api.request('/echo', { method: 'POST', json: {}, idempotencyKey: 'queued-1' })
+
+      expect(keys[0]).toBeNull()
+      expect(keys[1]).toMatch(/^[0-9a-f-]{36}$/)
+      expect(keys[2]).toMatch(/^[0-9a-f-]{36}$/)
+      expect(keys[1]).not.toBe(keys[2])
+      expect(keys[3]).toBe('queued-1')
+    })
+
+    it('keeps the same key when the request is retried after a token refresh', async () => {
+      const keys: (string | null)[] = []
+      server.use(
+        http.post('/api/v1/echo', ({ request }) => {
+          keys.push(request.headers.get('Idempotency-Key'))
+          return keys.length === 1 ? errorEnvelope(401, 'AUTH_TOKEN_EXPIRED') : ok()
+        }),
+        http.post('/api/v1/auth/refresh', ok),
+      )
+
+      await testApi().request('/echo', { method: 'POST', json: {}, idempotencyKey: true })
+
+      expect(keys).toHaveLength(2)
+      expect(keys[0]).toBeTruthy()
+      expect(keys[1]).toBe(keys[0])
+    })
+  })
+
   it('maps an error response to ApiError with the envelope fields', async () => {
     server.use(
       http.get('/api/v1/vehicles', () =>

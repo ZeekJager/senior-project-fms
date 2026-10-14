@@ -10,6 +10,13 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   json?: unknown
   /** Sent as multipart/form-data (uploads); the browser sets the boundary. */
   formData?: FormData
+  /**
+   * Sends an `Idempotency-Key` (api-contract §19) so a retried create is safe.
+   * `true` makes a fresh UUID for this call: it stays the same across the
+   * refresh-and-retry, so a retry replays rather than repeats. Pass a string to
+   * keep one key across your own retries (an offline queue entry).
+   */
+  idempotencyKey?: boolean | string
 }
 
 /** The whole success body: `data` plus `meta` (pagination, request id; api-contract §3.3). */
@@ -63,7 +70,7 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
   const endSession = () => sessionEndedHandlers.forEach((handler) => handler())
 
   async function send<T>(path: string, options: RequestOptions): Promise<Envelope<T>> {
-    const { json, formData, headers, ...init } = options
+    const { json, formData, idempotencyKey, headers, ...init } = options
     const res = await fetchImpl(`${API_BASE}${path}`, {
       credentials: 'same-origin',
       ...init,
@@ -71,6 +78,7 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
         Accept: 'application/json',
         'X-Client-Channel': clientChannel(),
         ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(typeof idempotencyKey === 'string' ? { 'Idempotency-Key': idempotencyKey } : {}),
         ...headers,
       },
       body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
@@ -94,7 +102,9 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     return (await requestEnvelope<T>(path, options)).data
   }
 
-  async function requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<Envelope<T>> {
+  async function requestEnvelope<T>(path: string, requested: RequestOptions = {}): Promise<Envelope<T>> {
+    // One key per call, fixed before the first attempt so the 401 retry reuses it.
+    const options = requested.idempotencyKey === true ? { ...requested, idempotencyKey: crypto.randomUUID() } : requested
     try {
       return await send<T>(path, options)
     } catch (err) {

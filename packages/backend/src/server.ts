@@ -4,6 +4,7 @@ import { config } from './config';
 import { pool } from './db';
 import { modules } from './modules';
 import { redis, redisKey } from './shared/cache';
+import { idempotencyPurgeJob } from './shared/http/idempotency-purge';
 import { PostgresJobLock } from './shared/jobs/job-lock';
 import { RedisJobLock } from './shared/jobs/redis-job-lock';
 import { startScheduler } from './shared/jobs/scheduler';
@@ -22,7 +23,7 @@ const runs = new PostgresJobLock(pool);
 const lock = redis ? new RedisJobLock(redis, runs, (job, day) => redisKey('lock', 'job', job, day)) : runs;
 
 startScheduler(
-  modules.flatMap((m) => m.jobs ?? []),
+  [...modules.flatMap((m) => m.jobs ?? []), idempotencyPurgeJob(pool)],
   {
     lock,
     audit: pool,
