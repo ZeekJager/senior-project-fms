@@ -1,7 +1,7 @@
 import { Building2, Download, Plus, Search, Truck } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { DataTable, EmptyState, ListToolbar } from '@/components/shared'
+import { DataTable, EmptyState, ListToolbar, SavedViews } from '@/components/shared'
 import { Button, FilterSelect, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -183,6 +183,7 @@ export function VehiclesPage() {
                   : undefined
               }
             >
+              <SavedViews screen="vehicles" />
               {showDepotFilter && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
             </ListToolbar>
             {selected.size > 0 && (

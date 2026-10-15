@@ -2,7 +2,7 @@ import { Building2, Plus, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
-import { DataTable, EmptyState, ListToolbar } from '@/components/shared'
+import { DataTable, EmptyState, ListToolbar, SavedViews } from '@/components/shared'
 import { Button, FilterSelect, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
@@ -144,6 +144,7 @@ export function DriversPage() {
               search={{ label: 'Search drivers', placeholder: 'Name, email or licence number', value: searchText, onChange: setSearchText, busy: list.isFetching }}
               onClear={filters.search || filters.depotId ? clearFilters : undefined}
             >
+              <SavedViews screen="drivers" />
               {(depots.data?.length ?? 0) > 1 && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
             </ListToolbar>
           }

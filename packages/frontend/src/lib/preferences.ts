@@ -60,3 +60,11 @@ export function usePreference<T>(key: string, fallback: T): [T, (value: T) => vo
   const set = useCallback((next: T) => setPreference(key, next), [key])
   return [value, set]
 }
+
+/** The value now, outside React (for formatting helpers). */
+export function getPreference<T>(key: string, fallback: T): T {
+  return read(key, fallback)
+}
+
+export type CalendarSystem = 'gregorian' | 'ethiopic'
+export const CALENDAR_KEY = 'fms-calendar'

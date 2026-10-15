@@ -589,6 +589,28 @@ describe('Vehicle Management (S-04)', () => {
     expect(await screen.findByText(/Filtered by search “ZZZZ” · view Ready to dispatch\./)).toBeInTheDocument()
   })
 
+  it('saves the current views and filters under a name, and brings them back', async () => {
+    localStorage.clear()
+    serveFleet([vehicle()])
+    const user = userEvent.setup()
+    await openVehicles('/vehicles?ready=1&sort=depot')
+    await within(table()).findAllByText(/AA 3-/)
+    await user.click(screen.getByRole('button', { name: 'Saved views' }))
+    await user.type(screen.getByLabelText('Name for the current view'), 'Ready by depot')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    // Elsewhere, then back with one click.
+    await user.click(within(screen.getByRole('group', { name: 'Vehicle views' })).getByRole('button', { name: /^All/ }))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles/))
+    await user.click(screen.getByRole('button', { name: 'Saved views' }))
+    await user.click(screen.getByRole('button', { name: 'Ready by depot' }))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('ready=1'))
+    expect(screen.getByTestId('location')).toHaveTextContent('sort=depot')
+    // And it can be removed.
+    await user.click(screen.getByRole('button', { name: 'Saved views' }))
+    await user.click(screen.getByRole('button', { name: 'Delete saved view Ready by depot' }))
+    expect(screen.queryByRole('button', { name: 'Ready by depot' })).not.toBeInTheDocument()
+  })
+
   describe('sorting', () => {
     it('sorts by depot, status and type, flipping the order on a second click', async () => {
       const api = serveFleet([vehicle(), vehicle()])

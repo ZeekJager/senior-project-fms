@@ -23,7 +23,9 @@ describe('portals', () => {
 
     const menu = mainMenu()
     expect(within(menu).getAllByRole('heading').map((h) => h.textContent)).toEqual(['Fleet management', 'Command center'])
-    expect(within(menu).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Dispatch', 'Live map'])
+    expect(within(menu).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'DispatchSoon', 'Live mapSoon'])
+    // "Soon" is decoration: the links keep their plain names for assistive technology.
+    expect(within(menu).getByRole('link', { name: 'Live map' })).toBeInTheDocument()
     // Not the driver's portal, though dispatchers hold trip:execute.
     expect(within(menu).queryByRole('link', { name: 'My day' })).not.toBeInTheDocument()
     expect(within(menu).getByRole('link', { name: 'Dispatch' })).toHaveAttribute('aria-current', 'page')
@@ -129,5 +131,38 @@ describe('sidebar', () => {
     renderApp('/dispatch')
     const aside = (await screen.findByRole('button', { name: /sidebar/ })).closest('aside')!
     expect(within(aside).getByText('Dispatcher')).toBeInTheDocument()
+  })
+})
+
+describe('help and calendar', () => {
+  it('? opens the help; the Ethiopian calendar choice is remembered', async () => {
+    localStorage.clear()
+    signedInAs(dispatcher)
+    renderApp('/dispatch')
+    await screen.findByRole('heading', { name: 'Dispatch' })
+    const user = userEvent.setup()
+    await user.keyboard('?')
+    const help = await screen.findByRole('dialog', { name: 'Help' })
+    expect(within(help).getByText('Ready to dispatch')).toBeInTheDocument()
+    expect(within(help).getByText('Jump to the search box')).toBeInTheDocument()
+    await user.click(within(help).getByRole('radio', { name: 'Ethiopian' }))
+    expect(localStorage.getItem('fms-calendar')).toBe('"ethiopic"')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Help' })).not.toBeInTheDocument()
+  })
+
+  it('the help button in the top bar opens the same dialog', async () => {
+    signedInAs(dispatcher)
+    renderApp('/dispatch')
+    await userEvent.click(await screen.findByRole('button', { name: 'Help and shortcuts' }))
+    expect(await screen.findByRole('dialog', { name: 'Help' })).toBeInTheDocument()
+  })
+
+  it('the menu button sits before the page name on small screens', async () => {
+    signedInAs(dispatcher)
+    renderApp('/dispatch')
+    const menu = await screen.findByRole('button', { name: 'Open menu' })
+    const help = screen.getByRole('button', { name: 'Help and shortcuts' })
+    expect(menu.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

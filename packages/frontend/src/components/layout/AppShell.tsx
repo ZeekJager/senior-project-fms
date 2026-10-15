@@ -1,15 +1,17 @@
-import { Menu } from 'lucide-react'
+import { HelpCircle, Menu } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/shared'
 import { cn, Drawer, IconButton, ToastProvider } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferences'
 import { isDriverPortalUser, navSections, portalOf, type NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
+import { HelpDialog } from './HelpDialog'
 import { NotificationBell } from './NotificationBell'
 import { Brand, initials, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
 import { ThemeToggle } from './ThemeToggle'
-import { useSearchShortcut } from './useSearchShortcut'
+import { useHelpShortcut, useSearchShortcut } from './useSearchShortcut'
 
 function SkipLink() {
   return (
@@ -21,10 +23,12 @@ function SkipLink() {
 
 function Content({ className }: { className: string }) {
   const location = useLocation()
+  // Dates are formatted as they render, so a change of calendar remounts the screen.
+  const [calendar] = usePreference<CalendarSystem>(CALENDAR_KEY, 'gregorian')
   return (
     <main id="main" className={className}>
       <ErrorBoundary resetKey={location.pathname}>
-        <Outlet />
+        <Outlet key={calendar} />
       </ErrorBoundary>
     </main>
   )
@@ -39,8 +43,10 @@ function Content({ className }: { className: string }) {
 function StaffShell({ sections }: { sections: NavSection[] }) {
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [collapsed] = useSidebarCollapsed()
   useSearchShortcut()
+  useHelpShortcut(() => setHelpOpen(true))
   const portal = portalOf(location.pathname)
   const page = sections
     .flatMap((s) => s.routes)
@@ -53,8 +59,11 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
 
       <div className={cn('transition-[padding] duration-200 ease-smooth md:pl-[72px]', !collapsed && 'lg:pl-64')}>
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-6 lg:px-8">
-          <div className="md:hidden">
-            <Brand compact />
+          <div className="flex items-center gap-2 lg:hidden">
+            <IconButton label="Open menu" icon={<Menu />} onClick={() => setMenuOpen(true)} />
+            <div className="md:hidden">
+              <Brand compact />
+            </div>
           </div>
           <p className="hidden items-center gap-2 text-sm md:flex">
             <span className={page ? 'text-ink-subtle' : 'font-semibold text-ink'}>{portal?.name ?? ''}</span>
@@ -68,19 +77,23 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
             )}
           </p>
           <div className="flex items-center gap-1">
+            <IconButton label="Help and shortcuts" icon={<HelpCircle />} onClick={() => setHelpOpen(true)} />
             <ThemeToggle />
             <NotificationBell />
-            <IconButton label="Open menu" icon={<Menu />} onClick={() => setMenuOpen(true)} className="lg:hidden" />
           </div>
         </header>
         <Content className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8" />
       </div>
 
       <Drawer open={menuOpen} onClose={() => setMenuOpen(false)} side="left" title="Menu" hideTitle footer={<div className="w-full"><UserCard /></div>}>
+        <div className="mb-5">
+          <Brand />
+        </div>
         <nav aria-label="Main">
           <Sections sections={sections} onNavigate={() => setMenuOpen(false)} />
         </nav>
       </Drawer>
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }

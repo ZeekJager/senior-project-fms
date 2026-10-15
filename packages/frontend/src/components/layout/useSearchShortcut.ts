@@ -15,3 +15,18 @@ export function useSearchShortcut() {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 }
+
+/** Press "?" anywhere outside a field to open the help. */
+export function useHelpShortcut(open: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return
+      if ((e.target as HTMLElement | null)?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('[role="dialog"]')) return
+      e.preventDefault()
+      open()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open])
+}
