@@ -28,12 +28,6 @@ function viewOf(f: VehicleFilters): View | null {
 const patchFor = (view: View): Partial<VehicleFilters> =>
   view === 'all' ? { status: '', flagged: false } : view === 'flagged' ? { status: '', flagged: true } : { status: view, flagged: false }
 
-const MORE_VIEWS: { value: View | ''; label: string }[] = [
-  { value: '', label: 'inactive or retired' },
-  { value: 'inactive', label: 'Inactive' },
-  { value: 'retired', label: 'Retired' },
-]
-
 /**
  * S-04 Vehicle Management (FMS-18): the whole fleet's state in one place
  * (status, maintenance flags, current trips, document expiry) so dispatch
@@ -144,14 +138,10 @@ export function VehiclesPage() {
                   { value: 'active', label: 'Active', count: fleet.counts.active, isLoading: fleet.isLoading },
                   { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading, hint: 'Vehicles flagged as needing maintenance' },
                   { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading, hint: 'Vehicles currently in maintenance' },
+                  { value: 'inactive', label: 'Inactive', count: fleet.counts.inactive, isLoading: fleet.isLoading, archived: true, hint: 'Vehicles taken out of service' },
+                  { value: 'retired', label: 'Retired', archived: true, hint: 'Vehicles no longer in the fleet' },
                 ],
                 onChange: (view) => update(patchFor(view)),
-                more: {
-                  label: 'Show',
-                  value: filters.status === 'inactive' || filters.status === 'retired' ? (filters.status as View) : '',
-                  options: MORE_VIEWS,
-                  onChange: (view) => update(view === '' ? patchFor('all') : patchFor(view)),
-                },
               }}
               search={{ label: 'Search vehicles', placeholder: 'Plate, VIN, make or model', value: searchText, onChange: setSearchText, busy: list.isFetching }}
               onClear={

@@ -157,7 +157,7 @@ describe('Vehicle Management (S-04)', () => {
       serveFleet([vehicle()])
       await openVehicles()
       const views = screen.getByRole('group', { name: 'Vehicle views' })
-      expect(within(views).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\d*$/, ''))).toEqual(['All', 'Active', 'Flagged', 'Workshop'])
+      expect(within(views).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\d*$/, ''))).toEqual(['All', 'Active', 'Flagged', 'Workshop', 'Inactive', 'Retired'])
       expect(screen.queryByRole('switch')).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /^Status:/ })).not.toBeInTheDocument()
     })
@@ -190,13 +190,14 @@ describe('Vehicle Management (S-04)', () => {
       expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles$/)
     })
 
-    it('keeps inactive and retired in a menu and applies them', async () => {
+    it('shows inactive and retired as views after a divider, and applies them', async () => {
       const gone = vehicle({ status: 'retired' })
       serveFleet([vehicle(), gone])
       const user = userEvent.setup()
       await openVehicles()
-      await user.click(screen.getByRole('button', { name: /^Show:/ }))
-      await user.click(screen.getByRole('option', { name: 'Retired' }))
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+      expect(within(views).getByRole('separator')).toBeInTheDocument()
+      await user.click(within(views).getByRole('button', { name: /^Retired/ }))
       await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?status=retired'))
       await within(table()).findByText(gone.registration_number)
     })

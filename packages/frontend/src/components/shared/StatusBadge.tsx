@@ -78,3 +78,17 @@ export function StatusBadge({ status }: { status: Status }) {
     </span>
   )
 }
+
+/**
+ * A status in a list: "active" is the normal state, so it is quiet (a dot and plain
+ * text); every other status keeps its coloured pill and so stands out.
+ */
+export function StatusText({ status }: { status: Status }) {
+  if (status !== 'active') return <StatusBadge status={status} />
+  return (
+    <span data-status="active" className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
+      <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
+      {STATUS_STYLES.active.label}
+    </span>
+  )
+}

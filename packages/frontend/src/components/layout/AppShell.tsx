@@ -70,7 +70,7 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
           <div className="flex items-center gap-1">
             <ThemeToggle />
             <NotificationBell />
-            <IconButton label="Open menu" icon={<Menu />} onClick={() => setMenuOpen(true)} className="md:hidden" />
+            <IconButton label="Open menu" icon={<Menu />} onClick={() => setMenuOpen(true)} className="lg:hidden" />
           </div>
         </header>
         <Content className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8" />

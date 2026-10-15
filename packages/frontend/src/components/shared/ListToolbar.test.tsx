@@ -75,4 +75,25 @@ describe('ListToolbar', () => {
     setup({ views: { label: 'Views', value: null, options: [...options], onChange: () => {} } })
     for (const b of within(screen.getByRole('group', { name: 'Views' })).getAllByRole('button')) expect(b).toHaveAttribute('aria-pressed', 'false')
   })
+
+  it('reads a view hint out to screen readers, not only on hover', () => {
+    setup()
+    const flagged = screen.getByRole('button', { name: 'Flagged 4' })
+    expect(flagged).toHaveAccessibleDescription('Needs maintenance')
+  })
+
+  it('puts archived views after a divider', () => {
+    setup({
+      views: {
+        label: 'Views',
+        value: 'all',
+        options: [...options, { value: 'retired', label: 'Retired', archived: true }],
+        onChange: () => {},
+      },
+    })
+    const group = screen.getByRole('group', { name: 'Views' })
+    expect(within(group).getByRole('separator')).toBeInTheDocument()
+    const names = within(group).getAllByRole('button').map((b) => b.textContent?.trim())
+    expect(names.at(-1)).toBe('Retired')
+  })
 })

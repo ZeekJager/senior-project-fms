@@ -207,7 +207,7 @@ export function UsersPage() {
                   { value: 'active', label: 'Active', count: stats.counts.active, isLoading: stats.isLoading, hint: 'Can sign in' },
                   { value: 'suspended', label: 'Suspended', count: stats.counts.suspended, isLoading: stats.isLoading, hint: 'Temporarily blocked' },
                   { value: 'locked', label: 'Locked', hint: 'Locked after failed sign-ins' },
-                  { value: 'inactive', label: 'Deactivated', count: stats.counts.inactive, isLoading: stats.isLoading, hint: 'No longer sign in' },
+                  { value: 'inactive', label: 'Deactivated', count: stats.counts.inactive, isLoading: stats.isLoading, archived: true, hint: 'No longer sign in' },
                 ],
                 onChange: (view) => update({ status: view === 'all' ? '' : view }),
               }}

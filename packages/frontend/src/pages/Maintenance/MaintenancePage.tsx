@@ -1,4 +1,4 @@
-import { ClipboardCheck, Eye, Plus, Search } from 'lucide-react'
+import { ArrowUpRight, ClipboardCheck, Eye, Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
@@ -169,11 +169,11 @@ export function MaintenancePage() {
                 loading={vehicleSearch.isFetching}
                 emptyText={vehicleQuery ? 'No vehicle matches' : 'Type a plate'}
           />
-              <Button variant="ghost" onClick={() => navigate('/vehicles?flagged=1')} title="Opens Vehicles, filtered to flagged">
+              <Button variant="secondary" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => navigate('/vehicles?flagged=1')} title="Opens Vehicles, filtered to flagged">
                 Flagged vehicles{workshop.counts.flagged === undefined ? '' : ` · ${workshop.counts.flagged}`}
               </Button>
               {canInventory && (
-                <Button variant="ghost" onClick={() => setShowReorder(true)} title="Opens the list of parts at or below their reorder level">
+                <Button variant="secondary" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => setShowReorder(true)} title="Opens the list of parts at or below their reorder level">
                   Parts to reorder{workshop.counts.reorder === undefined ? '' : ` · ${workshop.counts.reorder}`}
                 </Button>
               )}

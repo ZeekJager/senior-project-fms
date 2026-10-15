@@ -255,7 +255,7 @@ function UploadForm({ owner, initialFile, defaultType }: { owner: DocumentOwner;
         />
         <TextField label="Expires on" optional type="date" alwaysFloat value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
       </div>
-      <div role="alert">
+      <div role="alert" className="empty:-mb-6">
         {error && (
           <p className="mb-3 flex animate-fade-in items-start gap-2 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm text-danger">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

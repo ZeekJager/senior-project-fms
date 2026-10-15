@@ -1,7 +1,7 @@
 import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { EmptyState, ErrorState, ListToolbar } from '@/components/shared'
+import { ConfirmDialog, EmptyState, ErrorState, ListToolbar } from '@/components/shared'
 import { Button, Card, cn, FilterSelect, IconButton, Skeleton, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
@@ -76,6 +76,7 @@ export function AttendancePage() {
   const depotMap = useMemo(() => new Map((depots.data ?? []).map((d) => [d.id, d.name])), [depots.data])
   const mark = useMarkAttendance()
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [confirmingBulk, setConfirmingBulk] = useState(false)
 
   const entries = roster.data?.entries ?? []
   const unmarkedHere = entries.filter((e) => !e.attendance)
@@ -174,7 +175,7 @@ export function AttendancePage() {
               />
             )}
             {canWrite && !future && unmarkedHere.length > 0 && (
-              <Button variant="secondary" leadingIcon={<CalendarCheck className="h-4 w-4" />} loading={bulkBusy} onClick={() => void markRestPresent()}>
+              <Button variant="secondary" leadingIcon={<CalendarCheck className="h-4 w-4" />} loading={bulkBusy} onClick={() => setConfirmingBulk(true)}>
                 Mark {unmarkedHere.length} unmarked present
               </Button>
             )}
@@ -256,6 +257,19 @@ export function AttendancePage() {
           </>
         )}
       </section>
+
+      <ConfirmDialog
+        open={confirmingBulk}
+        onClose={() => setConfirmingBulk(false)}
+        title={`Mark ${unmarkedHere.length} driver${unmarkedHere.length === 1 ? '' : 's'} present?`}
+        message={`Everyone not yet marked for ${longDate(filters.date)} will be recorded as present. You can change any card afterwards.`}
+        action={`Mark ${unmarkedHere.length} present`}
+        tone="default"
+        onConfirm={async () => {
+          setConfirmingBulk(false)
+          await markRestPresent()
+        }}
+      />
     </div>
   )
 }

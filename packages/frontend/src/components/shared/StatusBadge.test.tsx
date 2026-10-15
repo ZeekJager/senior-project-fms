@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { STATUSES, STATUS_STYLES, StatusBadge, type Status } from './StatusBadge'
+import { STATUSES, STATUS_STYLES, StatusBadge, StatusText, type Status } from './StatusBadge'
 
 describe('StatusBadge colour vocabulary', () => {
   // A new status has to be added to this snapshot to pass: it cannot reach a
@@ -55,5 +55,19 @@ describe('StatusBadge colour vocabulary', () => {
     // @ts-expect-error 'parked' is not in STATUSES, so it has no colour.
     const unknown: Status = 'parked'
     expect(STATUS_STYLES[unknown]).toBeUndefined()
+  })
+})
+
+describe('StatusText (a status in a list)', () => {
+  it('keeps the normal "active" state quiet: plain text, no coloured pill', () => {
+    render(<StatusText status="active" />)
+    const el = screen.getByText('Active')
+    expect(el).toHaveAttribute('data-status', 'active')
+    expect(el.className).not.toContain('ring-1')
+  })
+
+  it('keeps every other status as its coloured pill', () => {
+    render(<StatusText status="maintenance" />)
+    expect(screen.getByText('Maintenance').className).toContain('ring-1')
   })
 })

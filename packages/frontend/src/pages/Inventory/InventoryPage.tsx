@@ -149,7 +149,7 @@ export function InventoryPage() {
     <div className="space-y-6">
       <header className="border-b border-line pb-5">
         <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Spare parts</h1>
-        <p className="mt-1 max-w-xl text-sm text-ink-muted">Live stock counts. Out-of-stock and low parts are flagged so they are reordered before a repair waits.</p>
+        <p className="mt-1 max-w-xl text-sm text-ink-muted">Live stock counts, with low and out-of-stock parts flagged.</p>
       </header>
 
       <section aria-label="Parts" className="space-y-0">

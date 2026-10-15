@@ -16,7 +16,7 @@ interface EmptyStateProps {
 export function EmptyState({ icon, heading, description, action, headingLevel: Heading = 'h3', className }: EmptyStateProps) {
   return (
     <div className={cn('flex flex-col items-center px-6 py-16 text-center', className)}>
-      <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-card bg-brand-soft text-brand-ink [&_svg]:h-6 [&_svg]:w-6">
+      <div className="mb-4 text-brand-ink [&_svg]:h-8 [&_svg]:w-8 [&_svg]:stroke-[1.5]">
         {icon}
       </div>
       <Heading className="text-base font-semibold tracking-tight text-ink">{heading}</Heading>

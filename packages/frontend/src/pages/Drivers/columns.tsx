@@ -1,6 +1,6 @@
 import { ArrowRight, FileText, MapPin, Paperclip, Pencil, Plus, RotateCcw } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { StatusBadge, type Column } from '@/components/shared'
+import { StatusText, type Column } from '@/components/shared'
 import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
 import type { Depot } from '@/features/depots'
 import { daysBetween, formatDate, today, type DocumentHealth } from '@/features/documents/expiry'
@@ -31,30 +31,31 @@ function initials(name: string): string {
 
 /**
  * The licence badge, from the API's licence_status (computed in Addis Ababa
- * time): red EXPIRED, amber EXPIRING SOON within 30 days, green otherwise.
+ * time): a red "Expired" or amber "Expiring soon" pill; a valid licence is plain text, so the exceptions stand out.
  */
 export function LicenceBadge({ status, expiry }: { status: LicenseStatus; expiry: string }) {
   if (status === 'expired') {
     return (
-      <Badge tone="danger" dot className="tracking-wide">
-        <span data-licence="expired">EXPIRED</span>
+      <Badge tone="danger" dot>
+        <span data-licence="expired">Expired</span>
       </Badge>
     )
   }
   if (status === 'expiring_soon') {
     const days = daysBetween(today(), expiry)
     return (
-      <Badge tone="warning" dot className="tracking-wide">
+      <Badge tone="warning" dot>
         <span data-licence="expiring_soon" title={days >= 0 ? `In ${days} day${days === 1 ? '' : 's'}` : undefined}>
-          EXPIRING SOON
+          Expiring soon
         </span>
       </Badge>
     )
   }
   return (
-    <Badge tone="success" dot>
+    <span className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
+      <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
       <span data-licence="valid">Valid</span>
-    </Badge>
+    </span>
   )
 }
 
@@ -157,7 +158,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       header: 'Status',
       width: 'w-[104px] coarse:w-[136px]',
       hideBelow: 'md',
-      cell: (d) => <StatusBadge status={d.status} />,
+      cell: (d) => <StatusText status={d.status} />,
       skeleton: <Skeleton className="h-5 w-16 rounded-full" />,
     },
     {
@@ -172,7 +173,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
             className="focus-ring group/trip -mx-2 flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-brand-soft"
           >
             <span
-              className={cn('h-2 w-2 shrink-0 rounded-full', d.current_trip.status === 'en_route' ? 'animate-pulse motion-reduce:animate-none bg-amber-500' : 'bg-blue-500')}
+              className={cn('h-2 w-2 shrink-0 rounded-full', d.current_trip.status === 'en_route' ? 'bg-amber-500' : 'bg-blue-500')}
               aria-hidden="true"
             />
             <span className="min-w-0">

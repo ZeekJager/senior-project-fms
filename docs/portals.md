@@ -16,7 +16,7 @@ The four portals of the architecture (§6, §7) are the sections of the route ta
 **Staff layout:**
 
 - From 1024px, a dark sidebar with one titled group per portal.
-- From 768px to 1023px, an icon rail (labels stay available to screen readers and as tooltips).
+- From 768px to 1023px, an icon rail, plus a menu button that opens the same labelled slide-in menu as on phones (hover tooltips do not exist on touch).
 - Below 768px, a slide-in menu.
 - At every width, a top bar with the current portal's name and the notification bell.
 

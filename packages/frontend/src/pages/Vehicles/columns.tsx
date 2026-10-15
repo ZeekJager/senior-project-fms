@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Plus, Truck, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { StatusBadge, type Column } from '@/components/shared'
+import { StatusText, type Column } from '@/components/shared'
 import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
 import type { DocumentHealth } from '@/features/documents/expiry'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
@@ -40,7 +40,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       sortKey: 'registration_number',
       cell: (v) => (
         <div className="flex min-w-0 items-center gap-3">
-          <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-control bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line sm:flex">
+          <div className={cn('hidden h-9 w-9 shrink-0 items-center justify-center rounded-control ring-1 ring-inset sm:flex', v.maintenance_flag ? 'bg-warning-soft text-warning ring-warning/25' : 'bg-surface-sunken text-ink-muted ring-line')}>
             {(() => {
               const Icon = TYPE_ICONS[v.vehicle_type]
               return <Icon className="h-4 w-4" aria-hidden="true" />
@@ -48,7 +48,17 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
           </div>
           <div className="min-w-0">
             <p className="plate flex items-center gap-2 truncate text-ink">
-              {v.registration_number}
+              {ctx.canWrite && v.status !== 'retired' ? (
+                <button
+                  type="button"
+                  onClick={() => ctx.onEdit(v)}
+                  className="focus-ring -mx-1 truncate rounded px-1 text-left hover:text-brand-ink hover:underline coarse:inline-flex coarse:min-h-11 coarse:items-center"
+                >
+                  {v.registration_number}
+                </button>
+              ) : (
+                v.registration_number
+              )}
               {v.maintenance_flag && (
                 <Badge tone="warning" icon={<AlertTriangle />} className="shrink-0">
                   <span aria-hidden="true">Flagged</span>
@@ -69,7 +79,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
           {/* Phones: only an exception earns the space; "Active" is the normal state. */}
           {v.status !== 'active' && (
             <span className="ml-auto sm:hidden">
-              <VehicleStatus status={v.status} />
+              <StatusText status={v.status} />
             </span>
           )}
         </div>
@@ -107,15 +117,15 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'status',
       header: 'Status',
       width: 'w-[148px]',
-      hideBelow: 'sm',
-      cell: (v) => <VehicleStatus status={v.status} />,
+      hideBelow: 'lg',
+      cell: (v) => <StatusText status={v.status} />,
       skeleton: <Skeleton className="h-5 w-20 rounded-full" />,
     },
     {
       key: 'trip',
       header: 'Current trip',
-      width: 'w-[19%]',
-      hideBelow: 'lg',
+      width: 'w-[26%] xl:w-[19%]',
+      hideBelow: 'md',
       cell: (v) =>
         v.current_trip ? (
           <Link
@@ -125,7 +135,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             <span
               className={cn(
                 'h-2 w-2 shrink-0 rounded-full',
-                v.current_trip.status === 'en_route' ? 'animate-pulse motion-reduce:animate-none bg-amber-500' : 'bg-blue-500',
+                v.current_trip.status === 'en_route' ? 'bg-amber-500' : 'bg-blue-500',
               )}
               aria-hidden="true"
             />
@@ -172,17 +182,6 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     })
   }
   return ctx.showStatus === false ? columns.filter((c) => c.key !== 'status') : columns
-}
-
-/** Active is the normal state, so it is quiet; every other status keeps its colored badge and stands out. */
-function VehicleStatus({ status }: { status: Vehicle['status'] }) {
-  if (status !== 'active') return <StatusBadge status={status} />
-  return (
-    <span data-status="active" className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
-      <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
-      Active
-    </span>
-  )
 }
 
 /** Phones only, and only for an exception: an expired or expiring document is the one thing worth a line. */

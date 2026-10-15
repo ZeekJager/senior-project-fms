@@ -149,7 +149,7 @@ export function DriversPage() {
                   { value: 'valid', label: 'Valid', count: licences.counts.valid, isLoading: licences.isLoading, hint: 'Licence valid beyond 30 days' },
                   { value: 'expiring_soon', label: 'Expiring soon', count: licences.counts.expiring, isLoading: licences.isLoading, hint: 'Licence expires within 30 days' },
                   { value: 'expired', label: 'Expired', count: licences.counts.expired, isLoading: licences.isLoading, hint: 'Cannot be dispatched' },
-                  { value: 'retired', label: 'Retired', hint: 'Drivers no longer working here' },
+                  { value: 'retired', label: 'Retired', archived: true, hint: 'Drivers no longer working here' },
                 ],
                 onChange: (view) => update(patchFor(view)),
               }}

@@ -9,7 +9,6 @@ interface ListToolbarProps<T extends string> {
     value: T | null
     options: readonly ViewOption<T>[]
     onChange: (value: T) => void
-    more?: Parameters<typeof ViewTabs<T>>[0]['more']
   }
   search?: {
     /** Accessible name, e.g. "Search vehicles". */
@@ -22,18 +21,20 @@ interface ListToolbarProps<T extends string> {
   }
   /** Other narrowing controls (depot, role…): the views and search cover the rest. */
   children?: ReactNode
-  /** Given when filters are applied; shows "Clear". The slot is reserved, so the bar never jumps. */
+  /** Given when filters are applied; shows "Clear" inside the search box (or beside the filters when there is no search). */
   onClear?: () => void
 }
 
 /**
- * The bar on top of every list: views, search, extra filters and Clear, in one
- * place and one order, so a user learns the pattern once.
+ * The bar on top of every list, in one order: views, then search and extra
+ * filters. Two rows on a desktop, three short ones on a phone (a scrolling
+ * row of views, search, then the filters side by side). Clear sits inside the
+ * search box, so nothing moves when it appears.
  */
 export function ListToolbar<T extends string>({ views, search, children, onClear }: ListToolbarProps<T>) {
   return (
-    <div className="flex flex-col gap-3">
-      {views && <ViewTabs label={views.label} value={views.value} options={views.options} onChange={views.onChange} more={views.more} />}
+    <div className="flex flex-col gap-2 sm:gap-3">
+      {views && <ViewTabs label={views.label} value={views.value} options={views.options} onChange={views.onChange} />}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         {search && (
           <div className="relative flex-1 sm:w-72 sm:flex-none">
@@ -45,10 +46,18 @@ export function ListToolbar<T extends string>({ views, search, children, onClear
               placeholder={search.placeholder}
               value={search.value}
               onChange={(e) => search.onChange(e.target.value)}
-              className={`focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand coarse:h-11 ${onClear ? 'pr-20' : 'pr-10'}`}
+              className={`focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand coarse:h-11 ${onClear ? 'pr-24' : 'pr-10'}`}
             />
-            {search.busy && search.value && <Spinner className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle ${onClear ? 'right-[5.25rem]' : 'right-3.5'}`} />}
-            {onClear ? (
+            {search.busy && search.value && <Spinner className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle ${onClear ? 'right-[5.75rem]' : 'right-3.5'}`} />}
+            {!search.value && (
+              <kbd
+                aria-hidden="true"
+                className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded border border-line-strong px-1.5 text-2xs font-medium text-ink-subtle coarse:hidden ${onClear ? 'right-[5.25rem]' : 'right-3'}`}
+              >
+                /
+              </kbd>
+            )}
+            {onClear && (
               <button
                 type="button"
                 onClick={onClear}
@@ -58,12 +67,6 @@ export function ListToolbar<T extends string>({ views, search, children, onClear
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
                 Clear
               </button>
-            ) : (
-              !search.value && (
-                <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line-strong px-1.5 text-2xs font-medium text-ink-subtle coarse:hidden">
-                  /
-                </kbd>
-              )
             )}
           </div>
         )}

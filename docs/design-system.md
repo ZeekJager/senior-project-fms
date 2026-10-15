@@ -72,19 +72,19 @@ down 1px. Cards do not lift. `prefers-reduced-motion` turns it all off
 | `Combobox` | A searchable select (WAI-ARIA combobox): the caller feeds options from the typed text (local filter or API search), optional groups ("Needs maintenance" first), a detail line and a trailing badge per option. Escape closes only the list |
 | `TextAreaField` | The multi-line floating-label field (descriptions, notes) |
 | `ListToolbar` (`components/shared`) | The bar on top of every list, in two fixed rows: `ViewTabs` (named views with counts), then search (press `/`) and extra filters (depot, role). Clear sits inside the search box, so nothing moves when it appears. Pass it to `DataTable`'s `toolbar`. Vehicles, Drivers, Users, Spare parts, Repair log and Attendance all use it |
-| `ViewTabs` | One control for "which rows?": named views with counts (`aria-pressed`), plus an optional menu for rare ones. Use it instead of a stat card, a dropdown and a switch that filter the same thing (Vehicles) |
+| `ViewTabs` | One control for "which rows?": named views with counts (`aria-pressed`). It scrolls sideways on a phone instead of wrapping. Archived states (Inactive, Retired, Deactivated) are views too, marked `archived`: they follow a divider in a quieter style, on every screen. A `hint` is read out by screen readers as well as shown on hover. Use it instead of a stat card, a dropdown and a switch that filter the same thing |
 | `FilterSelect` | The filter-bar pill: label, value, an animated listbox. Arrow keys, Home/End, Enter/Space, Escape. Tinted while a filter is applied |
 | `Dialog`, `Drawer` | Portal, focus trap, Escape and backdrop close, scroll lock, focus returned on close. Drawers are floating sheets inset 8px from the edge; use them for forms and detail instead of new pages |
 | `Card`, `Badge`, `Skeleton`, `Spinner` | Surfaces; tinted pills with a dot or icon; shimmering placeholders the size of what they replace |
 | `StatCard`, `StatShare` (`components/shared`) | A figure with an icon and a share bar in a `<section className="stat-strip">`. No list screen uses it now (the counts live in `ViewTabs`); keep it for a dashboard |
 | `ToastProvider`, `useToast` | Confirmations after an action ("Vehicle registered"). Errors belong next to what failed, not in a toast |
-| `AppShell` (`components/layout`) | A dark navy sidebar (`side` tokens) with the screens the user may open (from `router/routes.tsx`, filtered by permission): full from 1024px, an icon rail from 768px, a slide-in menu below. A 56px top bar with the portal name, `ThemeToggle` and the bell, a skip link, and an `ErrorBoundary` around each screen |
+| `AppShell` (`components/layout`) | A dark navy sidebar (`side` tokens) with the screens the user may open (from `router/routes.tsx`, filtered by permission): full from 1024px, an icon rail from 768px, and a slide-in menu below 1024px, whose button also shows on tablets so labels are one tap away on touch. A 56px top bar with the portal name, `ThemeToggle` and the bell, a skip link, and an `ErrorBoundary` around each screen |
 
 Shared by several screens: `features/documents` (the documents drawer, expiry rules, document hooks) and `features/depots` (`useDepots`).
 
 ## Row actions
 
-Every list row has one visible text action, a small `secondary` button with an icon: **Edit** (Vehicles, Drivers, Users), **Adjust** (Spare parts), **View** (Repair log). A destructive action never sits beside it: Decommission and Retire live in the footer of the edit drawer, apart from Save, and still ask for confirmation. Exceptions are said in words ("Flagged", "1 expiring"), and the healthy state is plain text. On phones the row keeps the facts that decide a dispatch (depot, trip, document warning) as lines under the name.
+Every list row has one visible text action, a small `secondary` button with an icon: **Edit** (Vehicles, Drivers, Users), **Adjust** (Spare parts), **View** (Repair log). A destructive action never sits beside it: Decommission and Retire live in the footer of the edit drawer, apart from Save, and still ask for confirmation. In a list, "active" and "valid" are quiet text (`StatusText`) while every other state keeps its coloured pill. Exceptions are said in words ("Flagged", "1 expiring"), and the healthy state is plain text. On phones the row keeps the facts that decide a dispatch (depot, trip, document warning) as lines under the name.
 
 ## A screen, step by step
 
