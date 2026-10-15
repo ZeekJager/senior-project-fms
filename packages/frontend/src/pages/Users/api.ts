@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 
@@ -76,9 +76,10 @@ export function useUsers(filters: UserFilters) {
 /** Totals per status for the stat cards (one tiny request each). */
 export function useUserCounts() {
   const { api } = useAuth()
-  const figures = { total: '', active: 'active', suspended: 'suspended', inactive: 'inactive' }
+  const figures = { total: '', active: 'active', suspended: 'suspended', locked: 'locked', inactive: 'inactive' }
   const results = useQueries({
     queries: Object.entries(figures).map(([name, status]) => ({
+      placeholderData: keepPreviousData,
       queryKey: ['users', 'counts', name],
       queryFn: async () => {
         const q = new URLSearchParams({ page_size: '1' })
@@ -87,8 +88,8 @@ export function useUserCounts() {
       },
     })),
   })
-  const [total, active, suspended, inactive] = results.map((r) => r.data)
-  return { counts: { total, active, suspended, inactive }, isLoading: results.some((r) => r.isPending) }
+  const [total, active, suspended, locked, inactive] = results.map((r) => r.data)
+  return { counts: { total, active, suspended, locked, inactive }, isLoading: results.some((r) => r.isPending) }
 }
 
 export function useRoles(enabled = true) {

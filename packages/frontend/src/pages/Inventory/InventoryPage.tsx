@@ -6,12 +6,24 @@ import { Badge, Button, cn, Drawer, FilterSelect, IconButton, Spinner } from '@/
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { describeFilters } from '@/lib/describeFilters'
 import { AdjustStockDialog } from './AdjustStockDialog'
 import { useMovements, useParts, useStockCounts, type Movement, type Part, type PartFilters, type StockStatus } from './api'
 
+const STOCK_VIEW: Record<string, string> = { ok: 'OK', low: 'Low', out: 'Out of stock' }
+
 /** OUT OF STOCK (red) at 0, LOW (amber) from 1 to the reorder level, OK (green) above it (FMS-25). */
 export function StockBadge({ status }: { status: StockStatus }) {
-  const [tone, label] = status === 'out' ? (['danger', 'OUT OF STOCK'] as const) : status === 'low' ? (['warning', 'LOW'] as const) : (['success', 'OK'] as const)
+  // Healthy is the normal state: plain text, so the pills that remain are the exceptions.
+  if (status === 'ok') {
+    return (
+      <span data-stock="ok" className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
+        OK
+      </span>
+    )
+  }
+  const [tone, label] = status === 'out' ? (['danger', 'OUT OF STOCK'] as const) : (['warning', 'LOW'] as const)
   return (
     <Badge tone={tone} dot className="tracking-wide">
       <span data-stock={status}>{label}</span>
@@ -215,7 +227,7 @@ export function InventoryPage() {
           pagination={list.data ? { page: filters.page, pageSize: filters.pageSize, totalItems: list.data.meta.total_items, onPageChange: (page) => setParams(writeFilters({ ...filters, page })) } : undefined}
           emptyState={
             filtered ? (
-              <EmptyState icon={<Search />} heading={filters.lowOnly || filters.status ? 'Nothing low on stock here' : 'No parts match'} description={filters.lowOnly ? 'Every part is above its reorder level.' : 'Try another search or clear the filters.'} />
+              <EmptyState icon={<Search />} heading={filters.lowOnly || filters.status ? 'Nothing low on stock here' : 'No parts match'} description={filters.lowOnly ? 'Every part is above its reorder level.' : `${describeFilters({ search: filters.search, view: filters.status ? STOCK_VIEW[filters.status] : undefined })} Try another search or clear the filters.`.trim()} />
             ) : (
               <EmptyState icon={<Boxes />} heading="No parts in stock records" description="Parts appear here once they are added to the inventory." />
             )

@@ -1,5 +1,5 @@
 import { Building2, Plus, Search, Users } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
 import { DataTable, EmptyState, ListToolbar } from '@/components/shared'
@@ -11,6 +11,7 @@ import { useOwnerDocuments } from '@/features/documents/api'
 import { documentHealth } from '@/features/documents/expiry'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { ApiError } from '@/lib/api/errors'
+import { describeFilters } from '@/lib/describeFilters'
 import { useDrivers, useLicenceCounts, useReinstateDriver } from './api'
 import { driverColumns } from './columns'
 import { DriverFormDrawer } from './DriverFormDrawer'
@@ -72,9 +73,6 @@ export function DriversPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [retiring, setRetiring] = useState<Driver | null>(null)
   const [docsFor, setDocsFor] = useState<Driver | null>(null)
-  const [stagedFile, setStagedFile] = useState<File | null>(null)
-  const filePicker = useRef<HTMLInputElement>(null)
-  const pickingFor = useRef<Driver | null>(null)
 
   const openCreate = () => {
     setEditing(null)
@@ -83,7 +81,7 @@ export function DriversPage() {
 
   const clearFilters = () => {
     setSearchText('')
-    update({ search: '', depotId: '', licence: '', retired: false })
+    update({ search: '', depotId: '' })
   }
 
   const columns = driverColumns({
@@ -101,17 +99,7 @@ export function DriversPage() {
         onError: (err) =>
           toast({ title: 'Could not reinstate the driver', description: err instanceof ApiError ? err.code : undefined, tone: 'danger' }),
       }),
-    onOpenDocuments: (d) => {
-      setStagedFile(null)
-      setDocsFor(d)
-    },
-    onAddDocument: (d) => {
-      pickingFor.current = d
-      if (filePicker.current) {
-        filePicker.current.value = ''
-        filePicker.current.click()
-      }
-    },
+    onOpenDocuments: setDocsFor,
   })
 
   const depotOptions = [{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]
@@ -154,13 +142,17 @@ export function DriversPage() {
                 onChange: (view) => update(patchFor(view)),
               }}
               search={{ label: 'Search drivers', placeholder: 'Name, email or licence number', value: searchText, onChange: setSearchText, busy: list.isFetching }}
-              onClear={filtered ? clearFilters : undefined}
+              onClear={filters.search || filters.depotId ? clearFilters : undefined}
             >
               {(depots.data?.length ?? 0) > 1 && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
             </ListToolbar>
           }
           caption="Drivers"
           rowHeight="stacked3"
+          tableId="drivers"
+          rowLabel={(d) => d.full_name}
+          rowClassName={(d) => (d.license_status === 'expired' || (health.get(d.id)?.expired ?? 0) > 0 ? 'bg-warning-soft/30' : undefined)}
+          onRowClick={canWrite ? (d) => (d.status === 'active' ? (setEditing(d), setFormOpen(true)) : canReadDocs ? setDocsFor(d) : undefined) : canReadDocs ? setDocsFor : undefined}
           columns={columns}
           data={drivers}
           rowKey={(d) => d.id}
@@ -191,7 +183,7 @@ export function DriversPage() {
               <EmptyState
                 icon={<Search />}
                 heading="No drivers match these filters"
-                description="Try a different search, or clear the filters to see every driver."
+                description={`${describeFilters({ search: filters.search, depot: filters.depotId ? depotMap.get(filters.depotId)?.name : undefined, view: { all: '', valid: 'Valid', expiring_soon: 'Expiring soon', expired: 'Expired', retired: 'Retired' }[viewOf(filters) ?? 'all'] })} Try a different search, or clear the filters to see every driver.`.trim()}
                 action={
                   <Button variant="secondary" onClick={clearFilters}>
                     Clear filters
@@ -216,23 +208,6 @@ export function DriversPage() {
         />
       </section>
 
-      <input
-        ref={filePicker}
-        type="file"
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden="true"
-        accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
-        data-testid="row-file-picker"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file && pickingFor.current) {
-            setStagedFile(file)
-            setDocsFor(pickingFor.current)
-          }
-        }}
-      />
-
       <DriverFormDrawer
         open={formOpen}
         onClose={() => setFormOpen(false)}
@@ -253,11 +228,8 @@ export function DriversPage() {
         owner={docsFor && { type: 'driver', id: docsFor.id, label: docsFor.full_name }}
         documents={docs.data ?? []}
         isLoading={docs.isPending}
-        onClose={() => {
-          setDocsFor(null)
-          setStagedFile(null)
-        }}
-        stagedFile={stagedFile}
+        onClose={() => setDocsFor(null)}
+        stagedFile={null}
         canUpload={canUploadDocs}
         canDelete={canDeleteDocs}
         defaultType="licence"

@@ -49,10 +49,10 @@ export function ListToolbar<T extends string>({ views, search, children, onClear
               className={`focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand coarse:h-11 ${onClear ? 'pr-24' : 'pr-10'}`}
             />
             {search.busy && search.value && <Spinner className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle ${onClear ? 'right-[5.75rem]' : 'right-3.5'}`} />}
-            {!search.value && (
+            {!search.value && !onClear && (
               <kbd
                 aria-hidden="true"
-                className={`pointer-events-none absolute top-1/2 -translate-y-1/2 rounded border border-line-strong px-1.5 text-2xs font-medium text-ink-subtle coarse:hidden ${onClear ? 'right-[5.25rem]' : 'right-3'}`}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line-strong px-1.5 text-2xs font-medium text-ink-subtle coarse:hidden"
               >
                 /
               </kbd>

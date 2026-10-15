@@ -1,7 +1,7 @@
-import { ArrowRight, FileText, MapPin, Paperclip, Pencil, Plus, RotateCcw } from 'lucide-react'
+import { ArrowRight, FileText, MapPin, Paperclip, Pencil, RotateCcw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
-import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
+import { Badge, Button, cn, Skeleton } from '@/components/ui'
 import type { Depot } from '@/features/depots'
 import { daysBetween, formatDate, today, type DocumentHealth } from '@/features/documents/expiry'
 import type { Driver, LicenseStatus } from './types'
@@ -14,7 +14,6 @@ export interface ColumnContext {
   onEdit: (driver: Driver) => void
   onReinstate: (driver: Driver) => void
   onOpenDocuments: (driver: Driver) => void
-  onAddDocument: (driver: Driver) => void
 }
 
 /** Today's attendance that makes a driver a dispatch risk: a warning, not a block (FMS-21). */
@@ -83,6 +82,9 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
             ) : (
               <p className="hidden truncate text-xs text-ink-subtle sm:block">{d.email}</p>
             )}
+            <p className="hidden truncate text-xs text-ink-subtle sm:block xl:hidden">
+              {d.depot_id ? (ctx.depots.get(d.depot_id)?.name ?? '') : ''}
+            </p>
             <p className="truncate text-xs text-ink-subtle sm:hidden">
               {d.license_number}
               {d.depot_id && ctx.depots.get(d.depot_id)?.name ? ` · ${ctx.depots.get(d.depot_id)?.name}` : ''}
@@ -107,8 +109,9 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
     {
       key: 'depot',
       header: 'Depot',
-      width: 'w-[11%]',
+      width: 'w-[14%]',
       hideBelow: 'xl',
+      optional: true,
       cell: (d) => {
         const name = d.depot_id ? ctx.depots.get(d.depot_id)?.name : undefined
         return (
@@ -125,8 +128,9 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       key: 'licence',
       header: 'Licence',
       sortKey: 'license_number',
-      width: 'w-[12%]',
+      width: 'w-[14%]',
       hideBelow: 'lg',
+      optional: true,
       cell: (d) => (
         <div className="min-w-0">
           <p className="truncate font-medium tracking-wide text-ink">{d.license_number}</p>
@@ -166,6 +170,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       header: 'Active trip',
       width: 'w-[14%]',
       hideBelow: 'lg',
+      optional: true,
       cell: (d) =>
         d.current_trip ? (
           <Link
@@ -184,7 +189,10 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
             </span>
           </Link>
         ) : (
-          <span className="text-ink-subtle">No active trip</span>
+          <span className="text-ink-subtle">
+            <span aria-hidden="true">—</span>
+            <span className="sr-only">No active trip</span>
+          </span>
         ),
     },
   ]
@@ -193,8 +201,9 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
     columns.push({
       key: 'documents',
       header: 'Documents',
-      width: 'w-[144px]',
+      width: 'w-[136px]',
       hideBelow: 'md',
+      optional: true,
       cell: (d) => <DocumentsCell driver={d} ctx={ctx} />,
       skeleton: <Skeleton className="h-5 w-16 rounded-full" />,
     })
@@ -227,41 +236,36 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
 }
 
 function DocumentsCell({ driver, ctx }: { driver: Driver; ctx: ColumnContext }) {
-  const { health, isLoading, canWrite } = ctx.documents
+  const { health, isLoading } = ctx.documents
   const h = health.get(driver.id)
+  if (isLoading) return <Skeleton className="h-5 w-14 rounded-full" />
   return (
-    <div className="flex items-center gap-1">
-      {isLoading ? (
-        <Skeleton className="h-5 w-14 rounded-full" />
+    <button
+      type="button"
+      onClick={() => ctx.onOpenDocuments(driver)}
+      aria-label={`Documents for ${driver.full_name}`}
+      className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
+    >
+      {!h ? (
+        <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-subtle">
+          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
+          None
+        </span>
+      ) : h.expired > 0 ? (
+        <Badge tone="danger" dot>
+          {h.expired} expired
+        </Badge>
+      ) : h.expiring > 0 ? (
+        <Badge tone="warning" dot>
+          {h.expiring} expiring
+        </Badge>
       ) : (
-        <button
-          type="button"
-          onClick={() => ctx.onOpenDocuments(driver)}
-          aria-label={`Documents for ${driver.full_name}`}
-          className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
-        >
-          {!h ? (
-            <Badge tone="neutral" icon={<Paperclip />}>
-              None
-            </Badge>
-          ) : h.expired > 0 ? (
-            <Badge tone="danger" dot>
-              {h.expired} expired
-            </Badge>
-          ) : h.expiring > 0 ? (
-            <Badge tone="warning" dot>
-              {h.expiring} expiring
-            </Badge>
-          ) : (
-            <Badge tone="success" icon={<FileText />}>
-              {h.total} on file
-            </Badge>
-          )}
-        </button>
+        <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-muted" title={`${h.total} document${h.total === 1 ? '' : 's'} on file`}>
+          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+          {h.total}
+          <span className="sr-only"> on file</span>
+        </span>
       )}
-      {canWrite && driver.status === 'active' && (
-        <IconButton size="sm" label={`Upload a document for ${driver.full_name}`} icon={<Plus />} onClick={() => ctx.onAddDocument(driver)} />
-      )}
-    </div>
+    </button>
   )
 }

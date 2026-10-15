@@ -30,7 +30,10 @@ interface ViewTabsProps<T extends string> {
 export function ViewTabs<T extends string>({ label, value, options, onChange }: ViewTabsProps<T>) {
   const id = useId()
   const firstArchived = options.findIndex((o) => o.archived)
+  const rule = options.find((o) => o.value === value)?.hint
+  const anyHint = options.some((o) => o.hint)
   return (
+    <div className="min-w-0">
     <div
       role="group"
       aria-label={label}
@@ -76,6 +79,13 @@ export function ViewTabs<T extends string>({ label, value, options, onChange }: 
           </Fragment>
         )
       })}
+    </div>
+      {/* The rule of the chosen view, in plain sight (the hints above also read out per button). Its height is kept so nothing moves between views. */}
+      {anyHint && (
+        <p aria-hidden="true" className="min-h-4 px-1 text-xs text-ink-subtle">
+          {rule}
+        </p>
+      )}
     </div>
   )
 }

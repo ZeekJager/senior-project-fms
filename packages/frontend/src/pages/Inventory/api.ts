@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 
@@ -69,6 +69,7 @@ export function useStockCounts(depotId: string) {
   const figures = { total: '', out: 'out', low: 'low', ok: 'ok' }
   const results = useQueries({
     queries: Object.entries(figures).map(([name, status]) => ({
+      placeholderData: keepPreviousData,
       queryKey: ['inventory', 'counts', depotId, name],
       queryFn: async () => {
         const q = new URLSearchParams({ page_size: '1' })

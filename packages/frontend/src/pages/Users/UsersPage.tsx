@@ -6,6 +6,7 @@ import { Badge, Button, FilterSelect } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { describeFilters } from '@/lib/describeFilters'
 import { useRoles, useUserCounts, useUsers, type User, type UserFilters, type UserStatus } from './api'
 import { PasswordLinkDialog } from './PasswordLinkDialog'
 import { RolesDrawer } from './RolesDrawer'
@@ -51,6 +52,14 @@ export function UserStatusBadge({ user }: { user: User }) {
       <Badge tone="info" dot>
         Invited
       </Badge>
+    )
+  }
+  if (user.status === 'active') {
+    return (
+      <span data-status="active" className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
+        Active
+      </span>
     )
   }
   const { label, tone } = STATUS_LABELS[user.status]
@@ -206,7 +215,7 @@ export function UsersPage() {
                   { value: 'all', label: 'All', count: stats.counts.total, isLoading: stats.isLoading },
                   { value: 'active', label: 'Active', count: stats.counts.active, isLoading: stats.isLoading, hint: 'Can sign in' },
                   { value: 'suspended', label: 'Suspended', count: stats.counts.suspended, isLoading: stats.isLoading, hint: 'Temporarily blocked' },
-                  { value: 'locked', label: 'Locked', hint: 'Locked after failed sign-ins' },
+                  { value: 'locked', label: 'Locked', count: stats.counts.locked, isLoading: stats.isLoading, hint: 'Locked after failed sign-ins' },
                   { value: 'inactive', label: 'Deactivated', count: stats.counts.inactive, isLoading: stats.isLoading, archived: true, hint: 'No longer sign in' },
                 ],
                 onChange: (view) => update({ status: view === 'all' ? '' : view }),
@@ -245,6 +254,9 @@ export function UsersPage() {
           }
           caption="Users"
           rowHeight="stacked"
+          tableId="users"
+          rowLabel={(u) => u.full_name}
+          onRowClick={canWrite ? setEditing : undefined}
           columns={columns}
           data={list.data?.users}
           rowKey={(u) => u.id}
@@ -254,7 +266,11 @@ export function UsersPage() {
           pagination={list.data ? { page: filters.page, pageSize: filters.pageSize, totalItems: list.data.meta.total_items, onPageChange: (page) => setParams(writeFilters({ ...filters, page })) } : undefined}
           emptyState={
             filtered ? (
-              <EmptyState icon={<Search />} heading="No users match" description="Try another search or clear the filters." />
+              <EmptyState
+                icon={<Search />}
+                heading="No users match"
+                description={`${describeFilters({ search: filters.search, depot: filters.depotId ? depotNames.get(filters.depotId) : undefined, view: filters.status ? STATUS_LABELS[filters.status].label : undefined })} Try another search or clear the filters.`.trim()}
+              />
             ) : (
               <EmptyState icon={<UserCog />} heading="No users yet" description="Invite the first person to give them access." />
             )
