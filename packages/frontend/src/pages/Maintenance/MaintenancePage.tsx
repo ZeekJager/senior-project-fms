@@ -1,4 +1,4 @@
-import { ClipboardCheck, Plus, Search } from 'lucide-react'
+import { ClipboardCheck, Eye, Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
@@ -91,10 +91,10 @@ export function MaintenancePage() {
     {
       key: 'open',
       header: <span className="sr-only">Actions</span>,
-      width: 'w-[96px]',
+      width: 'w-[112px]',
       align: 'right',
       cell: (r) => (
-        <Button size="sm" variant="ghost" onClick={() => setViewing(r)} aria-label={`View ${r.registration_number} ${TYPE_LABELS[r.maintenance_type]}`}>
+        <Button size="sm" variant="secondary" leadingIcon={<Eye className="h-3.5 w-3.5" />} onClick={() => setViewing(r)} aria-label={`View ${r.registration_number} ${TYPE_LABELS[r.maintenance_type]}`}>
           View
         </Button>
       ),

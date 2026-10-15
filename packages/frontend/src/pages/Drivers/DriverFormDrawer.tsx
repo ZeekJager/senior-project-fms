@@ -10,6 +10,8 @@ import { LICENSE_CATEGORY_GROUPS, type Driver, type LicenseCategory } from './ty
 interface DriverFormDrawerProps {
   open: boolean
   onClose: () => void
+  /** Given when the user may retire this driver: shown in the footer, apart from Save. */
+  onRetire?: () => void
   /** Null: add a new driver (and their account). */
   driver: Driver | null
   depots: Depot[]
@@ -27,7 +29,7 @@ const CONFLICT_MESSAGES: Record<string, string> = {
  * password yet) and the licence in one request. Licence changes go through
  * this panel only, never inline in the table, so each is one audited edit.
  */
-export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId }: DriverFormDrawerProps) {
+export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId, onRetire }: DriverFormDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
   const [values, setValues] = useState<DriverFormValues>(EMPTY_FORM)
@@ -108,6 +110,11 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
       description={driver ? 'Licence and depot changes are saved to the audit log.' : 'Creates the driver’s account and records their licence.'}
       footer={
         <>
+          {driver && onRetire && (
+            <Button variant="ghost" className="mr-auto text-danger hover:bg-danger-soft hover:text-danger" onClick={onRetire}>
+              Retire driver
+            </Button>
+          )}
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>

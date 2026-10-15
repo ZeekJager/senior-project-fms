@@ -71,7 +71,7 @@ down 1px. Cards do not lift. `prefers-reduced-motion` turns it all off
 | `TextField`, `SelectField` | Floating label: a real `<label>`, inside the control until there is a value. `error` replaces `hint` in a message line that always exists (a live region), and sets `aria-invalid`. `optional` adds "(optional)"; `trailing` holds a unit or a status icon |
 | `Combobox` | A searchable select (WAI-ARIA combobox): the caller feeds options from the typed text (local filter or API search), optional groups ("Needs maintenance" first), a detail line and a trailing badge per option. Escape closes only the list |
 | `TextAreaField` | The multi-line floating-label field (descriptions, notes) |
-| `ListToolbar` (`components/shared`) | The bar on top of every list, in one order: `ViewTabs` (named views with counts), search (press `/`), extra filters (depot, role), Clear. Pass it to `DataTable`'s `toolbar`; the Clear slot is reserved so the bar never jumps. Vehicles, Drivers, Users, Spare parts, Repair log and Attendance all use it |
+| `ListToolbar` (`components/shared`) | The bar on top of every list, in two fixed rows: `ViewTabs` (named views with counts), then search (press `/`) and extra filters (depot, role). Clear sits inside the search box, so nothing moves when it appears. Pass it to `DataTable`'s `toolbar`. Vehicles, Drivers, Users, Spare parts, Repair log and Attendance all use it |
 | `ViewTabs` | One control for "which rows?": named views with counts (`aria-pressed`), plus an optional menu for rare ones. Use it instead of a stat card, a dropdown and a switch that filter the same thing (Vehicles) |
 | `FilterSelect` | The filter-bar pill: label, value, an animated listbox. Arrow keys, Home/End, Enter/Space, Escape. Tinted while a filter is applied |
 | `Dialog`, `Drawer` | Portal, focus trap, Escape and backdrop close, scroll lock, focus returned on close. Drawers are floating sheets inset 8px from the edge; use them for forms and detail instead of new pages |
@@ -81,6 +81,10 @@ down 1px. Cards do not lift. `prefers-reduced-motion` turns it all off
 | `AppShell` (`components/layout`) | A dark navy sidebar (`side` tokens) with the screens the user may open (from `router/routes.tsx`, filtered by permission): full from 1024px, an icon rail from 768px, a slide-in menu below. A 56px top bar with the portal name, `ThemeToggle` and the bell, a skip link, and an `ErrorBoundary` around each screen |
 
 Shared by several screens: `features/documents` (the documents drawer, expiry rules, document hooks) and `features/depots` (`useDepots`).
+
+## Row actions
+
+Every list row has one visible text action, a small `secondary` button with an icon: **Edit** (Vehicles, Drivers, Users), **Adjust** (Spare parts), **View** (Repair log). A destructive action never sits beside it: Decommission and Retire live in the footer of the edit drawer, apart from Save, and still ask for confirmation. Exceptions are said in words ("Flagged", "1 expiring"), and the healthy state is plain text. On phones the row keeps the facts that decide a dispatch (depot, trip, document warning) as lines under the name.
 
 ## A screen, step by step
 

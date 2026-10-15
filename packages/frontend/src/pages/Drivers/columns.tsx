@@ -1,7 +1,7 @@
-import { ArrowRight, FileText, MapPin, Paperclip, Pencil, Plus, RotateCcw, UserMinus } from 'lucide-react'
+import { ArrowRight, FileText, MapPin, Paperclip, Pencil, Plus, RotateCcw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusBadge, type Column } from '@/components/shared'
-import { Badge, cn, IconButton, Skeleton } from '@/components/ui'
+import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
 import type { Depot } from '@/features/depots'
 import { daysBetween, formatDate, today, type DocumentHealth } from '@/features/documents/expiry'
 import type { Driver, LicenseStatus } from './types'
@@ -12,7 +12,6 @@ export interface ColumnContext {
   canWrite: boolean
   canDelete: boolean
   onEdit: (driver: Driver) => void
-  onRetire: (driver: Driver) => void
   onReinstate: (driver: Driver) => void
   onOpenDocuments: (driver: Driver) => void
   onAddDocument: (driver: Driver) => void
@@ -83,6 +82,10 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
             ) : (
               <p className="hidden truncate text-xs text-ink-subtle sm:block">{d.email}</p>
             )}
+            <p className="truncate text-xs text-ink-subtle sm:hidden">
+              {d.license_number}
+              {d.depot_id && ctx.depots.get(d.depot_id)?.name ? ` · ${ctx.depots.get(d.depot_id)?.name}` : ''}
+            </p>
             {/* Phones drop the expiry column; the badge rides under the name. */}
             <span className="mt-1 block sm:hidden" aria-hidden="true">
               <LicenceBadge status={d.license_status} expiry={d.license_expiry} />
@@ -196,28 +199,23 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
     })
   }
 
-  if (ctx.canWrite || ctx.canDelete) {
+  if (ctx.canWrite) {
     columns.push({
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
-      width: 'w-[96px]',
+      width: 'w-[128px]',
       align: 'right',
       cell: (d) => (
-        <div className="flex justify-end gap-1 coarse:gap-2">
+        <div className="flex justify-end">
           {ctx.canWrite && d.status === 'active' && (
-            <IconButton size="sm" label={`Edit ${d.full_name}`} icon={<Pencil />} onClick={() => ctx.onEdit(d)} />
-          )}
-          {ctx.canDelete && d.status === 'active' && (
-            <IconButton
-              size="sm"
-              label={`Retire ${d.full_name}`}
-              icon={<UserMinus />}
-              onClick={() => ctx.onRetire(d)}
-              className="hover:bg-danger-soft hover:text-danger"
-            />
+            <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit ${d.full_name}`} onClick={() => ctx.onEdit(d)}>
+              Edit
+            </Button>
           )}
           {ctx.canWrite && d.status === 'retired' && (
-            <IconButton size="sm" label={`Reinstate ${d.full_name}`} icon={<RotateCcw />} onClick={() => ctx.onReinstate(d)} />
+            <Button size="sm" variant="secondary" leadingIcon={<RotateCcw className="h-3.5 w-3.5" />} aria-label={`Reinstate ${d.full_name}`} onClick={() => ctx.onReinstate(d)}>
+              Reinstate
+            </Button>
           )}
         </div>
       ),
@@ -239,7 +237,7 @@ function DocumentsCell({ driver, ctx }: { driver: Driver; ctx: ColumnContext }) 
           type="button"
           onClick={() => ctx.onOpenDocuments(driver)}
           aria-label={`Documents for ${driver.full_name}`}
-          className="focus-ring rounded-full transition-transform duration-150 hover:scale-[1.03]"
+          className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
         >
           {!h ? (
             <Badge tone="neutral" icon={<Paperclip />}>

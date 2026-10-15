@@ -95,7 +95,6 @@ export function DriversPage() {
       setEditing(d)
       setFormOpen(true)
     },
-    onRetire: setRetiring,
     onReinstate: (d) =>
       reinstate.mutate(d.id, {
         onSuccess: () => toast({ title: 'Driver reinstated', description: `${d.full_name} is back on the active list.` }),
@@ -161,6 +160,7 @@ export function DriversPage() {
             </ListToolbar>
           }
           caption="Drivers"
+          rowHeight="stacked3"
           columns={columns}
           data={drivers}
           rowKey={(d) => d.id}
@@ -233,7 +233,21 @@ export function DriversPage() {
         }}
       />
 
-      <DriverFormDrawer open={formOpen} onClose={() => setFormOpen(false)} driver={editing} depots={depots.data ?? []} defaultDepotId={filters.depotId || undefined} />
+      <DriverFormDrawer
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        driver={editing}
+        depots={depots.data ?? []}
+        defaultDepotId={filters.depotId || undefined}
+        onRetire={
+          editing && canDelete && editing.status === 'active'
+            ? () => {
+                setFormOpen(false)
+                setRetiring(editing)
+              }
+            : undefined
+        }
+      />
       <RetireDriverDialog driver={retiring} onClose={() => setRetiring(null)} />
       <DocumentsDrawer
         owner={docsFor && { type: 'driver', id: docsFor.id, label: docsFor.full_name }}

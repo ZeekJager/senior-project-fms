@@ -108,7 +108,7 @@ export function Combobox<T>({ label, value, onChange, query, onQueryChange, opti
           className={cn(
             'peer block w-full rounded-control border bg-surface pr-16 text-sm text-ink shadow-soft placeholder:text-ink-subtle',
             'transition-[border-color,box-shadow] duration-150 ease-smooth hover:border-ink-subtle/50 focus:outline-none focus:ring-4',
-            hideLabel ? 'h-10 pl-3' : 'h-14 pb-1.5 pl-4 pt-[22px] placeholder:text-transparent',
+            hideLabel ? 'h-10 coarse:h-11 pl-3' : 'h-14 pb-1.5 pl-4 pt-[22px] placeholder:text-transparent',
             error ? 'border-danger/70 focus:border-danger focus:ring-danger/15' : 'border-line-strong focus:border-brand focus:ring-brand/15',
           )}
         />

@@ -126,7 +126,7 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
                 title={blocked ? 'Only leave can be recorded ahead of the day' : undefined}
                 onClick={() => void choose(status)}
                 className={cn(
-                  'focus-ring flex h-9 items-center justify-center gap-1.5 rounded-control text-xs font-semibold transition-all duration-200 ease-smooth [&_svg]:h-3.5 [&_svg]:w-3.5',
+                  'focus-ring flex h-9 coarse:h-11 items-center justify-center gap-1.5 rounded-control text-xs font-semibold transition-all duration-200 ease-smooth [&_svg]:h-3.5 [&_svg]:w-3.5',
                   on ? TOGGLE[status].on : 'text-ink-muted hover:bg-surface hover:text-ink hover:shadow-soft',
                   'disabled:cursor-not-allowed disabled:opacity-40',
                 )}

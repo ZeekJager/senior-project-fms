@@ -6,7 +6,7 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const BASE =
-  'focus-ring relative inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap font-medium ' +
+  'focus-ring relative inline-flex shrink-0 select-none coarse:min-w-11 items-center justify-center gap-2 whitespace-nowrap font-medium ' +
   'transition-colors duration-150 ease-smooth active:translate-y-px disabled:pointer-events-none disabled:opacity-50'
 
 const VARIANTS: Record<ButtonVariant, string> = {

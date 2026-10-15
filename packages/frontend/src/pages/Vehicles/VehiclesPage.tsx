@@ -29,7 +29,7 @@ const patchFor = (view: View): Partial<VehicleFilters> =>
   view === 'all' ? { status: '', flagged: false } : view === 'flagged' ? { status: '', flagged: true } : { status: view, flagged: false }
 
 const MORE_VIEWS: { value: View | ''; label: string }[] = [
-  { value: '', label: 'Inactive, retired' },
+  { value: '', label: 'inactive or retired' },
   { value: 'inactive', label: 'Inactive' },
   { value: 'retired', label: 'Retired' },
 ]
@@ -90,11 +90,11 @@ export function VehiclesPage() {
     documents: { health, isLoading: docs.isPending && docs.fetchStatus !== 'idle', canRead: canReadDocs, canWrite: canUploadDocs },
     canWrite,
     canDelete,
+    showStatus: !filters.status || filters.flagged,
     onEdit: (v) => {
       setEditing(v)
       setFormOpen(true)
     },
-    onDecommission: setDecommissioning,
     onOpenDocuments: (v) => {
       setStagedFile(null)
       setDocsFor(v)
@@ -147,7 +147,7 @@ export function VehiclesPage() {
                 ],
                 onChange: (view) => update(patchFor(view)),
                 more: {
-                  label: 'Other',
+                  label: 'Show',
                   value: filters.status === 'inactive' || filters.status === 'retired' ? (filters.status as View) : '',
                   options: MORE_VIEWS,
                   onChange: (view) => update(view === '' ? patchFor('all') : patchFor(view)),
@@ -167,6 +167,7 @@ export function VehiclesPage() {
             </ListToolbar>
           }
           caption="Vehicles"
+          rowHeight="stacked3"
           columns={columns}
           data={vehicles}
           rowKey={(v) => v.id}
@@ -248,6 +249,14 @@ export function VehiclesPage() {
         vehicle={editing}
         depots={depots.data ?? []}
         defaultDepotId={filters.depotId || undefined}
+        onDecommission={
+          editing && canDelete && editing.status !== 'retired'
+            ? () => {
+                setFormOpen(false)
+                setDecommissioning(editing)
+              }
+            : undefined
+        }
       />
       <DecommissionDialog vehicle={decommissioning} onClose={() => setDecommissioning(null)} />
       <DocumentsDrawer

@@ -20,6 +20,8 @@ import {
 interface VehicleFormDrawerProps {
   open: boolean
   onClose: () => void
+  /** Given when the user may decommission this vehicle: shown in the footer, apart from Save. */
+  onDecommission?: () => void
   /** Null: register a new vehicle. */
   vehicle: Vehicle | null
   depots: Depot[]
@@ -38,7 +40,7 @@ const CONFLICT_MESSAGES: Record<string, string> = {
  * The plate is checked for duplicates as it is typed (debounced); the API
  * repeats every check on save.
  */
-export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepotId }: VehicleFormDrawerProps) {
+export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepotId, onDecommission }: VehicleFormDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
   const [values, setValues] = useState<VehicleFormValues>(EMPTY_FORM)
@@ -133,6 +135,11 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
       description={vehicle ? 'Changes are saved to the audit log.' : 'Register a vehicle in one of your depots.'}
       footer={
         <>
+          {vehicle && onDecommission && (
+            <Button variant="ghost" className="mr-auto text-danger hover:bg-danger-soft hover:text-danger" onClick={onDecommission}>
+              Decommission vehicle
+            </Button>
+          )}
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>

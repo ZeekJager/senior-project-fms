@@ -1,4 +1,5 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { Spinner } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { loginPathFor } from '@/router/redirect'
 
@@ -13,9 +14,12 @@ export function ProtectedRoute() {
 
   if (status === 'loading') {
     return (
-      <p role="status" className="p-6 text-slate-500">
-        Checking your session…
-      </p>
+      <div className="flex min-h-screen items-center justify-center gap-3 text-ink-muted">
+        <Spinner className="h-5 w-5" />
+        <p role="status" className="text-sm">
+          Checking your session…
+        </p>
+      </div>
     )
   }
   if (status === 'unauthenticated') {

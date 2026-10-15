@@ -89,7 +89,7 @@ export function NavItems({ routes, onNavigate, rail = false, collapsed = false }
                   rail && !collapsed && 'lg:justify-start lg:px-3',
                   rail
                     ? isActive
-                      ? 'bg-brand text-white shadow-soft'
+                      ? 'bg-side-active text-white shadow-soft'
                       : 'text-side-ink hover:bg-white/10 hover:text-white'
                     : isActive
                       ? 'bg-brand-soft text-brand-ink'

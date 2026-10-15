@@ -33,7 +33,7 @@ export default {
           soft: token('brand-soft'),
           ink: token('brand-ink'),
         },
-        side: { DEFAULT: token('side'), line: token('side-line'), ink: token('side-ink') },
+        side: { DEFAULT: token('side'), line: token('side-line'), ink: token('side-ink'), active: token('side-active') },
         focus: token('focus'),
         overlay: token('overlay'),
         success: { DEFAULT: token('success'), soft: token('success-soft') },

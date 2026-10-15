@@ -253,7 +253,8 @@ describe('Driver Management (S-05)', () => {
     await openDrivers()
     await within(await screen.findByRole('table', { name: 'Drivers' })).findByText(d.full_name)
 
-    await user.click(screen.getByRole('button', { name: `Retire ${d.full_name}` }))
+    await user.click(screen.getByRole('button', { name: `Edit ${d.full_name}` }))
+    await user.click(await screen.findByRole('button', { name: 'Retire driver' }))
     const dialog = await screen.findByRole('dialog', { name: `Retire ${d.full_name}` })
     const confirm = within(dialog).getByRole('button', { name: 'Retire driver' })
     expect(confirm).toBeDisabled()

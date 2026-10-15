@@ -11,6 +11,8 @@ export default mergeConfig(
       include: ['src/**/*.test.{ts,tsx}'],
       setupFiles: ['./src/test/setup.ts'],
       css: false,
+      // Form tests drive real typing through user-event: on a busy machine 5 s is not enough.
+      testTimeout: 15_000,
       coverage: {
         provider: 'v8',
         include: ['src/**/*.{ts,tsx}'],

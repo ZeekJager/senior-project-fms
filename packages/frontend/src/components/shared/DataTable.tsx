@@ -82,19 +82,20 @@ interface DataTableProps<T> {
   /** Rows shown while loading; defaults to the page size (capped at 10). */
   skeletonRows?: number
   /**
-   * `regular`: 56px rows. `stacked`: 72px on phones, 56px from `sm` up, for
+   * `regular`: 56px rows. `stacked3`: 92px on phones for a three-line first cell. `stacked`: 72px on phones, 56px from `sm` up, for
    * tables whose first cell stacks a third line (a badge) on phones. Real and
    * placeholder rows always share it, so nothing moves when data arrives.
    */
   rowHeight?: RowHeight
 }
 
-export type RowHeight = 'regular' | 'stacked'
+export type RowHeight = 'regular' | 'stacked' | 'stacked3'
 
 /** On the 8px grid. Written out in full: Tailwind only generates classes it can find as text. */
 const ROW_HEIGHT: Record<RowHeight, string> = {
   regular: 'h-14',
   stacked: 'h-[72px] sm:h-14',
+  stacked3: 'h-[92px] sm:h-14',
 }
 
 /**

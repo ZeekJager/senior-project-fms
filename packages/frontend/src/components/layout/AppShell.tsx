@@ -42,6 +42,9 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
   const [collapsed] = useSidebarCollapsed()
   useSearchShortcut()
   const portal = portalOf(location.pathname)
+  const page = sections
+    .flatMap((s) => s.routes)
+    .find((r) => location.pathname === r.path || location.pathname.startsWith(`${r.path}/`))?.nav?.label
 
   return (
     <div className="min-h-screen text-ink">
@@ -53,7 +56,17 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
           <div className="md:hidden">
             <Brand compact />
           </div>
-          <p className="hidden text-sm font-semibold text-ink md:block">{portal?.name ?? ''}</p>
+          <p className="hidden items-center gap-2 text-sm md:flex">
+            <span className={page ? 'text-ink-subtle' : 'font-semibold text-ink'}>{portal?.name ?? ''}</span>
+            {page && (
+              <>
+                <span aria-hidden="true" className="text-ink-subtle">
+                  /
+                </span>
+                <span className="font-semibold text-ink">{page}</span>
+              </>
+            )}
+          </p>
           <div className="flex items-center gap-1">
             <ThemeToggle />
             <NotificationBell />

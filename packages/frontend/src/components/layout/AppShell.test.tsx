@@ -75,6 +75,14 @@ describe('top bar', () => {
     expect(bell).toHaveFocus()
   })
 
+  it('names the page as well as the portal', async () => {
+    signedInAs(dispatcher)
+    renderApp('/dispatch')
+    const header = (await screen.findAllByRole('banner'))[0]
+    expect(within(header).getByText('Command center')).toBeInTheDocument()
+    expect(within(header).getByText('Dispatch')).toBeInTheDocument()
+  })
+
   it('names the current portal', async () => {
     signedInAs(dispatcher)
     renderApp('/vehicles')

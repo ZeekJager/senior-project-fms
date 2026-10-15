@@ -45,24 +45,34 @@ export function ListToolbar<T extends string>({ views, search, children, onClear
               placeholder={search.placeholder}
               value={search.value}
               onChange={(e) => search.onChange(e.target.value)}
-              className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand coarse:h-11"
+              className={`focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand coarse:h-11 ${onClear ? 'pr-20' : 'pr-10'}`}
             />
-            {search.busy && search.value && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
-            {!search.value && (
-              <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line-strong px-1.5 text-2xs font-medium text-ink-subtle coarse:hidden">
-                /
-              </kbd>
+            {search.busy && search.value && <Spinner className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle ${onClear ? 'right-[5.25rem]' : 'right-3.5'}`} />}
+            {onClear ? (
+              <button
+                type="button"
+                onClick={onClear}
+                title="Clear the search and every filter"
+                className="focus-ring absolute right-1.5 top-1/2 inline-flex h-7 -translate-y-1/2 items-center gap-1 rounded-md px-2 text-xs font-medium text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink coarse:h-9"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                Clear
+              </button>
+            ) : (
+              !search.value && (
+                <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line-strong px-1.5 text-2xs font-medium text-ink-subtle coarse:hidden">
+                  /
+                </kbd>
+              )
             )}
           </div>
         )}
-        {children}
-        <div className="sm:w-20">
-          {onClear && (
-            <Button variant="ghost" leadingIcon={<X className="h-4 w-4" />} onClick={onClear}>
-              Clear
-            </Button>
-          )}
-        </div>
+        {children && <div className="grid grid-cols-2 gap-2 sm:contents">{children}</div>}
+        {!search && onClear && (
+          <Button variant="ghost" leadingIcon={<X className="h-4 w-4" />} onClick={onClear}>
+            Clear
+          </Button>
+        )}
       </div>
     </div>
   )

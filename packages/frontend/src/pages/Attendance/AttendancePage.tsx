@@ -5,7 +5,7 @@ import { EmptyState, ErrorState, ListToolbar } from '@/components/shared'
 import { Button, Card, cn, FilterSelect, IconButton, Skeleton, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
-import { today } from '@/features/documents/expiry'
+import { formatDate, today } from '@/features/documents/expiry'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { AttendanceCard } from './AttendanceCard'
 import { ATTENDANCE_STATUSES, ROSTER_PAGE_SIZE, useDayCounts, useMarkAttendance, useRoster, type AttendanceStatus, type RosterEntry, type RosterFilters } from './api'
@@ -114,14 +114,19 @@ export function AttendancePage() {
         </div>
         <nav aria-label="Day" className="flex items-center gap-2">
           <IconButton variant="secondary" label="Previous day" icon={<ChevronLeft />} onClick={() => update({ date: shiftDate(filters.date, -1) })} />
-          <label className="focus-within:ring-brand/20 relative flex h-10 items-center gap-2 rounded-control border border-line-strong bg-surface px-3 text-sm text-ink shadow-soft focus-within:ring-4">
+          {/* The browser's own date field shows its own locale (10/15/2026). We show the date the way the rest of the app does and lay the real input, invisible, over it. */}
+          <label className="focus-within:ring-brand/20 relative flex h-10 items-center gap-2 rounded-control border border-line-strong bg-surface px-3 text-sm text-ink shadow-soft focus-within:ring-4 coarse:h-11">
             <CalendarDays className="h-4 w-4 text-ink-subtle" aria-hidden="true" />
             <span className="sr-only">Date</span>
+            <span aria-hidden="true" className="tabular min-w-[6.5rem]">
+              {formatDate(filters.date)}
+            </span>
             <input
               type="date"
               value={filters.date}
               onChange={(e) => DATE.test(e.target.value) && update({ date: e.target.value })}
-              className="bg-transparent text-sm text-ink outline-none"
+              onClick={(e) => e.currentTarget.showPicker?.()}
+              className="absolute -inset-px h-[calc(100%+2px)] w-[calc(100%+2px)] cursor-pointer opacity-0"
             />
           </label>
           <IconButton variant="secondary" label="Next day" icon={<ChevronRight />} onClick={() => update({ date: shiftDate(filters.date, 1) })} />

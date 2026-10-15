@@ -1,7 +1,7 @@
-import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Plus, Truck, Archive, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Plus, Truck, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusBadge, type Column } from '@/components/shared'
-import { Badge, cn, IconButton, Skeleton } from '@/components/ui'
+import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
 import type { DocumentHealth } from '@/features/documents/expiry'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
 
@@ -20,8 +20,9 @@ export interface ColumnContext {
   documents: { health: Map<string, DocumentHealth>; isLoading: boolean; canRead: boolean; canWrite: boolean }
   canWrite: boolean
   canDelete: boolean
+  /** False when the chosen view is one status (every row would say the same). */
+  showStatus?: boolean
   onEdit: (vehicle: Vehicle) => void
-  onDecommission: (vehicle: Vehicle) => void
   onOpenDocuments: (vehicle: Vehicle) => void
   onAddDocument: (vehicle: Vehicle) => void
 }
@@ -49,20 +50,28 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             <p className="plate flex items-center gap-2 truncate text-ink">
               {v.registration_number}
               {v.maintenance_flag && (
-                <span title="Flagged for maintenance" className="text-warning">
-                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                <Badge tone="warning" icon={<AlertTriangle />} className="shrink-0">
+                  <span aria-hidden="true">Flagged</span>
                   <span className="sr-only">Flagged for maintenance</span>
-                </span>
+                </Badge>
               )}
             </p>
             <p className="truncate text-xs text-ink-subtle" title={`${v.make} ${v.model}${v.year ? ` · ${v.year}` : ''}`}>
               {v.make} {v.model}
               {v.year ? ` · ${v.year}` : ''}
             </p>
+            {/* Phones drop the depot, trip and documents columns; the facts that decide a dispatch ride under the name. */}
+            <p className="truncate text-xs text-ink-subtle sm:hidden">
+              {ctx.depots.get(v.depot_id)?.name ?? '—'} · {v.current_trip ? `${v.current_trip.origin ?? 'Origin'} to ${v.current_trip.destination ?? 'Destination'}` : 'No active trip'}
+            </p>
+            <PhoneDocumentState health={ctx.documents.health.get(v.id)} />
           </div>
-          <span className="ml-auto sm:hidden">
-            <VehicleStatus status={v.status} />
-          </span>
+          {/* Phones: only an exception earns the space; "Active" is the normal state. */}
+          {v.status !== 'active' && (
+            <span className="ml-auto sm:hidden">
+              <VehicleStatus status={v.status} />
+            </span>
+          )}
         </div>
       ),
       skeleton: (
@@ -144,32 +153,25 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     })
   }
 
-  if (ctx.canWrite || ctx.canDelete) {
+  if (ctx.canWrite) {
     columns.push({
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
-      width: 'w-[104px] coarse:w-[136px]',
+      width: 'w-[104px] coarse:w-[112px]',
       align: 'right',
       cell: (v) => (
-        <div className="flex justify-end gap-1 coarse:gap-2">
+        <div className="flex justify-end">
           {ctx.canWrite && v.status !== 'retired' && (
-            <IconButton size="sm" label={`Edit ${v.registration_number}`} icon={<Pencil />} onClick={() => ctx.onEdit(v)} />
-          )}
-          {ctx.canDelete && v.status !== 'retired' && (
-            <IconButton
-              size="sm"
-              label={`Decommission ${v.registration_number}`}
-              icon={<Archive />}
-              onClick={() => ctx.onDecommission(v)}
-              className="hover:bg-danger-soft hover:text-danger"
-            />
+            <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit ${v.registration_number}`} onClick={() => ctx.onEdit(v)}>
+              Edit
+            </Button>
           )}
         </div>
       ),
       skeleton: <span />,
     })
   }
-  return columns
+  return ctx.showStatus === false ? columns.filter((c) => c.key !== 'status') : columns
 }
 
 /** Active is the normal state, so it is quiet; every other status keeps its colored badge and stands out. */
@@ -180,6 +182,16 @@ function VehicleStatus({ status }: { status: Vehicle['status'] }) {
       <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
       Active
     </span>
+  )
+}
+
+/** Phones only, and only for an exception: an expired or expiring document is the one thing worth a line. */
+function PhoneDocumentState({ health }: { health: DocumentHealth | undefined }) {
+  if (!health || (health.expired === 0 && health.expiring === 0)) return null
+  return (
+    <p className={cn('truncate text-xs font-medium sm:hidden', health.expired > 0 ? 'text-danger' : 'text-warning')}>
+      {health.expired > 0 ? `${health.expired} document${health.expired === 1 ? '' : 's'} expired` : `${health.expiring} document${health.expiring === 1 ? '' : 's'} expiring`}
+    </p>
   )
 }
 

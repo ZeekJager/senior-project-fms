@@ -195,7 +195,7 @@ describe('Vehicle Management (S-04)', () => {
       serveFleet([vehicle(), gone])
       const user = userEvent.setup()
       await openVehicles()
-      await user.click(screen.getByRole('button', { name: /^Other:/ }))
+      await user.click(screen.getByRole('button', { name: /^Show:/ }))
       await user.click(screen.getByRole('option', { name: 'Retired' }))
       await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?status=retired'))
       await within(table()).findByText(gone.registration_number)
@@ -243,7 +243,8 @@ describe('Vehicle Management (S-04)', () => {
     await openVehicles()
     await within(table()).findByText(busy.registration_number)
 
-    await user.click(within(rowFor(busy.registration_number)).getByRole('button', { name: `Decommission ${busy.registration_number}` }))
+    await user.click(within(rowFor(busy.registration_number)).getByRole('button', { name: `Edit ${busy.registration_number}` }))
+    await user.click(await screen.findByRole('button', { name: 'Decommission vehicle' }))
     const dialog = await screen.findByRole('dialog', { name: `Decommission ${busy.registration_number}` })
     const confirm = within(dialog).getByRole('button', { name: 'Decommission vehicle' })
     const input = within(dialog).getByLabelText(`Type ${busy.registration_number} to confirm`)
@@ -270,7 +271,8 @@ describe('Vehicle Management (S-04)', () => {
     await openVehicles()
     await within(table()).findByText(idle.registration_number)
 
-    await user.click(within(rowFor(idle.registration_number)).getByRole('button', { name: `Decommission ${idle.registration_number}` }))
+    await user.click(within(rowFor(idle.registration_number)).getByRole('button', { name: `Edit ${idle.registration_number}` }))
+    await user.click(await screen.findByRole('button', { name: 'Decommission vehicle' }))
     const dialog = await screen.findByRole('dialog')
     await user.type(within(dialog).getByLabelText(/to confirm$/), idle.registration_number)
     await user.click(within(dialog).getByRole('button', { name: 'Decommission vehicle' }))
@@ -437,6 +439,43 @@ describe('Vehicle Management (S-04)', () => {
     await openVehicles(`/vehicles?depot=${DEPOT_A}`)
     expect(await screen.findByText(/for every vehicle in Addis Ababa Central/)).toBeInTheDocument()
     expect(screen.queryByText(/across your depots/)).not.toBeInTheDocument()
+  })
+
+  describe('row actions and exceptions', () => {
+    it('has one text "Edit" per row; Decommission lives in the edit drawer, apart from Save', async () => {
+      const v = vehicle()
+      serveFleet([v])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findByText(v.registration_number)
+      const row = rowFor(v.registration_number)
+      expect(within(row).getByRole('button', { name: `Edit ${v.registration_number}` })).toHaveTextContent('Edit')
+      expect(within(row).queryByRole('button', { name: /^Decommission / })).not.toBeInTheDocument()
+      await user.click(within(row).getByRole('button', { name: `Edit ${v.registration_number}` }))
+      expect(await screen.findByRole('button', { name: 'Decommission vehicle' })).toBeInTheDocument()
+    })
+
+    it('says "Flagged" in words on a flagged vehicle', async () => {
+      const v = vehicle({ maintenance_flag: true })
+      serveFleet([v])
+      await openVehicles()
+      await within(table()).findByText(v.registration_number)
+      expect(within(rowFor(v.registration_number)).getByText('Flagged')).toBeInTheDocument()
+    })
+
+    it('drops the Status column when the chosen view is one status, since every row would say the same', async () => {
+      serveFleet([vehicle()])
+      await openVehicles('/vehicles?status=active')
+      await within(table()).findByText(/AA 3-/)
+      expect(within(table()).queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument()
+    })
+
+    it('keeps the Status column in the All view', async () => {
+      serveFleet([vehicle()])
+      await openVehicles()
+      await within(table()).findByText(/AA 3-/)
+      expect(within(table()).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument()
+    })
   })
 
   describe('the "/" shortcut', () => {
