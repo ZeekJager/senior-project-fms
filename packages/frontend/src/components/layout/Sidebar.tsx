@@ -84,7 +84,7 @@ export function NavItems({ routes, onNavigate, rail = false, collapsed = false }
               title={rail ? nav!.label : undefined}
               className={({ isActive }) =>
                 cn(
-                  'focus-ring group flex h-10 items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-150 ease-smooth',
+                  'focus-ring group flex h-10 coarse:h-11 items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-150 ease-smooth',
                   rail && 'ring-offset-side md:justify-center md:px-0',
                   rail && !collapsed && 'lg:justify-start lg:px-3',
                   rail

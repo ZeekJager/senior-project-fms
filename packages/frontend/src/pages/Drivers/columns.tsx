@@ -152,7 +152,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
     {
       key: 'status',
       header: 'Status',
-      width: 'w-[104px]',
+      width: 'w-[104px] coarse:w-[136px]',
       hideBelow: 'md',
       cell: (d) => <StatusBadge status={d.status} />,
       skeleton: <Skeleton className="h-5 w-16 rounded-full" />,
@@ -203,7 +203,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       width: 'w-[96px]',
       align: 'right',
       cell: (d) => (
-        <div className="flex justify-end gap-1 transition-opacity duration-150 lg:opacity-60 lg:group-hover:opacity-100 lg:focus-within:opacity-100">
+        <div className="flex justify-end gap-1 coarse:gap-2">
           {ctx.canWrite && d.status === 'active' && (
             <IconButton size="sm" label={`Edit ${d.full_name}`} icon={<Pencil />} onClick={() => ctx.onEdit(d)} />
           )}

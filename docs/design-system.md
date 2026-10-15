@@ -61,6 +61,8 @@ toasts.
 2px on hover; buttons press down 1px. `prefers-reduced-motion` turns it all
 off (`index.css`).
 
+**Touch.** On touch devices every control is at least 44px: use the `coarse:` variant (`@media (pointer: coarse)`, in `tailwind.config.js`) to raise a size, e.g. `h-9 coarse:h-11`, so the desktop stays dense. Row actions are always visible (never faded until hover), and hover styles apply only where the device can hover (`hoverOnlyWhenSupported`).
+
 **Focus.** One style everywhere: `focus-ring` (a soft brand halo on keyboard
 focus only). Never remove an outline without it.
 

@@ -6,7 +6,7 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const BASE =
-  'focus-ring relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium ' +
+  'focus-ring relative inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap font-medium ' +
   'transition-colors duration-150 ease-smooth active:translate-y-px disabled:pointer-events-none disabled:opacity-50'
 
 const VARIANTS: Record<ButtonVariant, string> = {
@@ -21,8 +21,8 @@ const VARIANTS: Record<ButtonVariant, string> = {
 }
 
 const SIZES: Record<ButtonSize, string> = {
-  sm: 'h-8 rounded-control px-3 text-[13px]',
-  md: 'h-10 rounded-control px-4 text-sm',
+  sm: 'h-8 rounded-control px-3 text-[13px] coarse:h-11',
+  md: 'h-10 rounded-control px-4 text-sm coarse:h-11',
   lg: 'h-12 rounded-control px-5 text-[15px]',
 }
 
@@ -91,7 +91,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       className={cn(
         BASE,
         VARIANTS[variant],
-        size === 'sm' ? 'h-8 w-8 rounded-control' : 'h-10 w-10 rounded-control',
+        size === 'sm' ? 'h-8 w-8 rounded-control coarse:h-11 coarse:w-11' : 'h-10 w-10 rounded-control coarse:h-11 coarse:w-11',
         '[&_svg]:h-4 [&_svg]:w-4',
         className,
       )}

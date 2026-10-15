@@ -148,10 +148,10 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     columns.push({
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
-      width: 'w-[104px]',
+      width: 'w-[104px] coarse:w-[136px]',
       align: 'right',
       cell: (v) => (
-        <div className="flex justify-end gap-1 transition-opacity duration-150 lg:opacity-60 lg:group-hover:opacity-100 lg:focus-within:opacity-100">
+        <div className="flex justify-end gap-1 coarse:gap-2">
           {ctx.canWrite && v.status !== 'retired' && (
             <IconButton size="sm" label={`Edit ${v.registration_number}`} icon={<Pencil />} onClick={() => ctx.onEdit(v)} />
           )}
@@ -184,7 +184,7 @@ function DocumentsCell({ vehicle, ctx }: { vehicle: Vehicle; ctx: ColumnContext 
           type="button"
           onClick={() => ctx.onOpenDocuments(vehicle)}
           aria-label={`Documents for ${vehicle.registration_number}`}
-          className="focus-ring rounded-full transition-transform duration-150 hover:scale-[1.03]"
+          className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
         >
           {!h ? (
             <Badge tone="neutral" icon={<Paperclip />}>

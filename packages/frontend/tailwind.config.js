@@ -100,5 +100,11 @@ export default {
       },
     },
   },
-  plugins: [],
+  // Touch devices get 44px targets (`coarse:`) without making the desktop layout looser.
+  future: { hoverOnlyWhenSupported: true },
+  plugins: [
+    ({ addVariant }) => {
+      addVariant('coarse', '@media (pointer: coarse)')
+    },
+  ],
 }

@@ -164,7 +164,7 @@ export function InventoryPage() {
               placeholder="Search part name or number"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-9 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
+              className="focus-ring h-9 coarse:h-11 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
             />
             {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
           </div>
@@ -178,7 +178,7 @@ export function InventoryPage() {
               aria-checked={filters.lowOnly}
               onClick={() => update({ lowOnly: !filters.lowOnly, status: '' })}
               className={cn(
-                'focus-ring inline-flex h-9 items-center gap-2.5 rounded-control border px-3.5 text-sm  transition-all duration-150 ease-smooth',
+                'focus-ring inline-flex h-9 coarse:h-11 items-center gap-2.5 rounded-control border px-3.5 text-sm  transition-all duration-150 ease-smooth',
                 filters.lowOnly ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
               )}
             >

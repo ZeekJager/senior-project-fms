@@ -112,7 +112,7 @@ export function FilterSelect<T extends string>({
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={onButtonKeyDown}
         className={cn(
-          'focus-ring inline-flex h-9 w-full items-center gap-1.5 whitespace-nowrap rounded-control border px-2.5 text-[13px] transition-colors sm:gap-2 sm:px-3 sm:text-sm duration-150 ease-smooth sm:w-auto',
+          'focus-ring inline-flex h-9 coarse:h-11 w-full items-center gap-1.5 whitespace-nowrap rounded-control border px-2.5 text-[13px] transition-colors sm:gap-2 sm:px-3 sm:text-sm duration-150 ease-smooth sm:w-auto',
           isSet
             ? 'border-brand/30 bg-brand-soft text-brand-ink hover:border-brand/50'
             : 'border-line-strong bg-surface text-ink-muted hover:border-ink-subtle/50 hover:text-ink',

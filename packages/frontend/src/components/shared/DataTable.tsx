@@ -225,7 +225,7 @@ export function DataTable<T>({
 function HeaderCell<T>({ column, sort }: { column: Column<T>; sort?: SortState }) {
   const sorted = sort && column.sortKey === sort.key ? sort.order : null
   const classes = cn(
-    'h-10 px-3 text-xs font-semibold text-ink-muted',
+    'h-10 coarse:h-12 px-3 text-xs font-semibold text-ink-muted',
     column.align === 'right' && 'text-right',
     column.hideBelow && HIDE_BELOW[column.hideBelow],
     column.width,
@@ -243,7 +243,7 @@ function HeaderCell<T>({ column, sort }: { column: Column<T>; sort?: SortState }
       <button
         type="button"
         onClick={() => sort.onChange(column.sortKey!)}
-        className="focus-ring -mx-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:text-ink"
+        className="focus-ring -mx-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors coarse:min-h-11 hover:text-ink"
       >
         {column.header}
         <Icon className={cn('h-3.5 w-3.5', !sorted && 'opacity-50')} aria-hidden="true" />
