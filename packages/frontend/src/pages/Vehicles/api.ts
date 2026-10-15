@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 import { vehicleQuery, type VehicleFilters } from './filters'
@@ -34,9 +34,13 @@ export function useFleetCounts(depotId: string) {
     maintenance: 'status=maintenance',
     inactive: 'status=inactive',
     flagged: 'maintenance_flag=true',
+    retired: 'status=retired',
+    ready: 'ready_to_dispatch=true',
+    due: 'documents=due',
   }
   const results = useQueries({
     queries: Object.entries(figures).map(([name, filter]) => ({
+      placeholderData: keepPreviousData,
       queryKey: [...keys.counts(depotId), name],
       queryFn: async () => {
         const q = new URLSearchParams(filter)
@@ -47,9 +51,9 @@ export function useFleetCounts(depotId: string) {
       },
     })),
   })
-  const [total, active, maintenance, inactive, flagged] = results.map((r) => r.data)
+  const [total, active, maintenance, inactive, flagged, retired, ready, due] = results.map((r) => r.data)
   return {
-    counts: { total, active, maintenance, inactive, flagged },
+    counts: { total, active, maintenance, inactive, flagged, retired, ready, due },
     isLoading: results.some((r) => r.isPending),
     isError: results.some((r) => r.isError),
   }

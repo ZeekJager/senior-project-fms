@@ -22,7 +22,7 @@ export function RolesDrawer({ open, onClose }: { open: boolean; onClose: () => v
             <li key={role.name}>
               <details className="group rounded-card border border-line bg-surface shadow-soft open:shadow-card">
                 <summary className="focus-ring flex cursor-pointer list-none items-center gap-3 rounded-card p-4 [&::-webkit-details-marker]:hidden">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-ink ring-1 ring-inset ring-brand/20">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand-ink ring-1 ring-inset ring-brand/20">
                     <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                   </span>
                   <span className="min-w-0 flex-1">
@@ -37,7 +37,7 @@ export function RolesDrawer({ open, onClose }: { open: boolean; onClose: () => v
                       <dt className="font-medium text-ink-muted">{resource}</dt>
                       <dd className="flex flex-wrap gap-1">
                         {actions.map((a) => (
-                          <span key={a} className="rounded-md bg-surface-sunken px-1.5 py-0.5 font-mono text-[11px] text-ink">
+                          <span key={a} className="rounded-md bg-surface-sunken px-1.5 py-0.5 font-mono text-xs text-ink">
                             {a}
                           </span>
                         ))}

@@ -1,95 +1,17 @@
-import { LogOut, Menu, Truck } from 'lucide-react'
+import { HelpCircle, Menu } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/shared'
 import { cn, Drawer, IconButton, ToastProvider } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferences'
 import { isDriverPortalUser, navSections, portalOf, type NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
+import { HelpDialog } from './HelpDialog'
 import { NotificationBell } from './NotificationBell'
-
-function initials(name: string | undefined): string {
-  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
-  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?'
-}
-
-function Brand({ compact }: { compact?: boolean }) {
-  return (
-    <div className="flex items-center gap-3 px-2">
-      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand bg-gradient-to-br from-white/20 to-white/0 text-white shadow-glow ring-1 ring-inset ring-white/15">
-        <Truck className="h-[18px] w-[18px]" aria-hidden="true" />
-      </div>
-      <div className="leading-tight">
-        <p className="text-sm font-semibold tracking-tight text-ink">Fleet</p>
-        {!compact && <p className="text-xs text-ink-subtle">Management System</p>}
-      </div>
-    </div>
-  )
-}
-
-function NavItems({ routes, onNavigate }: { routes: AppRoute[]; onNavigate?: () => void }) {
-  return (
-    <ul className="space-y-1">
-      {routes.map(({ path, nav }) => {
-        const Icon = nav!.icon
-        return (
-          <li key={path}>
-            <NavLink
-              to={path}
-              onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  'focus-ring group flex h-10 items-center gap-3 rounded-control px-3 text-sm font-medium transition-all duration-150 ease-smooth',
-                  isActive ? 'bg-surface text-ink shadow-soft ring-1 ring-line' : 'text-ink-muted hover:bg-surface/60 hover:text-ink',
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon className={cn('h-[18px] w-[18px] transition-colors', isActive ? 'text-brand-ink' : 'text-ink-subtle group-hover:text-ink-muted')} aria-hidden="true" />
-                  {nav!.label}
-                </>
-              )}
-            </NavLink>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-/** The menu, one titled group per portal the user may use. */
-function Sections({ sections, onNavigate }: { sections: NavSection[]; onNavigate?: () => void }) {
-  return (
-    <div className="space-y-6">
-      {sections.map(({ portal, routes }) => (
-        <section key={portal.id} aria-labelledby={`nav-${portal.id}`}>
-          <h2 id={`nav-${portal.id}`} className="mb-2 px-3 text-2xs font-medium uppercase tracking-wider text-ink-subtle">
-            {portal.name}
-          </h2>
-          <NavItems routes={routes} onNavigate={onNavigate} />
-        </section>
-      ))}
-    </div>
-  )
-}
-
-function UserCard() {
-  const { session, logout } = useAuth()
-  const name = session?.user.full_name
-  return (
-    <div className="flex items-center gap-3 rounded-card border border-line bg-surface/70 p-2.5 shadow-soft">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand/80 to-purple-500/80 text-xs font-semibold text-white" aria-hidden="true">
-        {initials(name)}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink">{name}</p>
-        <p className="truncate text-xs text-ink-subtle">{session?.user.email}</p>
-      </div>
-      <IconButton label="Sign out" icon={<LogOut />} size="sm" onClick={() => void logout()} />
-    </div>
-  )
-}
+import { Brand, initials, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
+import { ThemeToggle } from './ThemeToggle'
+import { useHelpShortcut, useSearchShortcut } from './useSearchShortcut'
 
 function SkipLink() {
   return (
@@ -101,10 +23,12 @@ function SkipLink() {
 
 function Content({ className }: { className: string }) {
   const location = useLocation()
+  // Dates are formatted as they render, so a change of calendar remounts the screen.
+  const [calendar] = usePreference<CalendarSystem>(CALENDAR_KEY, 'gregorian')
   return (
     <main id="main" className={className}>
       <ErrorBoundary resetKey={location.pathname}>
-        <Outlet />
+        <Outlet key={calendar} />
       </ErrorBoundary>
     </main>
   )
@@ -119,38 +43,57 @@ function Content({ className }: { className: string }) {
 function StaffShell({ sections }: { sections: NavSection[] }) {
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [collapsed] = useSidebarCollapsed()
+  useSearchShortcut()
+  useHelpShortcut(() => setHelpOpen(true))
   const portal = portalOf(location.pathname)
+  const page = sections
+    .flatMap((s) => s.routes)
+    .find((r) => location.pathname === r.path || location.pathname.startsWith(`${r.path}/`))?.nav?.label
 
   return (
     <div className="min-h-screen text-ink">
       <SkipLink />
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-line bg-surface-muted/60 px-4 py-6 backdrop-blur-xl lg:flex">
-        <Brand />
-        <nav aria-label="Main" className="mt-8 flex-1 overflow-y-auto">
-          <Sections sections={sections} />
-        </nav>
-        <UserCard />
-      </aside>
+      <Sidebar sections={sections} />
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-line bg-surface/75 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
-          <div className="lg:hidden">
-            <Brand compact />
+      <div className={cn('transition-[padding] duration-200 ease-smooth md:pl-[72px]', !collapsed && 'lg:pl-64')}>
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-line bg-surface px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-2 lg:hidden">
+            <IconButton label="Open menu" icon={<Menu />} onClick={() => setMenuOpen(true)} />
+            <div className="md:hidden">
+              <Brand compact />
+            </div>
           </div>
-          <p className="hidden text-sm font-medium text-ink-muted lg:block">{portal?.name ?? ''}</p>
+          <p className="hidden items-center gap-2 text-sm md:flex">
+            <span className={page ? 'text-ink-subtle' : 'font-semibold text-ink'}>{portal?.name ?? ''}</span>
+            {page && (
+              <>
+                <span aria-hidden="true" className="text-ink-subtle">
+                  /
+                </span>
+                <span className="font-semibold text-ink">{page}</span>
+              </>
+            )}
+          </p>
           <div className="flex items-center gap-1">
+            <IconButton label="Help and shortcuts" icon={<HelpCircle />} onClick={() => setHelpOpen(true)} />
+            <ThemeToggle />
             <NotificationBell />
-            <IconButton label="Open menu" icon={<Menu />} onClick={() => setMenuOpen(true)} className="lg:hidden" />
           </div>
         </header>
-        <Content className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 lg:py-10" />
+        <Content className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8" />
       </div>
 
       <Drawer open={menuOpen} onClose={() => setMenuOpen(false)} side="left" title="Menu" hideTitle footer={<div className="w-full"><UserCard /></div>}>
+        <div className="mb-5">
+          <Brand />
+        </div>
         <nav aria-label="Main">
           <Sections sections={sections} onNavigate={() => setMenuOpen(false)} />
         </nav>
       </Drawer>
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
@@ -168,15 +111,16 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
   return (
     <div className="min-h-screen text-ink">
       <SkipLink />
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-surface/80 px-3 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-surface px-3">
         <Brand compact />
         <div className="flex items-center gap-1">
+          <ThemeToggle />
           <NotificationBell />
           <button
             type="button"
             onClick={() => setAccountOpen(true)}
             aria-label="Account"
-            className="focus-ring flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-brand/80 to-purple-500/80 text-xs font-semibold text-white"
+            className="focus-ring flex h-10 w-10 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink"
           >
             {initials(session?.user.full_name)}
           </button>
@@ -186,7 +130,7 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
       <Content className={cn('mx-auto w-full max-w-lg px-4 py-5', tabs && 'pb-24')} />
 
       {tabs && (
-        <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
+        <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]">
           <ul className="mx-auto grid max-w-lg" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
             {routes.map(({ path, nav }) => {
               const Icon = nav!.icon

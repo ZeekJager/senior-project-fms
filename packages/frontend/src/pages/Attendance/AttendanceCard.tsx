@@ -5,18 +5,18 @@ import { ApiError } from '@/lib/api/errors'
 import { STATUS_LABELS, TOGGLE_STATUSES, type AttendanceStatus, type RosterEntry } from './api'
 
 const TOGGLE: Record<(typeof TOGGLE_STATUSES)[number], { icon: ReactNode; on: string }> = {
-  present: { icon: <UserCheck />, on: 'bg-emerald-600 text-white shadow-[0_6px_16px_-6px_rgb(5_150_105/0.6)]' },
-  absent: { icon: <CircleSlash />, on: 'bg-red-600 text-white shadow-[0_6px_16px_-6px_rgb(220_38_38/0.6)]' },
-  on_leave: { icon: <Palmtree />, on: 'bg-amber-500 text-amber-950 shadow-[0_6px_16px_-6px_rgb(245_158_11/0.6)]' },
+  present: { icon: <UserCheck />, on: 'bg-emerald-700 text-white shadow-soft' },
+  absent: { icon: <CircleSlash />, on: 'bg-red-700 text-white shadow-soft' },
+  on_leave: { icon: <Palmtree />, on: 'bg-amber-500 text-amber-950 shadow-soft' },
 }
 
 const TINT: Record<AttendanceStatus, string> = {
-  present: 'before:bg-emerald-500',
-  absent: 'before:bg-red-500',
-  on_leave: 'before:bg-amber-400',
-  late: 'before:bg-sky-500',
-  sick: 'before:bg-rose-400',
-  other: 'before:bg-slate-400',
+  present: 'ring-emerald-500',
+  absent: 'ring-red-500',
+  on_leave: 'ring-amber-400',
+  late: 'ring-sky-500',
+  sick: 'ring-rose-400',
+  other: 'ring-slate-400',
 }
 
 function initials(name: string): string {
@@ -80,14 +80,12 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
     <article
       aria-label={label}
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-card border border-line bg-surface p-4 shadow-card transition-all duration-200 ease-smooth',
-        'before:absolute before:inset-x-0 before:top-0 before:h-1 before:transition-colors hover:-translate-y-0.5 hover:shadow-elevated',
-        shown ? TINT[shown] : 'before:bg-transparent',
+        'group relative flex flex-col overflow-hidden rounded-card border border-line bg-surface p-4 shadow-card transition-colors duration-200 ease-smooth',
       )}
     >
       <div className="flex items-start gap-3">
         <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-xs font-semibold text-white"
+          className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink', shown && `ring-2 ring-offset-2 ring-offset-surface ${TINT[shown]}`)}
           aria-hidden="true"
         >
           {initials(entry.full_name)}
@@ -128,7 +126,7 @@ export function AttendanceCard({ entry, depotName, canWrite, future, onMark }: A
                 title={blocked ? 'Only leave can be recorded ahead of the day' : undefined}
                 onClick={() => void choose(status)}
                 className={cn(
-                  'focus-ring flex h-9 items-center justify-center gap-1.5 rounded-[10px] text-xs font-semibold transition-all duration-200 ease-smooth [&_svg]:h-3.5 [&_svg]:w-3.5',
+                  'focus-ring flex h-9 coarse:h-11 items-center justify-center gap-1.5 rounded-control text-xs font-semibold transition-all duration-200 ease-smooth [&_svg]:h-3.5 [&_svg]:w-3.5',
                   on ? TOGGLE[status].on : 'text-ink-muted hover:bg-surface hover:text-ink hover:shadow-soft',
                   'disabled:cursor-not-allowed disabled:opacity-40',
                 )}

@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
+import { AlertCircle, Archive, CheckCircle2, XCircle } from 'lucide-react'
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, Drawer, SelectField, Spinner, TextField, useToast } from '@/components/ui'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -20,6 +20,8 @@ import {
 interface VehicleFormDrawerProps {
   open: boolean
   onClose: () => void
+  /** Given when the user may decommission this vehicle: shown in the footer, apart from Save. */
+  onDecommission?: () => void
   /** Null: register a new vehicle. */
   vehicle: Vehicle | null
   depots: Depot[]
@@ -38,7 +40,7 @@ const CONFLICT_MESSAGES: Record<string, string> = {
  * The plate is checked for duplicates as it is typed (debounced); the API
  * repeats every check on save.
  */
-export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepotId }: VehicleFormDrawerProps) {
+export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepotId, onDecommission }: VehicleFormDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
   const [values, setValues] = useState<VehicleFormValues>(EMPTY_FORM)
@@ -133,6 +135,11 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
       description={vehicle ? 'Changes are saved to the audit log.' : 'Register a vehicle in one of your depots.'}
       footer={
         <>
+          {vehicle && onDecommission && (
+            <Button variant="ghost" leadingIcon={<Archive className="h-4 w-4" />} className="mr-auto !text-danger hover:!bg-danger-soft hover:!text-danger" onClick={onDecommission}>
+              Decommission vehicle
+            </Button>
+          )}
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
@@ -143,7 +150,7 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
       }
     >
       <form id={formId} onSubmit={onSubmit} noValidate className="space-y-6">
-        <div role="alert">
+        <div role="alert" className="empty:-mb-6">
           {formError && (
             <div className="flex animate-fade-in items-start gap-2.5 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm text-danger">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

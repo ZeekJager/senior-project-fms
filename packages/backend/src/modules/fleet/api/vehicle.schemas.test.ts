@@ -102,7 +102,7 @@ describe('vehicleUpdateBody', () => {
 
 describe('vehicleListQuery', () => {
   test('defaults: first page of 25, by registration number', () => {
-    expect(parseInput(vehicleListQuery, {})).toEqual({ page: 1, page_size: 25, sort_by: 'registration_number', sort_order: 'asc' });
+    expect(parseInput(vehicleListQuery, {})).toEqual({ page: 1, page_size: 25, sort_by: 'registration_number', sort_order: 'asc', then_order: 'asc' });
   });
 
   test('parses query-string values and caps the page size', () => {
@@ -113,6 +113,27 @@ describe('vehicleListQuery', () => {
       search: 'hilux',
     });
     expect(parseInput(vehicleListQuery, { search: '   ' }).search).toBeUndefined();
+  });
+
+  test('parses ready_to_dispatch and documents, and the new sort columns', () => {
+    expect(parseInput(vehicleListQuery, { ready_to_dispatch: 'true', documents: 'due', sort_by: 'depot' })).toMatchObject({
+      ready_to_dispatch: true,
+      documents: 'due',
+      sort_by: 'depot',
+    });
+    expect(parseInput(vehicleListQuery, { ready_to_dispatch: 'false' }).ready_to_dispatch).toBe(false);
+    for (const sort_by of ['status', 'vehicle_type', 'depot']) expect(parseInput(vehicleListQuery, { sort_by }).sort_by).toBe(sort_by);
+  });
+
+  test('parses a second sort and rejects a bad one', () => {
+    expect(parseInput(vehicleListQuery, { sort_by: 'status', then_by: 'depot', then_order: 'desc' })).toMatchObject({ then_by: 'depot', then_order: 'desc' });
+    expect(parseInput(vehicleListQuery, {}).then_by).toBeUndefined();
+    expect(rejection(vehicleListQuery, { then_by: 'v.id; DROP TABLE x' }).code).toBe('VALIDATION_INVALID_ENUM');
+  });
+
+  test('rejects a bad ready_to_dispatch or documents value', () => {
+    expect(rejection(vehicleListQuery, { ready_to_dispatch: 'maybe' }).code).toBe('VALIDATION_INVALID_ENUM');
+    expect(rejection(vehicleListQuery, { documents: 'soon' }).code).toBe('VALIDATION_INVALID_ENUM');
   });
 
   test('rejects a bad page, flag or sort column', () => {

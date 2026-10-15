@@ -92,7 +92,7 @@ export function AdjustStockDialog({ part, onClose }: { part: Part | null; onClos
                   setServerError(null)
                 }}
                 className={cn(
-                  'focus-ring flex h-9 items-center justify-center gap-1.5 rounded-[10px] text-sm font-medium transition-all duration-200 ease-smooth',
+                  'focus-ring flex h-9 items-center justify-center gap-1.5 rounded-control text-sm font-medium transition-all duration-200 ease-smooth',
                   direction === d ? 'bg-surface text-ink shadow-soft' : 'text-ink-muted hover:text-ink',
                 )}
               >

@@ -137,6 +137,11 @@ describe('Attendance roll call (S-06)', () => {
     const user = userEvent.setup()
     await openAttendance()
     await user.click(await screen.findByRole('button', { name: 'Mark 2 unmarked present' }))
+    // A bulk change asks first, and names what it will do.
+    const dialog = await screen.findByRole('dialog', { name: 'Mark 2 drivers present?' })
+    expect(dialog).toHaveTextContent('will be recorded as present')
+    expect(posted).toEqual([])
+    await user.click(within(dialog).getByRole('button', { name: 'Mark 2 present' }))
     await waitFor(() => expect(posted).toEqual([entries[0].driver_id, entries[1].driver_id]))
     expect(await screen.findByText('2 drivers marked present')).toBeInTheDocument()
   })

@@ -1,11 +1,11 @@
-import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, CircleSlash, ClipboardList, Palmtree, Search, UserCheck, Users } from 'lucide-react'
+import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { EmptyState, ErrorState, StatCard, StatShare } from '@/components/shared'
+import { ConfirmDialog, EmptyState, ErrorState, ListToolbar } from '@/components/shared'
 import { Button, Card, cn, FilterSelect, IconButton, Skeleton, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
-import { today } from '@/features/documents/expiry'
+import { formatDate, today } from '@/features/documents/expiry'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { AttendanceCard } from './AttendanceCard'
 import { ATTENDANCE_STATUSES, ROSTER_PAGE_SIZE, useDayCounts, useMarkAttendance, useRoster, type AttendanceStatus, type RosterEntry, type RosterFilters } from './api'
@@ -76,11 +76,11 @@ export function AttendancePage() {
   const depotMap = useMemo(() => new Map((depots.data ?? []).map((d) => [d.id, d.name])), [depots.data])
   const mark = useMarkAttendance()
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [confirmingBulk, setConfirmingBulk] = useState(false)
 
   const entries = roster.data?.entries ?? []
   const unmarkedHere = entries.filter((e) => !e.attendance)
   const { counts } = day
-  const pct = (n?: number) => (n === undefined || !counts.total ? 0 : Math.round((n * 100) / counts.total))
 
   async function markRestPresent() {
     setBulkBusy(true)
@@ -101,17 +101,12 @@ export function AttendancePage() {
     })
   }
 
-  const statusFilter = (s: RosterFilters['status']) => update({ status: filters.status === s ? '' : s })
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 border-b border-line pb-5 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <ClipboardList className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Daily roll call
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Attendance</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Attendance</h1>
           <p className="mt-1.5 text-sm text-ink-muted">
             {longDate(filters.date)}
             {isToday && <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand-ink">Today</span>}
@@ -120,14 +115,19 @@ export function AttendancePage() {
         </div>
         <nav aria-label="Day" className="flex items-center gap-2">
           <IconButton variant="secondary" label="Previous day" icon={<ChevronLeft />} onClick={() => update({ date: shiftDate(filters.date, -1) })} />
-          <label className="focus-within:ring-brand/20 relative flex h-10 items-center gap-2 rounded-control border border-line-strong bg-surface px-3 text-sm text-ink shadow-soft focus-within:ring-4">
+          {/* The browser's own date field shows its own locale (10/15/2026). We show the date the way the rest of the app does and lay the real input, invisible, over it. */}
+          <label className="focus-within:ring-brand/20 relative flex h-10 items-center gap-2 rounded-control border border-line-strong bg-surface px-3 text-sm text-ink shadow-soft focus-within:ring-4 coarse:h-11">
             <CalendarDays className="h-4 w-4 text-ink-subtle" aria-hidden="true" />
             <span className="sr-only">Date</span>
+            <span aria-hidden="true" className="tabular min-w-[6.5rem]">
+              {formatDate(filters.date)}
+            </span>
             <input
               type="date"
               value={filters.date}
               onChange={(e) => DATE.test(e.target.value) && update({ date: e.target.value })}
-              className="bg-transparent text-sm text-ink outline-none"
+              onClick={(e) => e.currentTarget.showPicker?.()}
+              className="absolute -inset-px h-[calc(100%+2px)] w-[calc(100%+2px)] cursor-pointer opacity-0"
             />
           </label>
           <IconButton variant="secondary" label="Next day" icon={<ChevronRight />} onClick={() => update({ date: shiftDate(filters.date, 1) })} />
@@ -139,63 +139,31 @@ export function AttendancePage() {
         </nav>
       </header>
 
-      <section aria-label="Day summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard
-          label="Present"
-          value={counts.present}
-          isLoading={day.isLoading}
-          icon={<UserCheck />}
-          tone="success"
-          pressed={filters.status === 'present'}
-          onClick={() => statusFilter('present')}
-          footer={<StatShare value={pct(counts.present)} tone="success" caption="of drivers on duty" />}
-        />
-        <StatCard
-          label="Absent"
-          value={counts.absent}
-          isLoading={day.isLoading}
-          icon={<CircleSlash />}
-          tone="danger"
-          pressed={filters.status === 'absent'}
-          onClick={() => statusFilter('absent')}
-          footer={<StatShare value={pct(counts.absent)} tone="danger" caption="flagged to dispatch" />}
-        />
-        <StatCard
-          label="On leave"
-          value={counts.onLeave}
-          isLoading={day.isLoading}
-          icon={<Palmtree />}
-          tone="warning"
-          pressed={filters.status === 'on_leave'}
-          onClick={() => statusFilter('on_leave')}
-          footer={<StatShare value={pct(counts.onLeave)} tone="warning" caption="planned absence" />}
-        />
-        <StatCard
-          label="Not marked"
-          value={counts.unmarked}
-          isLoading={day.isLoading}
-          icon={<Users />}
-          tone="brand"
-          pressed={filters.status === 'unmarked'}
-          onClick={() => statusFilter('unmarked')}
-          footer={<StatShare value={pct(counts.unmarked)} tone="brand" caption="still to record" />}
-        />
-      </section>
-
       <section aria-label="Drivers" className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search drivers"
-              placeholder="Search name, email or licence number"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-4 text-sm text-ink shadow-soft placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+        <Card className="p-3">
+          <ListToolbar
+            views={{
+              label: 'Attendance views',
+              value: filters.status || 'all',
+              options: [
+                { value: 'all', label: 'All', count: counts.total, isLoading: day.isLoading },
+                { value: 'present', label: 'Present', count: counts.present, isLoading: day.isLoading },
+                { value: 'absent', label: 'Absent', count: counts.absent, isLoading: day.isLoading, hint: 'Flagged to dispatch' },
+                { value: 'on_leave', label: 'On leave', count: counts.onLeave, isLoading: day.isLoading },
+                { value: 'unmarked', label: 'Not marked', count: counts.unmarked, isLoading: day.isLoading, hint: 'Still to record' },
+              ],
+              onChange: (view) => update({ status: view === 'all' ? '' : view }),
+            }}
+            search={{ label: 'Search drivers', placeholder: 'Name, email or licence number', value: searchText, onChange: setSearchText }}
+            onClear={
+              filters.status || filters.search || filters.depotId
+                ? () => {
+                    setSearchText('')
+                    update({ search: '', depotId: '', status: '' })
+                  }
+                : undefined
+            }
+          >
             {(depots.data?.length ?? 0) > 1 && (
               <FilterSelect
                 label="Depot"
@@ -207,12 +175,12 @@ export function AttendancePage() {
               />
             )}
             {canWrite && !future && unmarkedHere.length > 0 && (
-              <Button variant="secondary" leadingIcon={<CalendarCheck className="h-4 w-4" />} loading={bulkBusy} onClick={() => void markRestPresent()}>
+              <Button variant="secondary" leadingIcon={<CalendarCheck className="h-4 w-4" />} loading={bulkBusy} onClick={() => setConfirmingBulk(true)}>
                 Mark {unmarkedHere.length} unmarked present
               </Button>
             )}
-          </div>
-        </div>
+          </ListToolbar>
+        </Card>
 
         {roster.isPending ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-busy="true">
@@ -289,6 +257,19 @@ export function AttendancePage() {
           </>
         )}
       </section>
+
+      <ConfirmDialog
+        open={confirmingBulk}
+        onClose={() => setConfirmingBulk(false)}
+        title={`Mark ${unmarkedHere.length} driver${unmarkedHere.length === 1 ? '' : 's'} present?`}
+        message={`Everyone not yet marked for ${longDate(filters.date)} will be recorded as present. You can change any card afterwards.`}
+        action={`Mark ${unmarkedHere.length} present`}
+        tone="default"
+        onConfirm={async () => {
+          setConfirmingBulk(false)
+          await markRestPresent()
+        }}
+      />
     </div>
   )
 }

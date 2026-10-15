@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 import { driverQuery, type DriverFilters } from './filters'
@@ -21,9 +21,10 @@ export function useDrivers(filters: DriverFilters) {
 /** Licence health for the stat cards: one tiny request per figure (page_size=1, read `total_items`). */
 export function useLicenceCounts(depotId: string) {
   const { api } = useAuth()
-  const figures = { total: '', valid: 'license_status=valid', expiring: 'license_status=expiring_soon', expired: 'license_status=expired' }
+  const figures = { total: '', valid: 'license_status=valid', expiring: 'license_status=expiring_soon', expired: 'license_status=expired', retired: 'status=retired' }
   const results = useQueries({
     queries: Object.entries(figures).map(([name, filter]) => ({
+      placeholderData: keepPreviousData,
       queryKey: ['drivers', 'counts', depotId, name],
       queryFn: async () => {
         const q = new URLSearchParams(filter)
@@ -34,8 +35,8 @@ export function useLicenceCounts(depotId: string) {
       },
     })),
   })
-  const [total, valid, expiring, expired] = results.map((r) => r.data)
-  return { counts: { total, valid, expiring, expired }, isLoading: results.some((r) => r.isPending) }
+  const [total, valid, expiring, expired, retired] = results.map((r) => r.data)
+  return { counts: { total, valid, expiring, expired, retired }, isLoading: results.some((r) => r.isPending) }
 }
 
 export interface NewDriverInput {

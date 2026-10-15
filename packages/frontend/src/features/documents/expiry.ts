@@ -1,3 +1,5 @@
+import { CALENDAR_KEY, getPreference, type CalendarSystem } from '@/lib/preferences'
+
 import type { OwnedDocument } from './types'
 
 /** Expiring "soon" means within this many days (FMS-18: amber badge). */
@@ -53,7 +55,9 @@ export function documentHealth(documents: readonly OwnedDocument[], on: string =
 /** "12 Mar 2027" for a YYYY-MM-DD date, without time-zone shifts. */
 export function formatDate(isoDate: string): string {
   const [y, m, d] = isoDate.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+  const ethiopic = getPreference<CalendarSystem>(CALENDAR_KEY, 'gregorian') === 'ethiopic'
+  // Only the display changes: the Ethiopian calendar via Intl, from the same stored date.
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(ethiopic ? 'en-u-ca-ethiopic' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 /** "1.4 MB" / "820 KB". Display only. */

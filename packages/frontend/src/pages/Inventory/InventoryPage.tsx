@@ -1,17 +1,29 @@
-import { ArrowDownRight, ArrowUpRight, Boxes, Building2, History, PackageCheck, PackageMinus, PackageX, Search, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Boxes, Building2, History, Search, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { DataTable, EmptyState, StatCard, StatShare, type Column } from '@/components/shared'
+import { DataTable, EmptyState, ListToolbar, type Column } from '@/components/shared'
 import { Badge, Button, cn, Drawer, FilterSelect, IconButton, Spinner } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { describeFilters } from '@/lib/describeFilters'
 import { AdjustStockDialog } from './AdjustStockDialog'
 import { useMovements, useParts, useStockCounts, type Movement, type Part, type PartFilters, type StockStatus } from './api'
 
+const STOCK_VIEW: Record<string, string> = { ok: 'OK', low: 'Low', out: 'Out of stock' }
+
 /** OUT OF STOCK (red) at 0, LOW (amber) from 1 to the reorder level, OK (green) above it (FMS-25). */
 export function StockBadge({ status }: { status: StockStatus }) {
-  const [tone, label] = status === 'out' ? (['danger', 'OUT OF STOCK'] as const) : status === 'low' ? (['warning', 'LOW'] as const) : (['success', 'OK'] as const)
+  // Healthy is the normal state: plain text, so the pills that remain are the exceptions.
+  if (status === 'ok') {
+    return (
+      <span data-stock="ok" className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
+        OK
+      </span>
+    )
+  }
+  const [tone, label] = status === 'out' ? (['danger', 'OUT OF STOCK'] as const) : (['warning', 'LOW'] as const)
   return (
     <Badge tone={tone} dot className="tracking-wide">
       <span data-stock={status}>{label}</span>
@@ -54,6 +66,17 @@ const MOVEMENT_LABELS: Record<Movement['movement_type'], string> = {
   transfer_out: 'Transfer out',
   return: 'Returned',
 }
+
+type StockView = 'all' | 'reorder' | StockStatus
+
+/** Which view the URL's filters amount to (null for a status together with "needs reorder"). */
+function stockViewOf(f: PartFilters): StockView | null {
+  if (f.lowOnly) return f.status ? null : 'reorder'
+  return f.status || 'all'
+}
+
+const stockPatch = (view: StockView): Partial<PartFilters> =>
+  view === 'all' ? { status: '', lowOnly: false } : view === 'reorder' ? { status: '', lowOnly: true } : { status: view, lowOnly: false }
 
 /**
  * S-09 Spare parts console (FMS-25): live stock counts with what is out or
@@ -132,77 +155,61 @@ export function InventoryPage() {
     },
   ]
 
-  const statusFilter = (s: StockStatus) => update({ status: filters.status === s ? '' : s, lowOnly: false })
-  const pct = (n?: number) => (n === undefined || !stock.counts.total ? 0 : Math.round((n * 100) / stock.counts.total))
   const filtered = Boolean(filters.search || filters.depotId || filters.lowOnly || filters.status)
 
   return (
-    <div className="space-y-8">
-      <header>
-        <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-          <Boxes className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-          Workshop stores
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Spare parts</h1>
-        <p className="mt-1.5 max-w-xl text-sm text-ink-muted">Live stock counts. Out-of-stock and low parts are flagged so they are reordered before a repair waits.</p>
+    <div className="space-y-6">
+      <header className="border-b border-line pb-5">
+        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Spare parts</h1>
+        <p className="mt-1 max-w-xl text-sm text-ink-muted">Live stock counts, with low and out-of-stock parts flagged.</p>
       </header>
 
-      <section aria-label="Stock summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard label="Parts tracked" value={stock.counts.total} isLoading={stock.isLoading} icon={<Boxes />} tone="brand" pressed={!filters.status && !filters.lowOnly} onClick={() => update({ status: '', lowOnly: false })} footer={<StatShare value={pct(stock.counts.ok)} tone="brand" caption="well stocked" />} />
-        <StatCard label="Out of stock" value={stock.counts.out} isLoading={stock.isLoading} icon={<PackageX />} tone="danger" pressed={filters.status === 'out'} onClick={() => statusFilter('out')} footer={<StatShare value={pct(stock.counts.out)} tone="danger" caption="reorder now" />} />
-        <StatCard label="Low" value={stock.counts.low} isLoading={stock.isLoading} icon={<PackageMinus />} tone="warning" pressed={filters.status === 'low'} onClick={() => statusFilter('low')} footer={<StatShare value={pct(stock.counts.low)} tone="warning" caption="at or below reorder level" />} />
-        <StatCard label="OK" value={stock.counts.ok} isLoading={stock.isLoading} icon={<PackageCheck />} tone="success" pressed={filters.status === 'ok'} onClick={() => statusFilter('ok')} footer={<StatShare value={pct(stock.counts.ok)} tone="success" caption="above reorder level" />} />
-      </section>
-
-      <section aria-label="Parts" className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search parts"
-              placeholder="Search part name or number"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-10 text-sm text-ink shadow-soft placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-            {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {(depots.data?.length ?? 0) > 1 && (
-              <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={[{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]} onChange={(depotId) => update({ depotId })} />
-            )}
-            <button
-              type="button"
-              role="switch"
-              aria-checked={filters.lowOnly}
-              onClick={() => update({ lowOnly: !filters.lowOnly, status: '' })}
-              className={cn(
-                'focus-ring inline-flex h-10 items-center gap-2.5 rounded-control border px-3.5 text-sm shadow-soft transition-all duration-150 ease-smooth',
-                filters.lowOnly ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
-              )}
-            >
-              <span className={cn('relative h-4 w-7 rounded-full transition-colors duration-200', filters.lowOnly ? 'bg-brand' : 'bg-line-strong')} aria-hidden="true">
-                <span className={cn('absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white shadow-soft transition-transform duration-200 ease-smooth', filters.lowOnly ? 'translate-x-3.5' : 'translate-x-0.5')} />
-              </span>
-              Show low stock only
-            </button>
-            {filtered && (
-              <Button
-                variant="ghost"
-                leadingIcon={<X className="h-4 w-4" />}
-                onClick={() => {
-                  setSearchText('')
-                  update({ search: '', depotId: '', lowOnly: false, status: '' })
-                }}
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
+      <section aria-label="Parts" className="space-y-0">
 
         <DataTable
+
+          toolbar={
+            <ListToolbar
+              views={{
+                label: 'Stock views',
+                value: stockViewOf(filters),
+                options: [
+                  { value: 'all', label: 'All', count: stock.counts.total, isLoading: stock.isLoading },
+                  {
+                    value: 'reorder',
+                    label: 'Needs reorder',
+                    count: stock.counts.out === undefined || stock.counts.low === undefined ? undefined : stock.counts.out + stock.counts.low,
+                    isLoading: stock.isLoading,
+                    hint: 'Out of stock, or at or below the reorder level',
+                  },
+                  { value: 'out', label: 'Out of stock', count: stock.counts.out, isLoading: stock.isLoading },
+                  { value: 'low', label: 'Low', count: stock.counts.low, isLoading: stock.isLoading, hint: 'At or below the reorder level' },
+                  { value: 'ok', label: 'OK', count: stock.counts.ok, isLoading: stock.isLoading, hint: 'Above the reorder level' },
+                ],
+                onChange: (view) => update(stockPatch(view)),
+              }}
+              search={{ label: 'Search parts', placeholder: 'Part name or number', value: searchText, onChange: setSearchText, busy: list.isFetching }}
+              onClear={
+                filtered
+                  ? () => {
+                      setSearchText('')
+                      update({ search: '', depotId: '', lowOnly: false, status: '' })
+                    }
+                  : undefined
+              }
+            >
+              {(depots.data?.length ?? 0) > 1 && (
+                <FilterSelect
+                  label="Depot"
+                  icon={<Building2 />}
+                  value={filters.depotId}
+                  emptyValue=""
+                  options={[{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]}
+                  onChange={(depotId) => update({ depotId })}
+                />
+              )}
+            </ListToolbar>
+          }
           caption="Spare parts"
           rowHeight="stacked"
           columns={columns}
@@ -220,7 +227,7 @@ export function InventoryPage() {
           pagination={list.data ? { page: filters.page, pageSize: filters.pageSize, totalItems: list.data.meta.total_items, onPageChange: (page) => setParams(writeFilters({ ...filters, page })) } : undefined}
           emptyState={
             filtered ? (
-              <EmptyState icon={<Search />} heading={filters.lowOnly || filters.status ? 'Nothing low on stock here' : 'No parts match'} description={filters.lowOnly ? 'Every part is above its reorder level.' : 'Try another search or clear the filters.'} />
+              <EmptyState icon={<Search />} heading={filters.lowOnly || filters.status ? 'Nothing low on stock here' : 'No parts match'} description={filters.lowOnly ? 'Every part is above its reorder level.' : `${describeFilters({ search: filters.search, view: filters.status ? STOCK_VIEW[filters.status] : undefined })} Try another search or clear the filters.`.trim()} />
             ) : (
               <EmptyState icon={<Boxes />} heading="No parts in stock records" description="Parts appear here once they are added to the inventory." />
             )

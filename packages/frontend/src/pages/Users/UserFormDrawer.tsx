@@ -230,7 +230,7 @@ export function UserFormDrawer({ open, user, onClose, onLink }: UserFormDrawerPr
         }
       >
         <form id={formId} onSubmit={onSubmit} noValidate className="space-y-7">
-          <div role="alert">
+          <div role="alert" className="empty:-mb-6">
             {formError && (
               <div className="flex animate-fade-in items-start gap-2.5 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm text-danger">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

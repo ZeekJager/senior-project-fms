@@ -1,9 +1,9 @@
-import { Building2, IdCard, Plus, Search, ShieldCheck, Users, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Building2, Plus, Search, Users } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
-import { DataTable, EmptyState } from '@/components/shared'
-import { Button, cn, FilterSelect, Spinner, useToast } from '@/components/ui'
+import { DataTable, EmptyState, ListToolbar, SavedViews } from '@/components/shared'
+import { Button, FilterSelect, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { DocumentsDrawer } from '@/features/documents/DocumentsDrawer'
@@ -11,20 +11,25 @@ import { useOwnerDocuments } from '@/features/documents/api'
 import { documentHealth } from '@/features/documents/expiry'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { ApiError } from '@/lib/api/errors'
+import { describeFilters } from '@/lib/describeFilters'
 import { useDrivers, useLicenceCounts, useReinstateDriver } from './api'
 import { driverColumns } from './columns'
 import { DriverFormDrawer } from './DriverFormDrawer'
 import { hasActiveFilters, readFilters, writeFilters, type DriverFilters, type SortKey } from './filters'
-import { LicenceStats } from './LicenceStats'
 import { RetireDriverDialog } from './RetireDriverDialog'
 import type { Driver, LicenseStatus } from './types'
 
-const LICENCE_OPTIONS: { value: LicenseStatus | ''; label: string; dot?: string }[] = [
-  { value: '', label: 'All' },
-  { value: 'valid', label: 'Valid', dot: 'bg-emerald-500' },
-  { value: 'expiring_soon', label: 'Expiring soon', dot: 'bg-amber-500' },
-  { value: 'expired', label: 'Expired', dot: 'bg-red-500' },
-]
+/** The views of the roster: licence health, plus the retired drivers. */
+type View = 'all' | LicenseStatus | 'retired'
+
+/** Which view the URL's filters amount to (null when retired is combined with a licence). */
+function viewOf(f: DriverFilters): View | null {
+  if (f.retired) return f.licence ? null : 'retired'
+  return f.licence || 'all'
+}
+
+const patchFor = (view: View): Partial<DriverFilters> =>
+  view === 'all' ? { licence: '', retired: false } : view === 'retired' ? { licence: '', retired: true } : { licence: view, retired: false }
 
 /**
  * S-05 Driver Management (FMS-19): every driver in the caller's depots with
@@ -68,9 +73,6 @@ export function DriversPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [retiring, setRetiring] = useState<Driver | null>(null)
   const [docsFor, setDocsFor] = useState<Driver | null>(null)
-  const [stagedFile, setStagedFile] = useState<File | null>(null)
-  const filePicker = useRef<HTMLInputElement>(null)
-  const pickingFor = useRef<Driver | null>(null)
 
   const openCreate = () => {
     setEditing(null)
@@ -79,7 +81,7 @@ export function DriversPage() {
 
   const clearFilters = () => {
     setSearchText('')
-    update({ search: '', depotId: '', licence: '', retired: false })
+    update({ search: '', depotId: '' })
   }
 
   const columns = driverColumns({
@@ -91,112 +93,67 @@ export function DriversPage() {
       setEditing(d)
       setFormOpen(true)
     },
-    onRetire: setRetiring,
     onReinstate: (d) =>
       reinstate.mutate(d.id, {
         onSuccess: () => toast({ title: 'Driver reinstated', description: `${d.full_name} is back on the active list.` }),
         onError: (err) =>
           toast({ title: 'Could not reinstate the driver', description: err instanceof ApiError ? err.code : undefined, tone: 'danger' }),
       }),
-    onOpenDocuments: (d) => {
-      setStagedFile(null)
-      setDocsFor(d)
-    },
-    onAddDocument: (d) => {
-      pickingFor.current = d
-      if (filePicker.current) {
-        filePicker.current.value = ''
-        filePicker.current.click()
-      }
-    },
+    onOpenDocuments: setDocsFor,
   })
 
   const depotOptions = [{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]
   const filtered = hasActiveFilters(filters)
   const scopeName = filters.depotId ? depotMap.get(filters.depotId)?.name : depots.data?.length === 1 ? depots.data[0].name : null
+  const showDepotFilter = (depots.data?.length ?? 0) > 1
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex items-start justify-between gap-3 border-b border-line pb-5 sm:items-center">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <ShieldCheck className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Compliance
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Drivers</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-ink-muted">
-            Licence and document health for every driver{scopeName ? ` in ${scopeName}` : ' across your depots'}, soonest expiry first.
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Drivers</h1>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">
+            Licence and document health for every driver{scopeName ? ` in ${scopeName}` : showDepotFilter ? ' across your depots' : ''}, soonest expiry first.
           </p>
         </div>
         <RoleGate permission="driver:write">
-          <Button size="lg" leadingIcon={<Plus className="h-4 w-4" />} onClick={openCreate} className="self-start sm:self-auto">
+          <Button leadingIcon={<Plus className="h-4 w-4" />} onClick={openCreate} className="self-start sm:self-auto">
             Add driver
           </Button>
         </RoleGate>
       </header>
 
-      <LicenceStats counts={licences.counts} isLoading={licences.isLoading} filters={filters} onSelect={(licence) => update({ licence, retired: false })} />
-
-      <section aria-label="Driver list" className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search drivers"
-              placeholder="Search name, email or licence number"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-10 text-sm text-ink shadow-soft transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-            {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {(depots.data?.length ?? 0) > 1 && (
-              <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />
-            )}
-            <FilterSelect
-              label="Licence"
-              icon={<IdCard />}
-              value={filters.licence}
-              emptyValue=""
-              options={LICENCE_OPTIONS.map((o) => ({
-                value: o.value,
-                label: o.label,
-                adornment: o.dot ? <span className={cn('h-2 w-2 rounded-full', o.dot)} aria-hidden="true" /> : undefined,
-              }))}
-              onChange={(licence) => update({ licence })}
-            />
-            <button
-              type="button"
-              role="switch"
-              aria-checked={filters.retired}
-              onClick={() => update({ retired: !filters.retired })}
-              className={cn(
-                'focus-ring inline-flex h-10 items-center gap-2.5 rounded-control border px-3.5 text-sm shadow-soft transition-all duration-150 ease-smooth',
-                filters.retired ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
-              )}
-            >
-              <span className={cn('relative h-4 w-7 rounded-full transition-colors duration-200', filters.retired ? 'bg-brand' : 'bg-line-strong')} aria-hidden="true">
-                <span
-                  className={cn(
-                    'absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white shadow-soft transition-transform duration-200 ease-smooth',
-                    filters.retired ? 'translate-x-3.5' : 'translate-x-0.5',
-                  )}
-                />
-              </span>
-              Retired drivers
-            </button>
-            {filtered && (
-              <Button variant="ghost" leadingIcon={<X className="h-4 w-4" />} onClick={clearFilters}>
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
+      <section aria-label="Driver list" className="space-y-0">
 
         <DataTable
+
+          toolbar={
+            <ListToolbar
+              views={{
+                label: 'Driver views',
+                value: viewOf(filters),
+                options: [
+                  { value: 'all', label: 'All', count: licences.counts.total, isLoading: licences.isLoading },
+                  { value: 'valid', label: 'Valid', count: licences.counts.valid, isLoading: licences.isLoading, hint: 'Licence valid beyond 30 days' },
+                  { value: 'expiring_soon', label: 'Expiring soon', count: licences.counts.expiring, isLoading: licences.isLoading, hint: 'Licence expires within 30 days' },
+                  { value: 'expired', label: 'Expired', count: licences.counts.expired, isLoading: licences.isLoading, hint: 'Cannot be dispatched' },
+                  { value: 'retired', label: 'Retired', count: licences.counts.retired, isLoading: licences.isLoading, archived: true, hint: 'Drivers no longer working here' },
+                ],
+                onChange: (view) => update(patchFor(view)),
+              }}
+              search={{ label: 'Search drivers', placeholder: 'Name, email or licence number', value: searchText, onChange: setSearchText, busy: list.isFetching }}
+              onClear={filters.search || filters.depotId ? clearFilters : undefined}
+            >
+              <SavedViews screen="drivers" />
+              {(depots.data?.length ?? 0) > 1 && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
+            </ListToolbar>
+          }
           caption="Drivers"
+          rowHeight="stacked3"
+          tableId="drivers"
+          rowLabel={(d) => d.full_name}
+          rowClassName={(d) => (d.license_status === 'expired' || (health.get(d.id)?.expired ?? 0) > 0 ? 'bg-warning-soft/30' : undefined)}
+          onRowClick={canWrite ? (d) => (d.status === 'active' ? (setEditing(d), setFormOpen(true)) : canReadDocs ? setDocsFor(d) : undefined) : canReadDocs ? setDocsFor : undefined}
           columns={columns}
           data={drivers}
           rowKey={(d) => d.id}
@@ -227,7 +184,7 @@ export function DriversPage() {
               <EmptyState
                 icon={<Search />}
                 heading="No drivers match these filters"
-                description="Try a different search, or clear the filters to see every driver."
+                description={`${describeFilters({ search: filters.search, depot: filters.depotId ? depotMap.get(filters.depotId)?.name : undefined, view: { all: '', valid: 'Valid', expiring_soon: 'Expiring soon', expired: 'Expired', retired: 'Retired' }[viewOf(filters) ?? 'all'] })} Try a different search, or clear the filters to see every driver.`.trim()}
                 action={
                   <Button variant="secondary" onClick={clearFilters}>
                     Clear filters
@@ -237,7 +194,7 @@ export function DriversPage() {
             ) : (
               <EmptyState
                 icon={<Users />}
-                heading="No drivers registered for this depot"
+                heading={scopeName ? `No drivers registered in ${scopeName}` : 'No drivers registered yet'}
                 description="Add the first driver to track their licence, documents and trips."
                 action={
                   <RoleGate permission="driver:write">
@@ -252,34 +209,28 @@ export function DriversPage() {
         />
       </section>
 
-      <input
-        ref={filePicker}
-        type="file"
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden="true"
-        accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
-        data-testid="row-file-picker"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file && pickingFor.current) {
-            setStagedFile(file)
-            setDocsFor(pickingFor.current)
-          }
-        }}
+      <DriverFormDrawer
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        driver={editing}
+        depots={depots.data ?? []}
+        defaultDepotId={filters.depotId || undefined}
+        onRetire={
+          editing && canDelete && editing.status === 'active'
+            ? () => {
+                setFormOpen(false)
+                setRetiring(editing)
+              }
+            : undefined
+        }
       />
-
-      <DriverFormDrawer open={formOpen} onClose={() => setFormOpen(false)} driver={editing} depots={depots.data ?? []} defaultDepotId={filters.depotId || undefined} />
       <RetireDriverDialog driver={retiring} onClose={() => setRetiring(null)} />
       <DocumentsDrawer
         owner={docsFor && { type: 'driver', id: docsFor.id, label: docsFor.full_name }}
         documents={docs.data ?? []}
         isLoading={docs.isPending}
-        onClose={() => {
-          setDocsFor(null)
-          setStagedFile(null)
-        }}
-        stagedFile={stagedFile}
+        onClose={() => setDocsFor(null)}
+        stagedFile={null}
         canUpload={canUploadDocs}
         canDelete={canDeleteDocs}
         defaultType="licence"

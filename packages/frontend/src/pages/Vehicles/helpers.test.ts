@@ -43,6 +43,18 @@ describe('filters in the URL', () => {
     expect(writeFilters(readFilters(new URLSearchParams())).toString()).toBe('')
   })
 
+  it('reads and writes the dispatch and document views, and sends them to the API', () => {
+    const filters = readFilters(new URLSearchParams('ready=1&docs=due&sort=depot'))
+    expect(filters).toMatchObject({ ready: true, docs: 'due', sortBy: 'depot' })
+    expect(writeFilters(filters).toString()).toBe('ready=1&docs=due&sort=depot')
+    const q = Object.fromEntries(new URLSearchParams(vehicleQuery(filters)))
+    expect(q).toMatchObject({ ready_to_dispatch: 'true', documents: 'due', sort_by: 'depot' })
+  })
+
+  it('ignores a documents value the API would reject', () => {
+    expect(readFilters(new URLSearchParams('docs=soon')).docs).toBe('')
+  })
+
   it('ignores values the API would reject', () => {
     expect(readFilters(new URLSearchParams('status=parked&page=-2&size=1000&sort=vin'))).toMatchObject({
       status: '',

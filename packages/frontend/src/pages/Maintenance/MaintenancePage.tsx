@@ -1,8 +1,8 @@
-import { AlertTriangle, ClipboardCheck, Package, Plus, Search, Wrench } from 'lucide-react'
+import { ArrowUpRight, ClipboardCheck, Eye, Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
-import { DataTable, EmptyState, MoneyDisplay, StatCard, StatShare, StatusBadge, type Column } from '@/components/shared'
+import { DataTable, EmptyState, ListToolbar, MoneyDisplay, StatusBadge, type Column } from '@/components/shared'
 import { Badge, Button, Combobox, Dialog, type ComboboxOption } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { formatDate } from '@/features/documents/expiry'
@@ -21,6 +21,9 @@ function readFilters(params: URLSearchParams): RecordFilters {
     page: Number.isInteger(page) && page > 0 ? page : 1,
   }
 }
+
+/** "1 item", "3 items". */
+const partCount = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'item' : 'items'}`
 
 /**
  * S-08 Technician repair log (FMS-24): open work first, every repair one
@@ -63,7 +66,7 @@ export function MaintenancePage() {
       header: 'Vehicle',
       cell: (r) => (
         <div className="min-w-0">
-          <p className="truncate font-semibold tracking-wide text-ink">{r.registration_number}</p>
+          <p className="plate truncate text-ink">{r.registration_number}</p>
           <p className="truncate text-xs text-ink-subtle">{TYPE_LABELS[r.maintenance_type]}</p>
         </div>
       ),
@@ -75,7 +78,7 @@ export function MaintenancePage() {
       header: 'Parts',
       width: 'w-[88px]',
       hideBelow: 'lg',
-      cell: (r) => (r.parts.length ? <Badge>{r.parts.reduce((n, p) => n + p.quantity, 0)} items</Badge> : <span className="text-ink-subtle">—</span>),
+      cell: (r) => (r.parts.length ? <Badge>{partCount(r.parts.reduce((n, p) => n + p.quantity, 0))}</Badge> : <span className="text-ink-subtle">—</span>),
     },
     { key: 'cost', header: 'Total', width: 'w-[136px]', align: 'right', hideBelow: 'sm', cell: (r) => <MoneyDisplay amountMinorUnits={r.total_cost_cents} className="font-medium" /> },
     {
@@ -88,10 +91,10 @@ export function MaintenancePage() {
     {
       key: 'open',
       header: <span className="sr-only">Actions</span>,
-      width: 'w-[96px]',
+      width: 'w-[112px]',
       align: 'right',
       cell: (r) => (
-        <Button size="sm" variant="ghost" onClick={() => setViewing(r)} aria-label={`View ${r.registration_number} ${TYPE_LABELS[r.maintenance_type]}`}>
+        <Button size="sm" variant="secondary" leadingIcon={<Eye className="h-3.5 w-3.5" />} onClick={() => setViewing(r)} aria-label={`View ${r.registration_number} ${TYPE_LABELS[r.maintenance_type]}`}>
           View
         </Button>
       ),
@@ -99,22 +102,16 @@ export function MaintenancePage() {
     },
   ]
 
-  const pct = (n?: number, of?: number) => (n === undefined || !of ? 0 : Math.round((n * 100) / of))
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex items-start justify-between gap-3 border-b border-line pb-5 sm:items-center">
         <div>
-          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/70 px-2.5 py-1 text-xs font-medium text-ink-muted shadow-soft backdrop-blur">
-            <Wrench className="h-3.5 w-3.5 text-brand-ink" aria-hidden="true" />
-            Workshop
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Repair log</h1>
-          <p className="mt-1.5 max-w-xl text-sm text-ink-muted">Every repair on every vehicle, with parts and costs. Open work comes first.</p>
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Repair log</h1>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">Every repair on every vehicle, with parts and costs. Open work comes first.</p>
         </div>
         <RoleGate permission="maintenance:write">
           <Button
-            size="lg"
             leadingIcon={<Plus className="h-4 w-4" />}
             onClick={() => {
               setCorrectionOf(null)
@@ -127,89 +124,61 @@ export function MaintenancePage() {
         </RoleGate>
       </header>
 
-      <section aria-label="Workshop summary" className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatCard
-          label="Open work"
-          value={workshop.counts.open}
-          isLoading={workshop.isLoading}
-          icon={<Wrench />}
-          tone="brand"
-          pressed={filters.view === 'open'}
-          onClick={() => update({ view: 'open' })}
-          footer={<StatShare value={pct(workshop.counts.open, (workshop.counts.open ?? 0) + (workshop.counts.completed ?? 0))} tone="brand" caption="of all logged work" />}
-        />
-        <StatCard
-          label="Completed"
-          value={workshop.counts.completed}
-          isLoading={workshop.isLoading}
-          icon={<ClipboardCheck />}
-          tone="success"
-          pressed={filters.view === 'completed'}
-          onClick={() => update({ view: 'completed' })}
-          footer={<StatShare value={pct(workshop.counts.completed, (workshop.counts.open ?? 0) + (workshop.counts.completed ?? 0))} tone="success" caption="closed job cards" />}
-        />
-        <StatCard
-          label="Vehicles flagged"
-          value={workshop.counts.flagged}
-          isLoading={workshop.isLoading}
-          icon={<AlertTriangle />}
-          tone="warning"
-          pressed={false}
-          onClick={() => navigate('/vehicles?flagged=1')}
-          footer={<span className="text-xs text-ink-subtle">Waiting for the workshop · see vehicles</span>}
-        />
-        {canInventory && (
-          <StatCard
-            label="Parts to reorder"
-            value={workshop.counts.reorder}
-            isLoading={workshop.counts.reorder === undefined}
-            icon={<Package />}
-            tone="danger"
-            pressed={false}
-            onClick={() => setShowReorder(true)}
-            footer={<span className="text-xs text-ink-subtle">At or below reorder level · show list</span>}
-          />
-        )}
-      </section>
-
-      <section aria-label="Repairs" className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-          <div role="tablist" aria-label="Which work" className="inline-flex h-10 shrink-0 items-center gap-1 self-start rounded-control bg-surface-sunken p-1">
-            {(['open', 'completed', 'all'] as const).map((v) => (
-              <button
-                key={v}
-                role="tab"
-                type="button"
-                aria-selected={filters.view === v}
-                onClick={() => update({ view: v })}
-                className={
-                  filters.view === v
-                    ? 'focus-ring h-8 rounded-[10px] bg-surface px-3.5 text-sm font-medium text-ink shadow-soft'
-                    : 'focus-ring h-8 rounded-[10px] px-3.5 text-sm text-ink-muted transition-colors hover:text-ink'
-                }
-              >
-                {v === 'open' ? 'Open work' : v === 'completed' ? 'Completed' : 'All'}
-              </button>
-            ))}
-          </div>
-          <Combobox
-            className="lg:w-80"
-            label="Filter by vehicle"
-            hideLabel
-            value={vehicleFilter}
-            onChange={(option) => {
-              setVehicleFilter(option)
-              update({ vehicleId: option?.value.id ?? '' })
-            }}
-            query={vehicleQuery}
-            onQueryChange={setVehicleQuery}
-            options={vehicleOptions}
-            loading={vehicleSearch.isFetching}
-            emptyText={vehicleQuery ? 'No vehicle matches' : 'Type a plate'}
-          />
-        </div>
+      <section aria-label="Repairs" className="space-y-0">
 
         <DataTable
+
+          toolbar={
+            <ListToolbar
+              views={{
+                label: 'Repair views',
+                value: filters.view,
+                options: [
+                  { value: 'open', label: 'Open work', count: workshop.counts.open, isLoading: workshop.isLoading },
+                  { value: 'completed', label: 'Completed', count: workshop.counts.completed, isLoading: workshop.isLoading },
+                  {
+                    value: 'all',
+                    label: 'All',
+                    count: workshop.counts.open === undefined || workshop.counts.completed === undefined ? undefined : workshop.counts.open + workshop.counts.completed,
+                    isLoading: workshop.isLoading,
+                  },
+                ],
+                onChange: (view) => update({ view }),
+              }}
+              onClear={
+                filters.vehicleId
+                  ? () => {
+                      setVehicleFilter(null)
+                      update({ vehicleId: '' })
+                    }
+                  : undefined
+              }
+            >
+              <Combobox
+                className="lg:w-80 [&>p]:mt-0 [&>p]:min-h-0"
+                label="Filter by vehicle"
+                hideLabel
+                value={vehicleFilter}
+                onChange={(option) => {
+                  setVehicleFilter(option)
+                  update({ vehicleId: option?.value.id ?? '' })
+                }}
+                query={vehicleQuery}
+                onQueryChange={setVehicleQuery}
+                options={vehicleOptions}
+                loading={vehicleSearch.isFetching}
+                emptyText={vehicleQuery ? 'No vehicle matches' : 'Type a plate'}
+          />
+              <Button variant="secondary" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => navigate('/vehicles?flagged=1')} title="Opens Vehicles, filtered to flagged">
+                Flagged vehicles{workshop.counts.flagged === undefined ? '' : ` · ${workshop.counts.flagged}`}
+              </Button>
+              {canInventory && (
+                <Button variant="secondary" trailingIcon={<ArrowUpRight className="h-3.5 w-3.5" />} onClick={() => setShowReorder(true)} title="Opens the list of parts at or below their reorder level">
+                  Parts to reorder{workshop.counts.reorder === undefined ? '' : ` · ${workshop.counts.reorder}`}
+                </Button>
+              )}
+            </ListToolbar>
+          }
           caption="Repairs"
           columns={columns}
           data={list.data?.records}

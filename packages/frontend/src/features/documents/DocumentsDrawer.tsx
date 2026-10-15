@@ -109,7 +109,7 @@ function DocumentRow({ doc, canDelete }: { doc: OwnedDocument; canDelete: boolea
 
   return (
     <li className="group flex items-center gap-3 rounded-card border border-line bg-surface p-3 shadow-soft transition-all duration-150 hover:border-line-strong hover:shadow-card">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line">
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-control bg-surface-sunken text-ink-muted ring-1 ring-inset ring-line">
         <Icon className="h-5 w-5" aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
@@ -255,7 +255,7 @@ function UploadForm({ owner, initialFile, defaultType }: { owner: DocumentOwner;
         />
         <TextField label="Expires on" optional type="date" alwaysFloat value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
       </div>
-      <div role="alert">
+      <div role="alert" className="empty:-mb-6">
         {error && (
           <p className="mb-3 flex animate-fade-in items-start gap-2 rounded-control border border-danger/25 bg-danger-soft px-3.5 py-3 text-sm text-danger">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

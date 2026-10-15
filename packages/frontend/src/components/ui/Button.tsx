@@ -6,26 +6,23 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const BASE =
-  'focus-ring relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium ' +
-  'transition-all duration-150 ease-smooth active:translate-y-px disabled:pointer-events-none disabled:opacity-50'
+  'focus-ring relative inline-flex shrink-0 select-none coarse:min-w-11 items-center justify-center gap-2 whitespace-nowrap font-medium ' +
+  'transition-colors duration-150 ease-smooth active:translate-y-px disabled:pointer-events-none disabled:opacity-50'
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  // A light top sheen over the brand colour; the glow appears on hover.
-  primary:
-    'bg-brand bg-gradient-to-b from-white/[0.14] to-white/0 text-white shadow-soft ring-1 ring-inset ring-black/10 ' +
-    'hover:bg-brand-strong hover:shadow-glow',
+    primary:
+    'bg-brand text-white shadow-soft hover:bg-brand-strong',
   secondary:
     'bg-surface text-ink shadow-soft ring-1 ring-inset ring-line-strong hover:bg-surface-muted hover:ring-ink-subtle/40 ' +
     'active:bg-surface-sunken',
   ghost: 'text-ink-muted hover:bg-surface-sunken hover:text-ink',
   danger:
-    'bg-danger-solid bg-gradient-to-b from-white/[0.12] to-white/0 text-white shadow-soft ring-1 ring-inset ring-black/10 ' +
-    'hover:brightness-110 hover:shadow-[0_8px_24px_-8px_rgb(var(--c-danger-solid)/0.55)]',
+    'bg-danger-solid text-white shadow-soft hover:brightness-110',
 }
 
 const SIZES: Record<ButtonSize, string> = {
-  sm: 'h-8 rounded-[10px] px-3 text-[13px]',
-  md: 'h-10 rounded-control px-4 text-sm',
+  sm: 'h-8 rounded-control px-3 text-[13px] coarse:h-11',
+  md: 'h-10 rounded-control px-4 text-sm coarse:h-11',
   lg: 'h-12 rounded-control px-5 text-[15px]',
 }
 
@@ -94,7 +91,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       className={cn(
         BASE,
         VARIANTS[variant],
-        size === 'sm' ? 'h-8 w-8 rounded-[10px]' : 'h-10 w-10 rounded-control',
+        size === 'sm' ? 'h-8 w-8 rounded-control coarse:h-11 coarse:w-11' : 'h-10 w-10 rounded-control coarse:h-11 coarse:w-11',
         '[&_svg]:h-4 [&_svg]:w-4',
         className,
       )}

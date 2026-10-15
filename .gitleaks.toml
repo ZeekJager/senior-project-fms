@@ -35,6 +35,11 @@ keywords = ["pass", "secret", "token"]
   paths = ['''(?i)\.test\.(ts|tsx|js)$''', '''(?i)(^|[/\\])test[/\\]''']
 
   [[rules.allowlists]]
+  # The Impeccable design skill (.claude/ and .github/) ships minified scripts
+  # with variables called `token`. They hold no credential.
+  paths = ['''^\.(claude|github)/skills/impeccable/''']
+
+  [[rules.allowlists]]
   # Error factories such as `tokenInvalid = () => new AppError(401, 'AUTH_TOKEN_INVALID', ...)`:
   # the literal is a contract error code, not a credential.
   regexTarget = "line"

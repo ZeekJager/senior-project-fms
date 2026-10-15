@@ -1,3 +1,4 @@
+import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { Check, CheckCircle2, KeyRound, Truck, XCircle } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
@@ -73,12 +74,13 @@ export function SetPasswordPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-canvas px-4 py-12">
-      <div aria-hidden="true" className="absolute -left-40 -top-40 h-[420px] w-[420px] rounded-full bg-brand/20 blur-[120px]" />
-      <div aria-hidden="true" className="absolute -bottom-40 -right-24 h-[380px] w-[380px] rounded-full bg-purple-500/15 blur-[120px]" />
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
 
-      <main className="relative w-full max-w-md animate-scale-in rounded-sheet border border-line bg-surface/80 p-6 shadow-elevated backdrop-blur-xl sm:p-8">
+      <main className="relative w-full max-w-md animate-scale-in rounded-sheet border border-line bg-surface p-6 shadow-elevated sm:p-8">
         <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand bg-gradient-to-br from-white/20 to-white/0 text-white shadow-glow">
+          <div className="flex h-10 w-10 items-center justify-center rounded-control bg-brand text-white">
             <Truck className="h-5 w-5" aria-hidden="true" />
           </div>
           <span className="text-sm font-semibold tracking-tight text-ink">Fleet Management System</span>

@@ -4,6 +4,8 @@ import type { MutationContext, Row } from '../../../shared/infrastructure/audite
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
 import type { FuelType, VehicleStatus, VehicleTrip, VehicleType, VehicleView } from '../domain/vehicle';
+import { EXPIRY_WINDOW_DAYS } from '../domain/expiry';
+import { operatingToday } from '../domain/attendance';
 import { resolveDepotInScope } from './depot.queries';
 
 /** Columns a list can be sorted by, and the SQL behind each. */
@@ -16,6 +18,9 @@ export const VEHICLE_SORT_COLUMNS = {
   health_score: 'v.health_score',
   created_at: 'v.created_at',
   updated_at: 'v.updated_at',
+  status: 'v.status::text',
+  vehicle_type: 'v.vehicle_type::text',
+  depot: 'd.name',
 } as const;
 
 export type VehicleSortKey = keyof typeof VEHICLE_SORT_COLUMNS;
@@ -28,10 +33,23 @@ export interface VehicleListQuery {
   /** Given: vehicles in that status, retired ones included. Omitted: live (not retired) vehicles only. */
   status?: VehicleStatus;
   maintenance_flag?: boolean;
+  /**
+   * true: vehicles that can be sent out now (active, not flagged for maintenance,
+   * not on an assigned or en-route trip, no expired document). false: the rest.
+   */
+  ready_to_dispatch?: boolean;
+  /**
+   * Vehicles with a live document that is `expired` (past its date), `expiring`
+   * (within the expiry window, today included) or `due` (either).
+   */
+  documents?: 'expired' | 'expiring' | 'due';
   /** Matches registration number, VIN, make or model. */
   search?: string;
   sort_by: VehicleSortKey;
   sort_order: 'asc' | 'desc';
+  /** A second sort, applied to rows the first leaves tied. Ignored when it is the same column as `sort_by`. */
+  then_by?: VehicleSortKey;
+  then_order?: 'asc' | 'desc';
 }
 
 /** The columns of fleet.vehicles a write may set. */
@@ -69,6 +87,9 @@ export interface MaintenanceVehicle {
   maintenanceFlag: boolean;
 }
 
+/** The trip module's SQL boolean for a vehicle column being on an assigned or en-route trip (see trip/index.ts). */
+export type ActiveTripSql = (vehicleIdColumn: string) => string;
+
 /** Current trips by vehicle internal id: the trip module's query, passed in through its index.ts. */
 export type ActiveTripLookup = (db: Queryable, vehicleIds: readonly string[]) => Promise<Map<string, VehicleTrip>>;
 
@@ -97,6 +118,7 @@ export class VehicleRepository extends Repository {
   constructor(
     db: Pool,
     private readonly activeTrips: ActiveTripLookup,
+    private readonly onActiveTripSql: ActiveTripSql,
   ) {
     super(db);
   }
@@ -154,6 +176,22 @@ export class VehicleRepository extends Repository {
     where.push(query.status ? `v.status = ${add(query.status)}` : 'v.is_active');
     if (query.depot_id) where.push(`d.public_id = ${add(query.depot_id)}`);
     if (query.maintenance_flag !== undefined) where.push(`v.maintenance_flag = ${add(query.maintenance_flag)}`);
+
+    // Document dates are calendar dates in Ethiopia (the operating day), like licence dates.
+    if (query.ready_to_dispatch !== undefined || query.documents) {
+      const today = add(operatingToday());
+      const liveDocument = (dateCondition: string) =>
+        `EXISTS (SELECT 1 FROM document.documents doc WHERE doc.owner_type = 'vehicle' AND doc.owner_id = v.id AND doc.deleted_at IS NULL AND doc.expires_on ${dateCondition})`;
+      const expired = liveDocument(`< ${today}::date`);
+      const expiring = liveDocument(`BETWEEN ${today}::date AND ${today}::date + ${EXPIRY_WINDOW_DAYS}`);
+      if (query.documents === 'expired') where.push(expired);
+      if (query.documents === 'expiring') where.push(expiring);
+      if (query.documents === 'due') where.push(`(${expired} OR ${expiring})`);
+      if (query.ready_to_dispatch !== undefined) {
+        const ready = `(v.status = 'active' AND NOT v.maintenance_flag AND NOT ${this.onActiveTripSql('v.id')} AND NOT ${expired})`;
+        where.push(query.ready_to_dispatch ? ready : `NOT ${ready}`);
+      }
+    }
     if (query.search) {
       const p = add(containsPattern(query.search));
       where.push(`(v.registration_number ILIKE ${p} OR v.vin ILIKE ${p} OR v.make ILIKE ${p} OR v.model ILIKE ${p})`);
@@ -169,9 +207,11 @@ export class VehicleRepository extends Repository {
     const direction = query.sort_order === 'desc' ? 'DESC' : 'ASC';
     const limit = add(query.page_size);
     const offset = add((query.page - 1) * query.page_size);
+    const second =
+      query.then_by && query.then_by !== query.sort_by ? `${VEHICLE_SORT_COLUMNS[query.then_by]} ${query.then_order === 'desc' ? 'DESC' : 'ASC'} NULLS LAST, ` : '';
     const rows = await db.query<VehicleRow>(
       `${VIEW_SQL} WHERE ${whereSql}
-        ORDER BY ${VEHICLE_SORT_COLUMNS[query.sort_by]} ${direction} NULLS LAST, v.id ${direction}
+        ORDER BY ${VEHICLE_SORT_COLUMNS[query.sort_by]} ${direction} NULLS LAST, ${second}v.id ${direction}
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     );

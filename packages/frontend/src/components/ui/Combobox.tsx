@@ -108,7 +108,7 @@ export function Combobox<T>({ label, value, onChange, query, onQueryChange, opti
           className={cn(
             'peer block w-full rounded-control border bg-surface pr-16 text-sm text-ink shadow-soft placeholder:text-ink-subtle',
             'transition-[border-color,box-shadow] duration-150 ease-smooth hover:border-ink-subtle/50 focus:outline-none focus:ring-4',
-            hideLabel ? 'h-10 pl-3' : 'h-14 pb-1.5 pl-4 pt-[22px] placeholder:text-transparent',
+            hideLabel ? 'h-10 coarse:h-11 pl-3' : 'h-14 pb-1.5 pl-4 pt-[22px] placeholder:text-transparent',
             error ? 'border-danger/70 focus:border-danger focus:ring-danger/15' : 'border-line-strong focus:border-brand focus:ring-brand/15',
           )}
         />
@@ -151,7 +151,7 @@ export function Combobox<T>({ label, value, onChange, query, onQueryChange, opti
           id={`${id}-list`}
           role="listbox"
           aria-label={label}
-          className="absolute left-0 right-0 top-full z-30 mt-2 max-h-72 animate-pop-in overflow-auto rounded-card border border-line bg-surface/95 p-1.5 shadow-elevated backdrop-blur-xl"
+          className="absolute left-0 right-0 top-full z-30 mt-2 max-h-72 animate-pop-in overflow-auto rounded-card border border-line bg-surface p-1.5 shadow-elevated"
         >
           {options.length === 0 && <li className="px-3 py-2.5 text-sm text-ink-subtle">{loading ? 'Searching…' : emptyText}</li>}
           {options.map((option, index) => {
@@ -171,7 +171,7 @@ export function Combobox<T>({ label, value, onChange, query, onQueryChange, opti
                 onMouseEnter={() => setActive(index)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(option)}
-                className={cn('flex cursor-pointer items-center gap-3 rounded-[10px] px-3 py-2 text-sm text-ink', index === active && 'bg-surface-sunken')}
+                className={cn('flex cursor-pointer items-center gap-3 rounded-control px-3 py-2 text-sm text-ink', index === active && 'bg-surface-sunken')}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{option.label}</span>

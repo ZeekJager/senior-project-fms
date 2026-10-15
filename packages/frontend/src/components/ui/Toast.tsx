@@ -69,7 +69,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
     <div
       className={cn(
         'pointer-events-auto flex w-full max-w-sm animate-toast-in items-start gap-3 rounded-card border border-line',
-        'bg-surface/90 p-4 shadow-elevated backdrop-blur-xl',
+        'bg-surface p-4 shadow-elevated',
       )}
     >
       {ICONS[item.tone]}

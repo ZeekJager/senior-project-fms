@@ -79,12 +79,12 @@ describe('Spare parts console (S-09)', () => {
     expect(badge('Wiper blade')).toHaveTextContent(/^OK$/)
   })
 
-  it('"Show low stock only" filters the table without a page reload', async () => {
+  it('the "Needs reorder" view filters the table without a page reload', async () => {
     const api = serveParts([part({ name: 'Brake pad set', stock_quantity: 0 }), part({ name: 'Wiper blade', stock_quantity: 40 })])
     const user = userEvent.setup()
     await openInventory('Wiper blade')
 
-    await user.click(screen.getByRole('switch', { name: 'Show low stock only' }))
+    await user.click(screen.getByRole('button', { name: /^Needs reorder/ }))
     await waitFor(() => expect(within(table()).queryByText('Wiper blade')).not.toBeInTheDocument())
     expect(within(table()).getByText('Brake pad set')).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('/inventory?low=1')
@@ -166,7 +166,7 @@ describe('Spare parts console (S-09)', () => {
     serveParts([part({ name: 'Wiper blade', stock_quantity: 40 })])
     const user = userEvent.setup()
     await openInventory('Wiper blade')
-    await user.click(screen.getByRole('switch', { name: 'Show low stock only' }))
+    await user.click(screen.getByRole('button', { name: /^Needs reorder/ }))
     expect(await screen.findByText('Nothing low on stock here')).toBeInTheDocument()
   })
 })

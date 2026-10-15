@@ -87,24 +87,24 @@ async function openDrivers(user = depotAdmin) {
 }
 
 describe('Driver Management (S-05)', () => {
-  it('shows a red EXPIRED badge for an expired licence, with no user action', async () => {
+  it('shows a red Expired badge for an expired licence, with no user action', async () => {
     const expired = driver({ license_expiry: plusDays(-3), license_status: 'expired' })
     serveDrivers([expired])
     await openDrivers()
 
-    const [badge] = await within(await screen.findByRole('table', { name: 'Drivers' })).findAllByText('EXPIRED')
+    const [badge] = await within(await screen.findByRole('table', { name: 'Drivers' })).findAllByText('Expired')
     expect(badge).toHaveAttribute('data-licence', 'expired')
     expect(badge.closest('span.rounded-full')).toHaveClass('bg-danger-soft')
     expect(rowFor(expired.full_name)).toContainElement(badge)
   })
 
-  it('shows an amber EXPIRING SOON badge for a licence expiring in 15 days', async () => {
+  it('shows an amber Expiring soon badge for a licence expiring in 15 days', async () => {
     const soon = driver({ license_expiry: plusDays(15), license_status: 'expiring_soon' })
     const fine = driver()
     serveDrivers([soon, fine])
     await openDrivers()
 
-    const [badge] = await within(await screen.findByRole('table', { name: 'Drivers' })).findAllByText('EXPIRING SOON')
+    const [badge] = await within(await screen.findByRole('table', { name: 'Drivers' })).findAllByText('Expiring soon')
     expect(badge.closest('span.rounded-full')).toHaveClass('bg-warning-soft')
     expect(badge).toHaveAttribute('title', 'In 15 days')
     expect(rowFor(soon.full_name)).toContainElement(badge)
@@ -253,7 +253,8 @@ describe('Driver Management (S-05)', () => {
     await openDrivers()
     await within(await screen.findByRole('table', { name: 'Drivers' })).findByText(d.full_name)
 
-    await user.click(screen.getByRole('button', { name: `Retire ${d.full_name}` }))
+    await user.click(screen.getByRole('button', { name: `Edit ${d.full_name}` }))
+    await user.click(await screen.findByRole('button', { name: 'Retire driver' }))
     const dialog = await screen.findByRole('dialog', { name: `Retire ${d.full_name}` })
     const confirm = within(dialog).getByRole('button', { name: 'Retire driver' })
     expect(confirm).toBeDisabled()
@@ -313,6 +314,6 @@ describe('Driver Management (S-05)', () => {
   it('says so when a depot has no drivers', async () => {
     serveDrivers([])
     await openDrivers()
-    expect(await screen.findByText('No drivers registered for this depot')).toBeInTheDocument()
+    expect(await screen.findByText('No drivers registered yet')).toBeInTheDocument()
   })
 })
