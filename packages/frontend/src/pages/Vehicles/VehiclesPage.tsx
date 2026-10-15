@@ -120,7 +120,7 @@ export function VehiclesPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Vehicles</h1>
           <p className="mt-1 max-w-xl text-sm text-ink-muted">
-            Registration, maintenance and trip status for every vehicle{scopeName ? ` in ${scopeName}` : ' across your depots'}.
+            Registration, maintenance and trip status for every vehicle{scopeName ? ` in ${scopeName}` : showDepotFilter ? ' across your depots' : ''}.
           </p>
         </div>
         {canWrite && (
@@ -142,8 +142,8 @@ export function VehiclesPage() {
                 options={[
                   { value: 'all', label: 'All', count: fleet.counts.total, isLoading: fleet.isLoading },
                   { value: 'active', label: 'Active', count: fleet.counts.active, isLoading: fleet.isLoading },
-                  { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading },
-                  { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading },
+                  { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading, hint: 'Vehicles flagged as needing maintenance' },
+                  { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading, hint: 'Vehicles currently in maintenance' },
                 ]}
                 onChange={(view) => update(patchFor(view))}
                 more={{
@@ -228,7 +228,7 @@ export function VehiclesPage() {
             ) : (
               <EmptyState
                 icon={<Truck />}
-                heading="No vehicles registered for this depot"
+                heading={scopeName ? `No vehicles registered in ${scopeName}` : 'No vehicles registered yet'}
                 description="Add the first vehicle to start tracking its status, trips and documents."
                 action={
                   canWrite && (

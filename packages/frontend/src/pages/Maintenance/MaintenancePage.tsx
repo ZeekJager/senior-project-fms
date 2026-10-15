@@ -154,7 +154,7 @@ export function MaintenancePage() {
           tone="warning"
           pressed={false}
           onClick={() => navigate('/vehicles?flagged=1')}
-          footer={<span className="text-xs text-ink-subtle">Waiting for the workshop · see vehicles</span>}
+          footer={<span className="text-xs text-ink-subtle">Waiting for the workshop · opens Vehicles</span>}
         />
         {canInventory && (
           <StatCard
@@ -165,7 +165,7 @@ export function MaintenancePage() {
             tone="danger"
             pressed={false}
             onClick={() => setShowReorder(true)}
-            footer={<span className="text-xs text-ink-subtle">At or below reorder level · show list</span>}
+            footer={<span className="text-xs text-ink-subtle">At or below reorder level · opens the list</span>}
           />
         )}
       </section>

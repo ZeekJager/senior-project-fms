@@ -313,6 +313,6 @@ describe('Driver Management (S-05)', () => {
   it('says so when a depot has no drivers', async () => {
     serveDrivers([])
     await openDrivers()
-    expect(await screen.findByText('No drivers registered for this depot')).toBeInTheDocument()
+    expect(await screen.findByText('No drivers registered yet')).toBeInTheDocument()
   })
 })

@@ -418,8 +418,30 @@ describe('Vehicle Management (S-04)', () => {
   it('says so when a depot has no vehicles, with a way to add one', async () => {
     serveFleet([])
     await openVehicles()
-    expect(await screen.findByText('No vehicles registered for this depot')).toBeInTheDocument()
+    // Two depots and none chosen: there is no single depot to name.
+    expect(await screen.findByText('No vehicles registered yet')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Add vehicle' })).toHaveLength(2)
+  })
+
+  it('says "across your depots" when there are several and none is chosen', async () => {
+    serveFleet([])
+    await openVehicles()
+    expect(await screen.findByText(/across your depots/)).toBeInTheDocument()
+  })
+
+  it('names the chosen depot in the subtitle', async () => {
+    serveFleet([])
+    await openVehicles(`/vehicles?depot=${DEPOT_A}`)
+    expect(await screen.findByText(/for every vehicle in Addis Ababa Central/)).toBeInTheDocument()
+    expect(screen.queryByText(/across your depots/)).not.toBeInTheDocument()
+  })
+
+  it('explains what the Flagged and Workshop views mean', async () => {
+    serveFleet([vehicle()])
+    await openVehicles()
+    const views = screen.getByRole('group', { name: 'Vehicle views' })
+    expect(within(views).getByRole('button', { name: /^Flagged/ })).toHaveAttribute('title', 'Vehicles flagged as needing maintenance')
+    expect(within(views).getByRole('button', { name: /^Workshop/ })).toHaveAttribute('title', 'Vehicles currently in maintenance')
   })
 
   it('shows the error with its correlation id when the list fails', async () => {

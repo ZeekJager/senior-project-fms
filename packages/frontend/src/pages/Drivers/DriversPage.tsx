@@ -114,6 +114,7 @@ export function DriversPage() {
   const depotOptions = [{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]
   const filtered = hasActiveFilters(filters)
   const scopeName = filters.depotId ? depotMap.get(filters.depotId)?.name : depots.data?.length === 1 ? depots.data[0].name : null
+  const showDepotFilter = (depots.data?.length ?? 0) > 1
 
   return (
     <div className="space-y-6">
@@ -121,7 +122,7 @@ export function DriversPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Drivers</h1>
           <p className="mt-1 max-w-xl text-sm text-ink-muted">
-            Licence and document health for every driver{scopeName ? ` in ${scopeName}` : ' across your depots'}, soonest expiry first.
+            Licence and document health for every driver{scopeName ? ` in ${scopeName}` : showDepotFilter ? ' across your depots' : ''}, soonest expiry first.
           </p>
         </div>
         <RoleGate permission="driver:write">
@@ -237,7 +238,7 @@ export function DriversPage() {
             ) : (
               <EmptyState
                 icon={<Users />}
-                heading="No drivers registered for this depot"
+                heading={scopeName ? `No drivers registered in ${scopeName}` : 'No drivers registered yet'}
                 description="Add the first driver to track their licence, documents and trips."
                 action={
                   <RoleGate permission="driver:write">

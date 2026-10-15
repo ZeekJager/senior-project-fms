@@ -8,6 +8,8 @@ export interface ViewOption<T extends string> {
   /** How many rows the view holds; shown beside the name. */
   count?: number
   isLoading?: boolean
+  /** A fuller description, shown as a tooltip when the name alone could be read two ways. */
+  hint?: string
 }
 
 interface ViewTabsProps<T extends string> {
@@ -36,6 +38,7 @@ export function ViewTabs<T extends string>({ label, value, options, onChange, mo
               key={option.value}
               type="button"
               aria-pressed={selected}
+              title={option.hint}
               onClick={() => onChange(option.value)}
               className={cn(
                 'focus-ring inline-flex h-9 coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control px-2.5 text-sm font-medium sm:gap-2 sm:px-3 transition-colors duration-150 ease-smooth',
