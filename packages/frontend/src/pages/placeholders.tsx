@@ -12,7 +12,7 @@ function Placeholder({ title, icon: Icon, description }: { title: string; icon: 
         <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">{title}</h1>
       </header>
       <Card>
-        <EmptyState icon={<Icon />} heading="This screen is on its way" description={description} />
+        <EmptyState icon={<Icon />} heading="This screen is on its way" description={description} headingLevel="h2" />
       </Card>
     </div>
   )

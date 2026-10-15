@@ -9,6 +9,7 @@ import type { AppRoute } from '@/router/routes'
 import { NotificationBell } from './NotificationBell'
 import { Brand, initials, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
 import { ThemeToggle } from './ThemeToggle'
+import { useSearchShortcut } from './useSearchShortcut'
 
 function SkipLink() {
   return (
@@ -39,6 +40,7 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
   const [collapsed] = useSidebarCollapsed()
+  useSearchShortcut()
   const portal = portalOf(location.pathname)
 
   return (

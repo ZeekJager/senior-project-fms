@@ -129,7 +129,7 @@ export function Sections({ sections, onNavigate, rail = false, collapsed = false
         >
           <h2
             id={`nav-${portal.id}`}
-            className={cn('mb-2 px-3 text-2xs font-semibold uppercase tracking-wider', rail ? 'text-side-ink/60' : 'text-ink-subtle', labelClass(rail, collapsed))}
+            className={cn('mb-2 px-3 text-2xs font-semibold uppercase tracking-wider', rail ? 'text-side-ink/80' : 'text-ink-subtle', labelClass(rail, collapsed))}
           >
             {portal.name}
           </h2>

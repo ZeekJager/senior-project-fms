@@ -34,6 +34,7 @@ export default {
           ink: token('brand-ink'),
         },
         side: { DEFAULT: token('side'), line: token('side-line'), ink: token('side-ink') },
+        focus: token('focus'),
         overlay: token('overlay'),
         success: { DEFAULT: token('success'), soft: token('success-soft') },
         warning: { DEFAULT: token('warning'), soft: token('warning-soft') },

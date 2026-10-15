@@ -436,6 +436,27 @@ describe('Vehicle Management (S-04)', () => {
     expect(screen.queryByText(/across your depots/)).not.toBeInTheDocument()
   })
 
+  describe('the "/" shortcut', () => {
+    it('jumps to the search box from anywhere on the page', async () => {
+      serveFleet([vehicle()])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findByText(/AA 3-/)
+      await user.keyboard('/')
+      expect(screen.getByRole('searchbox', { name: 'Search vehicles' })).toHaveFocus()
+    })
+
+    it('types a slash like any other key once you are in a field', async () => {
+      serveFleet([vehicle()])
+      const user = userEvent.setup()
+      await openVehicles()
+      const search = screen.getByRole('searchbox', { name: 'Search vehicles' })
+      await user.click(search)
+      await user.keyboard('AA/3')
+      expect(search).toHaveValue('AA/3')
+    })
+  })
+
   it('explains what the Flagged and Workshop views mean', async () => {
     serveFleet([vehicle()])
     await openVehicles()
