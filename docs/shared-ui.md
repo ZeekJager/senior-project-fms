@@ -51,11 +51,20 @@ Built with the vehicle screen (FMS-18) on the design system (`docs/design-system
 
 | Component | Props | Notes |
 |---|---|---|
-| `DataTable` | `columns`, `data`, `rowKey`, `caption`, `isLoading`, `isEmpty`, `error`, `onRetry`, `emptyState`, `pagination`, `sort`, `rowHeight` | Fixed layout (no sideways scroll on a desktop). Columns can hide below a breakpoint |
+| `DataTable` | `columns`, `data`, `rowKey`, `caption`, `isLoading`, `isEmpty`, `error`, `onRetry`, `emptyState`, `pagination`, `sort`, `rowHeight`, `tableId`, `onRowClick`, `rowLabel`, `rowClassName`, `selection` | Fixed layout (no sideways scroll on a desktop). Columns can hide below a breakpoint |
 | `EmptyState` | `icon`, `heading`, `description`, `action` | One heading, a short why, the next step |
 | `ErrorBoundary` / `ErrorState` | `resetKey`, `onReset` / `error`, `onRetry` | Shows the error code and the request id (`ApiError.requestId`: the API's `meta.request_id`, the audit log's `correlation_id`), with "Copy error details". The app shell wraps every screen in one, reset on navigation. "Try again" calls `onReset` first (refetch, clear bad state), then renders the children again |
 | `ConfirmDialog` | `open`, `onClose`, `title`, `message`, `action`, `onConfirm`, `requireTyping`, `error`, `busy` | With `requireTyping` (e.g. `DELETE`, a plate), confirm stays disabled until the text matches exactly, and a hint under the field says so. `error` shows inside the dialog, never as a toast |
 | `useCursorPages` | | The cursors of the pages seen, for cursor paging: `cursor`, `pageIndex`, `next(cursor)`, `previous()`, `reset()` (on new filters) |
+
+### Power features
+
+- **`onRowClick`**: a click on a row (outside its own buttons, links and inputs) calls it. The keyboard does the same: `J` and `K` move through the rows, `Enter` opens the marked one, `Esc` lets go. Ignored while typing in a field or when a dialog is open. A live region says "Row 2 of 24: AA 3-20212. Press Enter to open." (`rowLabel`).
+- **`tableId`** adds *Table options* to the footer: row height (comfortable 56px or compact 44px; touch screens keep 56px) and which **optional** columns show (`optional: true`, `label`). Remembered per device. Compact keeps skeleton and data rows the same height, so nothing jumps.
+- **`selection`** `{ selected, onChange }` adds a checkbox column with select-all for the page (mixed state included). Vehicles uses it for **Export CSV** of the ticked rows (`lib/csv.ts`: quoted, formula-safe, BOM for Amharic).
+- **`sort.then` / `sort.onThen`**: Shift+click a header for a second sort (a "2" marks it). Vehicles sends it as `then_by` and `then_order`.
+- **`rowClassName`** tints rows that need attention.
+- One page of results shows only the count ("1–12 of 12"): no arrows and no "Page 1 of 1".
 
 ### Rows never move when data arrives
 

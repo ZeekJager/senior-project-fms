@@ -86,6 +86,15 @@ Shared by several screens: `features/documents` (the documents drawer, expiry ru
 
 Every list row has one visible text action, a small `secondary` button with an icon: **Edit** (Vehicles, Drivers, Users), **Adjust** (Spare parts), **View** (Repair log). A destructive action never sits beside it: Decommission and Retire live in the footer of the edit drawer, apart from Save, and still ask for confirmation. In a list, "active" and "valid" are quiet text (`StatusText`) while every other state keeps its coloured pill. Exceptions are said in words ("Flagged", "1 expiring"), and the healthy state is plain text. On phones the row keeps the facts that decide a dispatch (depot, trip, document warning) as lines under the name.
 
+Rows open on click: a click anywhere on a row (not on its own buttons or links) opens the thing for editing, and on Vehicles, Drivers and Users the plate or name is plain text. The Edit/View/Adjust button stays as the keyboard-reachable action. Healthy states are quiet everywhere: Active, Valid, OK, a healthy document count and "no trip" (an em dash, with the words for screen readers) are plain text; Flagged, Expired and out-of-stock rows keep their pills and flagged or expired rows get a light amber tint (`rowClassName`).
+
+## Help, calendar and saved views
+
+- **Help** (`HelpCircle` in the top bar, or `?`): keyboard shortcuts, a glossary of the words the lists use (Flagged, Ready to dispatch, Documents due...), and the **calendar** choice. The Ethiopian calendar uses `Intl` (`en-u-ca-ethiopic`) and changes only how dates are shown; stored dates and the API stay Gregorian. The choice is remembered per device (`lib/preferences.ts`).
+- **Soon** badges mark nav entries whose screens are still placeholders (Dispatch, Live map, Fuel reconciliation). The badge is `aria-hidden`; the link names are unchanged.
+- **Saved views** (`SavedViews`, on Vehicles and Drivers): name the current views, filters, search and sort, and restore them in one click. Kept on this device, per screen.
+- The menu button is on the **left** below 1024px, and the menu sheet carries the brand.
+
 ## A screen, step by step
 
 1. Add the route to `router/routes.tsx` with its `permission` and `nav` entry.
