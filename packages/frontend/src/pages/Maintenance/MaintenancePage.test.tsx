@@ -80,6 +80,8 @@ describe('Technician repair log (S-08)', () => {
     const table = await screen.findByRole('table', { name: 'Repairs' })
     await within(table).findByText('AA 3-41207')
     expect(within(table).getByText('Open')).toHaveAttribute('data-status', 'open')
+    // The part count is plural-aware: four pads are "4 items".
+    expect(within(table).getByText('4 items')).toBeInTheDocument()
   })
 
   it('a cost with more than two decimals is refused in the form, before any API call', async () => {

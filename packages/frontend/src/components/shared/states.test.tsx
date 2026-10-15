@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api/errors'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DataTable, type Column } from './DataTable'
-import { ErrorBoundary } from './ErrorBoundary'
+import { ErrorBoundary, ErrorState, errorDetails } from './ErrorBoundary'
 import { useCursorPages } from './useCursorPages'
 
 interface Row {
@@ -257,5 +257,24 @@ describe('ErrorBoundary', () => {
     await act(() => userEvent.setup().click(screen.getByRole('button', { name: 'Try again' })))
     expect(screen.getByText('Recovered')).toBeInTheDocument()
     vi.mocked(console.error).mockRestore()
+  })
+})
+
+describe('ErrorState for a dropped connection', () => {
+  it('names the problem in plain words instead of "TypeError", and still offers a retry', async () => {
+    const retry = vi.fn()
+    render(<ErrorState error={new TypeError('Failed to fetch')} onRetry={retry} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('couldn’t reach the server')
+    expect(screen.getByRole('alert')).toHaveTextContent('NETWORK_ERROR')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('TypeError')
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(retry).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the generic wording and the real code for other errors', () => {
+    expect(errorDetails(new RangeError('bad')).code).toBe('RangeError')
+    render(<ErrorState error={new ApiError(503, 'SERVICE_UNAVAILABLE', 'down', [], 'r-9')} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('couldn’t complete this request')
+    expect(screen.getByRole('alert')).toHaveTextContent('SERVICE_UNAVAILABLE')
   })
 })

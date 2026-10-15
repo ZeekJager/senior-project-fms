@@ -22,6 +22,9 @@ function readFilters(params: URLSearchParams): RecordFilters {
   }
 }
 
+/** "1 item", "3 items". */
+const partCount = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'item' : 'items'}`
+
 /**
  * S-08 Technician repair log (FMS-24): open work first, every repair one
  * click away, and a job card to log the next. Replaces the paper cards.
@@ -75,7 +78,7 @@ export function MaintenancePage() {
       header: 'Parts',
       width: 'w-[88px]',
       hideBelow: 'lg',
-      cell: (r) => (r.parts.length ? <Badge>{r.parts.reduce((n, p) => n + p.quantity, 0)} items</Badge> : <span className="text-ink-subtle">—</span>),
+      cell: (r) => (r.parts.length ? <Badge>{partCount(r.parts.reduce((n, p) => n + p.quantity, 0))}</Badge> : <span className="text-ink-subtle">—</span>),
     },
     { key: 'cost', header: 'Total', width: 'w-[136px]', align: 'right', hideBelow: 'sm', cell: (r) => <MoneyDisplay amountMinorUnits={r.total_cost_cents} className="font-medium" /> },
     {

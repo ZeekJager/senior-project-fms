@@ -6,8 +6,14 @@ import { ApiError } from '@/lib/api/errors'
 /** What support needs from a failure: the error code and, for API errors, the request (correlation) id. */
 export function errorDetails(error: unknown): { code: string; message: string; requestId?: string } {
   if (error instanceof ApiError) return { code: error.code, message: error.message, requestId: error.requestId }
+  if (isNetworkFailure(error)) return { code: 'NETWORK_ERROR', message: 'The server could not be reached.' }
   if (error instanceof Error) return { code: error.name || 'Error', message: error.message }
   return { code: 'UNKNOWN_ERROR', message: String(error) }
+}
+
+/** fetch() rejects with a TypeError when the request never got an answer: offline, DNS, the server down. */
+export function isNetworkFailure(error: unknown): boolean {
+  return error instanceof TypeError
 }
 
 interface ErrorStateProps {
@@ -53,7 +59,9 @@ export function ErrorState({ error, heading = 'Something went wrong', onRetry, c
       </div>
       <h3 className="text-base font-semibold tracking-tight text-ink">{heading}</h3>
       <p className="mt-1.5 max-w-md text-sm text-ink-muted">
-        We couldn&apos;t complete this request. Try again; if it keeps failing, send the details below to support.
+        {isNetworkFailure(error)
+          ? 'We couldn’t reach the server. Check your connection, then try again; if it keeps failing, send the details below to support.'
+          : 'We couldn’t complete this request. Try again; if it keeps failing, send the details below to support.'}
       </p>
       <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-control border border-line bg-surface-muted px-4 py-3 text-left font-mono text-xs text-ink-muted">
         <dt className="text-ink-subtle">Code</dt>

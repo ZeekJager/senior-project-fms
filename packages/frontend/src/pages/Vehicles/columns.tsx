@@ -55,7 +55,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
                 </span>
               )}
             </p>
-            <p className="truncate text-xs text-ink-subtle">
+            <p className="truncate text-xs text-ink-subtle" title={`${v.make} ${v.model}${v.year ? ` · ${v.year}` : ''}`}>
               {v.make} {v.model}
               {v.year ? ` · ${v.year}` : ''}
             </p>
@@ -116,12 +116,12 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             <span
               className={cn(
                 'h-2 w-2 shrink-0 rounded-full',
-                v.current_trip.status === 'en_route' ? 'animate-pulse bg-amber-500' : 'bg-blue-500',
+                v.current_trip.status === 'en_route' ? 'animate-pulse motion-reduce:animate-none bg-amber-500' : 'bg-blue-500',
               )}
               aria-hidden="true"
             />
             <span className="min-w-0">
-              <span className="block truncate text-sm font-medium text-ink group-hover/trip:text-brand-ink">
+              <span className="block truncate text-sm font-medium text-ink group-hover/trip:text-brand-ink" title={`${v.current_trip.origin ?? 'Origin'} to ${v.current_trip.destination ?? 'Destination'}`}>
                 {v.current_trip.origin ?? 'Origin'} <ArrowRight className="inline h-3 w-3" aria-label="to" /> {v.current_trip.destination ?? 'Destination'}
               </span>
               <span className="block text-xs text-ink-subtle">{v.current_trip.status === 'en_route' ? 'En route' : 'Assigned'}</span>
