@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createApiClient, type ApiClient } from '@/lib/api/client'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
@@ -131,14 +131,15 @@ describe('Vehicle Management (S-04)', () => {
     await within(table()).findByText(onTrip.registration_number)
     const tripRow = rowFor(onTrip.registration_number)
     expect(within(tripRow).getByRole('link', { name: /Addis Ababa.*Adama/ })).toHaveAttribute('href', '/dispatch?trip=t-1')
-    expect(within(tripRow).getByText('Addis Ababa Central')).toBeInTheDocument()
+    // The depot shows in its column and, on narrower screens, under the plate.
+    expect(within(tripRow).getAllByText(/Addis Ababa Central/).length).toBeGreaterThan(0)
     expect(within(tripRow).getAllByText('Active')[0]).toHaveAttribute('data-status', 'active')
-    expect(await within(tripRow).findByText('1 on file')).toBeInTheDocument()
+    expect(await within(tripRow).findByTitle('1 document on file')).toBeInTheDocument()
 
     const idleRow = rowFor(idle.registration_number)
     expect(within(idleRow).getByText('No active trip')).toBeInTheDocument()
     expect(within(idleRow).getByText('Flagged for maintenance')).toBeInTheDocument()
-    expect(within(idleRow).getByText('Adama Hub')).toBeInTheDocument()
+    expect(within(idleRow).getAllByText(/Adama Hub/).length).toBeGreaterThan(0)
   })
 
   it('filters by maintenance flag without a page reload, keeping the filter in the URL', async () => {
@@ -216,13 +217,13 @@ describe('Vehicle Management (S-04)', () => {
       await within(table()).findByText(gone.registration_number)
     })
 
-    it('marks no view when the link combines a status with the flag, and Clear removes both', async () => {
+    it('marks no view when the link combines a status with the flag, and "All" resets both', async () => {
       serveFleet([vehicle()])
       const user = userEvent.setup()
       await openVehicles('/vehicles?status=active&flagged=1')
       const views = screen.getByRole('group', { name: 'Vehicle views' })
       for (const button of within(views).getAllByRole('button')) expect(button).toHaveAttribute('aria-pressed', 'false')
-      await user.click(screen.getByRole('button', { name: 'Clear' }))
+      await user.click(within(views).getByRole('button', { name: /^All/ }))
       await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles$/))
     })
   })
@@ -312,7 +313,7 @@ describe('Vehicle Management (S-04)', () => {
     expect(expiredBadge).toHaveClass('bg-danger-soft')
     expect(within(rowFor(expiring.registration_number)).getByText('1 expiring')).toHaveClass('bg-warning-soft')
     // Healthy documents are plain text, so the colored badges that remain are the exceptions.
-    const healthy = within(rowFor(valid.registration_number)).getByText('2 on file')
+    const healthy = within(rowFor(valid.registration_number)).getByTitle('2 documents on file')
     expect(healthy).not.toHaveClass('bg-success-soft')
     expect(healthy).toHaveClass('text-ink-muted')
 
@@ -328,7 +329,7 @@ describe('Vehicle Management (S-04)', () => {
     expect(within(drawer2).getByText('Expires in 30 days').closest('span.rounded-full')).toHaveClass('bg-warning-soft')
   })
 
-  it('uploads a document picked with the row + button', async () => {
+  it('uploads a document from the documents drawer, which the row opens', async () => {
     const v = vehicle()
     serveFleet([v])
     // jsdom's File cannot be streamed by Node's fetch, so the multipart body
@@ -346,10 +347,11 @@ describe('Vehicle Management (S-04)', () => {
     await openVehicles('/vehicles', api)
     await within(table()).findByText(v.registration_number)
 
-    await user.click(screen.getByRole('button', { name: `Upload a document for ${v.registration_number}` }))
-    const file = new File(['%PDF-1.4'], 'insurance.pdf', { type: 'application/pdf' })
-    await user.upload(screen.getByTestId('row-file-picker'), file)
+    expect(screen.queryByRole('button', { name: /^Upload a document for/ })).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: `Documents for ${v.registration_number}` }))
     const drawer = await screen.findByRole('dialog', { name: `Documents · ${v.registration_number}` })
+    const file = new File(['%PDF-1.4'], 'insurance.pdf', { type: 'application/pdf' })
+    await user.upload(within(drawer).getByLabelText(/Choose a file/), file)
     expect(within(drawer).getByText('insurance.pdf')).toBeInTheDocument()
     await user.selectOptions(within(drawer).getByLabelText('Document type'), 'insurance')
     await user.type(within(drawer).getByLabelText(/Expires on/), '2027-01-31')
@@ -491,13 +493,100 @@ describe('Vehicle Management (S-04)', () => {
       expect(api.listQueries().at(-1)?.get('documents')).toBe('due')
     })
 
-    it('Clear leaves every dispatch and document view', async () => {
+    it('Clear empties the search and depot but keeps the view you are in', async () => {
+      serveFleet([vehicle()])
+      const user = userEvent.setup()
+      await openVehicles('/vehicles?ready=1&q=AA')
+      await user.click(await screen.findByRole('button', { name: 'Clear' }))
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles\?ready=1$/))
+      expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument()
+    })
+
+    it('"All" leaves every dispatch and document view', async () => {
       serveFleet([vehicle()])
       const user = userEvent.setup()
       await openVehicles('/vehicles?ready=1')
-      await user.click(await screen.findByRole('button', { name: 'Clear' }))
+      await user.click(within(screen.getByRole('group', { name: 'Vehicle views' })).getByRole('button', { name: /^All/ }))
       await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles$/))
     })
+  })
+
+  describe('the whole row, selection and export', () => {
+    it('clicking a row opens the vehicle for editing; the plate itself is plain text', async () => {
+      const v = vehicle()
+      serveFleet([v])
+      const user = userEvent.setup()
+      await openVehicles()
+      const plate = await within(table()).findByText(v.registration_number)
+      expect(plate.closest('button')).toBeNull()
+      await user.click(plate)
+      expect(await screen.findByRole('dialog', { name: `Edit ${v.registration_number}` })).toBeInTheDocument()
+    })
+
+    it('J, K and Enter open a vehicle from the keyboard', async () => {
+      const v = vehicle()
+      serveFleet([v])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findByText(v.registration_number)
+      await user.keyboard('j')
+      expect(await screen.findByText(new RegExp(`Row 1 of 1: ${v.registration_number}`))).toBeInTheDocument()
+      await user.keyboard('{Enter}')
+      expect(await screen.findByRole('dialog', { name: `Edit ${v.registration_number}` })).toBeInTheDocument()
+    })
+
+    it('ticks vehicles and exports them as CSV', async () => {
+      const a = vehicle({ make: 'Isuzu, Ltd' })
+      const b = vehicle()
+      serveFleet([a, b])
+      const blobs: Blob[] = []
+      Object.assign(URL, { createObjectURL: (blob: Blob) => (blobs.push(blob), 'blob:x'), revokeObjectURL: () => {} })
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findByText(a.registration_number)
+
+      await user.click(screen.getByRole('checkbox', { name: `Select ${a.registration_number}` }))
+      expect(screen.getByText('1 selected')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Export CSV' }))
+      const csv = await blobs[0].text()
+      expect(csv).toContain('Plate,Make,Model')
+      expect(csv).toContain(a.registration_number)
+      expect(csv).toContain('"Isuzu, Ltd"')
+      expect(csv).not.toContain(b.registration_number)
+      expect(await screen.findByText('1 vehicle exported')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Clear selection' }))
+      expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+    })
+
+    it('selecting every row on the page ticks them all', async () => {
+      serveFleet([vehicle(), vehicle(), vehicle()])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findAllByText(/AA 3-/)
+      await user.click(screen.getByRole('checkbox', { name: 'Select every row on this page' }))
+      expect(screen.getByText('3 selected')).toBeInTheDocument()
+    })
+
+    it('a second sort in the URL goes to the API as then_by', async () => {
+      const api = serveFleet([vehicle(), vehicle()])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findAllByText(/AA 3-/)
+      await user.keyboard('{Shift>}')
+      await user.click(within(table()).getByRole('button', { name: /^Depot/ }))
+      await user.keyboard('{/Shift}')
+      await waitFor(() => expect(api.listQueries().at(-1)?.get('then_by')).toBe('depot'))
+      expect(api.listQueries().at(-1)?.get('then_order')).toBe('asc')
+      expect(screen.getByTestId('location')).toHaveTextContent('then=depot')
+    })
+  })
+
+  it('a search with no result names what is filtering, and says how to widen it', async () => {
+    serveFleet([vehicle()])
+    await openVehicles('/vehicles?q=ZZZZ&ready=1')
+    expect(await screen.findByText(/Filtered by search “ZZZZ” · view Ready to dispatch\./)).toBeInTheDocument()
   })
 
   describe('sorting', () => {

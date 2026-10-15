@@ -1,20 +1,22 @@
-import { Building2, Plus, Search, Truck } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Building2, Download, Plus, Search, Truck } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { DataTable, EmptyState, ListToolbar } from '@/components/shared'
-import { Button, FilterSelect } from '@/components/ui'
+import { Button, FilterSelect, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useDepots } from '@/features/depots'
 import { DocumentsDrawer } from '@/features/documents/DocumentsDrawer'
 import { useOwnerDocuments } from '@/features/documents/api'
-import { documentHealth } from '@/features/documents/expiry'
+import { documentHealth, today } from '@/features/documents/expiry'
+import { downloadCsv, toCsv } from '@/lib/csv'
+import { describeFilters } from '@/lib/describeFilters'
 import { useFleetCounts, useVehicles } from './api'
 import { vehicleColumns } from './columns'
 import { DecommissionDialog } from './DecommissionDialog'
 import { hasActiveFilters, readFilters, writeFilters, type SortKey, type VehicleFilters } from './filters'
 import { VehicleFormDrawer } from './VehicleFormDrawer'
-import type { Vehicle, VehicleStatus } from './types'
+import { VEHICLE_TYPE_LABELS, type Vehicle, type VehicleStatus } from './types'
 
 /** The views of the fleet. "flagged" is the maintenance flag; "ready" and "docs" are the API's dispatch and document filters; the rest are statuses. */
 type View = 'all' | 'ready' | 'flagged' | 'docs' | VehicleStatus
@@ -82,9 +84,10 @@ export function VehiclesPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [decommissioning, setDecommissioning] = useState<Vehicle | null>(null)
   const [docsFor, setDocsFor] = useState<Vehicle | null>(null)
-  const [stagedFile, setStagedFile] = useState<File | null>(null)
-  const filePicker = useRef<HTMLInputElement>(null)
-  const pickingFor = useRef<Vehicle | null>(null)
+  const { toast } = useToast()
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  // A selection is for the page on screen: new rows, new selection.
+  useEffect(() => setSelected(new Set()), [list.data])
 
   const openCreate = () => {
     setEditing(null)
@@ -101,23 +104,36 @@ export function VehiclesPage() {
       setEditing(v)
       setFormOpen(true)
     },
-    onOpenDocuments: (v) => {
-      setStagedFile(null)
-      setDocsFor(v)
-    },
-    // The + button opens the file picker straight away; the drawer then asks for the type and expiry.
-    onAddDocument: (v) => {
-      pickingFor.current = v
-      if (filePicker.current) {
-        filePicker.current.value = ''
-        filePicker.current.click()
-      }
-    },
+    onOpenDocuments: setDocsFor,
   })
+
+  function exportSelected() {
+    const chosen = (vehicles ?? []).filter((v) => selected.has(v.id))
+    const csv = toCsv(
+      ['Plate', 'Make', 'Model', 'Year', 'Type', 'Status', 'Depot', 'Flagged for maintenance', 'Current trip', 'Documents expired', 'Documents expiring'],
+      chosen.map((v) => [
+        v.registration_number,
+        v.make,
+        v.model,
+        v.year,
+        VEHICLE_TYPE_LABELS[v.vehicle_type],
+        v.status,
+        depotMap.get(v.depot_id)?.name,
+        v.maintenance_flag,
+        v.current_trip ? `${v.current_trip.origin ?? ''} to ${v.current_trip.destination ?? ''}` : '',
+        health.get(v.id)?.expired ?? 0,
+        health.get(v.id)?.expiring ?? 0,
+      ]),
+    )
+    downloadCsv(`vehicles-${today()}.csv`, csv)
+    toast({ title: `${chosen.length} vehicle${chosen.length === 1 ? '' : 's'} exported`, description: 'Saved as a CSV file.', tone: 'success' })
+  }
 
   const depotOptions = [{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]
   const showDepotFilter = (depots.data?.length ?? 0) > 1
   const filtered = hasActiveFilters(filters)
+  const hasToolbarFilters = Boolean(filters.search || filters.depotId)
+  const viewLabel = { all: '', ready: 'Ready to dispatch', flagged: 'Flagged', docs: 'Documents due', maintenance: 'Workshop', active: 'Active', inactive: 'Inactive', retired: 'Retired', decommissioned: 'Decommissioned' }[viewOf(filters) ?? 'all']
   const scopeName = filters.depotId ? depotMap.get(filters.depotId)?.name : depots.data?.length === 1 ? depots.data[0].name : null
 
   return (
@@ -141,6 +157,7 @@ export function VehiclesPage() {
         <DataTable
 
           toolbar={
+            <>
             <ListToolbar
               views={{
                 label: 'Vehicle views',
@@ -158,19 +175,36 @@ export function VehiclesPage() {
               }}
               search={{ label: 'Search vehicles', placeholder: 'Plate, VIN, make or model', value: searchText, onChange: setSearchText, busy: list.isFetching }}
               onClear={
-                filtered
+                hasToolbarFilters
                   ? () => {
                       setSearchText('')
-                      update({ search: '', depotId: '', ...NO_VIEW })
+                      update({ search: '', depotId: '' })
                     }
                   : undefined
               }
             >
               {showDepotFilter && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
             </ListToolbar>
+            {selected.size > 0 && (
+              <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-control bg-brand-soft px-3 py-2 text-sm text-brand-ink">
+                <span className="font-medium">{selected.size} selected</span>
+                <Button size="sm" variant="secondary" leadingIcon={<Download className="h-3.5 w-3.5" />} onClick={exportSelected}>
+                  Export CSV
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                  Clear selection
+                </Button>
+              </div>
+            )}
+            </>
           }
           caption="Vehicles"
           rowHeight="stacked3"
+          tableId="vehicles"
+          rowLabel={(v) => v.registration_number}
+          rowClassName={(v) => (v.maintenance_flag || (health.get(v.id)?.expired ?? 0) > 0 ? 'bg-warning-soft/30' : undefined)}
+          onRowClick={canWrite ? (v) => (v.status === 'retired' ? setDocsFor(v) : (setEditing(v), setFormOpen(true))) : canReadDocs ? setDocsFor : undefined}
+          selection={{ selected, onChange: setSelected }}
           columns={columns}
           data={vehicles}
           rowKey={(v) => v.id}
@@ -182,6 +216,17 @@ export function VehiclesPage() {
             order: filters.sortOrder,
             // The same column flips the order; another column starts ascending.
             onChange: (key) => update({ sortBy: key as SortKey, sortOrder: key === filters.sortBy && filters.sortOrder === 'asc' ? 'desc' : 'asc' }, { keepPage: true }),
+            then: filters.thenBy ? { key: filters.thenBy, order: filters.thenOrder } : undefined,
+            // Shift+click: a second sort. The same column again flips it, and a third time drops it.
+            onThen: (key) =>
+              update(
+                filters.thenBy !== key
+                  ? { thenBy: key as SortKey, thenOrder: 'asc' }
+                  : filters.thenOrder === 'asc'
+                    ? { thenOrder: 'desc' }
+                    : { thenBy: '', thenOrder: 'asc' },
+                { keepPage: true },
+              ),
           }}
           pagination={
             list.data
@@ -199,7 +244,7 @@ export function VehiclesPage() {
               <EmptyState
                 icon={<Search />}
                 heading="No vehicles match these filters"
-                description="Try a different search, or clear the filters to see the whole fleet."
+                description={`${describeFilters({ search: filters.search, depot: filters.depotId ? depotMap.get(filters.depotId)?.name : undefined, view: viewLabel })} Try a different search, or clear the filters to see the whole fleet.`.trim()}
                 action={
                   <Button
                     variant="secondary"
@@ -230,23 +275,6 @@ export function VehiclesPage() {
         />
       </section>
 
-      <input
-        ref={filePicker}
-        type="file"
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden="true"
-        accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
-        data-testid="row-file-picker"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file && pickingFor.current) {
-            setStagedFile(file)
-            setDocsFor(pickingFor.current)
-          }
-        }}
-      />
-
       <VehicleFormDrawer
         open={formOpen}
         onClose={() => setFormOpen(false)}
@@ -267,11 +295,8 @@ export function VehiclesPage() {
         owner={docsFor && { type: 'vehicle', id: docsFor.id, label: docsFor.registration_number }}
         documents={docs.data ?? []}
         isLoading={docs.isPending}
-        onClose={() => {
-          setDocsFor(null)
-          setStagedFile(null)
-        }}
-        stagedFile={stagedFile}
+        onClose={() => setDocsFor(null)}
+        stagedFile={null}
         canUpload={canUploadDocs}
         canDelete={canDeleteDocs}
       />

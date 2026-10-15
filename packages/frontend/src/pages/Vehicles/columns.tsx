@@ -1,7 +1,7 @@
-import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Plus, Truck, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Truck, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
-import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
+import { Badge, Button, cn, Skeleton } from '@/components/ui'
 import type { DocumentHealth } from '@/features/documents/expiry'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
 
@@ -24,7 +24,6 @@ export interface ColumnContext {
   showStatus?: boolean
   onEdit: (vehicle: Vehicle) => void
   onOpenDocuments: (vehicle: Vehicle) => void
-  onAddDocument: (vehicle: Vehicle) => void
 }
 
 /**
@@ -48,17 +47,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
           </div>
           <div className="min-w-0">
             <p className="plate flex flex-wrap items-center gap-x-2 text-ink">
-              {ctx.canWrite && v.status !== 'retired' ? (
-                <button
-                  type="button"
-                  onClick={() => ctx.onEdit(v)}
-                  className="focus-ring -mx-1 shrink-0 whitespace-nowrap rounded px-1 text-left hover:text-brand-ink hover:underline coarse:inline-flex coarse:min-h-11 coarse:items-center"
-                >
-                  {v.registration_number}
-                </button>
-              ) : (
-                <span className="whitespace-nowrap">{v.registration_number}</span>
-              )}
+              <span className="whitespace-nowrap">{v.registration_number}</span>
               {v.maintenance_flag && (
                 <Badge tone="warning" icon={<AlertTriangle />} className="shrink-0">
                   <span aria-hidden="true">Flagged</span>
@@ -70,15 +59,16 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
               {v.make} {v.model}
               {v.year ? ` · ${v.year}` : ''}
             </p>
-            {/* Phones drop the depot, trip and documents columns; the facts that decide a dispatch ride under the name. */}
-            <p className="truncate text-xs text-ink-subtle sm:hidden">
+            {/* Narrow screens drop columns; the facts that decide a dispatch ride under the name instead. */}
+            <p className="truncate text-xs text-ink-subtle md:hidden">
               {ctx.depots.get(v.depot_id)?.name ?? '—'} · {v.current_trip ? `${v.current_trip.origin ?? 'Origin'} to ${v.current_trip.destination ?? 'Destination'}` : 'No active trip'}
             </p>
+            <p className="hidden truncate text-xs text-ink-subtle md:block xl:hidden">{ctx.depots.get(v.depot_id)?.name ?? '—'}</p>
             <PhoneDocumentState health={ctx.documents.health.get(v.id)} />
           </div>
-          {/* Phones: only an exception earns the space; "Active" is the normal state. */}
+          {/* Below 1024px there is no Status column: only an exception earns the space, since "Active" is the normal state. */}
           {v.status !== 'active' && (
-            <span className="ml-auto sm:hidden">
+            <span className="ml-auto lg:hidden">
               <StatusText status={v.status} />
             </span>
           )}
@@ -98,16 +88,18 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'type',
       header: 'Type',
       sortKey: 'vehicle_type',
-      width: 'w-[9%]',
-      hideBelow: '2xl',
+      width: 'w-[8%]',
+      hideBelow: 'xl',
+      optional: true,
       cell: (v) => <span className="text-ink-muted">{VEHICLE_TYPE_LABELS[v.vehicle_type]}</span>,
     },
     {
       key: 'depot',
       header: 'Depot',
       sortKey: 'depot',
-      width: 'w-[17%]',
+      width: 'w-[15%]',
       hideBelow: 'xl',
+      optional: true,
       cell: (v) => (
         <span className="flex min-w-0 items-center gap-1.5 text-ink-muted">
           <MapPin className="h-3.5 w-3.5 shrink-0 text-ink-subtle" aria-hidden="true" />
@@ -119,8 +111,9 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'status',
       header: 'Status',
       sortKey: 'status',
-      width: 'w-[148px]',
+      width: 'w-[128px]',
       hideBelow: 'lg',
+      optional: true,
       cell: (v) => <StatusText status={v.status} />,
       skeleton: <Skeleton className="h-5 w-20 rounded-full" />,
     },
@@ -129,6 +122,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       header: 'Current trip',
       width: 'w-[26%] xl:w-[19%]',
       hideBelow: 'md',
+      optional: true,
       cell: (v) =>
         v.current_trip ? (
           <Link
@@ -150,7 +144,10 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             </span>
           </Link>
         ) : (
-          <span className="text-ink-subtle">No active trip</span>
+          <span className="text-ink-subtle">
+            <span aria-hidden="true">—</span>
+            <span className="sr-only">No active trip</span>
+          </span>
         ),
     },
   ]
@@ -159,8 +156,9 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     columns.push({
       key: 'documents',
       header: 'Documents',
-      width: 'w-[160px]',
+      width: 'w-[136px]',
       hideBelow: 'md',
+      optional: true,
       cell: (v) => <DocumentsCell vehicle={v} ctx={ctx} />,
       skeleton: <Skeleton className="h-5 w-16 rounded-full" />,
     })
@@ -187,54 +185,49 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
   return ctx.showStatus === false ? columns.filter((c) => c.key !== 'status') : columns
 }
 
-/** Phones only, and only for an exception: an expired or expiring document is the one thing worth a line. */
+/** Below the widest layouts only, and only for an exception: an expired or expiring document is the one thing worth a line. */
 function PhoneDocumentState({ health }: { health: DocumentHealth | undefined }) {
   if (!health || (health.expired === 0 && health.expiring === 0)) return null
   return (
-    <p className={cn('truncate text-xs font-medium sm:hidden', health.expired > 0 ? 'text-danger' : 'text-warning')}>
+    <p className={cn('truncate text-xs font-medium xl:hidden', health.expired > 0 ? 'text-danger' : 'text-warning')}>
       {health.expired > 0 ? `${health.expired} document${health.expired === 1 ? '' : 's'} expired` : `${health.expiring} document${health.expiring === 1 ? '' : 's'} expiring`}
     </p>
   )
 }
 
 function DocumentsCell({ vehicle, ctx }: { vehicle: Vehicle; ctx: ColumnContext }) {
-  const { health, isLoading, canWrite } = ctx.documents
+  const { health, isLoading } = ctx.documents
   const h = health.get(vehicle.id)
+  if (isLoading) return <Skeleton className="h-5 w-14 rounded-full" />
   return (
-    <div className="flex items-center gap-1">
-      {isLoading ? (
-        <Skeleton className="h-5 w-14 rounded-full" />
+    <button
+      type="button"
+      onClick={() => ctx.onOpenDocuments(vehicle)}
+      aria-label={`Documents for ${vehicle.registration_number}`}
+      className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
+    >
+      {!h ? (
+        // Missing documents are a gap, but not an alarm: plain text, no pill.
+        <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-subtle">
+          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
+          None
+        </span>
+      ) : h.expired > 0 ? (
+        <Badge tone="danger" icon={<AlertTriangle />}>
+          {h.expired} expired
+        </Badge>
+      ) : h.expiring > 0 ? (
+        <Badge tone="warning" dot>
+          {h.expiring} expiring
+        </Badge>
       ) : (
-        <button
-          type="button"
-          onClick={() => ctx.onOpenDocuments(vehicle)}
-          aria-label={`Documents for ${vehicle.registration_number}`}
-          className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
-        >
-          {!h ? (
-            <Badge tone="neutral" icon={<Paperclip />}>
-              None
-            </Badge>
-          ) : h.expired > 0 ? (
-            <Badge tone="danger" dot>
-              {h.expired} expired
-            </Badge>
-          ) : h.expiring > 0 ? (
-            <Badge tone="warning" dot>
-              {h.expiring} expiring
-            </Badge>
-          ) : (
-            // Healthy is the normal state: plain text, so the badges that remain are the exceptions.
-            <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-muted">
-              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-              {h.total} on file
-            </span>
-          )}
-        </button>
+        // Healthy is the normal state: the count, quietly, so the badges that remain are the exceptions.
+        <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-muted" title={`${h.total} document${h.total === 1 ? '' : 's'} on file`}>
+          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+          {h.total}
+          <span className="sr-only"> on file</span>
+        </span>
       )}
-      {canWrite && vehicle.status !== 'retired' && (
-        <IconButton size="sm" label={`Upload a document for ${vehicle.registration_number}`} icon={<Plus />} onClick={() => ctx.onAddDocument(vehicle)} />
-      )}
-    </div>
+    </button>
   )
 }

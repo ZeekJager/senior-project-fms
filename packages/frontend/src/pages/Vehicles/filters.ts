@@ -18,6 +18,9 @@ export interface VehicleFilters {
   pageSize: number
   sortBy: SortKey
   sortOrder: 'asc' | 'desc'
+  /** A second sort for rows the first leaves tied (Shift+click on a header). */
+  thenBy: SortKey | ''
+  thenOrder: 'asc' | 'desc'
 }
 
 const oneOf = <T extends string>(values: readonly T[], value: string | null, fallback: T): T =>
@@ -37,6 +40,8 @@ export function readFilters(params: URLSearchParams): VehicleFilters {
     pageSize: (PAGE_SIZES as readonly number[]).includes(size) ? size : PAGE_SIZES[0],
     sortBy: oneOf(SORT_KEYS, params.get('sort'), 'registration_number'),
     sortOrder: params.get('order') === 'desc' ? 'desc' : 'asc',
+    thenBy: oneOf<SortKey | ''>(['', ...SORT_KEYS], params.get('then'), ''),
+    thenOrder: params.get('thenorder') === 'desc' ? 'desc' : 'asc',
   }
 }
 
@@ -53,6 +58,8 @@ export function writeFilters(filters: VehicleFilters): URLSearchParams {
   if (filters.pageSize !== PAGE_SIZES[0]) params.set('size', String(filters.pageSize))
   if (filters.sortBy !== 'registration_number') params.set('sort', filters.sortBy)
   if (filters.sortOrder === 'desc') params.set('order', 'desc')
+  if (filters.thenBy) params.set('then', filters.thenBy)
+  if (filters.thenBy && filters.thenOrder === 'desc') params.set('thenorder', 'desc')
   return params
 }
 
@@ -70,6 +77,10 @@ export function vehicleQuery(filters: VehicleFilters): string {
   if (filters.flagged) q.set('maintenance_flag', 'true')
   if (filters.ready) q.set('ready_to_dispatch', 'true')
   if (filters.docs) q.set('documents', filters.docs)
+  if (filters.thenBy) {
+    q.set('then_by', filters.thenBy)
+    q.set('then_order', filters.thenOrder)
+  }
   return q.toString()
 }
 
