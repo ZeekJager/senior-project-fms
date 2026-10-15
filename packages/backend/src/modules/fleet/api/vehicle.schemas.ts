@@ -97,6 +97,11 @@ export const vehicleListQuery = z.object({
     .enum(['true', 'false'])
     .transform((v) => v === 'true')
     .optional(),
+  ready_to_dispatch: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
+  documents: z.enum(['expired', 'expiring', 'due']).optional(),
   search: z
     .string()
     .trim()

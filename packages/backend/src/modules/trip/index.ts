@@ -12,5 +12,6 @@ export {
   activeTripsForVehicles,
   driverHasActiveTrip,
   vehicleHasActiveTrip,
+  vehicleOnActiveTripSql,
   type ActiveTrip,
 } from './infrastructure/trip-activity.queries';

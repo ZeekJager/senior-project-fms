@@ -9,7 +9,7 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
-import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip } from '../trip';
+import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip, vehicleOnActiveTripSql } from '../trip';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
@@ -33,7 +33,7 @@ import { DriverRepository } from './infrastructure/driver.repository';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
-const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles);
+const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles, vehicleOnActiveTripSql);
 
 const vehicleService = new VehicleService({
   vehicles: vehicleRepository,

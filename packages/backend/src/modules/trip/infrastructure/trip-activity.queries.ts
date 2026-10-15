@@ -4,6 +4,16 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 export const ACTIVE_TRIP_STATUSES = ['assigned', 'en_route'] as const;
 
 /**
+ * An SQL boolean: the vehicle whose internal id is `vehicleIdColumn` (a column
+ * reference such as `v.id`, never user input) is on an assigned or en-route
+ * trip. For another module's list filter, so it never names trip tables.
+ */
+export function vehicleOnActiveTripSql(vehicleIdColumn: string): string {
+  const statuses = ACTIVE_TRIP_STATUSES.map((s) => `'${s}'`).join(', ');
+  return `EXISTS (SELECT 1 FROM trip.trips active_trip WHERE active_trip.vehicle_id = ${vehicleIdColumn} AND active_trip.status = ANY(ARRAY[${statuses}]::trip.trip_status[]))`;
+}
+
+/**
  * True when the vehicle (internal id) is on a trip that is assigned or en
  * route. Pass the caller's transaction client so the answer is read in the
  * same transaction as the change that depends on it.

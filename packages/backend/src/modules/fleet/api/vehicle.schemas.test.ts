@@ -115,6 +115,21 @@ describe('vehicleListQuery', () => {
     expect(parseInput(vehicleListQuery, { search: '   ' }).search).toBeUndefined();
   });
 
+  test('parses ready_to_dispatch and documents, and the new sort columns', () => {
+    expect(parseInput(vehicleListQuery, { ready_to_dispatch: 'true', documents: 'due', sort_by: 'depot' })).toMatchObject({
+      ready_to_dispatch: true,
+      documents: 'due',
+      sort_by: 'depot',
+    });
+    expect(parseInput(vehicleListQuery, { ready_to_dispatch: 'false' }).ready_to_dispatch).toBe(false);
+    for (const sort_by of ['status', 'vehicle_type', 'depot']) expect(parseInput(vehicleListQuery, { sort_by }).sort_by).toBe(sort_by);
+  });
+
+  test('rejects a bad ready_to_dispatch or documents value', () => {
+    expect(rejection(vehicleListQuery, { ready_to_dispatch: 'maybe' }).code).toBe('VALIDATION_INVALID_ENUM');
+    expect(rejection(vehicleListQuery, { documents: 'soon' }).code).toBe('VALIDATION_INVALID_ENUM');
+  });
+
   test('rejects a bad page, flag or sort column', () => {
     expect(rejection(vehicleListQuery, { page: '0' }).code).toBe('VALIDATION_FAILED');
     expect(rejection(vehicleListQuery, { maintenance_flag: 'yes' }).code).toBe('VALIDATION_INVALID_ENUM');

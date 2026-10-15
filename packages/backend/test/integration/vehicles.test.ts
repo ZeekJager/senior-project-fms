@@ -228,6 +228,110 @@ describe('GET /vehicles', () => {
   });
 });
 
+/** Adds a live document of a vehicle that expires `daysFromToday` days from today (negative: already past). */
+async function addDocument(vehicle: { id: string }, daysFromToday: number, deleted = false): Promise<void> {
+  const uploader = await createUser({ roles: ['admin'] });
+  const expiresOn = new Date(Date.now() + daysFromToday * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  await pool.query(
+    `INSERT INTO document.documents (owner_type, owner_id, document_type, storage_key, content_type, size_bytes, sha256, uploaded_by, expires_on, deleted_at, deleted_by)
+     VALUES ('vehicle', $1, 'insurance', $2, 'application/pdf', 100, $3, $4, $5, $6, $7)`,
+    [vehicle.id, `test/${randomUUID()}`, randomUUID().replaceAll('-', '').repeat(2), uploader.id, expiresOn, deleted ? new Date() : null, deleted ? uploader.id : null],
+  );
+}
+
+describe('GET /vehicles: ready_to_dispatch and documents', () => {
+  test('ready_to_dispatch=true lists only active, unflagged vehicles with no active trip and no expired document', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['fleet_manager']);
+    const { driver } = await createDriver({ depot });
+    const ready = await createVehicle({ depot });
+    const flagged = await createVehicle({ depot, maintenance_flag: true });
+    const parked = await createVehicle({ depot, status: 'inactive' });
+    const inWorkshop = await createVehicle({ depot, status: 'maintenance' });
+    const onTrip = await createVehicle({ depot });
+    const expired = await createVehicle({ depot });
+    const expiringOnly = await createVehicle({ depot });
+    const deletedExpired = await createVehicle({ depot });
+    await createTrip({ vehicle: onTrip, driver, status: 'en_route', actual_start: new Date().toISOString() });
+    await addDocument(expired, -3);
+    await addDocument(expiringOnly, 10);
+    await addDocument(deletedExpired, -3, true);
+
+    const readyIds = ids(await api.get(`/vehicles?depot_id=${depot.public_id}&ready_to_dispatch=true`, cookie)).sort();
+    // An expiring document does not block dispatch (the date has not passed); a retired document does not count.
+    expect(readyIds).toEqual([ready.public_id, expiringOnly.public_id, deletedExpired.public_id].sort());
+    const rest = ids(await api.get(`/vehicles?depot_id=${depot.public_id}&ready_to_dispatch=false`, cookie)).sort();
+    expect(rest).toEqual([flagged.public_id, parked.public_id, inWorkshop.public_id, onTrip.public_id, expired.public_id].sort());
+  });
+
+  test('a finished trip does not stop a vehicle being ready', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['fleet_manager']);
+    const { driver } = await createDriver({ depot });
+    const done = await createVehicle({ depot });
+    await createTrip({ vehicle: done, driver, status: 'completed' });
+    expect(ids(await api.get(`/vehicles?depot_id=${depot.public_id}&ready_to_dispatch=true`, cookie))).toEqual([done.public_id]);
+  });
+
+  test('documents=expired, expiring and due', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['fleet_manager']);
+    const past = await createVehicle({ depot });
+    const soon = await createVehicle({ depot });
+    const edge = await createVehicle({ depot });
+    const far = await createVehicle({ depot });
+    const none = await createVehicle({ depot });
+    await addDocument(past, -1);
+    await addDocument(soon, 5);
+    await addDocument(edge, 30);
+    await addDocument(far, 31);
+    const q = (documents: string) => api.get(`/vehicles?depot_id=${depot.public_id}&documents=${documents}`, cookie).then(ids);
+
+    expect(await q('expired')).toEqual([past.public_id]);
+    expect((await q('expiring')).sort()).toEqual([soon.public_id, edge.public_id].sort());
+    expect((await q('due')).sort()).toEqual([past.public_id, soon.public_id, edge.public_id].sort());
+    expect(await q('due')).not.toContain(none.public_id);
+  });
+
+  test('total_items counts the filtered set, so a view can show its count', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['fleet_manager']);
+    await addDocument(await createVehicle({ depot }), -2);
+    await addDocument(await createVehicle({ depot }), 4);
+    await createVehicle({ depot });
+    const res = await api.get(`/vehicles?depot_id=${depot.public_id}&documents=due&page_size=1`, cookie);
+    expect(res.body.meta).toMatchObject({ total_items: 2, total_pages: 2 });
+  });
+
+  test('a depot-scoped caller only counts their own depot', async () => {
+    const [a, b] = [await createDepot(), await createDepot()];
+    await addDocument(await createVehicle({ depot: a }), -2);
+    const other = await createVehicle({ depot: b });
+    await addDocument(other, -2);
+    const res = await api.get('/vehicles?documents=expired&page_size=100', await signIn(['dispatcher'], a));
+    expect(ids(res)).not.toContain(other.public_id);
+    expect(res.body.meta.total_items).toBe(1);
+  });
+});
+
+describe('GET /vehicles: sorting by status, type and depot', () => {
+  test('sorts by status, vehicle type and depot name', async () => {
+    const [zed, alpha] = [await createDepot({ name: 'Zed Depot' }), await createDepot({ name: 'Alpha Depot' })];
+    const cookie = await signIn(['fleet_manager']);
+    // A make unique to this test isolates its two vehicles in the list.
+    const tag = `Sort${randomUUID().slice(0, 8)}`;
+    const truck = await createVehicle({ depot: zed, vehicle_type: 'truck', status: 'maintenance', make: tag });
+    const bus = await createVehicle({ depot: alpha, vehicle_type: 'bus', status: 'active', make: tag });
+    const sorted = async (by: string, order = 'asc') => ids(await api.get(`/vehicles?search=${tag}&sort_by=${by}&sort_order=${order}`, cookie));
+
+    expect(await sorted('depot')).toEqual([bus.public_id, truck.public_id]);
+    expect(await sorted('depot', 'desc')).toEqual([truck.public_id, bus.public_id]);
+    expect(await sorted('vehicle_type')).toEqual([bus.public_id, truck.public_id]);
+    expect(await sorted('status')).toEqual([bus.public_id, truck.public_id]);
+    expect(await sorted('status', 'desc')).toEqual([truck.public_id, bus.public_id]);
+  });
+});
+
 describe('current_trip', () => {
   test('a vehicle on an assigned or en-route trip shows it (en route first); others show null', async () => {
     const depot = await createDepot();
