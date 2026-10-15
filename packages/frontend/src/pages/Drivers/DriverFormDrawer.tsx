@@ -1,4 +1,4 @@
-import { AlertCircle, Info, Mail, Phone } from 'lucide-react'
+import { AlertCircle, Info, Mail, Phone, UserMinus } from 'lucide-react'
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, cn, Drawer, SelectField, TextField, useToast } from '@/components/ui'
 import type { Depot } from '@/features/depots'
@@ -111,7 +111,7 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
       footer={
         <>
           {driver && onRetire && (
-            <Button variant="ghost" className="mr-auto text-danger hover:bg-danger-soft hover:text-danger" onClick={onRetire}>
+            <Button variant="ghost" leadingIcon={<UserMinus className="h-4 w-4" />} className="mr-auto !text-danger hover:!bg-danger-soft hover:!text-danger" onClick={onRetire}>
               Retire driver
             </Button>
           )}

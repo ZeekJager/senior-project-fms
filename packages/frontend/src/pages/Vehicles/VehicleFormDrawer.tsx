@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
+import { AlertCircle, Archive, CheckCircle2, XCircle } from 'lucide-react'
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, Drawer, SelectField, Spinner, TextField, useToast } from '@/components/ui'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -136,7 +136,7 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
       footer={
         <>
           {vehicle && onDecommission && (
-            <Button variant="ghost" className="mr-auto text-danger hover:bg-danger-soft hover:text-danger" onClick={onDecommission}>
+            <Button variant="ghost" leadingIcon={<Archive className="h-4 w-4" />} className="mr-auto !text-danger hover:!bg-danger-soft hover:!text-danger" onClick={onDecommission}>
               Decommission vehicle
             </Button>
           )}

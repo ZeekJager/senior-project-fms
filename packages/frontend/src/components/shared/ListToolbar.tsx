@@ -67,7 +67,7 @@ export function ListToolbar<T extends string>({ views, search, children, onClear
             )}
           </div>
         )}
-        {children && <div className="grid grid-cols-2 gap-2 sm:contents">{children}</div>}
+        {children && <div className="grid grid-cols-2 gap-2 sm:contents [&>button]:col-span-2 sm:[&>button]:col-auto">{children}</div>}
         {!search && onClear && (
           <Button variant="ghost" leadingIcon={<X className="h-4 w-4" />} onClick={onClear}>
             Clear
