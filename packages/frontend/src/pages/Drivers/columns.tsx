@@ -244,7 +244,7 @@ function DocumentsCell({ driver, ctx }: { driver: Driver; ctx: ColumnContext }) 
       type="button"
       onClick={() => ctx.onOpenDocuments(driver)}
       aria-label={`Documents for ${driver.full_name}`}
-      className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
+      className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:min-w-11 coarse:items-center coarse:justify-center"
     >
       {!h ? (
         <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-subtle">

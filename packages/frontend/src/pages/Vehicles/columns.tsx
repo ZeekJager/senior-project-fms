@@ -204,7 +204,7 @@ function DocumentsCell({ vehicle, ctx }: { vehicle: Vehicle; ctx: ColumnContext 
       type="button"
       onClick={() => ctx.onOpenDocuments(vehicle)}
       aria-label={`Documents for ${vehicle.registration_number}`}
-      className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:items-center"
+      className="focus-ring inline-flex rounded-full coarse:min-h-11 coarse:min-w-11 coarse:items-center coarse:justify-center"
     >
       {!h ? (
         // Missing documents are a gap, but not an alarm: plain text, no pill.
