@@ -169,7 +169,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
             className="focus-ring group/trip -mx-2 flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-brand-soft"
           >
             <span
-              className={cn('h-2 w-2 shrink-0 rounded-full', d.current_trip.status === 'en_route' ? 'animate-pulse bg-amber-500' : 'bg-blue-500')}
+              className={cn('h-2 w-2 shrink-0 rounded-full', d.current_trip.status === 'en_route' ? 'animate-pulse motion-reduce:animate-none bg-amber-500' : 'bg-blue-500')}
               aria-hidden="true"
             />
             <span className="min-w-0">

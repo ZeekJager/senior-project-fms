@@ -1,8 +1,8 @@
-import { AlertTriangle, ClipboardCheck, Package, Plus, Search, Wrench } from 'lucide-react'
+import { ClipboardCheck, Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
-import { DataTable, EmptyState, MoneyDisplay, StatCard, StatShare, StatusBadge, type Column } from '@/components/shared'
+import { DataTable, EmptyState, ListToolbar, MoneyDisplay, StatusBadge, type Column } from '@/components/shared'
 import { Badge, Button, Combobox, Dialog, type ComboboxOption } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { formatDate } from '@/features/documents/expiry'
@@ -102,7 +102,6 @@ export function MaintenancePage() {
     },
   ]
 
-  const pct = (n?: number, of?: number) => (n === undefined || !of ? 0 : Math.round((n * 100) / of))
 
   return (
     <div className="space-y-6">
@@ -125,92 +124,60 @@ export function MaintenancePage() {
         </RoleGate>
       </header>
 
-      <section aria-label="Workshop summary" className="stat-strip">
-        <StatCard
-          label="Open work"
-          value={workshop.counts.open}
-          isLoading={workshop.isLoading}
-          icon={<Wrench />}
-          tone="brand"
-          pressed={filters.view === 'open'}
-          onClick={() => update({ view: 'open' })}
-          footer={<StatShare value={pct(workshop.counts.open, (workshop.counts.open ?? 0) + (workshop.counts.completed ?? 0))} tone="brand" caption="of all logged work" />}
-        />
-        <StatCard
-          label="Completed"
-          value={workshop.counts.completed}
-          isLoading={workshop.isLoading}
-          icon={<ClipboardCheck />}
-          tone="success"
-          pressed={filters.view === 'completed'}
-          onClick={() => update({ view: 'completed' })}
-          footer={<StatShare value={pct(workshop.counts.completed, (workshop.counts.open ?? 0) + (workshop.counts.completed ?? 0))} tone="success" caption="closed job cards" />}
-        />
-        <StatCard
-          label="Vehicles flagged"
-          value={workshop.counts.flagged}
-          isLoading={workshop.isLoading}
-          icon={<AlertTriangle />}
-          tone="warning"
-          pressed={false}
-          onClick={() => navigate('/vehicles?flagged=1')}
-          footer={<span className="text-xs text-ink-subtle">Waiting for the workshop · opens Vehicles</span>}
-        />
-        {canInventory && (
-          <StatCard
-            label="Parts to reorder"
-            value={workshop.counts.reorder}
-            isLoading={workshop.counts.reorder === undefined}
-            icon={<Package />}
-            tone="danger"
-            pressed={false}
-            onClick={() => setShowReorder(true)}
-            footer={<span className="text-xs text-ink-subtle">At or below reorder level · opens the list</span>}
-          />
-        )}
-      </section>
-
       <section aria-label="Repairs" className="space-y-0">
 
         <DataTable
 
           toolbar={
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-          <div role="tablist" aria-label="Which work" className="inline-flex h-10 shrink-0 items-center gap-1 self-start rounded-control bg-surface-sunken p-1">
-            {(['open', 'completed', 'all'] as const).map((v) => (
-              <button
-                key={v}
-                role="tab"
-                type="button"
-                aria-selected={filters.view === v}
-                onClick={() => update({ view: v })}
-                className={
-                  filters.view === v
-                    ? 'focus-ring h-8 rounded-control bg-surface px-3.5 text-sm font-medium text-ink '
-                    : 'focus-ring h-8 rounded-control px-3.5 text-sm text-ink-muted transition-colors hover:text-ink'
-                }
-              >
-                {v === 'open' ? 'Open work' : v === 'completed' ? 'Completed' : 'All'}
-              </button>
-            ))}
-          </div>
-          <Combobox
-            className="lg:w-80 [&>p]:mt-0 [&>p]:min-h-0"
-            label="Filter by vehicle"
-            hideLabel
-            value={vehicleFilter}
-            onChange={(option) => {
-              setVehicleFilter(option)
-              update({ vehicleId: option?.value.id ?? '' })
-            }}
-            query={vehicleQuery}
-            onQueryChange={setVehicleQuery}
-            options={vehicleOptions}
-            loading={vehicleSearch.isFetching}
-            emptyText={vehicleQuery ? 'No vehicle matches' : 'Type a plate'}
+            <ListToolbar
+              views={{
+                label: 'Repair views',
+                value: filters.view,
+                options: [
+                  { value: 'open', label: 'Open work', count: workshop.counts.open, isLoading: workshop.isLoading },
+                  { value: 'completed', label: 'Completed', count: workshop.counts.completed, isLoading: workshop.isLoading },
+                  {
+                    value: 'all',
+                    label: 'All',
+                    count: workshop.counts.open === undefined || workshop.counts.completed === undefined ? undefined : workshop.counts.open + workshop.counts.completed,
+                    isLoading: workshop.isLoading,
+                  },
+                ],
+                onChange: (view) => update({ view }),
+              }}
+              onClear={
+                filters.vehicleId
+                  ? () => {
+                      setVehicleFilter(null)
+                      update({ vehicleId: '' })
+                    }
+                  : undefined
+              }
+            >
+              <Combobox
+                className="lg:w-80 [&>p]:mt-0 [&>p]:min-h-0"
+                label="Filter by vehicle"
+                hideLabel
+                value={vehicleFilter}
+                onChange={(option) => {
+                  setVehicleFilter(option)
+                  update({ vehicleId: option?.value.id ?? '' })
+                }}
+                query={vehicleQuery}
+                onQueryChange={setVehicleQuery}
+                options={vehicleOptions}
+                loading={vehicleSearch.isFetching}
+                emptyText={vehicleQuery ? 'No vehicle matches' : 'Type a plate'}
           />
-        </div>
-
+              <Button variant="ghost" onClick={() => navigate('/vehicles?flagged=1')} title="Opens Vehicles, filtered to flagged">
+                Flagged vehicles{workshop.counts.flagged === undefined ? '' : ` · ${workshop.counts.flagged}`}
+              </Button>
+              {canInventory && (
+                <Button variant="ghost" onClick={() => setShowReorder(true)} title="Opens the list of parts at or below their reorder level">
+                  Parts to reorder{workshop.counts.reorder === undefined ? '' : ` · ${workshop.counts.reorder}`}
+                </Button>
+              )}
+            </ListToolbar>
           }
           caption="Repairs"
           columns={columns}

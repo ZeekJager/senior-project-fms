@@ -1,8 +1,8 @@
-import { Activity, Building2, PauseCircle, Pencil, Search, ShieldCheck, UserCheck, UserCog, UserPlus, UserX, X } from 'lucide-react'
+import { Building2, Pencil, Search, ShieldCheck, UserCog, UserPlus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { DataTable, EmptyState, StatCard, StatShare, type Column } from '@/components/shared'
-import { Badge, Button, FilterSelect, Spinner } from '@/components/ui'
+import { DataTable, EmptyState, ListToolbar, type Column } from '@/components/shared'
+import { Badge, Button, FilterSelect } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -170,8 +170,6 @@ export function UsersPage() {
       : []),
   ]
 
-  const statusFilter = (s: UserStatus) => update({ status: filters.status === s ? '' : s })
-  const pct = (n?: number) => (n === undefined || !stats.counts.total ? 0 : Math.round((n * 100) / stats.counts.total))
   const filtered = Boolean(filters.search || filters.role || filters.status || filters.depotId)
 
   return (
@@ -195,68 +193,55 @@ export function UsersPage() {
         </div>
       </header>
 
-      <section aria-label="Account summary" className="stat-strip">
-        <StatCard label="Accounts" value={stats.counts.total} isLoading={stats.isLoading} icon={<UserCog />} tone="brand" pressed={!filters.status} onClick={() => update({ status: '' })} footer={<StatShare value={pct(stats.counts.active)} tone="brand" caption="can sign in" />} />
-        <StatCard label="Active" value={stats.counts.active} isLoading={stats.isLoading} icon={<UserCheck />} tone="success" pressed={filters.status === 'active'} onClick={() => statusFilter('active')} footer={<StatShare value={pct(stats.counts.active)} tone="success" caption="of all accounts" />} />
-        <StatCard label="Suspended" value={stats.counts.suspended} isLoading={stats.isLoading} icon={<PauseCircle />} tone="warning" pressed={filters.status === 'suspended'} onClick={() => statusFilter('suspended')} footer={<StatShare value={pct(stats.counts.suspended)} tone="warning" caption="temporarily blocked" />} />
-        <StatCard label="Deactivated" value={stats.counts.inactive} isLoading={stats.isLoading} icon={<UserX />} tone="danger" pressed={filters.status === 'inactive'} onClick={() => statusFilter('inactive')} footer={<StatShare value={pct(stats.counts.inactive)} tone="danger" caption="no longer sign in" />} />
-      </section>
-
       <section aria-label="Users" className="space-y-0">
 
         <DataTable
 
           toolbar={
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search users"
-              placeholder="Search name or email"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-9 coarse:h-11 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-            {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
-          </div>
-          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
-            {canReadRoles && (
-              <FilterSelect
-                label="Role"
-                icon={<ShieldCheck />}
-                value={filters.role}
-                emptyValue=""
-                options={[{ value: '', label: 'All roles' }, ...(roles.data ?? []).map((r) => ({ value: r.name, label: roleLabel(r.name) }))]}
-                onChange={(role) => update({ role })}
-              />
-            )}
-            <FilterSelect
-              label="Status"
-              icon={<Activity />}
-              value={filters.status}
-              emptyValue=""
-              options={[{ value: '' as const, label: 'Any status' }, ...STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s].label }))]}
-              onChange={(status) => update({ status })}
-            />
-            {(depots.data?.length ?? 0) > 1 && (
-              <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={[{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]} onChange={(depotId) => update({ depotId })} />
-            )}
-            {filtered && (
-              <Button
-                variant="ghost"
-                leadingIcon={<X className="h-4 w-4" />}
-                onClick={() => {
-                  setSearchText('')
-                  update({ search: '', role: '', status: '', depotId: '' })
-                }}
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
-
+            <ListToolbar
+              views={{
+                label: 'Account views',
+                value: filters.status || 'all',
+                options: [
+                  { value: 'all', label: 'All', count: stats.counts.total, isLoading: stats.isLoading },
+                  { value: 'active', label: 'Active', count: stats.counts.active, isLoading: stats.isLoading, hint: 'Can sign in' },
+                  { value: 'suspended', label: 'Suspended', count: stats.counts.suspended, isLoading: stats.isLoading, hint: 'Temporarily blocked' },
+                  { value: 'locked', label: 'Locked', hint: 'Locked after failed sign-ins' },
+                  { value: 'inactive', label: 'Deactivated', count: stats.counts.inactive, isLoading: stats.isLoading, hint: 'No longer sign in' },
+                ],
+                onChange: (view) => update({ status: view === 'all' ? '' : view }),
+              }}
+              search={{ label: 'Search users', placeholder: 'Name or email', value: searchText, onChange: setSearchText, busy: list.isFetching }}
+              onClear={
+                filtered
+                  ? () => {
+                      setSearchText('')
+                      update({ search: '', role: '', status: '', depotId: '' })
+                    }
+                  : undefined
+              }
+            >
+              {canReadRoles && (
+                <FilterSelect
+                  label="Role"
+                  icon={<ShieldCheck />}
+                  value={filters.role}
+                  emptyValue=""
+                  options={[{ value: '', label: 'All roles' }, ...(roles.data ?? []).map((r) => ({ value: r.name, label: roleLabel(r.name) }))]}
+                  onChange={(role) => update({ role })}
+                />
+              )}
+              {(depots.data?.length ?? 0) > 1 && (
+                <FilterSelect
+                  label="Depot"
+                  icon={<Building2 />}
+                  value={filters.depotId}
+                  emptyValue=""
+                  options={[{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]}
+                  onChange={(depotId) => update({ depotId })}
+                />
+              )}
+            </ListToolbar>
           }
           caption="Users"
           rowHeight="stacked"

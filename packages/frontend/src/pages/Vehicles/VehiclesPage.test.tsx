@@ -195,7 +195,7 @@ describe('Vehicle Management (S-04)', () => {
       serveFleet([vehicle(), gone])
       const user = userEvent.setup()
       await openVehicles()
-      await user.click(screen.getByRole('button', { name: /^More:/ }))
+      await user.click(screen.getByRole('button', { name: /^Other:/ }))
       await user.click(screen.getByRole('option', { name: 'Retired' }))
       await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?status=retired'))
       await within(table()).findByText(gone.registration_number)
@@ -279,7 +279,7 @@ describe('Vehicle Management (S-04)', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Vehicle decommissioned')
   })
 
-  it('marks expired documents red and those expiring within 30 days amber', async () => {
+  it('marks expired documents red and those expiring within 30 days amber; healthy ones stay quiet', async () => {
     const expired = vehicle()
     const expiring = vehicle()
     const valid = vehicle()
@@ -294,7 +294,10 @@ describe('Vehicle Management (S-04)', () => {
     const expiredBadge = await within(rowFor(expired.registration_number)).findByText('1 expired')
     expect(expiredBadge).toHaveClass('bg-danger-soft')
     expect(within(rowFor(expiring.registration_number)).getByText('1 expiring')).toHaveClass('bg-warning-soft')
-    expect(within(rowFor(valid.registration_number)).getByText('2 on file')).toHaveClass('bg-success-soft')
+    // Healthy documents are plain text, so the colored badges that remain are the exceptions.
+    const healthy = within(rowFor(valid.registration_number)).getByText('2 on file')
+    expect(healthy).not.toHaveClass('bg-success-soft')
+    expect(healthy).toHaveClass('text-ink-muted')
 
     await user.click(screen.getByRole('button', { name: `Documents for ${expired.registration_number}` }))
     const drawer = await screen.findByRole('dialog', { name: `Documents · ${expired.registration_number}` })

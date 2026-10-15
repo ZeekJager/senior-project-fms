@@ -1,7 +1,7 @@
-import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, CircleSlash, Palmtree, Search, UserCheck, Users } from 'lucide-react'
+import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { EmptyState, ErrorState, StatCard, StatShare } from '@/components/shared'
+import { EmptyState, ErrorState, ListToolbar } from '@/components/shared'
 import { Button, Card, cn, FilterSelect, IconButton, Skeleton, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
@@ -80,7 +80,6 @@ export function AttendancePage() {
   const entries = roster.data?.entries ?? []
   const unmarkedHere = entries.filter((e) => !e.attendance)
   const { counts } = day
-  const pct = (n?: number) => (n === undefined || !counts.total ? 0 : Math.round((n * 100) / counts.total))
 
   async function markRestPresent() {
     setBulkBusy(true)
@@ -101,7 +100,6 @@ export function AttendancePage() {
     })
   }
 
-  const statusFilter = (s: RosterFilters['status']) => update({ status: filters.status === s ? '' : s })
 
   return (
     <div className="space-y-6">
@@ -135,63 +133,31 @@ export function AttendancePage() {
         </nav>
       </header>
 
-      <section aria-label="Day summary" className="stat-strip">
-        <StatCard
-          label="Present"
-          value={counts.present}
-          isLoading={day.isLoading}
-          icon={<UserCheck />}
-          tone="success"
-          pressed={filters.status === 'present'}
-          onClick={() => statusFilter('present')}
-          footer={<StatShare value={pct(counts.present)} tone="success" caption="of drivers on duty" />}
-        />
-        <StatCard
-          label="Absent"
-          value={counts.absent}
-          isLoading={day.isLoading}
-          icon={<CircleSlash />}
-          tone="danger"
-          pressed={filters.status === 'absent'}
-          onClick={() => statusFilter('absent')}
-          footer={<StatShare value={pct(counts.absent)} tone="danger" caption="flagged to dispatch" />}
-        />
-        <StatCard
-          label="On leave"
-          value={counts.onLeave}
-          isLoading={day.isLoading}
-          icon={<Palmtree />}
-          tone="warning"
-          pressed={filters.status === 'on_leave'}
-          onClick={() => statusFilter('on_leave')}
-          footer={<StatShare value={pct(counts.onLeave)} tone="warning" caption="planned absence" />}
-        />
-        <StatCard
-          label="Not marked"
-          value={counts.unmarked}
-          isLoading={day.isLoading}
-          icon={<Users />}
-          tone="brand"
-          pressed={filters.status === 'unmarked'}
-          onClick={() => statusFilter('unmarked')}
-          footer={<StatShare value={pct(counts.unmarked)} tone="brand" caption="still to record" />}
-        />
-      </section>
-
       <section aria-label="Drivers" className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search drivers"
-              placeholder="Search name, email or licence number"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-10 w-full rounded-control border border-line-strong bg-surface pl-10 pr-4 text-sm text-ink shadow-soft placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-          </div>
-          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
+        <Card className="p-3">
+          <ListToolbar
+            views={{
+              label: 'Attendance views',
+              value: filters.status || 'all',
+              options: [
+                { value: 'all', label: 'All', count: counts.total, isLoading: day.isLoading },
+                { value: 'present', label: 'Present', count: counts.present, isLoading: day.isLoading },
+                { value: 'absent', label: 'Absent', count: counts.absent, isLoading: day.isLoading, hint: 'Flagged to dispatch' },
+                { value: 'on_leave', label: 'On leave', count: counts.onLeave, isLoading: day.isLoading },
+                { value: 'unmarked', label: 'Not marked', count: counts.unmarked, isLoading: day.isLoading, hint: 'Still to record' },
+              ],
+              onChange: (view) => update({ status: view === 'all' ? '' : view }),
+            }}
+            search={{ label: 'Search drivers', placeholder: 'Name, email or licence number', value: searchText, onChange: setSearchText }}
+            onClear={
+              filters.status || filters.search || filters.depotId
+                ? () => {
+                    setSearchText('')
+                    update({ search: '', depotId: '', status: '' })
+                  }
+                : undefined
+            }
+          >
             {(depots.data?.length ?? 0) > 1 && (
               <FilterSelect
                 label="Depot"
@@ -207,8 +173,8 @@ export function AttendancePage() {
                 Mark {unmarkedHere.length} unmarked present
               </Button>
             )}
-          </div>
-        </div>
+          </ListToolbar>
+        </Card>
 
         {roster.isPending ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-busy="true">

@@ -61,7 +61,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             </p>
           </div>
           <span className="ml-auto sm:hidden">
-            <StatusBadge status={v.status} />
+            <VehicleStatus status={v.status} />
           </span>
         </div>
       ),
@@ -99,7 +99,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       header: 'Status',
       width: 'w-[148px]',
       hideBelow: 'sm',
-      cell: (v) => <StatusBadge status={v.status} />,
+      cell: (v) => <VehicleStatus status={v.status} />,
       skeleton: <Skeleton className="h-5 w-20 rounded-full" />,
     },
     {
@@ -172,6 +172,17 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
   return columns
 }
 
+/** Active is the normal state, so it is quiet; every other status keeps its colored badge and stands out. */
+function VehicleStatus({ status }: { status: Vehicle['status'] }) {
+  if (status !== 'active') return <StatusBadge status={status} />
+  return (
+    <span data-status="active" className="inline-flex items-center gap-1.5 text-sm text-ink-muted">
+      <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
+      Active
+    </span>
+  )
+}
+
 function DocumentsCell({ vehicle, ctx }: { vehicle: Vehicle; ctx: ColumnContext }) {
   const { health, isLoading, canWrite } = ctx.documents
   const h = health.get(vehicle.id)
@@ -199,9 +210,11 @@ function DocumentsCell({ vehicle, ctx }: { vehicle: Vehicle; ctx: ColumnContext 
               {h.expiring} expiring
             </Badge>
           ) : (
-            <Badge tone="success" icon={<FileText />}>
+            // Healthy is the normal state: plain text, so the badges that remain are the exceptions.
+            <span className="inline-flex items-center gap-1.5 px-1 text-sm text-ink-muted">
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
               {h.total} on file
-            </Badge>
+            </span>
           )}
         </button>
       )}

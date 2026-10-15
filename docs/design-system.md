@@ -18,7 +18,7 @@ greys, so light and dark mode both work. The theme is `data-theme` on `<html>`: 
 
 | Token | Use |
 |---|---|
-| `canvas` | The page behind everything (with a faint brand glow at the top) |
+| `canvas` | The page behind everything: a flat, indigo-tinted neutral |
 | `surface`, `surface-muted`, `surface-sunken` | Cards and panels; table headers and footers; wells, skeletons, icon tiles |
 | `line`, `line-strong` | Hairline borders; control borders |
 | `ink`, `ink-muted`, `ink-subtle` | Headings and values; body text; captions and placeholders |
@@ -50,16 +50,14 @@ in Tailwind units), with 4px only inside small components. Table rows are
 
 **Shape and depth.** Controls 8px corners (`rounded-control`), cards 12px
 (`rounded-card`), sheets and dialogs 16px (`rounded-sheet`). Shadows:
-`shadow-soft` on controls, `shadow-card` on cards, `shadow-elevated` on
-anything floating (menus, drawers, toasts), `shadow-glow` on the primary
-button's hover. Frosted glass (`backdrop-blur` over a translucent surface) is
-for chrome that floats over content: the sidebar, the mobile top bar, menus,
-toasts.
+`shadow-soft` on controls, `shadow-card` on cards and `shadow-elevated` on
+anything floating (menus, drawers, toasts). There is no glow, no gradient and
+no blur: surfaces are solid. The sidebar is the one dark surface (`side` tokens).
 
 **Motion.** 150-300ms with `ease-smooth`. Things enter (`animate-scale-in`,
-`animate-slide-in-right`, `animate-pop-in`, `animate-fade-in`); cards lift
-2px on hover; buttons press down 1px. `prefers-reduced-motion` turns it all
-off (`index.css`).
+`animate-slide-in-right`, `animate-pop-in`, `animate-fade-in`); buttons press
+down 1px. Cards do not lift. `prefers-reduced-motion` turns it all off
+(`index.css`), and the en-route pulse has `motion-reduce:animate-none`.
 
 **Touch.** On touch devices every control is at least 44px: use the `coarse:` variant (`@media (pointer: coarse)`, in `tailwind.config.js`) to raise a size, e.g. `h-9 coarse:h-11`, so the desktop stays dense. Row actions are always visible (never faded until hover), and hover styles apply only where the device can hover (`hoverOnlyWhenSupported`).
 
@@ -73,11 +71,12 @@ off (`index.css`).
 | `TextField`, `SelectField` | Floating label: a real `<label>`, inside the control until there is a value. `error` replaces `hint` in a message line that always exists (a live region), and sets `aria-invalid`. `optional` adds "(optional)"; `trailing` holds a unit or a status icon |
 | `Combobox` | A searchable select (WAI-ARIA combobox): the caller feeds options from the typed text (local filter or API search), optional groups ("Needs maintenance" first), a detail line and a trailing badge per option. Escape closes only the list |
 | `TextAreaField` | The multi-line floating-label field (descriptions, notes) |
+| `ListToolbar` (`components/shared`) | The bar on top of every list, in one order: `ViewTabs` (named views with counts), search (press `/`), extra filters (depot, role), Clear. Pass it to `DataTable`'s `toolbar`; the Clear slot is reserved so the bar never jumps. Vehicles, Drivers, Users, Spare parts, Repair log and Attendance all use it |
 | `ViewTabs` | One control for "which rows?": named views with counts (`aria-pressed`), plus an optional menu for rare ones. Use it instead of a stat card, a dropdown and a switch that filter the same thing (Vehicles) |
 | `FilterSelect` | The filter-bar pill: label, value, an animated listbox. Arrow keys, Home/End, Enter/Space, Escape. Tinted while a filter is applied |
 | `Dialog`, `Drawer` | Portal, focus trap, Escape and backdrop close, scroll lock, focus returned on close. Drawers are floating sheets inset 8px from the edge; use them for forms and detail instead of new pages |
 | `Card`, `Badge`, `Skeleton`, `Spinner` | Surfaces; tinted pills with a dot or icon; shimmering placeholders the size of what they replace |
-| `StatCard`, `StatShare` (`components/shared`) | One cell of a summary strip: put cells in a `<section className="stat-strip">` (one panel, hairline dividers; 2 columns on phones, 4 from `xl`). A cell is a figure with an icon and a share bar; tinted while its filter applies to the table below |
+| `StatCard`, `StatShare` (`components/shared`) | A figure with an icon and a share bar in a `<section className="stat-strip">`. No list screen uses it now (the counts live in `ViewTabs`); keep it for a dashboard |
 | `ToastProvider`, `useToast` | Confirmations after an action ("Vehicle registered"). Errors belong next to what failed, not in a toast |
 | `AppShell` (`components/layout`) | A dark navy sidebar (`side` tokens) with the screens the user may open (from `router/routes.tsx`, filtered by permission): full from 1024px, an icon rail from 768px, a slide-in menu below. A 56px top bar with the portal name, `ThemeToggle` and the bell, a skip link, and an `ErrorBoundary` around each screen |
 

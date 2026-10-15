@@ -1,8 +1,8 @@
-import { Building2, Plus, Search, Truck, X } from 'lucide-react'
+import { Building2, Plus, Search, Truck } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { DataTable, EmptyState } from '@/components/shared'
-import { Button, FilterSelect, Spinner, ViewTabs } from '@/components/ui'
+import { DataTable, EmptyState, ListToolbar } from '@/components/shared'
+import { Button, FilterSelect } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useDepots } from '@/features/depots'
@@ -29,7 +29,7 @@ const patchFor = (view: View): Partial<VehicleFilters> =>
   view === 'all' ? { status: '', flagged: false } : view === 'flagged' ? { status: '', flagged: true } : { status: view, flagged: false }
 
 const MORE_VIEWS: { value: View | ''; label: string }[] = [
-  { value: '', label: 'views' },
+  { value: '', label: 'Inactive, retired' },
   { value: 'inactive', label: 'Inactive' },
   { value: 'retired', label: 'Retired' },
 ]
@@ -135,54 +135,36 @@ export function VehiclesPage() {
         <DataTable
 
           toolbar={
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <ViewTabs
-                label="Vehicle views"
-                value={viewOf(filters)}
-                options={[
+            <ListToolbar
+              views={{
+                label: 'Vehicle views',
+                value: viewOf(filters),
+                options: [
                   { value: 'all', label: 'All', count: fleet.counts.total, isLoading: fleet.isLoading },
                   { value: 'active', label: 'Active', count: fleet.counts.active, isLoading: fleet.isLoading },
                   { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading, hint: 'Vehicles flagged as needing maintenance' },
                   { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading, hint: 'Vehicles currently in maintenance' },
-                ]}
-                onChange={(view) => update(patchFor(view))}
-                more={{
-                  label: 'More',
+                ],
+                onChange: (view) => update(patchFor(view)),
+                more: {
+                  label: 'Other',
                   value: filters.status === 'inactive' || filters.status === 'retired' ? (filters.status as View) : '',
                   options: MORE_VIEWS,
                   onChange: (view) => update(view === '' ? patchFor('all') : patchFor(view)),
-                }}
-              />
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="relative flex-1 sm:w-72 sm:flex-none">
-                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-                  <input
-                    type="search"
-                    aria-label="Search vehicles"
-                    placeholder="Plate, VIN, make or model"
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    className="focus-ring h-9 coarse:h-11 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-                  />
-                  {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
-                </div>
-                {showDepotFilter && (
-                  <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />
-                )}
-                {filtered && (
-                  <Button
-                    variant="ghost"
-                    leadingIcon={<X className="h-4 w-4" />}
-                    onClick={() => {
+                },
+              }}
+              search={{ label: 'Search vehicles', placeholder: 'Plate, VIN, make or model', value: searchText, onChange: setSearchText, busy: list.isFetching }}
+              onClear={
+                filtered
+                  ? () => {
                       setSearchText('')
                       update({ search: '', depotId: '', status: '', flagged: false })
-                    }}
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
-            </div>
+                    }
+                  : undefined
+              }
+            >
+              {showDepotFilter && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
+            </ListToolbar>
           }
           caption="Vehicles"
           columns={columns}

@@ -29,8 +29,8 @@ interface ViewTabsProps<T extends string> {
  */
 export function ViewTabs<T extends string>({ label, value, options, onChange, more }: ViewTabsProps<T>) {
   return (
-    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-      <div role="group" aria-label={label} className="flex min-w-0 flex-wrap gap-1 py-1">
+    <div className="flex max-w-full flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+      <div role="group" aria-label={label} className="flex min-w-0 flex-wrap gap-1 py-1 sm:flex-nowrap">
         {options.map((option) => {
           const selected = value === option.value
           return (

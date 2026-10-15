@@ -1,9 +1,9 @@
-import { Building2, IdCard, Plus, Search, Users, X } from 'lucide-react'
+import { Building2, Plus, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
-import { DataTable, EmptyState } from '@/components/shared'
-import { Button, cn, FilterSelect, Spinner, useToast } from '@/components/ui'
+import { DataTable, EmptyState, ListToolbar } from '@/components/shared'
+import { Button, FilterSelect, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { DocumentsDrawer } from '@/features/documents/DocumentsDrawer'
@@ -15,16 +15,20 @@ import { useDrivers, useLicenceCounts, useReinstateDriver } from './api'
 import { driverColumns } from './columns'
 import { DriverFormDrawer } from './DriverFormDrawer'
 import { hasActiveFilters, readFilters, writeFilters, type DriverFilters, type SortKey } from './filters'
-import { LicenceStats } from './LicenceStats'
 import { RetireDriverDialog } from './RetireDriverDialog'
 import type { Driver, LicenseStatus } from './types'
 
-const LICENCE_OPTIONS: { value: LicenseStatus | ''; label: string; dot?: string }[] = [
-  { value: '', label: 'All' },
-  { value: 'valid', label: 'Valid', dot: 'bg-emerald-500' },
-  { value: 'expiring_soon', label: 'Expiring soon', dot: 'bg-amber-500' },
-  { value: 'expired', label: 'Expired', dot: 'bg-red-500' },
-]
+/** The views of the roster: licence health, plus the retired drivers. */
+type View = 'all' | LicenseStatus | 'retired'
+
+/** Which view the URL's filters amount to (null when retired is combined with a licence). */
+function viewOf(f: DriverFilters): View | null {
+  if (f.retired) return f.licence ? null : 'retired'
+  return f.licence || 'all'
+}
+
+const patchFor = (view: View): Partial<DriverFilters> =>
+  view === 'all' ? { licence: '', retired: false } : view === 'retired' ? { licence: '', retired: true } : { licence: view, retired: false }
 
 /**
  * S-05 Driver Management (FMS-19): every driver in the caller's depots with
@@ -132,70 +136,29 @@ export function DriversPage() {
         </RoleGate>
       </header>
 
-      <LicenceStats counts={licences.counts} isLoading={licences.isLoading} filters={filters} onSelect={(licence) => update({ licence, retired: false })} />
-
       <section aria-label="Driver list" className="space-y-0">
 
         <DataTable
 
           toolbar={
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-1 lg:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" aria-hidden="true" />
-            <input
-              type="search"
-              aria-label="Search drivers"
-              placeholder="Search name, email or licence number"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="focus-ring h-9 coarse:h-11 w-full rounded-control border border-line-strong bg-surface-muted pl-10 pr-10 text-sm text-ink  transition-[border-color,box-shadow] duration-150 placeholder:text-ink-subtle hover:border-ink-subtle/50 focus:border-brand"
-            />
-            {list.isFetching && searchText && <Spinner className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />}
-          </div>
-          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap [&>button]:col-span-2 sm:[&>button]:col-auto">
-            {(depots.data?.length ?? 0) > 1 && (
-              <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />
-            )}
-            <FilterSelect
-              label="Licence"
-              icon={<IdCard />}
-              value={filters.licence}
-              emptyValue=""
-              options={LICENCE_OPTIONS.map((o) => ({
-                value: o.value,
-                label: o.label,
-                adornment: o.dot ? <span className={cn('h-2 w-2 rounded-full', o.dot)} aria-hidden="true" /> : undefined,
-              }))}
-              onChange={(licence) => update({ licence })}
-            />
-            <button
-              type="button"
-              role="switch"
-              aria-checked={filters.retired}
-              onClick={() => update({ retired: !filters.retired })}
-              className={cn(
-                'focus-ring inline-flex h-9 coarse:h-11 items-center gap-2.5 rounded-control border px-3.5 text-sm  transition-all duration-150 ease-smooth',
-                filters.retired ? 'border-brand/30 bg-brand-soft text-brand-ink' : 'border-line-strong bg-surface text-ink-muted hover:text-ink',
-              )}
+            <ListToolbar
+              views={{
+                label: 'Driver views',
+                value: viewOf(filters),
+                options: [
+                  { value: 'all', label: 'All', count: licences.counts.total, isLoading: licences.isLoading },
+                  { value: 'valid', label: 'Valid', count: licences.counts.valid, isLoading: licences.isLoading, hint: 'Licence valid beyond 30 days' },
+                  { value: 'expiring_soon', label: 'Expiring soon', count: licences.counts.expiring, isLoading: licences.isLoading, hint: 'Licence expires within 30 days' },
+                  { value: 'expired', label: 'Expired', count: licences.counts.expired, isLoading: licences.isLoading, hint: 'Cannot be dispatched' },
+                  { value: 'retired', label: 'Retired', hint: 'Drivers no longer working here' },
+                ],
+                onChange: (view) => update(patchFor(view)),
+              }}
+              search={{ label: 'Search drivers', placeholder: 'Name, email or licence number', value: searchText, onChange: setSearchText, busy: list.isFetching }}
+              onClear={filtered ? clearFilters : undefined}
             >
-              <span className={cn('relative h-4 w-7 rounded-full transition-colors duration-200', filters.retired ? 'bg-brand' : 'bg-line-strong')} aria-hidden="true">
-                <span
-                  className={cn(
-                    'absolute left-0 top-0.5 h-3 w-3 rounded-full bg-white  transition-transform duration-200 ease-smooth',
-                    filters.retired ? 'translate-x-3.5' : 'translate-x-0.5',
-                  )}
-                />
-              </span>
-              Retired drivers
-            </button>
-            {filtered && (
-              <Button variant="ghost" leadingIcon={<X className="h-4 w-4" />} onClick={clearFilters}>
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
-
+              {(depots.data?.length ?? 0) > 1 && <FilterSelect label="Depot" icon={<Building2 />} value={filters.depotId} emptyValue="" options={depotOptions} onChange={(depotId) => update({ depotId })} />}
+            </ListToolbar>
           }
           caption="Drivers"
           columns={columns}
