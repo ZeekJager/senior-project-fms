@@ -171,6 +171,13 @@ describe('Vehicle Management (S-04)', () => {
       expect(within(views).getByRole('button', { name: 'Workshop 1' })).toBeInTheDocument()
     })
 
+    it('counts the retired vehicles too, so no view looks like a bug', async () => {
+      serveFleet([vehicle(), vehicle({ status: 'retired' }), vehicle({ status: 'retired' })])
+      await openVehicles()
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+      expect(await within(views).findByRole('button', { name: 'Retired 2' })).toBeInTheDocument()
+    })
+
     it('a view filters the table, is kept in the URL and clears back to All', async () => {
       const idle = vehicle({ status: 'active' })
       const away = vehicle({ status: 'maintenance' })

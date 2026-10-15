@@ -34,6 +34,7 @@ export function useFleetCounts(depotId: string) {
     maintenance: 'status=maintenance',
     inactive: 'status=inactive',
     flagged: 'maintenance_flag=true',
+    retired: 'status=retired',
   }
   const results = useQueries({
     queries: Object.entries(figures).map(([name, filter]) => ({
@@ -47,9 +48,9 @@ export function useFleetCounts(depotId: string) {
       },
     })),
   })
-  const [total, active, maintenance, inactive, flagged] = results.map((r) => r.data)
+  const [total, active, maintenance, inactive, flagged, retired] = results.map((r) => r.data)
   return {
-    counts: { total, active, maintenance, inactive, flagged },
+    counts: { total, active, maintenance, inactive, flagged, retired },
     isLoading: results.some((r) => r.isPending),
     isError: results.some((r) => r.isError),
   }

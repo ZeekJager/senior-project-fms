@@ -139,7 +139,7 @@ export function VehiclesPage() {
                   { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading, hint: 'Vehicles flagged as needing maintenance' },
                   { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading, hint: 'Vehicles currently in maintenance' },
                   { value: 'inactive', label: 'Inactive', count: fleet.counts.inactive, isLoading: fleet.isLoading, archived: true, hint: 'Vehicles taken out of service' },
-                  { value: 'retired', label: 'Retired', archived: true, hint: 'Vehicles no longer in the fleet' },
+                  { value: 'retired', label: 'Retired', count: fleet.counts.retired, isLoading: fleet.isLoading, archived: true, hint: 'Vehicles no longer in the fleet' },
                 ],
                 onChange: (view) => update(patchFor(view)),
               }}

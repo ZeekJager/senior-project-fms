@@ -21,7 +21,7 @@ export function useDrivers(filters: DriverFilters) {
 /** Licence health for the stat cards: one tiny request per figure (page_size=1, read `total_items`). */
 export function useLicenceCounts(depotId: string) {
   const { api } = useAuth()
-  const figures = { total: '', valid: 'license_status=valid', expiring: 'license_status=expiring_soon', expired: 'license_status=expired' }
+  const figures = { total: '', valid: 'license_status=valid', expiring: 'license_status=expiring_soon', expired: 'license_status=expired', retired: 'status=retired' }
   const results = useQueries({
     queries: Object.entries(figures).map(([name, filter]) => ({
       queryKey: ['drivers', 'counts', depotId, name],
@@ -34,8 +34,8 @@ export function useLicenceCounts(depotId: string) {
       },
     })),
   })
-  const [total, valid, expiring, expired] = results.map((r) => r.data)
-  return { counts: { total, valid, expiring, expired }, isLoading: results.some((r) => r.isPending) }
+  const [total, valid, expiring, expired, retired] = results.map((r) => r.data)
+  return { counts: { total, valid, expiring, expired, retired }, isLoading: results.some((r) => r.isPending) }
 }
 
 export interface NewDriverInput {
