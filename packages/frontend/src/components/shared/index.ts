@@ -1,5 +1,6 @@
 export { ConfirmDialog } from './ConfirmDialog'
-export { DataTable, type Column, type CursorPagination, type PagePagination, type Pagination, type RowHeight, type SortState } from './DataTable'
+export { DataTable, type Column, type CursorPagination, type PagePagination, type Pagination, type RowHeight, type RowSelection, type SortState } from './DataTable'
+export { TableOptions, type Density } from './TableOptions'
 export { formatMinor, parseDecimal } from './decimal'
 export { EmptyState } from './EmptyState'
 export { ErrorBoundary, ErrorState, errorDetails, isNetworkFailure } from './ErrorBoundary'
