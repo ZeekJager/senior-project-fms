@@ -47,17 +47,17 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             })()}
           </div>
           <div className="min-w-0">
-            <p className="plate flex items-center gap-2 truncate text-ink">
+            <p className="plate flex flex-wrap items-center gap-x-2 text-ink">
               {ctx.canWrite && v.status !== 'retired' ? (
                 <button
                   type="button"
                   onClick={() => ctx.onEdit(v)}
-                  className="focus-ring -mx-1 truncate rounded px-1 text-left hover:text-brand-ink hover:underline coarse:inline-flex coarse:min-h-11 coarse:items-center"
+                  className="focus-ring -mx-1 shrink-0 whitespace-nowrap rounded px-1 text-left hover:text-brand-ink hover:underline coarse:inline-flex coarse:min-h-11 coarse:items-center"
                 >
                   {v.registration_number}
                 </button>
               ) : (
-                v.registration_number
+                <span className="whitespace-nowrap">{v.registration_number}</span>
               )}
               {v.maintenance_flag && (
                 <Badge tone="warning" icon={<AlertTriangle />} className="shrink-0">

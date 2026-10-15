@@ -34,7 +34,7 @@ export function ViewTabs<T extends string>({ label, value, options, onChange }: 
     <div
       role="group"
       aria-label={label}
-      className="-mx-1 flex min-w-0 gap-1 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="-mx-1 flex min-w-0 gap-1 overflow-x-auto px-1 py-1 [scrollbar-width:none] max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] [&::-webkit-scrollbar]:hidden"
     >
       {options.map((option, index) => {
         const selected = value === option.value
