@@ -47,6 +47,9 @@ export interface VehicleListQuery {
   search?: string;
   sort_by: VehicleSortKey;
   sort_order: 'asc' | 'desc';
+  /** A second sort, applied to rows the first leaves tied. Ignored when it is the same column as `sort_by`. */
+  then_by?: VehicleSortKey;
+  then_order?: 'asc' | 'desc';
 }
 
 /** The columns of fleet.vehicles a write may set. */
@@ -204,9 +207,11 @@ export class VehicleRepository extends Repository {
     const direction = query.sort_order === 'desc' ? 'DESC' : 'ASC';
     const limit = add(query.page_size);
     const offset = add((query.page - 1) * query.page_size);
+    const second =
+      query.then_by && query.then_by !== query.sort_by ? `${VEHICLE_SORT_COLUMNS[query.then_by]} ${query.then_order === 'desc' ? 'DESC' : 'ASC'} NULLS LAST, ` : '';
     const rows = await db.query<VehicleRow>(
       `${VIEW_SQL} WHERE ${whereSql}
-        ORDER BY ${VEHICLE_SORT_COLUMNS[query.sort_by]} ${direction} NULLS LAST, v.id ${direction}
+        ORDER BY ${VEHICLE_SORT_COLUMNS[query.sort_by]} ${direction} NULLS LAST, ${second}v.id ${direction}
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     );

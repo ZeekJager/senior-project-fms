@@ -110,4 +110,6 @@ export const vehicleListQuery = z.object({
     .transform((s) => s || undefined),
   sort_by: z.enum(SORT_KEYS).default('registration_number'),
   sort_order: z.enum(['asc', 'desc']).default('asc'),
+  then_by: z.enum(SORT_KEYS).optional(),
+  then_order: z.enum(['asc', 'desc']).default('asc'),
 });

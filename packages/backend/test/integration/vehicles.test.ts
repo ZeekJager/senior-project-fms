@@ -332,6 +332,24 @@ describe('GET /vehicles: sorting by status, type and depot', () => {
   });
 });
 
+describe('GET /vehicles: a second sort', () => {
+  test('then_by orders the rows the first sort leaves tied', async () => {
+    const [zed, alpha] = [await createDepot({ name: 'Zed Depot' }), await createDepot({ name: 'Alpha Depot' })];
+    const cookie = await signIn(['fleet_manager']);
+    const tag = `Then${randomUUID().slice(0, 8)}`;
+    const a = await createVehicle({ depot: zed, vehicle_type: 'truck', make: tag });
+    const b = await createVehicle({ depot: alpha, vehicle_type: 'truck', make: tag });
+    const c = await createVehicle({ depot: alpha, vehicle_type: 'bus', make: tag });
+    const sorted = async (query: string) => ids(await api.get(`/vehicles?search=${tag}&${query}`, cookie));
+
+    // Type first (bus before truck); the two trucks are then split by depot name.
+    expect(await sorted('sort_by=vehicle_type&then_by=depot')).toEqual([c.public_id, b.public_id, a.public_id]);
+    expect(await sorted('sort_by=vehicle_type&then_by=depot&then_order=desc')).toEqual([c.public_id, a.public_id, b.public_id]);
+    // The same column twice is just the first sort.
+    expect(await sorted('sort_by=depot&then_by=depot&then_order=desc')).toEqual(await sorted('sort_by=depot'));
+  });
+});
+
 describe('current_trip', () => {
   test('a vehicle on an assigned or en-route trip shows it (en route first); others show null', async () => {
     const depot = await createDepot();
