@@ -12,21 +12,33 @@ import { documentHealth } from '@/features/documents/expiry'
 import { useFleetCounts, useVehicles } from './api'
 import { vehicleColumns } from './columns'
 import { DecommissionDialog } from './DecommissionDialog'
-import { hasActiveFilters, readFilters, writeFilters, type VehicleFilters } from './filters'
+import { hasActiveFilters, readFilters, writeFilters, type SortKey, type VehicleFilters } from './filters'
 import { VehicleFormDrawer } from './VehicleFormDrawer'
 import type { Vehicle, VehicleStatus } from './types'
 
-/** The views of the fleet. "flagged" is the maintenance flag; the rest are statuses. */
-type View = 'all' | 'flagged' | VehicleStatus
+/** The views of the fleet. "flagged" is the maintenance flag; "ready" and "docs" are the API's dispatch and document filters; the rest are statuses. */
+type View = 'all' | 'ready' | 'flagged' | 'docs' | VehicleStatus
 
-/** Which view the URL's filters amount to, or null for a mix (a status and the flag together). */
+/** Which view the URL's filters amount to, or null for a mix (a status together with the flag, say). */
 function viewOf(f: VehicleFilters): View | null {
+  if (f.ready) return f.status || f.flagged || f.docs ? null : 'ready'
+  if (f.docs) return f.status || f.flagged ? null : 'docs'
   if (f.flagged) return f.status ? null : 'flagged'
   return f.status || 'all'
 }
 
+const NO_VIEW = { status: '', flagged: false, ready: false, docs: '' } as const
+
 const patchFor = (view: View): Partial<VehicleFilters> =>
-  view === 'all' ? { status: '', flagged: false } : view === 'flagged' ? { status: '', flagged: true } : { status: view, flagged: false }
+  view === 'all'
+    ? NO_VIEW
+    : view === 'ready'
+      ? { ...NO_VIEW, ready: true }
+      : view === 'flagged'
+        ? { ...NO_VIEW, flagged: true }
+        : view === 'docs'
+          ? { ...NO_VIEW, docs: 'due' }
+          : { ...NO_VIEW, status: view }
 
 /**
  * S-04 Vehicle Management (FMS-18): the whole fleet's state in one place
@@ -84,7 +96,7 @@ export function VehiclesPage() {
     documents: { health, isLoading: docs.isPending && docs.fetchStatus !== 'idle', canRead: canReadDocs, canWrite: canUploadDocs },
     canWrite,
     canDelete,
-    showStatus: !filters.status || filters.flagged,
+    showStatus: (!filters.status || filters.flagged) && !filters.ready,
     onEdit: (v) => {
       setEditing(v)
       setFormOpen(true)
@@ -135,9 +147,10 @@ export function VehiclesPage() {
                 value: viewOf(filters),
                 options: [
                   { value: 'all', label: 'All', count: fleet.counts.total, isLoading: fleet.isLoading },
-                  { value: 'active', label: 'Active', count: fleet.counts.active, isLoading: fleet.isLoading },
+                  { value: 'ready', label: 'Ready to dispatch', count: fleet.counts.ready, isLoading: fleet.isLoading, hint: 'Active, not flagged, not on a trip and with no expired document' },
                   { value: 'flagged', label: 'Flagged', count: fleet.counts.flagged, isLoading: fleet.isLoading, hint: 'Vehicles flagged as needing maintenance' },
                   { value: 'maintenance', label: 'Workshop', count: fleet.counts.maintenance, isLoading: fleet.isLoading, hint: 'Vehicles currently in maintenance' },
+                  { value: 'docs', label: 'Documents due', count: fleet.counts.due, isLoading: fleet.isLoading, hint: 'A document has expired or expires within 30 days' },
                   { value: 'inactive', label: 'Inactive', count: fleet.counts.inactive, isLoading: fleet.isLoading, archived: true, hint: 'Vehicles taken out of service' },
                   { value: 'retired', label: 'Retired', count: fleet.counts.retired, isLoading: fleet.isLoading, archived: true, hint: 'Vehicles no longer in the fleet' },
                 ],
@@ -148,7 +161,7 @@ export function VehiclesPage() {
                 filtered
                   ? () => {
                       setSearchText('')
-                      update({ search: '', depotId: '', status: '', flagged: false })
+                      update({ search: '', depotId: '', ...NO_VIEW })
                     }
                   : undefined
               }
@@ -167,7 +180,8 @@ export function VehiclesPage() {
           sort={{
             key: filters.sortBy,
             order: filters.sortOrder,
-            onChange: () => update({ sortOrder: filters.sortOrder === 'asc' ? 'desc' : 'asc' }, { keepPage: true }),
+            // The same column flips the order; another column starts ascending.
+            onChange: (key) => update({ sortBy: key as SortKey, sortOrder: key === filters.sortBy && filters.sortOrder === 'asc' ? 'desc' : 'asc' }, { keepPage: true }),
           }}
           pagination={
             list.data
@@ -191,7 +205,7 @@ export function VehiclesPage() {
                     variant="secondary"
                     onClick={() => {
                       setSearchText('')
-                      update({ search: '', depotId: '', status: '', flagged: false })
+                      update({ search: '', depotId: '', ...NO_VIEW })
                     }}
                   >
                     Clear filters

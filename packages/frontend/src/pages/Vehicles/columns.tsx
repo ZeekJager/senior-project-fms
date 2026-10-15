@@ -97,6 +97,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     {
       key: 'type',
       header: 'Type',
+      sortKey: 'vehicle_type',
       width: 'w-[9%]',
       hideBelow: '2xl',
       cell: (v) => <span className="text-ink-muted">{VEHICLE_TYPE_LABELS[v.vehicle_type]}</span>,
@@ -104,6 +105,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     {
       key: 'depot',
       header: 'Depot',
+      sortKey: 'depot',
       width: 'w-[17%]',
       hideBelow: 'xl',
       cell: (v) => (
@@ -116,6 +118,7 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     {
       key: 'status',
       header: 'Status',
+      sortKey: 'status',
       width: 'w-[148px]',
       hideBelow: 'lg',
       cell: (v) => <StatusText status={v.status} />,

@@ -79,6 +79,13 @@ function serveFleet(fleet: Vehicle[], documents: OwnedDocument[] = []) {
       let rows = fleet.filter((v) => (q.get('status') ? v.status === q.get('status') : v.status !== 'retired'))
       if (q.get('maintenance_flag')) rows = rows.filter((v) => v.maintenance_flag === (q.get('maintenance_flag') === 'true'))
       if (q.get('depot_id')) rows = rows.filter((v) => v.depot_id === q.get('depot_id'))
+      if (q.get('ready_to_dispatch')) {
+        const want = q.get('ready_to_dispatch') === 'true'
+        rows = rows.filter((v) => (v.status === 'active' && !v.maintenance_flag && !v.current_trip) === want)
+      }
+      if (q.get('documents') === 'due') {
+        rows = rows.filter((v) => documents.some((d) => d.owner_id === v.id && d.expires_on !== null && d.expires_on <= plusDays(30)))
+      }
       if (q.get('search')) rows = rows.filter((v) => v.registration_number.includes(q.get('search')!.toUpperCase()))
       const page = Number(q.get('page') ?? 1)
       const size = Number(q.get('page_size') ?? 25)
@@ -157,7 +164,7 @@ describe('Vehicle Management (S-04)', () => {
       serveFleet([vehicle()])
       await openVehicles()
       const views = screen.getByRole('group', { name: 'Vehicle views' })
-      expect(within(views).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\d*$/, ''))).toEqual(['All', 'Active', 'Flagged', 'Workshop', 'Inactive', 'Retired'])
+      expect(within(views).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\d*$/, ''))).toEqual(['All', 'Ready to dispatch', 'Flagged', 'Workshop', 'Documents due', 'Inactive', 'Retired'])
       expect(screen.queryByRole('switch')).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /^Status:/ })).not.toBeInTheDocument()
     })
@@ -447,6 +454,71 @@ describe('Vehicle Management (S-04)', () => {
     await openVehicles(`/vehicles?depot=${DEPOT_A}`)
     expect(await screen.findByText(/for every vehicle in Addis Ababa Central/)).toBeInTheDocument()
     expect(screen.queryByText(/across your depots/)).not.toBeInTheDocument()
+  })
+
+  describe('dispatch and document views', () => {
+    it('Ready to dispatch asks the API for ready vehicles, shows its count and keeps the filter in the URL', async () => {
+      const ready = vehicle()
+      const flagged = vehicle({ maintenance_flag: true })
+      const api = serveFleet([ready, flagged])
+      const user = userEvent.setup()
+      await openVehicles()
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+      const tab = await within(views).findByRole('button', { name: 'Ready to dispatch 1' })
+
+      await user.click(tab)
+      await waitFor(() => expect(within(table()).queryByText(flagged.registration_number)).not.toBeInTheDocument())
+      expect(within(table()).getByText(ready.registration_number)).toBeInTheDocument()
+      expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?ready=1')
+      expect(api.listQueries().at(-1)?.get('ready_to_dispatch')).toBe('true')
+      expect(screen.getByRole('button', { name: /^Ready to dispatch/ })).toHaveAttribute('aria-pressed', 'true')
+      // Every row says the same status, so the column goes.
+      expect(within(table()).queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument()
+    })
+
+    it('Documents due asks for vehicles with an expired or expiring document, with a count', async () => {
+      const due = vehicle()
+      const fine = vehicle()
+      const api = serveFleet([due, fine], [doc(due.id, plusDays(10)), doc(fine.id, plusDays(200))])
+      const user = userEvent.setup()
+      await openVehicles()
+      const views = screen.getByRole('group', { name: 'Vehicle views' })
+
+      await user.click(await within(views).findByRole('button', { name: 'Documents due 1' }))
+      await waitFor(() => expect(within(table()).queryByText(fine.registration_number)).not.toBeInTheDocument())
+      expect(within(table()).getByText(due.registration_number)).toBeInTheDocument()
+      expect(screen.getByTestId('location')).toHaveTextContent('/vehicles?docs=due')
+      expect(api.listQueries().at(-1)?.get('documents')).toBe('due')
+    })
+
+    it('Clear leaves every dispatch and document view', async () => {
+      serveFleet([vehicle()])
+      const user = userEvent.setup()
+      await openVehicles('/vehicles?ready=1')
+      await user.click(await screen.findByRole('button', { name: 'Clear' }))
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/vehicles$/))
+    })
+  })
+
+  describe('sorting', () => {
+    it('sorts by depot, status and type, flipping the order on a second click', async () => {
+      const api = serveFleet([vehicle(), vehicle()])
+      const user = userEvent.setup()
+      await openVehicles()
+      await within(table()).findAllByText(/AA 3-/)
+
+      await user.click(within(table()).getByRole('button', { name: /^Depot/ }))
+      await waitFor(() => expect(api.listQueries().at(-1)?.get('sort_by')).toBe('depot'))
+      expect(api.listQueries().at(-1)?.get('sort_order')).toBe('asc')
+      await user.click(within(table()).getByRole('button', { name: /^Depot/ }))
+      await waitFor(() => expect(api.listQueries().at(-1)?.get('sort_order')).toBe('desc'))
+      expect(screen.getByTestId('location')).toHaveTextContent('sort=depot')
+      expect(screen.getByTestId('location')).toHaveTextContent('order=desc')
+
+      await user.click(within(table()).getByRole('button', { name: /^Status/ }))
+      await waitFor(() => expect(api.listQueries().at(-1)?.get('sort_by')).toBe('status'))
+      expect(api.listQueries().at(-1)?.get('sort_order')).toBe('asc')
+    })
   })
 
   describe('row actions and exceptions', () => {
