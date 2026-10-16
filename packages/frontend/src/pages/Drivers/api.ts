@@ -39,8 +39,8 @@ export function useLicenceCounts(depotId: string) {
   return { counts: { total, valid, expiring, expired, retired }, isLoading: results.some((r) => r.isPending) }
 }
 
-export interface NewDriverInput {
-  account: { full_name: string; email: string; phone: string | null }
+/** What a driver profile holds, whichever way the account comes in. */
+export interface DriverProfileInput {
   license_number: string
   license_categories: LicenseCategory[]
   license_expiry: string
@@ -49,7 +49,10 @@ export interface NewDriverInput {
   depot_id: string
 }
 
-export type DriverPatch = Partial<Omit<NewDriverInput, 'account'>>
+/** A new account created with the driver (`account`), or an existing account with the driver role (`user_id`). */
+export type NewDriverInput = DriverProfileInput & ({ account: { full_name: string; email: string; phone: string | null } } | { user_id: string })
+
+export type DriverPatch = Partial<DriverProfileInput>
 
 function useInvalidate() {
   const queryClient = useQueryClient()
@@ -60,7 +63,7 @@ function useInvalidate() {
     ])
 }
 
-/** POST /drivers with a new account: created with the driver role and no password (sign-in is set up later). */
+/** POST /drivers with a new account (driver role, no password yet) or with an existing driver-role account's `user_id`. */
 export function useCreateDriver() {
   const { api } = useAuth()
   const invalidate = useInvalidate()
