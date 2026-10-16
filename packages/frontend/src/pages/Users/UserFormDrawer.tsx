@@ -40,6 +40,8 @@ export interface IssuedLink {
   link: PasswordLink
   name: string
   email: string
+  /** Set when the invited account holds the driver role: it still needs a licence profile (the Drivers screen). */
+  driverProfile?: { userId: string; depotId: string | null }
 }
 
 interface UserFormDrawerProps {
@@ -159,7 +161,12 @@ export function UserFormDrawer({ open, user, onClose, onLink }: UserFormDrawerPr
         })
         onClose()
         toast({ title: 'Account created', description: `Send ${created.full_name} the invitation link to finish.` })
-        onLink({ link, name: created.full_name, email: created.email })
+        onLink({
+          link,
+          name: created.full_name,
+          email: created.email,
+          driverProfile: created.roles.includes('driver') ? { userId: created.id, depotId: created.depot_id } : undefined,
+        })
       }
     } catch (err) {
       setConfirmingStatus(false)

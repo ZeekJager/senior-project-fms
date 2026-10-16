@@ -1,4 +1,4 @@
-import { Check, Copy, KeyRound, ShieldAlert } from 'lucide-react'
+import { Check, ClipboardList, Copy, KeyRound, ShieldAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button, Dialog } from '@/components/ui'
 import { passwordLinkUrl, type PasswordLink } from './api'
@@ -7,6 +7,8 @@ interface PasswordLinkDialogProps {
   /** The link and who it is for; null closes the dialog. */
   link: { link: PasswordLink; name: string; email: string } | null
   onClose: () => void
+  /** Given when the account is a new driver and the caller may add driver profiles: closes the dialog and opens the licence form. */
+  onAddDriverProfile?: () => void
 }
 
 const formatExpiry = (iso: string) =>
@@ -17,7 +19,7 @@ const formatExpiry = (iso: string) =>
  * closing this dialog loses it: a new one can be issued from the user's
  * record at any time.
  */
-export function PasswordLinkDialog({ link, onClose }: PasswordLinkDialogProps) {
+export function PasswordLinkDialog({ link, onClose, onAddDriverProfile }: PasswordLinkDialogProps) {
   const [copied, setCopied] = useState(false)
   const field = useRef<HTMLInputElement>(null)
   const url = link ? passwordLinkUrl(link.link.token) : ''
@@ -74,10 +76,24 @@ export function PasswordLinkDialog({ link, onClose }: PasswordLinkDialogProps) {
           This link is shown only now. If it is lost or expires, issue a new one from the user’s record; older links stop working.
         </p>
 
-        <div className="flex justify-end">
+        {onAddDriverProfile && (
+          <p className="flex items-start gap-2 rounded-control border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink-muted">
+            <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" aria-hidden="true" />
+            <span>
+              {link?.name.split(' ')[0] ?? 'This driver'} cannot be dispatched until their licence is on file. Copy the link first, then add the driver profile.
+            </span>
+          </p>
+        )}
+
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Done
           </Button>
+          {onAddDriverProfile && (
+            <Button leadingIcon={<ClipboardList className="h-4 w-4" />} onClick={onAddDriverProfile}>
+              Add driver profile
+            </Button>
+          )}
         </div>
       </div>
     </Dialog>

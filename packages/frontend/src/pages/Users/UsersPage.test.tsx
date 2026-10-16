@@ -12,10 +12,15 @@ const manager = currentUser(['fleet_manager'], ['users:read', 'roles:read', 'dep
 // Not a seeded grant: a non-admin who may write users, to show the escalation guard.
 const writerWithoutAdmin = currentUser(['fleet_manager'], ['users:read', 'users:write', 'roles:read', 'depot:read', 'vehicle:read', 'trip:read'])
 const driver = currentUser(['driver'], ['vehicle:read', 'trip:execute'])
+// The seeded admin also holds driver:write, so it may add the licence profile of a driver it invites.
+const adminWithDrivers = currentUser(['admin'], [...ADMIN_PERMS, 'driver:read', 'driver:write'])
+// Reads the directory only: no roles:read, so no role controls at all.
+const directoryReader = currentUser(['compliance_officer'], ['users:read', 'depot:read', 'vehicle:read'])
 
 const roles: Role[] = [
   { name: 'admin', description: 'Full access', permissions: ADMIN_PERMS },
   { name: 'dispatcher', description: 'Plans trips in one depot', permissions: ['trip:read', 'vehicle:read'] },
+  { name: 'driver', description: 'Drives assigned trips', permissions: ['trip:read'] },
   { name: 'fleet_owner', description: 'Reads the fleet', permissions: ['vehicle:read', 'audit:read'] },
 ]
 
@@ -200,6 +205,148 @@ describe('Users and roles', () => {
     await u.click(within(drawer).getByRole('button', { name: 'Create reset link' }))
     const dialog = await screen.findByRole('dialog', { name: 'Password reset link ready' })
     expect(within(dialog).getByLabelText('One-time link')).toHaveValue(`${window.location.origin}/set-password#token=reset_tok`)
+  })
+
+  describe('inviting a driver', () => {
+    const invited = () =>
+      user({ id: 'u-driver', full_name: 'Dawit Driver', email: 'dawit@fms.local', roles: ['driver'], depot_id: 'd-1', has_password: false })
+
+    function serveInvite() {
+      serveUsers([user({ full_name: 'Abebe Kebede' })])
+      let account: unknown
+      let profile: unknown
+      server.use(
+        http.post('/api/v1/users', async ({ request }) => {
+          account = await request.json()
+          return HttpResponse.json(
+            { data: invited(), meta: { password_setup: { token: 'tok_driver', purpose: 'setup', expires_at: '2026-10-20T08:00:00Z' }, request_id: 'r' } },
+            { status: 201 },
+          )
+        }),
+        http.post('/api/v1/drivers', async ({ request }) => {
+          profile = await request.json()
+          return HttpResponse.json({ data: { id: 'drv-1' }, meta: { request_id: 'r' } }, { status: 201 })
+        }),
+      )
+      return { account: () => account, profile: () => profile }
+    }
+
+    async function inviteDriver(u: ReturnType<typeof userEvent.setup>) {
+      await u.click(screen.getByRole('button', { name: 'Invite user' }))
+      const drawer = await screen.findByRole('dialog', { name: 'Invite a user' })
+      await u.type(within(drawer).getByLabelText('Full name'), 'Dawit Driver')
+      await u.type(within(drawer).getByLabelText('Work email'), 'dawit@fms.local')
+      await u.click(await within(drawer).findByRole('checkbox', { name: /Driver/ }))
+      await u.click(within(drawer).getByRole('button', { name: 'Create account' }))
+      // Drivers work in one depot, like dispatchers.
+      expect(await within(drawer).findByText(/choose their home depot/)).toBeInTheDocument()
+      await u.selectOptions(within(drawer).getByLabelText(/Home depot/), 'd-1')
+      await u.click(within(drawer).getByRole('button', { name: 'Create account' }))
+      return screen.findByRole('dialog', { name: 'Invitation link ready' })
+    }
+
+    it('creates the driver account and then records the licence for it, end to end', async () => {
+      const sent = serveInvite()
+      const u = userEvent.setup()
+      await openUsers('Abebe Kebede', adminWithDrivers)
+
+      const link = await inviteDriver(u)
+      expect(sent.account()).toEqual({ email: 'dawit@fms.local', full_name: 'Dawit Driver', phone: null, depot_id: 'd-1', roles: ['driver'] })
+      expect(within(link).getByLabelText('One-time link')).toHaveValue(`${window.location.origin}/set-password#token=tok_driver`)
+      expect(within(link).getByText(/cannot be dispatched until their licence is on file/)).toBeInTheDocument()
+
+      await u.click(within(link).getByRole('button', { name: 'Add driver profile' }))
+      const form = await screen.findByRole('dialog', { name: 'Add driver profile' })
+      expect(screen.queryByRole('dialog', { name: 'Invitation link ready' })).not.toBeInTheDocument()
+      // The account is fixed: no name or email to type again, and the depot is the one just chosen.
+      expect(within(form).getByText('Dawit Driver')).toBeInTheDocument()
+      expect(within(form).queryByLabelText('Full name')).not.toBeInTheDocument()
+      expect(within(form).getByLabelText('Home depot')).toHaveValue('d-1')
+
+      await u.click(within(form).getByRole('button', { name: 'Add driver' }))
+      expect(await within(form).findByText('Enter the licence number.')).toBeInTheDocument()
+      expect(sent.profile()).toBeUndefined()
+
+      await u.type(within(form).getByLabelText('Licence number'), 'ET 4471')
+      await u.type(within(form).getByLabelText('Expires on'), '2030-06-30')
+      await u.click(within(form).getByRole('button', { name: 'CE' }))
+      await u.click(within(form).getByRole('button', { name: 'B' }))
+      await u.click(within(form).getByRole('button', { name: 'Add driver' }))
+
+      await waitFor(() =>
+        expect(sent.profile()).toEqual({
+          user_id: 'u-driver',
+          license_number: 'ET 4471',
+          license_categories: ['B', 'CE'],
+          license_expiry: '2030-06-30',
+          hire_date: null,
+          emergency_phone: null,
+          depot_id: 'd-1',
+        }),
+      )
+      expect(await screen.findByText('Driver added')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Add driver profile' })).not.toBeInTheDocument()
+    })
+
+    it("shows the server's refusal of the profile inside the form", async () => {
+      serveInvite()
+      server.use(http.post('/api/v1/drivers', () => errorEnvelope(400, 'VALIDATION_FAILED', 'Invalid.', [{ field: 'user_id', reason: 'account_not_active' }])))
+      const u = userEvent.setup()
+      await openUsers('Abebe Kebede', adminWithDrivers)
+
+      await u.click(within(await inviteDriver(u)).getByRole('button', { name: 'Add driver profile' }))
+      const form = await screen.findByRole('dialog', { name: 'Add driver profile' })
+      await u.type(within(form).getByLabelText('Licence number'), 'ET 4471')
+      await u.type(within(form).getByLabelText('Expires on'), '2030-06-30')
+      await u.click(within(form).getByRole('button', { name: 'Add driver' }))
+      expect(await within(form).findByRole('alert')).toHaveTextContent('not active')
+    })
+
+    it('offers no licence shortcut to an admin who cannot write drivers', async () => {
+      serveInvite()
+      const u = userEvent.setup()
+      await openUsers('Abebe Kebede')
+
+      const link = await inviteDriver(u)
+      expect(within(link).queryByRole('button', { name: 'Add driver profile' })).not.toBeInTheDocument()
+      expect(within(link).getByRole('button', { name: 'Done' })).toBeInTheDocument()
+    })
+
+    it('offers no licence shortcut for an account that is not a driver', async () => {
+      serveUsers([user({ full_name: 'Abebe Kebede' })])
+      server.use(
+        http.post('/api/v1/users', () =>
+          HttpResponse.json(
+            { data: user({ roles: ['fleet_owner'] }), meta: { password_setup: { token: 'tok_o', purpose: 'setup', expires_at: '2026-10-20T08:00:00Z' }, request_id: 'r' } },
+            { status: 201 },
+          ),
+        ),
+      )
+      const u = userEvent.setup()
+      await openUsers('Abebe Kebede', adminWithDrivers)
+      await u.click(screen.getByRole('button', { name: 'Invite user' }))
+      const drawer = await screen.findByRole('dialog', { name: 'Invite a user' })
+      await u.type(within(drawer).getByLabelText('Full name'), 'Selam Owner')
+      await u.type(within(drawer).getByLabelText('Work email'), 'selam@fms.local')
+      await u.click(await within(drawer).findByRole('checkbox', { name: /Fleet owner/ }))
+      await u.click(within(drawer).getByRole('button', { name: 'Create account' }))
+
+      const link = await screen.findByRole('dialog', { name: 'Invitation link ready' })
+      expect(within(link).queryByRole('button', { name: 'Add driver profile' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows no role controls to someone who cannot read roles or write users', async () => {
+    serveUsers([user({ full_name: 'Abebe Kebede' })])
+    await openUsers('Abebe Kebede', directoryReader)
+
+    expect(screen.queryByRole('button', { name: 'Roles' })).not.toBeInTheDocument()
+    expect(screen.queryByText('All roles')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Invite user' })).not.toBeInTheDocument()
+    expect(within(rowOf('Abebe Kebede')).queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument()
+    // Clicking a row does not open the role editor either.
+    await userEvent.setup().click(within(rowOf('Abebe Kebede')).getByText('Abebe Kebede'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('renders nothing for a driver', async () => {

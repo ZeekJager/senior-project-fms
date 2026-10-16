@@ -1,5 +1,5 @@
 import { today } from '@/features/documents/expiry'
-import type { DriverPatch, NewDriverInput } from './api'
+import type { DriverPatch, DriverProfileInput, NewDriverInput } from './api'
 import { normalizeLicence } from './filters'
 import { LICENSE_CATEGORIES, type Driver, type LicenseCategory } from './types'
 
@@ -59,14 +59,17 @@ export function orderedCategories(categories: readonly LicenseCategory[]): Licen
 /**
  * Checks the form and builds the request body. `creating`: the account
  * fields are required and sent; editing leaves them to user administration.
+ * `userId`: the profile is for an account that already exists (the account
+ * fields are neither asked nor sent).
  */
 export function validateDriverForm(
   v: DriverFormValues,
   creating: boolean,
   on: string = today(),
+  userId?: string,
 ): { errors: FieldErrors; input: NewDriverInput | null } {
   const errors: FieldErrors = {}
-  if (creating) {
+  if (creating && !userId) {
     if (!v.full_name.trim()) errors.full_name = 'Enter the driver’s full name.'
     else if (v.full_name.trim().length > 255) errors.full_name = 'At most 255 characters.'
     if (!v.email.trim()) errors.email = 'Enter an email for the driver’s account.'
@@ -86,22 +89,22 @@ export function validateDriverForm(
   if (!v.depot_id) errors.depot_id = 'Choose the home depot.'
 
   if (Object.keys(errors).length > 0) return { errors, input: null }
-  return {
-    errors,
-    input: {
-      account: { full_name: v.full_name.trim(), email: v.email.trim().toLowerCase(), phone: v.phone.trim() || null },
-      license_number: licence,
-      license_categories: orderedCategories(v.license_categories),
-      license_expiry: v.license_expiry,
-      hire_date: v.hire_date || null,
-      emergency_phone: v.emergency_phone.trim() || null,
-      depot_id: v.depot_id,
-    },
+  const profile: DriverProfileInput = {
+    license_number: licence,
+    license_categories: orderedCategories(v.license_categories),
+    license_expiry: v.license_expiry,
+    hire_date: v.hire_date || null,
+    emergency_phone: v.emergency_phone.trim() || null,
+    depot_id: v.depot_id,
   }
+  const who = userId
+    ? { user_id: userId }
+    : { account: { full_name: v.full_name.trim(), email: v.email.trim().toLowerCase(), phone: v.phone.trim() || null } }
+  return { errors, input: { ...who, ...profile } }
 }
 
 /** For PATCH: only the licence, depot and contact fields that changed. */
-export function changedFields(input: NewDriverInput, original: Driver): DriverPatch {
+export function changedFields(input: DriverProfileInput, original: Driver): DriverPatch {
   const patch: DriverPatch = {}
   if (input.license_number !== original.license_number) patch.license_number = input.license_number
   if (input.license_categories.join() !== original.license_categories.join()) patch.license_categories = input.license_categories

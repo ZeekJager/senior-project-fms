@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { describeFilters } from '@/lib/describeFilters'
+import { DriverFormDrawer } from '@/pages/Drivers/DriverFormDrawer'
 import { useRoles, useUserCounts, useUsers, type User, type UserFilters, type UserStatus } from './api'
 import { PasswordLinkDialog } from './PasswordLinkDialog'
 import { RolesDrawer } from './RolesDrawer'
@@ -82,6 +83,7 @@ export function UsersPage() {
   const filters = useMemo(() => readFilters(params), [params])
   const canWrite = hasPermission('users:write')
   const canReadRoles = hasPermission('roles:read')
+  const canAddDriverProfile = hasPermission('driver:write')
 
   function update(patch: Partial<UserFilters>) {
     setParams(writeFilters({ ...filters, page: 1, ...patch }), { replace: true })
@@ -104,6 +106,8 @@ export function UsersPage() {
   const [creating, setCreating] = useState(false)
   const [link, setLink] = useState<IssuedLink | null>(null)
   const [showRoles, setShowRoles] = useState(false)
+  // The account just invited with the driver role, while its licence form is open.
+  const [profileFor, setProfileFor] = useState<{ id: string; full_name: string; email: string; depotId: string | null } | null>(null)
 
   const columns: Column<User>[] = [
     {
@@ -289,7 +293,28 @@ export function UsersPage() {
           onLink={setLink}
         />
       )}
-      <PasswordLinkDialog link={link} onClose={() => setLink(null)} />
+      <PasswordLinkDialog
+        link={link}
+        onClose={() => setLink(null)}
+        onAddDriverProfile={
+          link?.driverProfile && canAddDriverProfile
+            ? () => {
+                setProfileFor({ id: link.driverProfile!.userId, full_name: link.name, email: link.email, depotId: link.driverProfile!.depotId })
+                setLink(null)
+              }
+            : undefined
+        }
+      />
+      {canAddDriverProfile && (
+        <DriverFormDrawer
+          open={profileFor !== null}
+          driver={null}
+          forUser={profileFor ?? undefined}
+          depots={depots.data ?? []}
+          defaultDepotId={profileFor?.depotId ?? undefined}
+          onClose={() => setProfileFor(null)}
+        />
+      )}
       {canReadRoles && <RolesDrawer open={showRoles} onClose={() => setShowRoles(false)} />}
     </div>
   )
