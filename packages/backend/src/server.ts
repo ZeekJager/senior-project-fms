@@ -4,6 +4,8 @@ import { config } from './config';
 import { pool } from './db';
 import { modules } from './modules';
 import { redis, redisKey } from './shared/cache';
+import { createOutboxRelay } from './shared/events/event-bus';
+import { outboxCleanupJob } from './shared/events/outbox-cleanup';
 import { idempotencyPurgeJob } from './shared/http/idempotency-purge';
 import { PostgresJobLock } from './shared/jobs/job-lock';
 import { RedisJobLock } from './shared/jobs/redis-job-lock';
@@ -23,7 +25,7 @@ const runs = new PostgresJobLock(pool);
 const lock = redis ? new RedisJobLock(redis, runs, (job, day) => redisKey('lock', 'job', job, day)) : runs;
 
 startScheduler(
-  [...modules.flatMap((m) => m.jobs ?? []), idempotencyPurgeJob(pool)],
+  [...modules.flatMap((m) => m.jobs ?? []), idempotencyPurgeJob(pool), outboxCleanupJob(pool)],
   {
     lock,
     audit: pool,
@@ -32,3 +34,7 @@ startScheduler(
     log: (level, message, fields) => logger[level](fields, message),
   },
 );
+
+// Delivers domain events from the outbox to consumers and Redis (FMS-73).
+// Every instance runs one; an advisory lock lets one relay at a time.
+createOutboxRelay().start();

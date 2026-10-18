@@ -1,6 +1,7 @@
 import { depotScope } from '../../../shared/authz/scope';
 import { validationFailed } from '../../../shared/errors/app-error';
-import { createEvent } from '../../../shared/events/domain-event';
+import type { PoolClient } from 'pg';
+import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -86,9 +87,10 @@ export class DepotService {
     const { depots } = this.deps;
     const view = await depots.inTransaction(async (client) => {
       const row = await depots.insert(mutationContext(caller), toColumns(input), client);
-      return depots.findViewById(client, row.id as string);
+      const created = await depots.findViewById(client, row.id as string);
+      await this.publish(client, caller, DEPOT_EVENTS.created, { depot_id: created.id });
+      return created;
     });
-    await this.publish(caller, DEPOT_EVENTS.created, { depot_id: view.id });
     return view;
   }
 
@@ -100,7 +102,7 @@ export class DepotService {
   async update(caller: Caller, depotId: string, input: DepotUpdate, expectedVersion: number | null, replace = false): Promise<DepotView> {
     const { depots } = this.deps;
     const patch: DepotUpdate = replace ? { ...Object.fromEntries(OPTIONAL_FIELDS.map((k) => [k, null])), ...input } : input;
-    const { view, changed } = await depots.inTransaction(async (client) => {
+    return depots.inTransaction(async (client) => {
       const current = await depots.lockForWrite(client, depotId);
       if (!current) throw depotNotFoundById();
       if (expectedVersion !== null && expectedVersion !== current.version) throw staleVersion();
@@ -111,11 +113,12 @@ export class DepotService {
       checkCoordinates(lat, lon);
       const data = toColumns(patch);
       const changedFields = Object.keys(data).sort();
-      if (changedFields.length > 0) await depots.update(mutationContext(caller), current.id, data, client);
-      return { view: await depots.findViewById(client, current.id), changed: changedFields };
+      if (changedFields.length === 0) return depots.findViewById(client, current.id);
+      await depots.update(mutationContext(caller), current.id, data, client);
+      const view = await depots.findViewById(client, current.id);
+      await this.publish(client, caller, DEPOT_EVENTS.updated, { depot_id: view.id, changed_fields: changedFields });
+      return view;
     });
-    if (changed.length > 0) await this.publish(caller, DEPOT_EVENTS.updated, { depot_id: view.id, changed_fields: changed });
-    return view;
   }
 
   /**
@@ -127,35 +130,37 @@ export class DepotService {
    */
   async remove(caller: Caller, depotId: string): Promise<void> {
     const { depots, users } = this.deps;
-    const removed = await depots.inTransaction(async (client) => {
+    await depots.inTransaction(async (client) => {
       const current = await depots.lockForWrite(client, depotId);
       if (!current) throw depotNotFoundById();
-      if (!current.isActive) return null;
+      if (!current.isActive) return;
       const { vehicles, drivers } = await depots.occupancy(client, current.id);
       const accounts = await users.countActiveInDepot(client, current.id);
       if (vehicles + drivers + accounts > 0) throw depotNotEmpty({ vehicles, drivers, users: accounts });
       await depots.deactivate(mutationContext(caller), current.id, client);
-      return depots.findViewById(client, current.id);
+      const removed = await depots.findViewById(client, current.id);
+      await this.publish(client, caller, DEPOT_EVENTS.deactivated, { depot_id: removed.id });
     });
-    if (removed) await this.publish(caller, DEPOT_EVENTS.deactivated, { depot_id: removed.id });
   }
 
   /** POST /depots/{id}/reactivate: brings a deleted depot back. Already active: unchanged. */
   async reactivate(caller: Caller, depotId: string): Promise<DepotView> {
     const { depots } = this.deps;
-    const { view, changed } = await depots.inTransaction(async (client) => {
+    return depots.inTransaction(async (client) => {
       const current = await depots.lockForWrite(client, depotId);
       if (!current) throw depotNotFoundById();
-      if (current.isActive) return { view: await depots.findViewById(client, current.id), changed: false };
+      if (current.isActive) return depots.findViewById(client, current.id);
       await depots.update(mutationContext(caller), current.id, { is_active: true }, client);
-      return { view: await depots.findViewById(client, current.id), changed: true };
+      const view = await depots.findViewById(client, current.id);
+      await this.publish(client, caller, DEPOT_EVENTS.reactivated, { depot_id: view.id });
+      return view;
     });
-    if (changed) await this.publish(caller, DEPOT_EVENTS.reactivated, { depot_id: view.id });
-    return view;
   }
 
-  private publish(caller: Caller, type: string, payload: Record<string, unknown>): Promise<void> {
-    return this.deps.events.publish([createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId })]);
+  /** Into the outbox on the change's transaction (FMS-73); ordered per depot. */
+  private publish(client: PoolClient, caller: Caller, type: string, payload: { depot_id: string } & Record<string, unknown>): Promise<void> {
+    const ctx = { actor: caller.user.publicId, correlationId: caller.correlationId };
+    return this.deps.events.publish(client, [createEvent(type, payload, ctx, { aggregate: aggregateKey('depot', payload.depot_id) })]);
   }
 }
 

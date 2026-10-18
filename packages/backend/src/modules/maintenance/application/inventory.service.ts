@@ -1,6 +1,6 @@
 import { DatabaseError } from 'pg';
 import { depotScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent, type DomainEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -143,16 +143,17 @@ export class InventoryService {
       if (opening > 0) {
         await parts.recordMovement(ctx, client, { partId: row.id as string, depotId, type: 'purchase', delta: opening, notes: 'Opening stock', performedBy: caller.user.id });
       }
-      return (await this.views(client, [await parts.findById(client, row.id as string)]))[0];
+      const created = (await this.views(client, [await parts.findById(client, row.id as string)]))[0];
+      await this.deps.events.publish(client, [inventoryEvent(caller, INVENTORY_EVENTS.created, { part_id: created.id, depot_id: created.depot_id })]);
+      return created;
     });
-    await this.publish([event(caller, INVENTORY_EVENTS.created, { part_id: view.id, depot_id: view.depot_id })]);
     return view;
   }
 
   /** PUT /inventory/{id}: the fields sent (not stock: that moves only through adjust and repairs). */
   async update(caller: Caller, partId: string, patch: PartUpdate, expectedVersion: number | null): Promise<InventoryPartView> {
     const { parts } = this.deps;
-    const { view, changed } = await parts.inTransaction(async (client) => {
+    return parts.inTransaction(async (client) => {
       const row = await parts.findVisible(client, partId, depotScope(caller.user), true);
       if (!row) throw partNotFoundById();
       if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
@@ -164,10 +165,12 @@ export class InventoryService {
       if (patch.depot_id !== undefined) data.depot_id = await this.depotFor(client, caller, patch.depot_id);
       const changedFields = Object.keys(data).sort();
       if (changedFields.length > 0) await parts.update(mutationContext(caller), row.id, data, client);
-      return { view: (await this.views(client, [await parts.findById(client, row.id)]))[0], changed: changedFields };
+      const view = (await this.views(client, [await parts.findById(client, row.id)]))[0];
+      if (changedFields.length > 0) {
+        await this.deps.events.publish(client, [inventoryEvent(caller, INVENTORY_EVENTS.updated, { part_id: view.id, changed_fields: changedFields })]);
+      }
+      return view;
     });
-    if (changed.length > 0) await this.publish([event(caller, INVENTORY_EVENTS.updated, { part_id: view.id, changed_fields: changed })]);
-    return view;
   }
 
   /**
@@ -179,7 +182,7 @@ export class InventoryService {
   async adjust(caller: Caller, partId: string, input: { quantity: number; reason: string }): Promise<InventoryPartView> {
     const { parts } = this.deps;
     const ctx = mutationContext(caller);
-    const { view, before } = await parts.inTransaction(async (client) => {
+    return parts.inTransaction(async (client) => {
       const row = await parts.findVisible(client, partId, depotScope(caller.user), true);
       if (!row) throw partNotFoundById();
       if (!row.isActive) throw partNotFoundById();
@@ -192,17 +195,14 @@ export class InventoryService {
         throw err;
       }
       await parts.recordMovement(ctx, client, { partId: row.id, depotId: row.depotId, type: 'adjustment', delta: input.quantity, notes: input.reason, performedBy: caller.user.id });
-      return { view: (await this.views(client, [await parts.findById(client, row.id)]))[0], before: row };
+      const view = (await this.views(client, [await parts.findById(client, row.id)]))[0];
+      const events: DomainEvent[] = [
+        inventoryEvent(caller, INVENTORY_EVENTS.adjusted, { part_id: view.id, quantity_delta: input.quantity, stock_quantity: view.stock_quantity, reason: input.reason }),
+      ];
+      if (row.stockQuantity > row.reorderThreshold && view.below_reorder) events.push(inventoryEvent(caller, INVENTORY_EVENTS.reorderNeeded, reorderPayload(view)));
+      await this.deps.events.publish(client, events);
+      return view;
     });
-
-    const events: DomainEvent[] = [
-      event(caller, INVENTORY_EVENTS.adjusted, { part_id: view.id, quantity_delta: input.quantity, stock_quantity: view.stock_quantity, reason: input.reason }),
-    ];
-    if (before.stockQuantity > before.reorderThreshold && view.below_reorder) {
-      events.push(event(caller, INVENTORY_EVENTS.reorderNeeded, reorderPayload(view)));
-    }
-    await this.publish(events);
-    return view;
   }
 
   /** A depot for a part: one in the caller's scope, or null (shared), which only a fleet-wide role may choose. */
@@ -237,9 +237,6 @@ export class InventoryService {
     }));
   }
 
-  private publish(events: DomainEvent[]): Promise<void> {
-    return this.deps.events.publish(events);
-  }
 }
 
 export function reorderPayload(part: { id: string; part_number: string; depot_id: string | null; stock_quantity: number; reorder_threshold: number }) {
@@ -252,8 +249,9 @@ export function reorderPayload(part: { id: string; part_number: string; depot_id
   };
 }
 
-function event(caller: Caller, type: string, payload: Record<string, unknown>): DomainEvent {
-  return createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId });
+/** An inventory event, ordered per part in the outbox (FMS-73). */
+export function inventoryEvent(caller: Caller, type: string, payload: { part_id: string } & Record<string, unknown>): DomainEvent {
+  return createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId }, { aggregate: aggregateKey('part', payload.part_id) });
 }
 
 function mutationContext(caller: Caller): MutationContext {

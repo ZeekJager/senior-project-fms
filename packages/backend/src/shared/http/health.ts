@@ -22,15 +22,24 @@ export interface OptionalDependency {
   ping(): Promise<unknown>;
 }
 
+/** Numbers for operators (counts and ages, never personal data), reported under `metrics`. */
+export type HealthMetrics = () => Promise<Record<string, number>>;
+
 /**
  * `GET /health/live`: the process is up (no dependencies checked).
  * `GET /health/ready`: every required check passes; 503 otherwise, so a
  * load balancer stops sending traffic. Optional dependencies are reported
  * as `ok`, `degraded` (configured but failing: the API serves without it,
- * status `degraded`, still 200) or `disabled` (not configured). The ML
- * service adds its check in FMS-75.
+ * status `degraded`, still 200) or `disabled` (not configured). `metrics`
+ * adds numbers such as the event outbox's lag (FMS-73); one that fails is
+ * left out. The ML service adds its check in FMS-75.
  */
-export function healthRouter(checks: Record<string, ReadinessCheck>, timeoutMs = 2000, optional: Record<string, OptionalDependency> = {}): Router {
+export function healthRouter(
+  checks: Record<string, ReadinessCheck>,
+  timeoutMs = 2000,
+  optional: Record<string, OptionalDependency> = {},
+  metrics: Record<string, HealthMetrics> = {},
+): Router {
   const router = Router();
 
   router.get('/health/live', publicRoute(), (_req, res) => {
@@ -58,9 +67,16 @@ export function healthRouter(checks: Record<string, ReadinessCheck>, timeoutMs =
       degraded ||= !ok;
     }
 
+    const numbers: Record<string, Record<string, number>> = {};
+    for (const [name, read] of Object.entries(metrics)) {
+      const value = await withTimeout(read, timeoutMs).catch(() => undefined);
+      if (value) numbers[name] = value as Record<string, number>;
+    }
+
     res.status(ready ? 200 : 503).json({
       status: ready ? (degraded ? 'degraded' : 'ok') : 'unavailable',
       checks: report,
+      ...(Object.keys(metrics).length > 0 ? { metrics: numbers } : {}),
       timestamp: new Date().toISOString(),
     });
   });

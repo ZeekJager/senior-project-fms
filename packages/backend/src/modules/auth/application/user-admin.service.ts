@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { createEvent, type DomainEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import { withTransaction } from '../../../shared/infrastructure/transaction';
@@ -131,13 +131,14 @@ export class UserAdminService {
       await users.setRoles(ctx, client, userId, roleRows.map((r) => r.id), [], input.roles);
       const link = newPasswordLink();
       const expiresAt = await users.issueToken(ctx, client, { userId, purpose: 'setup', tokenHash: link.hash, ttlSeconds: SETUP_TOKEN_TTL_SECONDS });
-      return { row: await users.findById(client, userId), link: link.value, expiresAt };
+      const created = await users.findById(client, userId);
+      await this.deps.events.publish(client, [
+        event(caller, USER_ADMIN_EVENTS.created, { user_id: created.publicId, roles: created.roles }),
+        event(caller, this.deps.accountChangedEvent, { user_id: created.publicId }),
+      ]);
+      return { row: created, link: link.value, expiresAt };
     });
     const user = await this.view(result.row);
-    await this.deps.events.publish([
-      event(caller, USER_ADMIN_EVENTS.created, { user_id: user.id, roles: user.roles }),
-      event(caller, this.deps.accountChangedEvent, { user_id: user.id }),
-    ]);
     return { user, passwordSetup: { token: result.link, purpose: 'setup', expires_at: result.expiresAt } };
   }
 
@@ -153,7 +154,7 @@ export class UserAdminService {
     if (self && patch.roles !== undefined) throw ownRolesForbidden();
     if (self && patch.status !== undefined && patch.status !== 'active') throw ownStatusForbidden();
 
-    const outcome = await withTransaction(db, async (client) => {
+    const updated = await withTransaction(db, async (client) => {
       const current = await users.lock(client, userId);
       if (!current) throw userNotFound();
 
@@ -186,26 +187,24 @@ export class UserAdminService {
       if (rolesChanged) await users.setRoles(ctx, client, current.id, roleRows.map((r) => r.id), current.roles, roles);
       const deactivated = data.status !== undefined && data.status !== 'active';
       const revoked = deactivated ? await users.revokeAllSessions(client, current.id) : 0;
-      return { before: current, after: await users.findById(client, current.id), data, rolesChanged, deactivated, revoked };
-    });
+      const after = await users.findById(client, current.id);
 
-    const user = await this.view(outcome.after);
-    const events: DomainEvent[] = [];
-    if (outcome.rolesChanged) {
-      const before = new Set(outcome.before.roles);
-      const after = new Set(outcome.after.roles);
-      events.push(
-        event(caller, USER_ADMIN_EVENTS.roleChanged, {
-          user_id: user.id,
-          added: [...after].filter((r) => !before.has(r)).sort(),
-          removed: [...before].filter((r) => !after.has(r)).sort(),
-        }),
-      );
-    }
-    if (outcome.deactivated) events.push(event(caller, USER_ADMIN_EVENTS.deactivated, { user_id: user.id, status: user.status, sessions_revoked: outcome.revoked }));
-    if (Object.keys(outcome.data).length > 0) events.push(event(caller, this.deps.accountChangedEvent, { user_id: user.id }));
-    await this.deps.events.publish(events);
-    return user;
+      const events: DomainEvent[] = [];
+      if (rolesChanged) {
+        events.push(
+          event(caller, USER_ADMIN_EVENTS.roleChanged, {
+            user_id: after.publicId,
+            added: after.roles.filter((r) => !current.roles.includes(r)).sort(),
+            removed: current.roles.filter((r) => !after.roles.includes(r)).sort(),
+          }),
+        );
+      }
+      if (deactivated) events.push(event(caller, USER_ADMIN_EVENTS.deactivated, { user_id: after.publicId, status: after.status, sessions_revoked: revoked }));
+      if (Object.keys(data).length > 0) events.push(event(caller, this.deps.accountChangedEvent, { user_id: after.publicId }));
+      await this.deps.events.publish(client, events);
+      return after;
+    });
+    return this.view(updated);
   }
 
   /** POST /users/{id}/password-reset: a new one-time link (1 hour); older open links stop working. */
@@ -319,8 +318,9 @@ function requireDepotFor(roles: readonly string[], depotId: string | null): void
   if (depotId === null && roles.some((r) => DEPOT_SCOPED_ROLES.includes(r))) throw depotRequired();
 }
 
-function event(caller: AdminCaller, type: string, payload: Record<string, unknown>): DomainEvent {
-  return createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId });
+/** A user administration event, ordered per user in the outbox (FMS-73). */
+function event(caller: AdminCaller, type: string, payload: { user_id: string } & Record<string, unknown>): DomainEvent {
+  return createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId }, { aggregate: aggregateKey('user', payload.user_id) });
 }
 
 function mutationContext(caller: AdminCaller): MutationContext {

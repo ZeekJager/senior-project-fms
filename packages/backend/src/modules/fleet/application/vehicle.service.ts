@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { depotScope } from '../../../shared/authz/scope';
-import { createEvent, type DomainEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import type { Cache } from '../../../shared/cache/cache';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
@@ -98,8 +98,8 @@ function reviveVehicle(raw: unknown): CachedVehicle | null {
 
 /**
  * Register, update and retire vehicles (FMS-15). Every write is limited to
- * the caller's depot scope, writes one audit row, and publishes its event
- * only after the transaction has committed.
+ * the caller's depot scope, writes one audit row, and writes its event into
+ * the outbox in the same transaction (delivered after commit, FMS-73).
  */
 export class VehicleService {
   constructor(private readonly deps: VehicleServiceDeps) {}
@@ -149,10 +149,10 @@ export class VehicleService {
     const view = await vehicles.inTransaction(async (client) => {
       const depotId = await this.depotInScope(client, input.depot_id, caller);
       const row = await vehicles.insert(mutationContext(caller), { ...toColumns(input), depot_id: depotId }, client);
-      return vehicles.findViewById(client, row.id as string);
+      const created = await vehicles.findViewById(client, row.id as string);
+      await this.publish(client, caller, VEHICLE_EVENTS.registered, { vehicle_id: created.id, depot_id: created.depot_id });
+      return created;
     });
-
-    await this.publish(caller, VEHICLE_EVENTS.registered, { vehicle_id: view.id, depot_id: view.depot_id });
     return view;
   }
 
@@ -178,15 +178,16 @@ export class VehicleService {
       if (patch.depot_id !== undefined) data.depot_id = await this.depotInScope(client, patch.depot_id, caller);
 
       await vehicles.update(mutationContext(caller), current.id, data, client);
-      return vehicles.findViewById(client, current.id);
+      const updated = await vehicles.findViewById(client, current.id);
+      await this.publish(client, caller, VEHICLE_EVENTS.updated, {
+        vehicle_id: updated.id,
+        depot_id: updated.depot_id,
+        changed_fields: Object.keys(patch).sort(),
+      });
+      return updated;
     });
 
     await this.invalidate(view.id);
-    await this.publish(caller, VEHICLE_EVENTS.updated, {
-      vehicle_id: view.id,
-      depot_id: view.depot_id,
-      changed_fields: Object.keys(patch).sort(),
-    });
     return view;
   }
 
@@ -212,13 +213,12 @@ export class VehicleService {
         throw vehicleInUse();
       }
       await vehicles.retire(mutationContext(caller), current.id, client);
-      return vehicles.findViewById(client, current.id);
+      const view = await vehicles.findViewById(client, current.id);
+      await this.publish(client, caller, VEHICLE_EVENTS.retired, { vehicle_id: view.id, depot_id: view.depot_id });
+      return view;
     });
 
-    if (retired) {
-      await this.invalidate(retired.id);
-      await this.publish(caller, VEHICLE_EVENTS.retired, { vehicle_id: retired.id, depot_id: retired.depot_id });
-    }
+    if (retired) await this.invalidate(retired.id);
   }
 
   /** A depot the caller may put vehicles in, or 400: an unknown depot and one outside the scope look the same. */
@@ -228,9 +228,10 @@ export class VehicleService {
     return depotId;
   }
 
-  private publish(caller: Caller, type: string, payload: Record<string, unknown>): Promise<void> {
-    const event: DomainEvent = createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId });
-    return this.deps.events.publish([event]);
+  /** Into the outbox on the change's transaction (FMS-73); ordered per vehicle. */
+  private publish(client: PoolClient, caller: Caller, type: string, payload: { vehicle_id: string } & Record<string, unknown>): Promise<void> {
+    const ctx = { actor: caller.user.publicId, correlationId: caller.correlationId };
+    return this.deps.events.publish(client, [createEvent(type, payload, ctx, { aggregate: aggregateKey('vehicle', payload.vehicle_id) })]);
   }
 }
 

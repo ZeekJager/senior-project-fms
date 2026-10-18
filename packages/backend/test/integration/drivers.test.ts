@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import request, { type Response } from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
 import { checkDriverEligibility, fleetModule, isDriverEligible } from '../../src/modules/fleet';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
+import { createEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
+import { withTransaction } from '../../src/shared/infrastructure/transaction';
+import { deliverEvents, publishedEvents } from '../support/events';
 import { copyDriverAccount, createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 
 const app = createApp();
@@ -331,16 +333,6 @@ describe('isDriverEligible (for the trip module)', () => {
 });
 
 describe('driver events', () => {
-  const received: DomainEvent[] = [];
-  let unsubscribe: (() => void)[] = [];
-  beforeAll(() => {
-    unsubscribe = ['DriverRegistered', 'DriverRetired'].map((type) => eventBus.subscribe(type, (e) => void received.push(e)));
-  });
-  beforeEach(() => {
-    received.length = 0;
-  });
-  afterAll(() => unsubscribe.forEach((u) => u()));
-
   test('register and retire each publish one event; a failed register publishes nothing', async () => {
     const depot = await createDepot();
     const cookie = await signIn(['depot_admin'], depot);
@@ -350,8 +342,10 @@ describe('driver events', () => {
     await api.post('/drivers', driverBody(await createUser({ roles: ['driver'], depot }), depot, { license_number: 'EVT 1' }), cookie);
     await api.delete(`/drivers/${created.body.data.id}`, cookie);
 
+    const received = await publishedEvents('DriverRegistered', 'DriverRetired');
     expect(received.map((e) => e.type)).toEqual(['DriverRegistered', 'DriverRetired']);
     expect(received[0].payload).toEqual({ driver_id: created.body.data.id, user_id: user.public_id, depot_id: depot.public_id });
+    expect(received[0].aggregate).toBe(`driver:${created.body.data.id}`);
   });
 });
 
@@ -443,22 +437,16 @@ describe('POST /drivers/{id}/reinstate (enhancement 4)', () => {
     const { driver } = await createDriver({ depot });
     await api.delete(`/drivers/${driver.public_id}`, cookie);
 
-    const received: DomainEvent[] = [];
-    const off = eventBus.subscribe('DriverReinstated', (e) => void received.push(e));
-    try {
-      const res = await api.post(`/drivers/${driver.public_id}/reinstate`, {}, cookie);
-      expect(res.status).toBe(200);
-      expect(res.body.data).toMatchObject({ id: driver.public_id, status: 'active' });
-      expect(await auditRows(res)).toEqual([{ action: 'UPDATE', entity_type: 'fleet.drivers' }]);
-      expect(ids(await api.get(`/drivers?depot_id=${depot.public_id}`, cookie))).toContain(driver.public_id);
+    const res = await api.post(`/drivers/${driver.public_id}/reinstate`, {}, cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ id: driver.public_id, status: 'active' });
+    expect(await auditRows(res)).toEqual([{ action: 'UPDATE', entity_type: 'fleet.drivers' }]);
+    expect(ids(await api.get(`/drivers?depot_id=${depot.public_id}`, cookie))).toContain(driver.public_id);
 
-      const again = await api.post(`/drivers/${driver.public_id}/reinstate`, {}, cookie);
-      expect(again.status).toBe(200);
-      expect(await auditRows(again)).toEqual([]);
-      expect(received.map((e) => e.payload.driver_id)).toEqual([driver.public_id]);
-    } finally {
-      off();
-    }
+    const again = await api.post(`/drivers/${driver.public_id}/reinstate`, {}, cookie);
+    expect(again.status).toBe(200);
+    expect(await auditRows(again)).toEqual([]);
+    expect((await publishedEvents('DriverReinstated')).map((e) => e.payload.driver_id)).toEqual([driver.public_id]);
   });
 
   test('another depot is 404; a dispatcher (no driver:write) is 403', async () => {
@@ -474,25 +462,20 @@ describe('DriverUpdated and DriverTransferred (enhancement 5)', () => {
     const [a, b] = [await createDepot(), await createDepot()];
     const { driver, user } = await createDriver({ depot: a });
     const cookie = await signIn(['fleet_manager']);
-    const received: DomainEvent[] = [];
-    const offs = ['DriverUpdated', 'DriverTransferred'].map((t) => eventBus.subscribe(t, (e) => void received.push(e)));
-    try {
-      await api.patch(`/drivers/${driver.public_id}`, { license_expiry: '2031-01-31', license_categories: ['B'], depot_id: b.public_id }, cookie);
-      expect(received.map((e) => e.type)).toEqual(['DriverUpdated', 'DriverTransferred']);
-      expect(received[0].payload).toEqual({
-        driver_id: driver.public_id,
-        user_id: user.public_id,
-        depot_id: b.public_id,
-        changed_fields: ['license_categories', 'license_expiry'],
-      });
-      expect(received[1].payload).toMatchObject({ from_depot_id: a.public_id, to_depot_id: b.public_id });
+    const received = () => publishedEvents('DriverUpdated', 'DriverTransferred');
+    await api.patch(`/drivers/${driver.public_id}`, { license_expiry: '2031-01-31', license_categories: ['B'], depot_id: b.public_id }, cookie);
+    const both = await received();
+    expect(both.map((e) => e.type)).toEqual(['DriverUpdated', 'DriverTransferred']);
+    expect(both[0].payload).toEqual({
+      driver_id: driver.public_id,
+      user_id: user.public_id,
+      depot_id: b.public_id,
+      changed_fields: ['license_categories', 'license_expiry'],
+    });
+    expect(both[1].payload).toMatchObject({ from_depot_id: a.public_id, to_depot_id: b.public_id });
 
-      received.length = 0;
-      await api.patch(`/drivers/${driver.public_id}`, { depot_id: b.public_id }, cookie); // already there
-      expect(received).toEqual([]);
-    } finally {
-      offs.forEach((off) => off());
-    }
+    await api.patch(`/drivers/${driver.public_id}`, { depot_id: b.public_id }, cookie); // already there
+    expect(await received()).toHaveLength(2);
   });
 });
 
@@ -602,11 +585,13 @@ describe('driver list from fleet.driver_accounts (enhancement 9)', () => {
     await api.patch(`/drivers/${zed.driver.public_id}`, { depot_id: b.public_id }, cookie);
     expect(ids(await api.get(`/drivers?depot_id=${b.public_id}`, cookie))).toEqual([zed.driver.public_id]);
 
-    // An account change made elsewhere arrives as UserAccountChanged.
-    await pool.query("UPDATE auth.users SET full_name = 'Kidist' WHERE id = $1", [abe.user.id]);
-    await eventBus.publish([
-      { id: randomUUID(), type: 'UserAccountChanged', version: 1, occurred_at: new Date().toISOString(), actor: null, correlation_id: randomUUID(), payload: { user_id: abe.user.public_id } },
-    ]);
+    // An account change made elsewhere arrives as UserAccountChanged, once the relay delivers it.
+    await withTransaction(pool, async (tx) => {
+      await tx.query("UPDATE auth.users SET full_name = 'Kidist' WHERE id = $1", [abe.user.id]);
+      await eventBus.publish(tx, [createEvent('UserAccountChanged', { user_id: abe.user.public_id }, { actor: null, correlationId: randomUUID() })]);
+    });
+    expect(ids(await api.get(`/drivers?search=kidist`, cookie))).toEqual([]);
+    await deliverEvents();
     expect(ids(await api.get(`/drivers?search=kidist`, cookie))).toEqual([abe.driver.public_id]);
   });
 

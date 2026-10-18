@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import request, { type Response } from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createUser, createVehicle, type RoleName } from '../support/factories';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Maintenance-Test-1';
@@ -258,16 +257,6 @@ describe('GET /maintenance', () => {
 });
 
 describe('maintenance events', () => {
-  const seen: DomainEvent[] = [];
-  const offs: (() => void)[] = [];
-  beforeAll(() => {
-    for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted']) offs.push(eventBus.subscribe(type, (e) => void seen.push(e)));
-  });
-  afterAll(() => offs.forEach((off) => off()));
-  beforeEach(() => {
-    seen.length = 0;
-  });
-
   test('open and complete each publish one event; completion says whether the flag was cleared', async () => {
     const depot = await createDepot();
     const cookie = await signIn(['technician'], depot);
@@ -275,7 +264,9 @@ describe('maintenance events', () => {
     const created = await api.post('/maintenance', body(vehicle), cookie);
     await api.put(`/maintenance/${created.body.data.id}`, { completed_at: new Date().toISOString() }, cookie);
 
+    const seen = await publishedEvents('MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted');
     expect(seen.map((e) => e.type)).toEqual(['MaintenanceRecordOpened', 'MaintenanceRecordCompleted']);
+    expect(seen[1].aggregate).toBe(`maintenance:${created.body.data.id}`);
     expect(seen[1].payload).toMatchObject({ vehicle_id: vehicle.public_id, maintenance_flag_cleared: true });
   });
 });

@@ -1,8 +1,7 @@
 import type { PoolClient } from 'pg';
 import { describe, expect, test } from 'vitest';
 import { AppError } from '../../../shared/errors/app-error';
-import type { DomainEvent } from '../../../shared/events/domain-event';
-import { InProcessEventBus } from '../../../shared/events/in-process-event-bus';
+import { RecordingEventBus } from '../../../shared/events/recording-event-bus';
 import type { RequestUser } from '../../../types/express';
 import type { UserAccount } from '../../auth';
 import type { VehicleType } from '../domain/vehicle';
@@ -56,10 +55,8 @@ interface HarnessOptions {
 
 function harness(options: HarnessOptions = {}) {
   const calls: string[] = [];
-  const published: DomainEvent[] = [];
-  const events = new InProcessEventBus(() => {});
-  events.subscribe('DriverRetired', (e) => void published.push(e));
-  events.subscribe('DriverRegistered', (e) => void published.push(e));
+  const events = new RecordingEventBus();
+  const published = events.published;
   const current = options.row === undefined ? row() : options.row;
   const acct = options.account ?? account();
 

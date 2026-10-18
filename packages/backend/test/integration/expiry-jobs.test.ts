@@ -1,17 +1,16 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import request from 'supertest';
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterAll, describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { config } from '../../src/config';
 import { loadMigrationConfig } from '../../src/config/schema';
 import { pool } from '../../src/db';
 import { fleetModule } from '../../src/modules/fleet';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { PostgresJobLock } from '../../src/shared/jobs/job-lock';
 import type { ScheduledJob } from '../../src/shared/jobs/job';
 import { runJob } from '../../src/shared/jobs/scheduler';
+import { deliverEvents, publishedEvents } from '../support/events';
 import { createDepot, createDriver, createUser, createVehicle } from '../support/factories';
 
 const app = createApp();
@@ -30,13 +29,6 @@ function addisDate(days: number): string {
 const job = (name: string) => fleetModule.jobs!.find((j) => j.name === name)!;
 const deps = (instanceId = 'test-instance') => ({ lock: new PostgresJobLock(pool), audit: pool, timeZone: TZ, instanceId });
 
-let received: DomainEvent[] = [];
-let offs: (() => void)[] = [];
-beforeEach(() => {
-  received = [];
-  offs = ['DocumentExpiring', 'LicenceExpiring'].map((t) => eventBus.subscribe(t, (e) => void received.push(e)));
-});
-afterEach(() => offs.forEach((off) => off()));
 
 async function vehicleWithDocument(expiresOn: string | null, extra: { deleted?: boolean; retired?: boolean } = {}) {
   const depot = await createDepot();
@@ -50,7 +42,9 @@ async function vehicleWithDocument(expiresOn: string | null, extra: { deleted?: 
   return { vehicle, document: doc.rows[0] };
 }
 
-const mine = (ids: string[]) => received.filter((e) => ids.includes(String(e.payload.document_id ?? e.payload.driver_id)));
+/** The expiry events raised for these documents or drivers, oldest first. */
+const mine = async (ids: string[]) =>
+  (await publishedEvents('DocumentExpiring', 'LicenceExpiring')).filter((e) => ids.includes(String(e.payload.document_id ?? e.payload.driver_id)));
 
 describe('document expiry check', () => {
   test('a document expiring in 15 days raises one amber DocumentExpiring; re-running the job raises nothing', async () => {
@@ -58,7 +52,7 @@ describe('document expiry check', () => {
     const first = await runJob(job('document-expiry-check'), deps());
     expect(first.status).toBe('succeeded');
 
-    const events = mine([document.public_id]);
+    const events = await mine([document.public_id]);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: 'DocumentExpiring',
@@ -70,7 +64,7 @@ describe('document expiry check', () => {
     // The same day: the lock skips the run. Forced again (another day's key): the notice is already there.
     expect(await runJob(job('document-expiry-check'), deps('another-instance'))).toEqual({ status: 'skipped' });
     await job('document-expiry-check').run({ now: new Date(), correlationId: randomUUID(), runKey: 'forced' });
-    expect(mine([document.public_id])).toHaveLength(1);
+    expect(await mine([document.public_id])).toHaveLength(1);
   });
 
   test('levels: 30 amber, 7 and 0 red; 31 days, already expired, deleted, no date or a retired vehicle: nothing', async () => {
@@ -82,9 +76,9 @@ describe('document expiry check', () => {
     const retired = (await vehicleWithDocument(addisDate(5), { retired: true })).document.public_id;
 
     await job('document-expiry-check').run({ now: new Date(), correlationId: randomUUID(), runKey: 't' });
-    const levels = Object.fromEntries(mine([in30, in7, today]).map((e) => [e.payload.document_id, e.payload.level]));
+    const levels = Object.fromEntries((await mine([in30, in7, today])).map((e) => [e.payload.document_id, e.payload.level]));
     expect(levels).toEqual({ [in30]: 'amber', [in7]: 'red', [today]: 'red' });
-    expect(mine([...quiet, retired])).toEqual([]);
+    expect(await mine([...quiet, retired])).toEqual([]);
   });
 
   test('amber then red as the date nears, once each; a new expiry date starts again', async () => {
@@ -94,12 +88,12 @@ describe('document expiry check', () => {
     await pool.query('UPDATE document.documents SET expires_on = $2 WHERE id = $1', [document.id, addisDate(6)]);
     await check();
     await check();
-    expect(mine([document.public_id]).map((e) => e.payload.level)).toEqual(['amber', 'red']);
+    expect((await mine([document.public_id])).map((e) => e.payload.level)).toEqual(['amber', 'red']);
 
     // Renewed: a different expiry date is a different fact.
     await pool.query('UPDATE document.documents SET expires_on = $2 WHERE id = $1', [document.id, addisDate(25)]);
     await check();
-    expect(mine([document.public_id]).map((e) => e.payload.level)).toEqual(['amber', 'red', 'amber']);
+    expect((await mine([document.public_id])).map((e) => e.payload.level)).toEqual(['amber', 'red', 'amber']);
   });
 
   test('an upload already inside the window is flagged at once, and the daily job does not repeat it', async () => {
@@ -118,14 +112,17 @@ describe('document expiry check', () => {
       .field('expires_on', addisDate(5))
       .attach('file', PDF, { filename: 'registration.pdf', contentType: 'application/pdf' });
     expect(res.status).toBe(201);
-    const flagged = mine([res.body.data.id]);
+    // The check runs when the relay delivers DocumentUploaded (fleet.document-expiry).
+    expect(await mine([res.body.data.id])).toEqual([]);
+    await deliverEvents();
+    const flagged = await mine([res.body.data.id]);
     expect(flagged).toHaveLength(1);
     expect(flagged[0].payload).toMatchObject({ level: 'red', days_left: 5 });
     // Traced to the upload that caused it.
     expect(flagged[0].correlation_id).toBe(res.headers['x-request-id']);
 
     await job('document-expiry-check').run({ now: new Date(), correlationId: randomUUID(), runKey: 't' });
-    expect(mine([res.body.data.id])).toHaveLength(1);
+    expect(await mine([res.body.data.id])).toHaveLength(1);
   });
 });
 
@@ -141,7 +138,7 @@ describe('licence expiry check', () => {
     const run = () => job('licence-expiry-check').run({ now: new Date(), correlationId: randomUUID(), runKey: 't' });
     expect(await run()).toMatchObject({ raised: expect.any(Number) });
     const ids = [in30, in8, in7, in31, retired].map((d) => String(d.driver.public_id));
-    const events = mine(ids);
+    const events = await mine(ids);
     expect(Object.fromEntries(events.map((e) => [e.payload.driver_id, e.payload.level]))).toEqual({
       [in30.driver.public_id as string]: 'amber',
       [in8.driver.public_id as string]: 'amber',
@@ -157,7 +154,7 @@ describe('licence expiry check', () => {
     });
 
     await run();
-    expect(mine(ids)).toHaveLength(3);
+    expect(await mine(ids)).toHaveLength(3);
   });
 });
 
@@ -178,7 +175,7 @@ describe('scheduler lock and run history', () => {
       ['job.succeeded', null],
     ]);
     expect(audit.rows[1].details).toMatchObject({ job: 'document-expiry-check', result: { raised: expect.any(Number) } });
-    expect(mine([document.public_id])[0].correlation_id).toBe(correlationId);
+    expect((await mine([document.public_id]))[0].correlation_id).toBe(correlationId);
 
     const history = await pool.query('SELECT status, attempts, result FROM jobs.job_runs WHERE correlation_id = $1', [correlationId]);
     expect(history.rows).toEqual([{ status: 'succeeded', attempts: 1, result: expect.objectContaining({ raised: expect.any(Number) }) }]);

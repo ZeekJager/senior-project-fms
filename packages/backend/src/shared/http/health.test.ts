@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
-import { healthRouter, type OptionalDependency, type ReadinessCheck } from './health';
+import { healthRouter, type HealthMetrics, type OptionalDependency, type ReadinessCheck } from './health';
 
 interface ReadyBody {
   status: string;
@@ -13,8 +13,13 @@ interface ReadyBody {
 const servers: Server[] = [];
 afterAll(() => Promise.all(servers.map((s) => new Promise((r) => s.close(r)))));
 
-async function serve(checks: Record<string, ReadinessCheck>, timeoutMs?: number, optional?: Record<string, OptionalDependency>): Promise<string> {
-  const app = express().use(healthRouter(checks, timeoutMs, optional));
+async function serve(
+  checks: Record<string, ReadinessCheck>,
+  timeoutMs?: number,
+  optional?: Record<string, OptionalDependency>,
+  metrics?: Record<string, HealthMetrics>,
+): Promise<string> {
+  const app = express().use(healthRouter(checks, timeoutMs, optional, metrics));
   const server = app.listen(0);
   servers.push(server);
   await new Promise((r) => server.once('listening', r));
@@ -88,4 +93,14 @@ test('an optional dependency that is up is ok; one not configured is disabled', 
 test('the database down is still 503 whatever Redis says', async () => {
   const base = await serve({ database: () => Promise.reject(new Error('down')) }, undefined, { redis: new FakeRedis(true) });
   assert.equal((await fetch(`${base}/health/ready`)).status, 503);
+});
+
+test('metrics (the outbox lag) are reported; one that fails is left out, and never fails the probe', async () => {
+  const base = await serve({ database: async () => 'ok' }, undefined, undefined, {
+    outbox: async () => ({ undispatched: 2, oldest_pending_seconds: 1 }),
+    broken: () => Promise.reject(new Error('query failed')),
+  });
+  const res = await fetch(`${base}/health/ready`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(((await res.json()) as { metrics: unknown }).metrics, { outbox: { undispatched: 2, oldest_pending_seconds: 1 } });
 });

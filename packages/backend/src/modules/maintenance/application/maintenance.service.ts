@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { depotScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -24,6 +24,7 @@ import {
   type MaintenanceWarning,
 } from '../domain/maintenance';
 import { INVENTORY_EVENTS } from '../domain/inventory';
+import { inventoryEvent } from './inventory.service';
 import type { LockedPart, MaintenanceRepository, RecordRow, RecordWrite } from '../infrastructure/maintenance.repository';
 
 /** Who is asking, for scope, audit and events. */
@@ -198,7 +199,7 @@ export class MaintenanceService {
       );
 
       const warnings: MaintenanceWarning[] = [];
-      const reorder: (LockedPart & { depotPublicId: string | null })[] = [];
+      const reorder: LockedPart[] = [];
       for (const use of uses) {
         const part = locked.get(use.part_id)!;
         const before = part.stockQuantity;
@@ -211,7 +212,7 @@ export class MaintenanceService {
           performedBy: caller.user.id,
         });
         part.stockQuantity = stock;
-        if (before > part.reorderThreshold && stock <= part.reorderThreshold) reorder.push({ ...part, depotPublicId: null });
+        if (before > part.reorderThreshold && stock <= part.reorderThreshold) reorder.push({ ...part });
         if (shortfall > 0) {
           warnings.push({ warning: 'LOW_STOCK', part_id: part.publicId, part_number: part.partNumber, stock_quantity: stock, shortfall });
         }
@@ -223,20 +224,21 @@ export class MaintenanceService {
         warnings.push({ warning: 'COST_BELOW_PARTS', total_cost_cents: record.total_cost_cents, parts_cost_cents: record.parts_cost_cents });
       }
       const depotIds = await this.deps.depots.publicIds(client, [...new Set(reorder.flatMap((p) => (p.depotId ? [p.depotId] : [])))]);
-      return { record, warnings, reorder: reorder.map((p) => ({ ...p, depotPublicId: p.depotId ? (depotIds.get(p.depotId) ?? null) : null })) };
+      await this.deps.events.publish(client, [
+        this.event(caller, MAINTENANCE_EVENTS.opened, { maintenance_record_id: record.id, vehicle_id: record.vehicle_id }),
+        // Same event as a manual adjustment that crosses the reorder point (FMS-23).
+        ...reorder.map((p) =>
+          inventoryEvent(caller, INVENTORY_EVENTS.reorderNeeded, {
+            part_id: p.publicId,
+            part_number: p.partNumber,
+            depot_id: p.depotId ? (depotIds.get(p.depotId) ?? null) : null,
+            stock_quantity: p.stockQuantity,
+            reorder_threshold: p.reorderThreshold,
+          }),
+        ),
+      ]);
+      return { record, warnings };
     });
-
-    await this.publish(caller, MAINTENANCE_EVENTS.opened, { maintenance_record_id: result.record.id, vehicle_id: result.record.vehicle_id });
-    for (const p of result.reorder) {
-      // Same event as a manual adjustment that crosses the reorder point (FMS-23).
-      await this.publish(caller, INVENTORY_EVENTS.reorderNeeded, {
-        part_id: p.publicId,
-        part_number: p.partNumber,
-        depot_id: p.depotPublicId,
-        stock_quantity: p.stockQuantity,
-        reorder_threshold: p.reorderThreshold,
-      });
-    }
     return { record: result.record, warnings: result.warnings };
   }
 
@@ -249,7 +251,7 @@ export class MaintenanceService {
   async update(caller: Caller, recordId: string, patch: MaintenanceUpdate, expectedVersion: number | null = null): Promise<MaintenanceRecordView> {
     const { records, vehicles } = this.deps;
     const ctx = mutationContext(caller);
-    const { view, flagCleared, closing } = await records.inTransaction(async (client) => {
+    return records.inTransaction(async (client) => {
       const row = await records.lockForWrite(client, recordId);
       const vehicle = row && (await vehicles.findInScope(client, { id: row.vehicleId }, depotScope(caller.user), true));
       if (!row || !vehicle) throw maintenanceNotFound();
@@ -276,24 +278,19 @@ export class MaintenanceService {
         await vehicles.setMaintenanceFlag(client, ctx, row.vehicleId, false);
         cleared = true;
       }
-      return { view: (await this.views(client, [await records.findById(client, row.id)]))[0], flagCleared: cleared, closing: data.status };
+      const view = (await this.views(client, [await records.findById(client, row.id)]))[0];
+      const event =
+        data.status === 'completed'
+          ? this.event(caller, MAINTENANCE_EVENTS.completed, { maintenance_record_id: view.id, vehicle_id: view.vehicle_id, maintenance_flag_cleared: cleared })
+          : this.event(caller, MAINTENANCE_EVENTS.updated, {
+              maintenance_record_id: view.id,
+              vehicle_id: view.vehicle_id,
+              changed_fields: Object.keys(patch).sort(),
+              maintenance_flag_cleared: cleared,
+            });
+      await this.deps.events.publish(client, [event]);
+      return view;
     });
-
-    if (closing === 'completed') {
-      await this.publish(caller, MAINTENANCE_EVENTS.completed, {
-        maintenance_record_id: view.id,
-        vehicle_id: view.vehicle_id,
-        maintenance_flag_cleared: flagCleared,
-      });
-    } else {
-      await this.publish(caller, MAINTENANCE_EVENTS.updated, {
-        maintenance_record_id: view.id,
-        vehicle_id: view.vehicle_id,
-        changed_fields: Object.keys(patch).sort(),
-        maintenance_flag_cleared: flagCleared,
-      });
-    }
-    return view;
   }
 
   private async views(db: Queryable, rows: RecordRow[]): Promise<MaintenanceRecordView[]> {
@@ -340,8 +337,10 @@ export class MaintenanceService {
     });
   }
 
-  private publish(caller: Caller, type: string, payload: Record<string, unknown>): Promise<void> {
-    return this.deps.events.publish([createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId })]);
+  /** A maintenance event, ordered per record in the outbox (FMS-73). */
+  private event(caller: Caller, type: string, payload: { maintenance_record_id: string } & Record<string, unknown>): DomainEvent {
+    const ctx = { actor: caller.user.publicId, correlationId: caller.correlationId };
+    return createEvent(type, payload, ctx, { aggregate: aggregateKey('maintenance', payload.maintenance_record_id) });
   }
 }
 

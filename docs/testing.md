@@ -63,6 +63,24 @@ Add a factory here when a second test needs the same kind of row.
 
 For a whole dataset rather than a few rows (demos, load tests), use the seed generator: [seed-data.md](seed-data.md).
 
+### Domain events
+
+A service writes its events into the outbox inside the test's transaction (FMS-73), and nothing reacts until the relay delivers them. `test/support/events.ts` has two helpers:
+
+```ts
+import { deliverEvents, publishedEvents } from '../support/events';
+
+await api.delete(`/vehicles/${id}`, cookie);
+expect((await publishedEvents('VehicleRetired')).map((e) => e.payload)).toEqual([{ vehicle_id: id, depot_id }]);
+
+await deliverEvents(); // consumers react: the driver-account copy, the cache, the expiry check on upload
+```
+
+- `publishedEvents(...types)` reads what the test published, oldest first.
+- `deliverEvents()` runs relay passes on the test's connection until nothing is left.
+
+Unit tests of a service over fakes pass a `RecordingEventBus` (`src/shared/events/recording-event-bus.ts`). It records the events and the client they were published on, so a test can check they went out inside the transaction.
+
 ## Frontend
 
 Component tests sit next to the component as `*.test.tsx` and run in `jsdom` with [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/). Query the page the way a user sees it (`getByRole`, `getByLabelText`), not by class names.

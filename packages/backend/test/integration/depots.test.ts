@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import request, { type Response } from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
-import type { DomainEvent } from '../../src/shared/events/domain-event';
-import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Depot-Test-1';
@@ -222,18 +221,6 @@ describe('DELETE /depots/{id}', () => {
 });
 
 describe('depot events', () => {
-  const seen: DomainEvent[] = [];
-  const unsubscribe: (() => void)[] = [];
-  beforeAll(() => {
-    for (const type of ['DepotCreated', 'DepotUpdated', 'DepotDeactivated', 'DepotReactivated']) {
-      unsubscribe.push(eventBus.subscribe(type, (e) => void seen.push(e)));
-    }
-  });
-  afterAll(() => unsubscribe.forEach((u) => u()));
-  beforeEach(() => {
-    seen.length = 0;
-  });
-
   test('create, update, delete and reactivate each publish one event; a refused delete publishes nothing', async () => {
     const cookie = await signIn(['admin']);
     const created = await api.post('/depots', { name: 'Evented', location: 'Bahir Dar' }, cookie);
@@ -245,6 +232,7 @@ describe('depot events', () => {
     await createVehicle({ depot: full });
     await api.delete(`/depots/${full.public_id}`, cookie);
 
+    const seen = await publishedEvents('DepotCreated', 'DepotUpdated', 'DepotDeactivated', 'DepotReactivated');
     expect(seen.map((e) => [e.type, e.payload.depot_id])).toEqual([
       ['DepotCreated', id],
       ['DepotUpdated', id],

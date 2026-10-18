@@ -136,14 +136,51 @@ Use `authorize('resource:action')` on every route, or `authenticated()` / `publi
 
 ## Events
 
-Modules react to each other through events. Status: until FMS-73 (Sprint 3) brings the outbox and Redis pub/sub, `eventBus` in `src/shared/events` delivers in process, after the transaction commits, at most once. Publish with `eventBus.publish([createEvent(type, payload, ctx)])` once the transaction has resolved; FMS-73 keeps the interface. Follow these rules from the start so modules are ready.
+Modules react to each other through domain events (FMS-73; how it works: [docs/events.md](docs/events.md)). A module writes its events into the outbox (`events.outbox`) **in the transaction that makes the change**. After commit, the relay hands them to the in-process consumers and publishes them on Redis for the real-time layer.
+
+```ts
+await vehicles.inTransaction(async (client) => {
+  // ... the change, audited ...
+  await this.deps.events.publish(client, [
+    createEvent(VEHICLE_EVENTS.retired, { vehicle_id: view.id }, ctx, { aggregate: aggregateKey('vehicle', view.id) }),
+  ]);
+});
+
+eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (event, tx) => { /* ... */ });
+```
 
 - **Name:** `PastTense` PascalCase, a fact that already happened: `TripAssigned`, `FuelAnomalyDetected`. Not `AssignTrip`, `TripAssigning` or `TripUpdate`.
-- **Envelope:** every event is `{ id, type, version, occurred_at, actor, correlation_id, payload }`. `id` is unique per event, `version` starts at 1 and increases when the payload changes shape, `correlation_id` is the request's id.
-- **Payload carries ids, not personal data.** Consumers re-read what they need through the owning module, with their own authorization.
-- **Delivery is at least once**, so a consumer must be idempotent by event `id`. A scheduled job (a module's `jobs`, run daily by `src/server.ts`, at most once a day per server) gives a fact a fixed id with `deterministicEventId(...)`, so a rerun or a second server repeats the id rather than the fact.
-- **Publish in the same transaction as the change.** A rolled-back change publishes nothing.
-- **Catalogue** (extended as events are added): `VehicleRegistered`, `VehicleUpdated`, `VehicleRetired` (fleet, FMS-15), `DriverRegistered`, `DriverUpdated`, `DriverTransferred`, `DriverRetired`, `DriverReinstated` (fleet, FMS-16), `DocumentUploaded`, `DocumentExpiring`, `LicenceExpiring` (fleet, FMS-17 and FMS-26), `TripAssigned`, `TripStarted`, `TripCompleted`, `VehicleLocationUpdated`, `FuelAnomalyDetected`, `MaintenanceRiskDetected`, `VehicleFaultDetected`, `AlertCreated`, `BatteryThresholdExceeded`.
+- **Envelope:** every event is `{ id, type, version, occurred_at, actor, correlation_id, payload }`.
+  - `id` is unique per event.
+  - `version` starts at 1 and increases when the payload changes shape.
+  - `actor` is the user's public id, or null for the system.
+  - `correlation_id` is the request's id (a job's run id).
+- **Payload carries ids, not personal data.** Consumers re-read what they need through the owning module, with their own authorization. Events are retained for a week and go out on Redis.
+- **Publish in the change's transaction, at its end.** Call `events.publish(client, [...])` after the aggregate's row is written (so it is locked), never after commit and never on the pool. A rolled-back change publishes nothing; a committed one cannot lose its event.
+- **Aggregate:** pass `aggregate: aggregateKey('<kind>', publicId)` for the entity the event is about. Consumers get one aggregate's events in the order they were written; a consumer failing on one holds back only that aggregate.
+- **Delivery is at least once.** Every subscription names its consumer, `<module>.<purpose>` (`fleet.vehicle-cache`), and the bus records each event a consumer has handled (`events.processed_events`). A redelivered event is skipped.
+  - Do database work on the `tx` the handler gets: it commits with that record.
+  - Work done elsewhere (a cache delete, a call to another service) must be safe to repeat.
+  - Keep a consumer's name once it is released: a renamed consumer sees every retained event again.
+- **A failing consumer is retried** with backoff (1 s, 2 s, 4 s ... up to 5 minutes). After 10 attempts its event is dead-lettered and `/health/ready` reports `outbox: "degraded"`. See docs/events.md to retry one.
+- **A scheduled job** gives a fact a fixed id with `deterministicEventId(...)`: the outbox keeps one row per id, so a rerun or a second server repeats the id, not the fact.
+- **Tests:** `publishedEvents(...types)` reads what a test published; `deliverEvents()` runs the relay so consumers react (`test/support/events.ts`). Unit tests over fakes use `RecordingEventBus`.
+
+**Catalogue.** Add a row when you add an event; payloads carry public ids.
+
+| Event | Module | Aggregate | Payload | Consumers |
+|---|---|---|---|---|
+| `VehicleRegistered`, `VehicleUpdated`, `VehicleRetired` | fleet (FMS-15) | vehicle | `vehicle_id`, `depot_id`; `changed_fields` on update | |
+| `DriverRegistered`, `DriverUpdated`, `DriverTransferred`, `DriverRetired`, `DriverReinstated` | fleet (FMS-16) | driver | `driver_id`, `user_id`, `depot_id`; `changed_fields` on update; `from_depot_id`, `to_depot_id` on transfer | |
+| `DepotCreated`, `DepotUpdated`, `DepotDeactivated`, `DepotReactivated` | fleet (FMS-20) | depot | `depot_id`; `changed_fields` on update | |
+| `AttendanceRecorded` | fleet (FMS-21) | attendance | `attendance_id`, `driver_id`, `date`, `status`, `previous_status` | |
+| `DocumentUploaded` | fleet (FMS-17) | document | `document_id`, `owner_type`, `owner_id`, `document_type`, `expires_on` | `fleet.document-expiry` |
+| `DocumentExpiring`, `LicenceExpiring` | fleet (FMS-26) | document, driver | `level` (amber, red), `days_left`, the expiry date, owner or driver ids | |
+| `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | maintenance (FMS-22) | maintenance | `maintenance_record_id`, `vehicle_id`; `changed_fields`, `maintenance_flag_cleared` | `fleet.vehicle-cache` |
+| `InventoryPartCreated`, `InventoryPartUpdated`, `InventoryStockAdjusted`, `InventoryReorderNeeded` | maintenance (FMS-23) | part | `part_id`; stock and threshold on adjust and reorder | |
+| `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
+
+Planned, named here so modules agree on them: `TripAssigned`, `TripStarted`, `TripCompleted` (trip), `VehicleLocationUpdated`, `VehicleFaultDetected` (integration), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
 
 ## API
 
@@ -155,19 +192,20 @@ Modules react to each other through events. Status: until FMS-73 (Sprint 3) brin
 
 ## Redis
 
-Redis (FMS-72) holds the cache, the shared login throttle and job leases. It is **never the system of record**. Every use has a PostgreSQL or in-process fallback: if Redis is down, the API serves from PostgreSQL, throttles logins per process, and locks jobs in `jobs.job_runs`. `/health/ready` then reports `redis: "degraded"` and stays `200`.
+Redis (FMS-72) holds the cache, the shared login throttle and job leases, and carries domain events to the real-time layer (FMS-73). It is **never the system of record**. Every use has a PostgreSQL or in-process fallback: if Redis is down, the API serves from PostgreSQL, throttles logins per process, locks jobs in `jobs.job_runs`, and domain events wait in the outbox (consumers still get them). `/health/ready` then reports `redis: "degraded"` and stays `200`.
 
 - **Keys:** `<prefix>:<namespace>:<module>:<entity>:<id>`, lowercase, `:`-separated. The prefix is `REDIS_KEY_PREFIX` (default `fms`; tests use `fms-test`).
   - `cache`: `fms:cache:fleet:vehicle:<public_id>` (`cache.key('fleet', 'vehicle', id)`).
   - `throttle`: `fms:throttle:login:<sha256>` (`redisKey('throttle', ...)`).
   - `lock`: `fms:lock:job:<job>:<day>` (`redisKey('lock', ...)`).
+  - `events`: pub/sub channels, not keys: `fms:events:<EventType>` (`eventChannel(type)`), one per event type, carrying the JSON envelope.
   - Public ids in keys, never internal ids. Never an email, name or other personal data: hash it, as the throttle does.
 - **Every key has a TTL.** Redis evicts by least-recent use among keys with a TTL (`volatile-lru`) and saves nothing to disk.
 - **Caching a read:** `cache.getOrSet(key, ttlSeconds, loader, revive?)` from `src/shared/cache`.
   - Pass `revive` to restore what JSON loses (Dates).
   - Cache what is the same for every caller, and check the caller's scope against the cached value. The vehicle cache stores the depot with the view, so a depot user's read needs no PostgreSQL.
   - Keep the TTL short (seconds to a minute).
-- **Invalidating:** after the write has committed, `cache.delete(key)` (or `cache.invalidate('fleet:vehicle:*')`). Deleting inside the transaction lets a concurrent read re-cache the old row before the commit. A change made inside another module's transaction invalidates on that module's event, which is published after commit: fleet drops a vehicle on the maintenance events. After an outage every instance drops the whole cache namespace, because invalidations sent while Redis was down were lost.
+- **Invalidating:** after the write has committed, `cache.delete(key)` (or `cache.invalidate('fleet:vehicle:*')`). Deleting inside the transaction lets a concurrent read re-cache the old row before the commit. A change made inside another module's transaction invalidates on that module's event, which the relay delivers after commit (within a fraction of a second): fleet drops a vehicle on the maintenance events. After an outage every instance drops the whole cache namespace, because invalidations sent while Redis was down were lost.
 - **Scripts** that import the app close the connection at the end (`closeRedis()`), or the process never exits.
 
 ## SQL

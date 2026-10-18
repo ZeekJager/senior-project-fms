@@ -8,6 +8,7 @@ import { depotDirectory } from '../../src/modules/fleet';
 import type { DomainEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
 import { createDepot, createUser, type RoleName } from '../support/factories';
+import { publishedEvents } from '../support/events';
 
 const app = createApp();
 const PASSWORD = 'Users-Test-2026';
@@ -35,20 +36,12 @@ const api = {
   patch: (path: string, body: object, cookie = '') => request(app).patch(`/api/v1${path}`).set('Cookie', cookie).send(body),
 };
 
-/** Collects the user events published during `fn`. */
+/** The user events published during `fn`. */
 async function capture(fn: () => Promise<unknown>): Promise<DomainEvent[]> {
-  const seen: DomainEvent[] = [];
-  const offs = ['UserCreated', 'UserRoleChanged', 'UserDeactivated', 'UserAccountChanged'].map((t) =>
-    eventBus.subscribe(t, (e) => {
-      seen.push(e);
-    }),
-  );
-  try {
-    await fn();
-  } finally {
-    offs.forEach((off) => off());
-  }
-  return seen;
+  const types = ['UserCreated', 'UserRoleChanged', 'UserDeactivated', 'UserAccountChanged'];
+  const before = (await publishedEvents(...types)).length;
+  await fn();
+  return (await publishedEvents(...types)).slice(before);
 }
 
 async function publicIdOf(user: User): Promise<string> {

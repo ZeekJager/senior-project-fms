@@ -8,6 +8,7 @@ import { VehicleRepository } from '../../src/modules/fleet/infrastructure/vehicl
 import { cache, redis, redisKey } from '../../src/shared/cache';
 import { PostgresJobLock } from '../../src/shared/jobs/job-lock';
 import { RedisJobLock } from '../../src/shared/jobs/redis-job-lock';
+import { deliverEvents } from '../support/events';
 import { createDepot, createUser, createVehicle, type RoleName } from '../support/factories';
 
 // FMS-72 against a real Redis. CI starts one (scripts/ci/start-redis.sh);
@@ -99,6 +100,9 @@ describe.skipIf(!configured)('vehicle cache', () => {
       .set('Cookie', cookie)
       .send({ vehicle_id: id, description: 'Brakes squeal', labour_hours: 1, total_cost_cents: 50000, status: 'open' });
     expect(opened.status).toBe(201);
+    // Dropped when the relay delivers MaintenanceRecordOpened (fleet.vehicle-cache), after commit.
+    expect(await redis!.exists(vehicleKey(id))).toBe(1);
+    await deliverEvents();
     expect(await redis!.exists(vehicleKey(id))).toBe(0);
     expect((await request(app).get(`/api/v1/vehicles/${id}`).set('Cookie', cookie)).body.data.maintenance_flag).toBe(true);
   });

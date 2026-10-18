@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
@@ -108,26 +108,27 @@ export class DocumentService {
           },
           client,
         );
-        return this.view(client, await documents.findById(client, row.id as string), owner.publicId);
+        const uploaded = await this.view(client, await documents.findById(client, row.id as string), owner.publicId);
+        await this.deps.events.publish(client, [
+          createEvent(
+            DOCUMENT_EVENTS.uploaded,
+            {
+              document_id: uploaded.id,
+              owner_type: uploaded.owner_type,
+              owner_id: uploaded.owner_id,
+              document_type: uploaded.document_type,
+              expires_on: uploaded.expires_on,
+            },
+            { actor: caller.user.publicId, correlationId: caller.correlationId },
+            { aggregate: aggregateKey('document', uploaded.id) },
+          ),
+        ]);
+        return uploaded;
       });
     } catch (err) {
       await storage.remove(key).catch(() => {});
       throw err;
     }
-
-    await this.deps.events.publish([
-      createEvent(
-        DOCUMENT_EVENTS.uploaded,
-        {
-          document_id: view.id,
-          owner_type: view.owner_type,
-          owner_id: view.owner_id,
-          document_type: view.document_type,
-          expires_on: view.expires_on,
-        },
-        { actor: caller.user.publicId, correlationId: caller.correlationId },
-      ),
-    ]);
     return view;
   }
 

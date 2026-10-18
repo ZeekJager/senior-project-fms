@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
-import { createEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import { AppError, validationFailed } from '../../../shared/errors/app-error';
 import { toAppError } from '../../../shared/errors/to-app-error';
 import type { EventBus } from '../../../shared/events/event-bus';
@@ -188,13 +188,15 @@ export class DriverService {
     });
   }
 
-  /** An account changed in another module (UserAccountChanged): refresh the copy if the user is a driver. */
-  async onAccountChanged(userPublicId: string): Promise<void> {
-    const { drivers, users, accounts } = this.deps;
-    await drivers.inTransaction(async (client) => {
-      const account = await users.findByPublicId(client, userPublicId);
-      if (account && (await accounts.isDriver(client, account.id))) await accounts.upsert(client, [account]);
-    });
+  /**
+   * An account changed in another module (UserAccountChanged): refresh the
+   * copy if the user is a driver, on the consumer's transaction, so the copy
+   * and the event's processed record commit together.
+   */
+  async onAccountChanged(client: PoolClient, userPublicId: string): Promise<void> {
+    const { users, accounts } = this.deps;
+    const account = await users.findByPublicId(client, userPublicId);
+    if (account && (await accounts.isDriver(client, account.id))) await accounts.upsert(client, [account]);
   }
 
   async get(caller: Caller, driverId: string): Promise<DriverView> {
@@ -238,7 +240,6 @@ export class DriverService {
       });
       return this.register(client, caller, { ...input, account: undefined, user_id: account.publicId });
     });
-    await this.publish(caller, DRIVER_EVENTS.registered, view);
     return view;
   }
 
@@ -312,11 +313,14 @@ export class DriverService {
       throw err;
     }
 
-    for (const { view } of views) await this.publish(caller, DRIVER_EVENTS.registered, view);
     return { created: views.map(({ row, view }) => ({ row, id: view.id })) };
   }
 
-  /** Registers one driver in the caller's transaction (POST /drivers and each import row). */
+  /**
+   * Registers one driver in the caller's transaction (POST /drivers and each
+   * import row), with its DriverRegistered event: a row the import rolls back
+   * to its savepoint takes its event with it.
+   */
   private async register(client: PoolClient, caller: Caller, input: DriverCreate): Promise<DriverView> {
     const { drivers, users } = this.deps;
     const scope = depotScope(caller.user);
@@ -333,7 +337,9 @@ export class DriverService {
     const row = await drivers.insert(ctx, { ...toColumns(input), user_id: account.id }, client);
     if (account.depotId !== depotId) await users.setDepot(client, ctx, account.id, depotId);
     await this.deps.accounts.upsert(client, [{ ...account, depotId }]);
-    return (await this.views(client, [await drivers.findById(client, row.id as string)]))[0];
+    const view = (await this.views(client, [await drivers.findById(client, row.id as string)]))[0];
+    await this.publish(client, caller, DRIVER_EVENTS.registered, view);
+    return view;
   }
 
   /**
@@ -344,7 +350,7 @@ export class DriverService {
    */
   async update(caller: Caller, driverId: string, patch: DriverUpdate, expectedVersion: number | null = null): Promise<DriverView> {
     const { drivers, users, depots } = this.deps;
-    const { view, changedFields, transfer } = await drivers.inTransaction(async (client) => {
+    return drivers.inTransaction(async (client) => {
       const row = await this.lockInScope(client, caller, driverId);
       if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
       if (!row.isActive) throw driverRetired();
@@ -367,14 +373,10 @@ export class DriverService {
         }
       }
       const updated = (await this.views(client, [await drivers.findById(client, row.id)]))[0];
-      return { view: updated, changedFields: fields, transfer: moved };
+      if (fields.length > 0) await this.publish(client, caller, DRIVER_EVENTS.updated, updated, { changed_fields: fields });
+      if (moved) await this.publish(client, caller, DRIVER_EVENTS.transferred, updated, { from_depot_id: moved.from, to_depot_id: moved.to });
+      return updated;
     });
-
-    if (changedFields.length > 0) await this.publish(caller, DRIVER_EVENTS.updated, view, { changed_fields: changedFields });
-    if (transfer) {
-      await this.publish(caller, DRIVER_EVENTS.transferred, view, { from_depot_id: transfer.from, to_depot_id: transfer.to });
-    }
-    return view;
   }
 
   /**
@@ -385,14 +387,14 @@ export class DriverService {
    */
   async reinstate(caller: Caller, driverId: string): Promise<DriverView> {
     const { drivers } = this.deps;
-    const { view, changed } = await drivers.inTransaction(async (client) => {
+    return drivers.inTransaction(async (client) => {
       const row = await this.lockInScope(client, caller, driverId);
-      if (row.isActive) return { view: (await this.views(client, [row]))[0], changed: false };
+      if (row.isActive) return (await this.views(client, [row]))[0];
       await drivers.update(mutationContext(caller), row.id, { is_active: true }, client);
-      return { view: (await this.views(client, [await drivers.findById(client, row.id)]))[0], changed: true };
+      const view = (await this.views(client, [await drivers.findById(client, row.id)]))[0];
+      await this.publish(client, caller, DRIVER_EVENTS.reinstated, view);
+      return view;
     });
-    if (changed) await this.publish(caller, DRIVER_EVENTS.reinstated, view);
-    return view;
   }
 
   /**
@@ -403,16 +405,15 @@ export class DriverService {
    */
   async retire(caller: Caller, driverId: string): Promise<void> {
     const { drivers, trips } = this.deps;
-    const retired = await drivers.inTransaction(async (client) => {
+    await drivers.inTransaction(async (client) => {
       const row = await this.lockInScope(client, caller, driverId);
-      if (!row.isActive) return null;
+      if (!row.isActive) return;
       if ((await trips.driverHasActiveTrip(client, row.id)) || (await drivers.hasActiveAssignment(client, row.id))) {
         throw driverInUse();
       }
       await drivers.retire(mutationContext(caller), row.id, client);
-      return (await this.views(client, [await drivers.findById(client, row.id)]))[0];
+      await this.publish(client, caller, DRIVER_EVENTS.retired, (await this.views(client, [await drivers.findById(client, row.id)]))[0]);
     });
-    if (retired) await this.publish(caller, DRIVER_EVENTS.retired, retired);
   }
 
   /**
@@ -492,9 +493,11 @@ export class DriverService {
     return depotId;
   }
 
-  private publish(caller: Caller, type: string, view: DriverView, extra: Record<string, unknown> = {}): Promise<void> {
+  /** Into the outbox on the change's transaction (FMS-73); ordered per driver. */
+  private publish(client: PoolClient, caller: Caller, type: string, view: DriverView, extra: Record<string, unknown> = {}): Promise<void> {
     const payload = { driver_id: view.id, user_id: view.user_id, depot_id: view.depot_id, ...extra };
-    return this.deps.events.publish([createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId })]);
+    const ctx = { actor: caller.user.publicId, correlationId: caller.correlationId };
+    return this.deps.events.publish(client, [createEvent(type, payload, ctx, { aggregate: aggregateKey('driver', view.id) })]);
   }
 }
 

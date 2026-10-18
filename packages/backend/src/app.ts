@@ -10,14 +10,17 @@ import { requestLogger } from './middleware/requestLogger';
 import { modules as defaultModules } from './modules';
 import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
 import { cache } from './shared/cache';
-import { healthRouter, type OptionalDependency, type ReadinessCheck } from './shared/http/health';
+import { outboxHealth } from './shared/events/outbox-health';
+import { healthRouter, type HealthMetrics, type OptionalDependency, type ReadinessCheck } from './shared/http/health';
 import type { AppModule } from './shared/module';
 
 export interface AppOptions {
   /** Dependencies `/health/ready` checks. Defaults to the database. */
   readinessChecks?: Record<string, ReadinessCheck>;
-  /** Reported by /health/ready but never a reason for 503 (Redis). Defaults to the app's cache. */
+  /** Reported by /health/ready but never a reason for 503. Defaults to Redis (the app's cache) and the event outbox. */
   optionalDependencies?: Record<string, OptionalDependency>;
+  /** Numbers /health/ready reports. Defaults to the event outbox's lag. */
+  metrics?: Record<string, HealthMetrics>;
   /** The modules to mount. Defaults to every module; tests pass their own routes. */
   modules?: AppModule[];
 }
@@ -39,7 +42,10 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(requestSource);
   app.use(auditLogMiddleware);
 
-  app.use(healthRouter(readinessChecks, undefined, options.optionalDependencies ?? { redis: cache }));
+  const outbox = outboxHealth(pool);
+  app.use(
+    healthRouter(readinessChecks, undefined, options.optionalDependencies ?? { redis: cache, outbox }, options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }) }),
+  );
 
   for (const mod of options.modules ?? defaultModules) {
     if (mod.router) app.use('/api/v1', mod.router);
