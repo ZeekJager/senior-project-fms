@@ -226,20 +226,24 @@ export const fleetAvailability = {
 export const depotRefs = { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds };
 
 /**
- * For the trip module (FMS-30): depots, vehicles and drivers between public
- * and internal ids, and the driver profile of a signed-in user (a driver
- * sees only their own trips).
+ * For the trip module (FMS-30, FMS-31): depots, vehicles and drivers between
+ * public and internal ids, the driver profile of a signed-in user (a driver
+ * sees only their own trips), and for assignment the vehicle's state, the
+ * driver in scope and their eligibility.
  */
 export const tripRefs = {
   depots: depotRefs,
   vehicles: {
     idOf: async (db: Queryable, publicId: string) => (await vehicleRepository.findRef(db, { publicId }, { kind: 'all' }))?.id ?? null,
+    forAssignment: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findForTrip(db, publicId, scope),
     publicIds: async (db: Queryable, ids: readonly string[]) =>
       new Map([...(await vehicleRepository.refsByIds(db, ids))].map(([id, ref]) => [id, ref.publicId])),
   },
   drivers: {
     idOf: async (db: Queryable, publicId: string) => (await driverRepository.findByPublicId(db, publicId))?.id ?? null,
     idOfUser: async (db: Queryable, userId: string) => (await driverRepository.findByUserId(db, userId))?.id ?? null,
+    forAssignment: (db: Queryable, publicId: string, scope: Scope) => driverRepository.findForTrip(db, publicId, scope),
+    eligibility: (db: Queryable, driverId: string, at: Date, vehicleId: string) => driverService.checkEligibility(db, driverId, at, vehicleId),
     publicIds: (db: Queryable, ids: readonly string[]) => driverRepository.publicIdsByIds(db, ids),
   },
 };

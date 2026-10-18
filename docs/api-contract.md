@@ -119,6 +119,7 @@ A detail may carry `record_id`: the public id of the record the problem is about
 | `CONFLICT_DRIVER_OVERLAP` | 409 | Driver already assigned in that time window | `ex_trip_driver_overlap` |
 | `CONFLICT_VEHICLE_OVERLAP` | 409 | Vehicle already assigned in that time window | `ex_trip_vehicle_overlap` |
 | `CONFLICT_VEHICLE_FLAGGED` | 409 | Vehicle has `maintenance_flag` set | API |
+| `CONFLICT_DRIVER_NOT_ELIGIBLE` | 409 | Driver cannot drive this trip: retired, account not active, licence expired or wrong class (`details[].reason`) | API |
 | `CONFLICT_ATTENDANCE_DUPLICATE` | 409 | Attendance already recorded for driver/date | `driver_attendance_driver_id_attendance_date_key` |
 | `CONFLICT_INVALID_STATE_TRANSITION` | 409 | Status change not allowed from current state | API / `chk_trip_*` |
 | `CONFLICT_INSUFFICIENT_STOCK` | 409 | Movement would make stock negative | `inventory_parts_stock_quantity_check` |
@@ -403,6 +404,16 @@ Trip rules (FMS-30):
 - **Cancel:** `PATCH {"status": "cancelled"}` keeps the row with status `cancelled`; it stays in the history. A trip under way (`en_route`) is ended, not cancelled, and a completed or cancelled trip never changes: both `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: trip_en_route`, `trip_completed`, `trip_cancelled`).
 - **History:** `GET /trips` filters by `status` (one or several, comma-separated), `driver_id`, `vehicle_id`, `route_id`, `depot_id`, and `from`/`to` on the trip's start (`scheduled_start`, or `created_at` for an unscheduled draft). `from`/`to` take an instant or a date; a date is that Addis Ababa day, and a date `to` covers the whole day. `to` at or before `from` is `400 VALIDATION_INVALID_DATE_RANGE`. Filters combine (AND); one naming something unknown matches nothing. Newest first (`sort_order=asc` for earliest first) with **keyset paging**: `page_size` 1-100 (default 50), `meta.next_cursor` for the next page or `null` on the last; trips written while paging never shift a page. A cursor the API did not issue is `400 invalid_cursor`.
 - **Events:** `TripCreated` (`trip_id`, `route_id`, `depot_id`, `scheduled_start`, `scheduled_end`), `TripUpdated` on a reschedule (`changed_fields`, `status`), `TripCancelled` (`previous_status`, `route_id`, `driver_id`, `vehicle_id`), ordered per trip (FMS-73).
+
+Assignment rules (FMS-31):
+
+- **Who:** `trip:assign` (admin, fleet manager, dispatcher; never drivers). Every assignment is audited.
+- **Request:** `POST /trips/{trip_id}/assign` with `{ "driver_id", "vehicle_id", "version" }`. `version` is the one the dispatcher saw and is required: if the trip changed since, `409 CONFLICT_CONCURRENT_MODIFICATION`. `Idempotency-Key` is accepted. A `scheduled` trip becomes `assigned`; an `assigned` trip can be re-assigned. A draft without times, or a trip under way, completed or cancelled, is `409 CONFLICT_INVALID_STATE_TRANSITION`.
+- **Checks, in this order:** the vehicle and driver are in your depots (`400 references_missing_record`) and the vehicle is `active`; **BR-2** the vehicle is not flagged for maintenance or in the workshop (`409 CONFLICT_VEHICLE_FLAGGED`, `record_id` = its open maintenance record); the driver is eligible for that vehicle on the trip's start (`409 CONFLICT_DRIVER_NOT_ELIGIBLE`, one detail per reason, §6.3); **BR-1** the driver and **BR-3** the vehicle are not on another `assigned` or `en_route` trip that overlaps (`409 CONFLICT_DRIVER_OVERLAP` / `CONFLICT_VEHICLE_OVERLAP`, `record_id` = that trip).
+- **A 0-minute gap is an overlap:** a trip ending at 08:00 and the next starting at 08:00 conflict. The database enforces the same rule (`ex_trip_driver_overlap`, `ex_trip_vehicle_overlap`, both ends included since migration 030), so two concurrent assignments can never both succeed: one gets `200`, the other `409` (when the database refuses it, the `409` has no `record_id`).
+- **Overrun warning:** if the driver or vehicle is on a trip still under way whose expected end (its scheduled end, or now if it is already late) plus `TRIP_OVERRUN_GRACE_MINUTES` (default 0) is after this trip's start, the assignment still succeeds, with `meta.warnings: [{ warning: "PREVIOUS_TRIP_OVERRUN", field, trip_id, expected_end }]`. It never blocks assignment or start.
+- **Response:** `200` with the `Trip` (new `version` and ETag) and `meta.warnings` (empty when none). Assigning the same driver and vehicle again changes nothing.
+- **Event:** `TripAssigned` (`trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `scheduled_end`). Live updates to screens (Socket.IO) arrive in Sprint 4 from this event.
 
 ### 7.3 Trip creation example
 

@@ -40,6 +40,13 @@ const updateBody = z
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: 'Send at least one field to change.', params: { reason: 'empty_update' } });
 
+/** POST /trips/{id}/assign: the version the dispatcher saw is required, so two dispatchers never overwrite each other. */
+const assignBody = z.strictObject({
+  driver_id: z.uuid(),
+  vehicle_id: z.uuid(),
+  version: z.number().int().min(0),
+});
+
 const historyQuery = z
   .object({
     /** One status or several, comma-separated: status=scheduled,assigned. */
@@ -73,8 +80,9 @@ function tripId(req: Request): string {
 /**
  * Trips and trip history (api-contract §7.2, FMS-30). Reads need trip:read;
  * staff see their depots' trips and a driver only their own. Writes need
- * trip:write (admin, fleet manager, dispatcher). POST takes an optional
- * Idempotency-Key, so a retried create never makes a second trip.
+ * trip:write (admin, fleet manager, dispatcher); assignment trip:assign
+ * (FMS-31; drivers excluded). The POSTs take an optional Idempotency-Key, so
+ * a retry never makes a second trip or a second assignment.
  */
 export function tripRouter(service: TripService): Router {
   const router = Router();
@@ -119,6 +127,17 @@ export function tripRouter(service: TripService): Router {
       const id = tripId(req);
       const trip = await service.update(caller(req), id, parseInput(updateBody, req.body), ifMatchVersion(req.get('If-Match')));
       res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  router.post(
+    '/trips/:tripId/assign',
+    authorize('trip:assign'),
+    idempotent(),
+    asyncHandler(async (req, res) => {
+      const id = tripId(req);
+      const { trip, warnings } = await service.assign(caller(req), id, parseInput(assignBody, req.body));
+      res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { warnings, request_id: req.correlationId } });
     }),
   );
 

@@ -62,13 +62,25 @@ export interface FleetRefs {
   vehicles: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+    /** For assignment: a vehicle in the scope with its state, share-locked. */
+    forAssignment(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean } | null>;
   };
   drivers: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;
     /** The driver profile of a user account (internal user id). */
     idOfUser(db: Queryable, userId: string): Promise<string | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+    /** For assignment: a driver in the scope (home depot), share-locked. */
+    forAssignment(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string } | null>;
+    /** Whether the driver may drive this vehicle at `at`, and every reason if not (FMS-76). */
+    eligibility(db: Queryable, driverId: string, at: Date, vehicleId: string): Promise<{ eligible: boolean; reasons: string[] }>;
   };
+}
+
+/** What the trip module needs from maintenance (FMS-31), connected by src/modules/index.ts. */
+export interface MaintenanceRefs {
+  /** The public id of the open record behind a vehicle's maintenance flag, if any. */
+  openRecordFor(db: Queryable, vehicleId: string): Promise<string | null>;
 }
 
 export interface RouteServiceDeps {

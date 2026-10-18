@@ -41,6 +41,8 @@ Rules that follow from this:
 - **Don't run database calls in parallel inside a test** (`Promise.all` over queries); they share one connection.
 - **Tests can't see data committed by another connection**, and can't test two concurrent connections (for example a race between two dispatchers). Such a test needs its own setup; ask before adding one.
 
+**Races** (`test/integration/trip-assignment-race.test.ts`, FMS-31): the file creates its own database (`<test db>_race`), migrates it with the same code, and drops it afterwards. It builds the service on its own `Pool` there, so each call gets its own connection and commits, as in production. Its own database is needed because committed audit rows can never be deleted (append-only), and the run fails if the test database gains rows. Copy that file's setup for another race test.
+
 ### Factories
 
 `test/support/factories.ts` creates valid rows in one line. Unique fields get random values; pass overrides for anything the test cares about.
