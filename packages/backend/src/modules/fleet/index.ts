@@ -137,6 +137,25 @@ export const vehicleMaintenance = {
 /** For other modules: depots by public id in a caller's scope (share-locked), and public ids by internal id. */
 export const depotRefs = { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds };
 
+/**
+ * For the trip module (FMS-30): depots, vehicles and drivers between public
+ * and internal ids, and the driver profile of a signed-in user (a driver
+ * sees only their own trips).
+ */
+export const tripRefs = {
+  depots: depotRefs,
+  vehicles: {
+    idOf: async (db: Queryable, publicId: string) => (await vehicleRepository.findRef(db, { publicId }, { kind: 'all' }))?.id ?? null,
+    publicIds: async (db: Queryable, ids: readonly string[]) =>
+      new Map([...(await vehicleRepository.refsByIds(db, ids))].map(([id, ref]) => [id, ref.publicId])),
+  },
+  drivers: {
+    idOf: async (db: Queryable, publicId: string) => (await driverRepository.findByPublicId(db, publicId))?.id ?? null,
+    idOfUser: async (db: Queryable, userId: string) => (await driverRepository.findByUserId(db, userId))?.id ?? null,
+    publicIds: (db: Queryable, ids: readonly string[]) => driverRepository.publicIdsByIds(db, ids),
+  },
+};
+
 export const fleetModule: AppModule = {
   name: 'fleet',
   router,

@@ -110,6 +110,13 @@ export class DriverRepository extends Repository {
     return res.rows;
   }
 
+  /** Public ids by internal id, for other modules' responses. */
+  async publicIdsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; publicId: string }>('SELECT id, public_id AS "publicId" FROM fleet.drivers WHERE id = ANY($1::bigint[])', [ids]);
+    return new Map(res.rows.map((r) => [r.id, r.publicId]));
+  }
+
   /** The driver profile of a user account (internal user id), if any. */
   async findByUserId(db: Queryable, userId: string): Promise<DriverRow | null> {
     const res = await db.query<DriverRow>(`${ROW_SQL} WHERE d.user_id = $1`, [userId]);

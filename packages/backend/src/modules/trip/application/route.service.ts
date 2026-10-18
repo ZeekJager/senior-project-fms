@@ -48,13 +48,32 @@ export interface RouteListQuery {
   sort_order: 'asc' | 'desc';
 }
 
-export interface RouteServiceDeps {
-  routes: Pick<RouteRepository, 'inTransaction' | 'list' | 'findVisible' | 'findById' | 'insert' | 'update'>;
-  /** The fleet module's depots, connected by src/modules/index.ts (fleet imports trip, so trip cannot import fleet). */
-  depots: () => {
+/**
+ * What the trip module needs from fleet: depots, vehicles and drivers by
+ * public id (internal id, or null if unknown) and back. Connected by
+ * src/modules/index.ts, since fleet imports trip and trip cannot import fleet.
+ */
+export interface FleetRefs {
+  depots: {
+    /** A live depot in the scope, share-locked. */
     resolveInScope(db: Queryable, publicId: string, scope: Scope): Promise<string | null>;
     publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>>;
   };
+  vehicles: {
+    idOf(db: Queryable, publicId: string): Promise<string | null>;
+    publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+  };
+  drivers: {
+    idOf(db: Queryable, publicId: string): Promise<string | null>;
+    /** The driver profile of a user account (internal user id). */
+    idOfUser(db: Queryable, userId: string): Promise<string | null>;
+    publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+  };
+}
+
+export interface RouteServiceDeps {
+  routes: Pick<RouteRepository, 'inTransaction' | 'list' | 'findVisible' | 'findById' | 'insert' | 'update'>;
+  fleet: () => FleetRefs;
   events: EventBus;
 }
 
@@ -77,7 +96,7 @@ export class RouteService {
       const scope = depotScope(caller.user);
       let depotId: string | undefined;
       if (query.depot_id) {
-        const resolved = await this.deps.depots().resolveInScope(client, query.depot_id, scope);
+        const resolved = await this.deps.fleet().depots.resolveInScope(client, query.depot_id, scope);
         if (!resolved) return { items: [], total: 0 };
         depotId = resolved;
       }
@@ -168,13 +187,13 @@ export class RouteService {
 
   /** A depot in the caller's scope, or 400: a route without a valid depot is not saved. */
   private async depotFor(db: Queryable, caller: Caller, depotPublicId: string): Promise<string> {
-    const id = await this.deps.depots().resolveInScope(db, depotPublicId, depotScope(caller.user));
+    const id = await this.deps.fleet().depots.resolveInScope(db, depotPublicId, depotScope(caller.user));
     if (!id) throw routeDepotNotFound();
     return id;
   }
 
   private async views(db: Queryable, rows: RouteRow[]): Promise<RouteView[]> {
-    const depots = await this.deps.depots().publicIds(db, [...new Set(rows.map((r) => r.depotId))]);
+    const depots = await this.deps.fleet().depots.publicIds(db, [...new Set(rows.map((r) => r.depotId))]);
     return rows.map((r) => ({
       id: r.publicId,
       name: r.name,
