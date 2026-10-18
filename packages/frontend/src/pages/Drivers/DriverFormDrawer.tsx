@@ -14,6 +14,8 @@ interface DriverFormDrawerProps {
   onRetire?: () => void
   /** Null: add a new driver (and their account). */
   driver: Driver | null
+  /** With `driver` null: add the licence profile of this existing driver-role account instead of creating one. */
+  forUser?: { id: string; full_name: string; email: string }
   depots: Depot[]
   defaultDepotId?: string
 }
@@ -24,12 +26,19 @@ const CONFLICT_MESSAGES: Record<string, string> = {
   NOT_FOUND: 'This driver no longer exists or is outside your depots.',
 }
 
+const USER_ID_MESSAGES: Record<string, string> = {
+  references_missing_record: 'This account no longer exists or is outside your depots.',
+  account_not_active: 'This account is not active, so it cannot get a driver profile.',
+  not_a_driver: 'This account does not hold the driver role.',
+}
+
 /**
  * S-05 add / edit. Adding creates the driver's user account (driver role, no
- * password yet) and the licence in one request. Licence changes go through
+ * password yet) and the licence in one request, or, with `forUser`, adds the
+ * licence to an account that was invited with the driver role. Licence changes go through
  * this panel only, never inline in the table, so each is one audited edit.
  */
-export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId, onRetire }: DriverFormDrawerProps) {
+export function DriverFormDrawer({ open, onClose, driver, forUser, depots, defaultDepotId, onRetire }: DriverFormDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
   const [values, setValues] = useState<DriverFormValues>(EMPTY_FORM)
@@ -67,7 +76,7 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
     event.preventDefault()
     if (saving) return
     setFormError(null)
-    const { errors: found, input } = validateDriverForm(values, creating)
+    const { errors: found, input } = validateDriverForm(values, creating, undefined, forUser?.id)
     setErrors(found)
     if (!input) return
     try {
@@ -77,7 +86,7 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
         toast({ title: 'Changes saved', description: `${driver.full_name}’s record is up to date.` })
       } else {
         await create.mutateAsync(input)
-        toast({ title: 'Driver added', description: `${input.account.full_name} can be assigned to trips once their licence is valid.` })
+        toast({ title: 'Driver added', description: `${forUser?.full_name ?? values.full_name.trim()} can be assigned to trips once their licence is valid.` })
       }
       onClose()
     } catch (err) {
@@ -93,6 +102,8 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
     if (err.code === 'CONFLICT_DUPLICATE' && err.details.some((d) => d.field === 'account.email')) {
       return setErrors({ email: 'An account with this email already exists.' })
     }
+    const accountProblem = err.details.find((d) => d.field === 'user_id')
+    if (accountProblem) return setFormError((accountProblem.reason && USER_ID_MESSAGES[accountProblem.reason]) || 'This account cannot get a driver profile.')
     const fieldErrors: FieldErrors = {}
     for (const detail of err.details) {
       const field = detail.field ? API_FIELDS[detail.field] : undefined
@@ -106,8 +117,14 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
     <Drawer
       open={open}
       onClose={onClose}
-      title={driver ? `Edit ${driver.full_name}` : 'Add driver'}
-      description={driver ? 'Licence and depot changes are saved to the audit log.' : 'Creates the driver’s account and records their licence.'}
+      title={driver ? `Edit ${driver.full_name}` : forUser ? 'Add driver profile' : 'Add driver'}
+      description={
+        driver
+          ? 'Licence and depot changes are saved to the audit log.'
+          : forUser
+            ? 'Records the licence for this account so they can be dispatched.'
+            : 'Creates the driver’s account and records their licence.'
+      }
       footer={
         <>
           {driver && onRetire && (
@@ -135,7 +152,18 @@ export function DriverFormDrawer({ open, onClose, driver, depots, defaultDepotId
         </div>
 
         <Section title="Person">
-          {creating ? (
+          {forUser ? (
+            <div className="rounded-card border border-line bg-surface-muted p-4">
+              <p className="font-medium text-ink">{forUser.full_name}</p>
+              <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
+                <Mail className="h-3.5 w-3.5" aria-hidden="true" /> {forUser.email}
+              </p>
+              <p className="mt-3 flex items-start gap-1.5 text-xs text-ink-subtle">
+                <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                The account was just invited with the driver role. Only the licence and employment details are asked here.
+              </p>
+            </div>
+          ) : creating ? (
             <>
               <TextField label="Full name" autoComplete="off" value={values.full_name} onChange={(e) => set('full_name', e.target.value)} error={errors.full_name} />
               <TextField

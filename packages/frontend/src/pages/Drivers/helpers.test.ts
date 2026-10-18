@@ -24,6 +24,25 @@ describe('driver form', () => {
     })
   })
 
+  it('for an existing account sends user_id, asks no account fields and still requires the licence and depot', () => {
+    const profile = { ...EMPTY_FORM, license_number: 'et 4471', license_expiry: '2030-06-30', depot_id: 'd-1' }
+    const { errors, input } = validateDriverForm(profile, true, '2026-10-10', 'u-driver')
+    expect(errors).toEqual({})
+    expect(input).toEqual({
+      user_id: 'u-driver',
+      license_number: 'ET 4471',
+      license_categories: [],
+      license_expiry: '2030-06-30',
+      hire_date: null,
+      emergency_phone: null,
+      depot_id: 'd-1',
+    })
+    expect(input).not.toHaveProperty('account')
+
+    const missing = validateDriverForm({ ...profile, license_number: '', depot_id: '' }, true, '2026-10-10', 'u-driver')
+    expect(Object.keys(missing.errors).sort()).toEqual(['depot_id', 'license_number'])
+  })
+
   it('refuses a hire date in the future and a malformed phone', () => {
     const { errors } = validateDriverForm({ ...base, hire_date: '2026-10-11', emergency_phone: 'call me' }, true, '2026-10-10')
     expect(Object.keys(errors).sort()).toEqual(['emergency_phone', 'hire_date'])
