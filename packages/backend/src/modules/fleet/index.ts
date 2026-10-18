@@ -10,7 +10,16 @@ import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
 import { depotInScope } from '../../shared/authz/scope';
-import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, tripLookups, vehicleHasActiveTrip, vehicleOnActiveTripSql } from '../trip';
+import {
+  activeAssignments,
+  activeTripsForDrivers,
+  activeTripsForVehicles,
+  driverHasActiveTrip,
+  tripAssignment,
+  tripLookups,
+  vehicleHasActiveTrip,
+  vehicleOnActiveTripSql,
+} from '../trip';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
@@ -18,6 +27,7 @@ import { driverRouter } from './api/driver.routes';
 import { dvirRouter } from './api/dvir.routes';
 import { vehicleRouter } from './api/vehicle.routes';
 import { AttendanceService } from './application/attendance.service';
+import { AvailabilityService, TRIP_ASSIGNMENT_EVENTS, type AvailabilityQuery } from './application/availability.service';
 import { DepotService } from './application/depot.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
@@ -29,6 +39,7 @@ import type { DriverEligibility } from './domain/driver';
 import { VehicleService } from './application/vehicle.service';
 import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
 import { AttendanceRepository } from './infrastructure/attendance.repository';
+import { availabilityStore } from './infrastructure/availability.repository';
 import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
@@ -39,12 +50,40 @@ import { VehicleRepository } from './infrastructure/vehicle.repository';
 
 const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles, vehicleOnActiveTripSql);
 
+const availabilityService = new AvailabilityService({
+  store: availabilityStore,
+  trips: { tripAssignment, activeAssignments },
+  inTransaction: (fn) => vehicleRepository.inTransaction(fn),
+});
+
+/** The open record behind a vehicle's maintenance flag (FMS-76 status), connected by src/modules/index.ts. */
+type MaintenanceLookup = { openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> };
+let maintenanceLookup: MaintenanceLookup | null = null;
+
+/** Connects the maintenance module's lookup. Called once by src/modules/index.ts: fleet cannot import maintenance, which imports fleet. */
+export function provideMaintenanceLookup(lookup: MaintenanceLookup): void {
+  maintenanceLookup = lookup;
+}
+
 const vehicleService = new VehicleService({
   vehicles: vehicleRepository,
-  trips: { vehicleHasActiveTrip },
+  trips: { vehicleHasActiveTrip, activeTripsForVehicles },
   events: eventBus,
   cache,
+  availability: availabilityService,
+  assignments: availabilityStore,
+  users: userDirectory,
+  maintenance: () => maintenanceLookup,
 });
+
+// Fleet's read model of the trips holding a vehicle or driver (FMS-76).
+// Each trip event names a trip; the consumer re-reads that trip's state from
+// the trip module and updates its row, in its own transaction (FMS-73).
+for (const type of TRIP_ASSIGNMENT_EVENTS) {
+  eventBus.subscribe(type, 'fleet.trip-assignments', async (event, tx) => {
+    if (typeof event.payload.trip_id === 'string') await availabilityService.onTripEvent(tx, event.payload.trip_id);
+  });
+}
 
 // The maintenance module sets and clears the maintenance flag inside its
 // own transaction; its events are delivered after commit, so the cached
@@ -150,6 +189,21 @@ export const vehicleMaintenance = {
   setMaintenanceFlag: (client: PoolClient, ctx: MutationContext, id: string, flag: boolean) => vehicleRepository.setMaintenanceFlag(ctx, id, flag, client),
 };
 
+/**
+ * Availability (FMS-76) for other modules, the trip module's assignment rules
+ * first: whether vehicles and drivers (internal ids) are available for a
+ * window, with every reason. Pass the caller's transaction client as `db`.
+ * Trip overlaps come from fleet's read model, which follows trip events
+ * after they commit; a write that must never double-book still needs its own
+ * check in its transaction (and the trip exclusion constraints).
+ */
+export const fleetAvailability = {
+  check: (db: Queryable, query: AvailabilityQuery) => availabilityService.check(db, query),
+};
+
+/** Rebuilds the trip-assignment read model from the trip module (the daily job's work): for the seed, which writes trips directly. */
+export const rebuildTripAssignments = () => availabilityService.resync();
+
 /** For other modules: depots by public id in a caller's scope (share-locked), and public ids by internal id. */
 export const depotRefs = { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds };
 
@@ -220,6 +274,12 @@ export const fleetModule: AppModule = {
       at: '03:00',
       run: async () => ({ synced: await driverService.syncAccounts() }),
     },
+    {
+      // Rebuilds the trip-assignment read model from the trip module, repairing any missed trip event (FMS-76).
+      name: 'trip-assignment-sync',
+      at: '03:20',
+      run: () => availabilityService.resync(),
+    },
   ],
 };
 
@@ -250,6 +310,7 @@ export async function isDriverEligible(driverId: string, at: Date, db: Queryable
 }
 
 export type { DriverEligibility, EligibilityReason } from './domain/driver';
+export type { Availability, AvailabilityReason, AvailabilityResult, AvailabilityWindow } from './domain/availability';
 
 /** Event types, for modules that subscribe to them. */
 export { ATTENDANCE_EVENTS } from './domain/attendance';

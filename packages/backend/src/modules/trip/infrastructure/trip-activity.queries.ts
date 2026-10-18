@@ -39,6 +39,36 @@ export async function driverHasActiveTrip(db: Queryable, driverId: string): Prom
   return res.rows[0].active;
 }
 
+/**
+ * A trip's commitment of a vehicle and driver, for fleet's availability read
+ * model (FMS-76). Internal vehicle and driver ids: fleet's own keys.
+ */
+export interface TripAssignmentState {
+  tripId: string;
+  status: string;
+  vehicleId: string | null;
+  driverId: string | null;
+  scheduledStart: Date | null;
+  scheduledEnd: Date | null;
+}
+
+const ASSIGNMENT_SQL = `
+  SELECT public_id AS "tripId", status::text AS status, vehicle_id AS "vehicleId", driver_id AS "driverId",
+         scheduled_start AS "scheduledStart", scheduled_end AS "scheduledEnd"
+    FROM trip.trips`;
+
+/** One trip's current state by public id, or null if there is no such trip. */
+export async function tripAssignment(db: Queryable, tripPublicId: string): Promise<TripAssignmentState | null> {
+  const res = await db.query<TripAssignmentState>(`${ASSIGNMENT_SQL} WHERE public_id = $1`, [tripPublicId]);
+  return res.rows[0] ?? null;
+}
+
+/** Every assigned or en-route trip, for the daily re-sync of the read model. */
+export async function activeAssignments(db: Queryable): Promise<TripAssignmentState[]> {
+  const res = await db.query<TripAssignmentState>(`${ASSIGNMENT_SQL} WHERE status = ANY($1::trip.trip_status[]) ORDER BY id`, [ACTIVE_TRIP_STATUSES]);
+  return res.rows;
+}
+
 /** A vehicle's current trip, as other modules show it (public ids only). */
 export interface ActiveTrip {
   id: string;

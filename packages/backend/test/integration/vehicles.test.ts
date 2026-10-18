@@ -463,14 +463,18 @@ describe('PATCH /vehicles/{id}', () => {
 });
 
 describe('DELETE /vehicles/{id}', () => {
-  test('retiring an idle vehicle hides it from the default list, keeps it readable, and writes one audit row', async () => {
+  test('retiring an idle vehicle hides it from the default list, keeps it readable, and audits the retirement and its status history', async () => {
     const depot = await createDepot();
     const vehicle = await createVehicle({ depot });
     const cookie = await signIn(['depot_admin'], depot);
 
     const res = await api.delete(`/vehicles/${vehicle.public_id}`, cookie);
     expect(res.status).toBe(204);
-    expect(await auditRows(res)).toEqual([{ action: 'DELETE', entity_type: 'fleet.vehicles' }]);
+    // The retirement, and (FMS-76) the status change it is, kept in the status history.
+    expect(await auditRows(res)).toEqual([
+      { action: 'DELETE', entity_type: 'fleet.vehicles' },
+      { action: 'INSERT', entity_type: 'fleet.vehicle_status_history' },
+    ]);
 
     expect(ids(await api.get(`/vehicles?depot_id=${depot.public_id}`, cookie))).not.toContain(vehicle.public_id);
     expect(ids(await api.get(`/vehicles?depot_id=${depot.public_id}&status=retired`, cookie))).toEqual([vehicle.public_id]);

@@ -47,6 +47,8 @@ export const VEHICLE_EVENTS = {
   registered: 'VehicleRegistered',
   updated: 'VehicleUpdated',
   retired: 'VehicleRetired',
+  /** Any status change, retirement included (FMS-76). */
+  statusChanged: 'VehicleStatusChanged',
 } as const;
 
 /**

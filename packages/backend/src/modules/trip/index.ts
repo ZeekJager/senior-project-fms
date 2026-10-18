@@ -50,12 +50,16 @@ export { TRIP_EVENTS } from './domain/trip';
 
 /**
  * For other modules: whether a vehicle or driver is on an assigned or
- * en-route trip (fleet blocks retirement), and each vehicle's current trip
- * (the vehicle and driver lists show it).
+ * en-route trip (fleet blocks retirement), each vehicle's current trip (the
+ * vehicle and driver lists show it), and trips' assignment state for fleet's
+ * availability read model (FMS-76).
  */
 export {
+  activeAssignments,
   activeTripsForDrivers,
   activeTripsForVehicles,
+  tripAssignment,
+  type TripAssignmentState,
   driverHasActiveTrip,
   vehicleHasActiveTrip,
   vehicleOnActiveTripSql,
