@@ -1,4 +1,4 @@
-import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Radar, Route, Truck, UserCog, Users, Wrench, type LucideIcon } from 'lucide-react'
+import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Radar, Route, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
@@ -6,6 +6,7 @@ import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { CommandCenterPage, DashboardPage, DispatchPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
+import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
 import { VehiclesPage } from '@/pages/Vehicles'
 
@@ -76,6 +77,15 @@ export const portals: Portal[] = [
         element: <InventoryPage />,
         permission: 'inventory:read',
         nav: { label: 'Spare parts', icon: Boxes },
+      },
+      {
+        // Route planning (FMS-83). Dispatchers, depot admins and fleet managers write
+        // (route:write). Drivers hold route:read for their trips but not depot:read,
+        // so, as for vehicles, the planning screen needs both.
+        path: '/routes',
+        element: <RoutesPage />,
+        permission: { all: ['route:read', 'depot:read'] },
+        nav: { label: 'Routes', icon: Waypoints },
       },
       {
         path: '/fuel-reconciliation',

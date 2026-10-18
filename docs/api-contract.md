@@ -342,6 +342,16 @@ Attendance rules (FMS-21):
 | `GET /routes/{route_id}` | Get route | `route:read` | `Route` |
 | `PATCH /routes/{route_id}` | Update route | `route:write` | `RouteUpdate` -> `Route` |
 
+Route rules (FMS-83):
+
+- **Who:** `route:read`: every staff role except the finance clerk, and drivers (for their trips). `route:write`: admin, fleet manager, dispatcher, depot admin. Depot scope applies to reads and writes: a depot's dispatcher never sees, reads (`404`) or changes another depot's routes, and cannot create one there (`400 references_missing_record`).
+- **Create:** `name` (1-255, unique among the depot's active routes, case-insensitive: `409 CONFLICT_DUPLICATE` with field `name`) and `depot_id` are required; a route without a depot is `400 VALIDATION_FAILED`. Optional: `origin_name`, `origin` (`{latitude, longitude}`), `destination_name`, `destination`, `stops` (up to 25, in travel order: `[{name, latitude, longitude}]`, a stop's point optional but both parts or neither), `distance_km` (0-100,000, at most 3 decimals), `estimated_duration_seconds` (0-30 days). Latitude is -90 to 90 and longitude -180 to 180, at most 6 decimals. Distance and time are entered by hand until the mapping adapter (FMS-84) measures them.
+- **`Route`:** `id`, `name`, `depot_id`, `origin_name`, `origin`, `destination_name`, `destination`, `stops[]`, `distance_km`, `estimated_duration_seconds`, `is_active`, `version` (ETag; `If-Match` on `PATCH`, `409 CONFLICT_CONCURRENT_MODIFICATION` when stale), `created_at`, `updated_at`.
+- **Update:** `PATCH` takes the fields sent (an empty body is `400`); `null` clears an optional field; `stops` replaces the whole list. A `PATCH` that changes nothing writes no audit row and publishes nothing.
+- **Retire:** `PATCH {"is_active": false}`. Routes are never deleted: a retired route leaves the default list (`status=active`) and is not offered for new trips, while trips that used it keep their reference and their own copy of the plan (origin, destination, planned distance, stops). Its name is free for a new route; `{"is_active": true}` restores it unless the name has been taken (`409`).
+- **List:** `GET /routes` filters by `depot_id`, `search` (name, origin, destination), `status` (`active` default, `retired`, `all`); sorts by `name` (default), `distance_km` or `updated_at` (`sort_order`). Paged (§18).
+- **Events:** `RouteCreated` (`route_id`, `depot_id`, `name`, `distance_km`) and `RouteUpdated` (`route_id`, `depot_id`, `changed_fields`, `is_active`), ordered per route (FMS-73).
+
 ### 7.2 Trips
 
 | Method + path | Purpose | Auth / permission | Request / response |

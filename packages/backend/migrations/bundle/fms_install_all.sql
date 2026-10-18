@@ -1983,3 +1983,33 @@ BEGIN
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA events TO fms_app;
     END IF;
 END $$;
+
+-- ===== 027_route_management.sql =====
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE TRIGGER trg_trip_routes_version
+    BEFORE UPDATE ON trip.routes
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS stops JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_stops
+        CHECK (jsonb_typeof(stops) = 'array' AND jsonb_array_length(stops) <= 25);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_origin_pair
+        CHECK ((origin_latitude IS NULL) = (origin_longitude IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_destination_pair
+        CHECK ((destination_latitude IS NULL) = (destination_longitude IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_trip_routes_depot_name
+    ON trip.routes (depot_id, lower(name))
+    WHERE is_active;
+
+CREATE INDEX IF NOT EXISTS idx_trip_routes_depot ON trip.routes (depot_id);
