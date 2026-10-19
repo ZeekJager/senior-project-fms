@@ -181,10 +181,10 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | maintenance (FMS-22) | maintenance | `maintenance_record_id`, `vehicle_id`; `changed_fields`, `maintenance_flag_cleared` | `fleet.vehicle-cache` |
 | `InventoryPartCreated`, `InventoryPartUpdated`, `InventoryStockAdjusted`, `InventoryReorderNeeded` | maintenance (FMS-23) | part | `part_id`; stock and threshold on adjust and reorder | |
 | `RouteCreated`, `RouteUpdated` | trip (FMS-83) | route | `route_id`, `depot_id`; `name`, `distance_km` on create; `changed_fields`, `is_active` on update (retiring is an update) | |
-| `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | |
+| `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | `fleet.vehicle-cache` (`TripCancelled`) |
 | `FuelLogged` | fuel (FMS-39) | vehicle | `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km`, `recorded_at` | |
 | `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration later (telematics) | vehicle | `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set` | `fleet.vehicle-cache` |
-| `TripAssigned` | trip (FMS-31) | trip | `trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, the schedule | |
+| `TripAssigned` | trip (FMS-31) | trip | `trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, the schedule | `fleet.vehicle-cache` |
 | `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
 
 Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31); `TripStarted` and `TripCompleted` are named there for their publisher (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
@@ -198,6 +198,7 @@ Planned, named here so modules agree on them: `TripStarted`, `TripCompleted` (tr
 - Cookie-based sessions: tokens are `HttpOnly; Secure; SameSite=Strict` cookies and never appear in a response body or `localStorage` (`docs/auth.md`).
 - Endpoints marked `Idempotency-Key` in the contract must honour it: add `idempotent()` (`src/shared/http/idempotency.ts`) after `authorize(...)`. It stores the first successful response and replays it to retries (api-contract §19). From the web client, pass `idempotencyKey: true` to `api.request` on those calls. Expired keys are purged daily by `idempotency-key-purge` (`docs/jobs.md`).
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
+- A new or changed endpoint also goes in `docs/openapi.yaml` (OpenAPI 3.1). `test/integration/openapi.test.ts` fails if an operation listed there is not mounted, a `$ref` is broken, or an error code it names is not in `ERROR_CODES`.
 
 ## Redis
 

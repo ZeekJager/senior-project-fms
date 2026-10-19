@@ -15,6 +15,7 @@ import {
   type RouteStop,
   type RouteView,
 } from '../domain/route';
+import type { AvailabilityAnswer } from '../domain/assignment';
 import type { RouteRepository, RouteRow, RouteWrite } from '../infrastructure/route.repository';
 
 export interface Caller {
@@ -74,6 +75,17 @@ export interface FleetRefs {
     forAssignment(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string } | null>;
     /** Whether the driver may drive this vehicle at `at`, and every reason if not (FMS-76). */
     eligibility(db: Queryable, driverId: string, at: Date, vehicleId: string): Promise<{ eligible: boolean; reasons: string[] }>;
+  };
+  /**
+   * Fleet availability (FMS-76): vehicles and drivers (internal ids) for a
+   * window, with every reason. With `depotId` (internal), only that depot's
+   * are available. Pass the transaction's client to read inside it.
+   */
+  availability: {
+    check(
+      db: Queryable,
+      query: { vehicleIds?: readonly string[]; driverIds?: readonly string[]; window: { start: Date; end: Date }; excludeTripId?: string; depotId?: string },
+    ): Promise<{ vehicles: Map<string, AvailabilityAnswer>; drivers: Map<string, AvailabilityAnswer> }>;
   };
 }
 

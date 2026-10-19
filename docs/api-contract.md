@@ -4,7 +4,7 @@
 
 Status: canonical architecture and implementation contract, combining the previous API contract with the expanded API specification.
 
-API version: `v1` · Base path: `/api/v1` · Machine-readable companion: OpenAPI 3.0.3
+API version: `v1` · Base path: `/api/v1` · Machine-readable companion: OpenAPI 3.1, `docs/openapi.yaml` (endpoints are added as their cards are built; it uses 3.1 for nullable fields as `type: [string, 'null']`)
 
 | Item | Decision |
 |---|---|
@@ -120,6 +120,7 @@ A detail may carry `record_id`: the public id of the record the problem is about
 | `CONFLICT_VEHICLE_OVERLAP` | 409 | Vehicle already assigned in that time window | `ex_trip_vehicle_overlap` |
 | `CONFLICT_VEHICLE_FLAGGED` | 409 | Vehicle has `maintenance_flag` set | API |
 | `CONFLICT_DRIVER_NOT_ELIGIBLE` | 409 | Driver cannot drive this trip: retired, account not active, licence expired or wrong class (`details[].reason`) | API |
+| `CONFLICT_DEPOT_MISMATCH` | 409 | The vehicle or driver belongs to another depot than the trip (`details[].field`, `reason: "other_depot"`) | API |
 | `CONFLICT_ATTENDANCE_DUPLICATE` | 409 | Attendance already recorded for driver/date | `driver_attendance_driver_id_attendance_date_key` |
 | `CONFLICT_INVALID_STATE_TRANSITION` | 409 | Status change not allowed from current state | API / `chk_trip_*` |
 | `CONFLICT_INSUFFICIENT_STOCK` | 409 | Movement would make stock negative | `inventory_parts_stock_quantity_check` |
@@ -409,9 +410,11 @@ Assignment rules (FMS-31):
 
 - **Who:** `trip:assign` (admin, fleet manager, dispatcher; never drivers). Every assignment is audited.
 - **Request:** `POST /trips/{trip_id}/assign` with `{ "driver_id", "vehicle_id", "version" }`. `version` is the one the dispatcher saw and is required: if the trip changed since, `409 CONFLICT_CONCURRENT_MODIFICATION`. `Idempotency-Key` is accepted. A `scheduled` trip becomes `assigned`; an `assigned` trip can be re-assigned. A draft without times, or a trip under way, completed or cancelled, is `409 CONFLICT_INVALID_STATE_TRANSITION`.
-- **Checks, in this order:** the vehicle and driver are in your depots (`400 references_missing_record`) and the vehicle is `active`; **BR-2** the vehicle is not flagged for maintenance or in the workshop (`409 CONFLICT_VEHICLE_FLAGGED`, `record_id` = its open maintenance record); the driver is eligible for that vehicle on the trip's start (`409 CONFLICT_DRIVER_NOT_ELIGIBLE`, one detail per reason, §6.3); **BR-1** the driver and **BR-3** the vehicle are not on another `assigned` or `en_route` trip that overlaps (`409 CONFLICT_DRIVER_OVERLAP` / `CONFLICT_VEHICLE_OVERLAP`, `record_id` = that trip).
+- **Checks, in this order:** the vehicle and driver are in your depots (`400 references_missing_record`). Then fleet availability (FMS-76), read in the same transaction after the vehicle and driver rows are locked: the vehicle belongs to the trip's depot (`409 CONFLICT_DEPOT_MISMATCH`), and so does the driver, after the vehicle checks; it is not retired or out of service (`409 CONFLICT_INVALID_STATE_TRANSITION`, `reason: "vehicle_retired"` / `"vehicle_inactive"`); **BR-2** it is not flagged for maintenance or in the workshop (`409 CONFLICT_VEHICLE_FLAGGED`, `record_id` = its open maintenance record, when there is one). The driver is eligible for that vehicle on the trip's start (`409 CONFLICT_DRIVER_NOT_ELIGIBLE`, one detail per reason, §6.3). **BR-1** the driver and **BR-3** the vehicle are not on another `assigned` or `en_route` trip that overlaps (`409 CONFLICT_DRIVER_OVERLAP` / `CONFLICT_VEHICLE_OVERLAP`, `record_id` = that trip), checked on the trips themselves.
+- **Depot:** a trip is staffed from its own depot, whoever assigns it: a fleet manager or admin who sees every depot still cannot put another depot's vehicle or driver on it. To lend one, move it to that depot first.
 - **A 0-minute gap is an overlap:** a trip ending at 08:00 and the next starting at 08:00 conflict. The database enforces the same rule (`ex_trip_driver_overlap`, `ex_trip_vehicle_overlap`, both ends included since migration 030), so two concurrent assignments can never both succeed: one gets `200`, the other `409` (when the database refuses it, the `409` has no `record_id`).
 - **Overrun warning:** if the driver or vehicle is on a trip still under way whose expected end (its scheduled end, or now if it is already late) plus `TRIP_OVERRUN_GRACE_MINUTES` (default 0) is after this trip's start, the assignment still succeeds, with `meta.warnings: [{ warning: "PREVIOUS_TRIP_OVERRUN", field, trip_id, expected_end }]`. It never blocks assignment or start.
+- **Attendance warning:** a driver marked `absent`, `on_leave` or `sick` on the trip's first day (Addis Ababa) is still assigned, with `meta.warnings: [{ warning: "DRIVER_ATTENDANCE", field: "driver_id", attendance }]` (FMS-21, through fleet availability).
 - **Response:** `200` with the `Trip` (new `version` and ETag) and `meta.warnings` (empty when none). Assigning the same driver and vehicle again changes nothing.
 - **Event:** `TripAssigned` (`trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `scheduled_end`). Live updates to screens (Socket.IO) arrive in Sprint 4 from this event.
 

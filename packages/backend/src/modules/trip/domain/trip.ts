@@ -109,6 +109,12 @@ export const driverNotEligible = (reasons: readonly string[]) =>
 export const vehicleNotActive = (status: string) =>
   new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', `A vehicle that is ${status} cannot be dispatched.`, [{ field: 'vehicle_id', reason: `vehicle_${status}` }]);
 
+/** A trip is staffed from its own depot (FMS-76): the vehicle or driver belongs to another. */
+export const depotMismatch = (field: 'driver_id' | 'vehicle_id') =>
+  new AppError(409, 'CONFLICT_DEPOT_MISMATCH', `The ${field === 'driver_id' ? 'driver' : 'vehicle'} belongs to another depot than the trip.`, [
+    { field, reason: 'other_depot' },
+  ]);
+
 export const assignmentRefNotFound = (field: 'driver_id' | 'vehicle_id') =>
   new AppError(400, 'VALIDATION_FAILED', `The ${field === 'driver_id' ? 'driver' : 'vehicle'} does not exist or is outside your depots.`, [
     { field, reason: 'references_missing_record' },
@@ -122,15 +128,23 @@ export const notAssignable = (status: TripStatus) =>
     [{ field: 'status', reason: `trip_${status}` }],
   );
 
-/** A warning on a successful assignment: it does not block (FMS-31 overrun rule). */
-export interface AssignmentWarning {
-  warning: 'PREVIOUS_TRIP_OVERRUN';
-  field: 'driver_id' | 'vehicle_id';
-  /** The trip still under way. */
-  trip_id: string;
-  /** When it is now expected to end: its scheduled end, or now if it is already late. */
-  expected_end: string;
-}
+/** Warnings on a successful assignment: they never block. */
+export type AssignmentWarning =
+  | {
+      /** FMS-31 overrun rule: a trip of the driver or vehicle still under way runs into this one. */
+      warning: 'PREVIOUS_TRIP_OVERRUN';
+      field: 'driver_id' | 'vehicle_id';
+      /** The trip still under way. */
+      trip_id: string;
+      /** When it is now expected to end: its scheduled end, or now if it is already late. */
+      expected_end: string;
+    }
+  | {
+      /** The driver is marked absent, on leave or sick on the trip's first day (FMS-21, via fleet availability). */
+      warning: 'DRIVER_ATTENDANCE';
+      field: 'driver_id';
+      attendance: 'absent' | 'on_leave' | 'sick';
+    };
 
 /** A position in the history order: the trip's start (microseconds, UTC) and id. */
 export interface TripCursor {

@@ -97,13 +97,25 @@ async function rebuildTripAssignments(): Promise<Record<string, unknown>> {
   return { ...result };
 }
 
-// The maintenance module sets and clears the maintenance flag inside its
-// own transaction; its events are delivered after commit, so the cached
-// vehicle is dropped only once the change is visible. By name: fleet cannot
-// import the maintenance module, which imports fleet.
-for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted', 'VehicleFaultDetected']) {
+// The cached vehicle (GET /vehicles/{id}) carries its maintenance flag and
+// its current trip. Maintenance sets and clears the flag, and the trip module
+// assigns and cancels trips, inside their own transactions; their events are
+// delivered after commit, so the vehicle is dropped only once the change is
+// visible. An assignment also drops the vehicle it replaced. Maintenance
+// events by name: fleet cannot import the maintenance module, which imports fleet.
+for (const type of [
+  'MaintenanceRecordOpened',
+  'MaintenanceRecordUpdated',
+  'MaintenanceRecordCompleted',
+  'VehicleFaultDetected',
+  TRIP_EVENTS.assigned,
+  TRIP_EVENTS.cancelled,
+]) {
   eventBus.subscribe(type, 'fleet.vehicle-cache', async (event) => {
-    if (typeof event.payload.vehicle_id === 'string') await vehicleService.invalidate(event.payload.vehicle_id);
+    for (const key of ['vehicle_id', 'previous_vehicle_id']) {
+      const id = event.payload[key];
+      if (typeof id === 'string') await vehicleService.invalidate(id);
+    }
   });
 }
 
@@ -233,6 +245,7 @@ export const depotRefs = { resolveInScope: resolveDepotInScope, publicIds: depot
  */
 export const tripRefs = {
   depots: depotRefs,
+  availability: fleetAvailability,
   vehicles: {
     idOf: async (db: Queryable, publicId: string) => (await vehicleRepository.findRef(db, { publicId }, { kind: 'all' }))?.id ?? null,
     forAssignment: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findForTrip(db, publicId, scope),

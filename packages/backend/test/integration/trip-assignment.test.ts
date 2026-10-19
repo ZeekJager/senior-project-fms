@@ -190,6 +190,52 @@ describe('POST /trips/{id}/assign', () => {
     expect((await assign(s.cookie, s.trip, { ...body, vehicle_id: parked.public_id })).body.error.details).toEqual([{ field: 'vehicle_id', reason: 'vehicle_inactive' }]);
   });
 
+  test("a trip is staffed from its own depot: another depot's vehicle or driver is 409 CONFLICT_DEPOT_MISMATCH, even for a fleet manager", async () => {
+    const s = await setup();
+    const manager = await signIn(['fleet_manager']);
+    const elsewhere = await createDepot();
+    const body = { driver_id: s.driver.public_id, vehicle_id: s.vehicle.public_id, version: 0 };
+
+    const lentVehicle = await assign(manager, s.trip, { ...body, vehicle_id: (await createVehicle({ depot: elsewhere })).public_id });
+    expect(lentVehicle.status).toBe(409);
+    expect(lentVehicle.body.error).toMatchObject({ code: 'CONFLICT_DEPOT_MISMATCH', details: [{ field: 'vehicle_id', reason: 'other_depot' }] });
+
+    const lentDriver = await assign(manager, s.trip, { ...body, driver_id: (await truckDriver(elsewhere)).public_id });
+    expect(lentDriver.status).toBe(409);
+    expect(lentDriver.body.error).toMatchObject({ code: 'CONFLICT_DEPOT_MISMATCH', details: [{ field: 'driver_id', reason: 'other_depot' }] });
+
+    expect((await assign(manager, s.trip, body)).status).toBe(200);
+  });
+
+  test('a driver marked absent that day is assigned, with a DRIVER_ATTENDANCE warning', async () => {
+    const s = await setup();
+    const clerk = await createUser({ roles: ['depot_admin'], depot: s.depot });
+    // The trip starts 2026-11-02 06:00 UTC: 09:00 in Addis Ababa, the same day.
+    await pool.query("INSERT INTO fleet.driver_attendance (driver_id, attendance_date, status, logged_by) VALUES ($1, '2026-11-02', 'absent', $2)", [s.driver.id, clerk.id]);
+    const res = await assign(s.cookie, s.trip, { driver_id: s.driver.public_id, vehicle_id: s.vehicle.public_id, version: 0 });
+    expect(res.status).toBe(200);
+    expect(res.body.meta.warnings).toEqual([{ warning: 'DRIVER_ATTENDANCE', field: 'driver_id', attendance: 'absent' }]);
+  });
+
+  test('a vehicle in the workshop (status maintenance, no flag) is BR-2 too; out of service is not active', async () => {
+    const s = await setup();
+    const body = { driver_id: s.driver.public_id, vehicle_id: s.vehicle.public_id, version: 0 };
+    const workshop = await createVehicle({ depot: s.depot, status: 'maintenance' });
+    expect((await assign(s.cookie, s.trip, { ...body, vehicle_id: workshop.public_id })).body.error).toMatchObject({
+      code: 'CONFLICT_VEHICLE_FLAGGED',
+      details: [{ field: 'vehicle_id', reason: 'maintenance_flag' }],
+    });
+    const retired = await createVehicle({ depot: s.depot, status: 'retired', is_active: false });
+    expect((await assign(s.cookie, s.trip, { ...body, vehicle_id: retired.public_id })).body.error.details).toEqual([{ field: 'vehicle_id', reason: 'vehicle_retired' }]);
+  });
+
+  test("the assignment shows in fleet availability at once (the trip change's own transaction)", async () => {
+    const s = await setup();
+    expect((await assign(s.cookie, s.trip, { driver_id: s.driver.public_id, vehicle_id: s.vehicle.public_id, version: 0 })).status).toBe(200);
+    const status = await request(app).get(`/api/v1/vehicles/${s.vehicle.public_id}/status?from=2026-11-02T07:00:00Z&to=2026-11-02T08:00:00Z`).set('Cookie', s.cookie);
+    expect(status.body.data.availability).toMatchObject({ availability: 'unavailable', reasons: [{ code: 'assigned_to_overlapping_trip', trip_id: s.trip.public_id }] });
+  });
+
   test('trip:assign is required: a driver and a depot admin get 403', async () => {
     const s = await setup();
     const body = { driver_id: s.driver.public_id, vehicle_id: s.vehicle.public_id, version: 0 };

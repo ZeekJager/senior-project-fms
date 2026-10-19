@@ -1,4 +1,5 @@
 import { depotScope, ownDriverScope } from '../../../shared/authz/scope';
+import type { AppError } from '../../../shared/errors/app-error';
 import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
@@ -10,6 +11,7 @@ import {
   TRIP_EVENTS,
   assignmentRefNotFound,
   cannotCancelEnRoute,
+  depotMismatch,
   driverNotEligible,
   driverOverlap,
   notAssignable,
@@ -29,6 +31,7 @@ import {
 } from '../domain/trip';
 import type { RequestUser } from '../../../types/express';
 import type { TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
+import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
 
 export interface TripCreate {
@@ -256,13 +259,25 @@ export class TripService {
       const scope = depotScope(caller.user);
       const fleet = this.deps.fleet();
 
+      // Share-locked: a maintenance flag, status change or retirement cannot land mid-assignment.
       const vehicle = await fleet.vehicles.forAssignment(client, input.vehicle_id, scope);
       if (!vehicle) throw assignmentRefNotFound('vehicle_id');
-      if (vehicle.maintenanceFlag || vehicle.status === 'maintenance') throw vehicleFlagged(await this.deps.maintenance().openRecordFor(client, vehicle.id));
-      if (vehicle.status !== 'active') throw vehicleNotActive(vehicle.status);
-
       const driver = await fleet.drivers.forAssignment(client, input.driver_id, scope);
       if (!driver) throw assignmentRefNotFound('driver_id');
+
+      // Fleet availability (FMS-76), read on this transaction after the locks: the
+      // vehicle's status and flag (BR-2), the trip's depot, the driver's attendance.
+      // At the trip's start: what it reads here does not depend on the window's end.
+      const answer = await fleet.availability.check(client, {
+        vehicleIds: [vehicle.id],
+        driverIds: [driver.id],
+        window: { start, end: start },
+        excludeTripId: row.publicId,
+        ...(row.depotId ? { depotId: row.depotId } : {}),
+      });
+      const availability = readAvailability(answer.vehicles.get(vehicle.id)!, answer.drivers.get(driver.id)!);
+      if (availability.refusal) throw await this.refusal(client, availability.refusal, vehicle.id);
+
       const eligibility = await fleet.drivers.eligibility(client, driver.id, start, vehicle.id);
       if (!eligibility.eligible) throw driverNotEligible(eligibility.reasons);
 
@@ -271,7 +286,11 @@ export class TripService {
       const vehicleClash = await trips.overlapping(client, 'vehicle_id', vehicle.id, start, end, row.id);
       if (vehicleClash) throw vehicleOverlap(vehicleClash);
 
-      const warnings = [...(await this.overruns(client, 'driver_id', driver.id, row.id, start)), ...(await this.overruns(client, 'vehicle_id', vehicle.id, row.id, start))];
+      const warnings = [
+        ...availability.warnings,
+        ...(await this.overruns(client, 'driver_id', driver.id, row.id, start)),
+        ...(await this.overruns(client, 'vehicle_id', vehicle.id, row.id, start)),
+      ];
 
       const changed = row.driverId !== driver.id || row.vehicleId !== vehicle.id || row.status !== 'assigned';
       if (changed) await trips.update(mutationContext(caller), row.id, { driver_id: driver.id, vehicle_id: vehicle.id, status: 'assigned' }, client);
@@ -295,6 +314,18 @@ export class TripService {
       }
       return { trip: view, warnings };
     });
+  }
+
+  /** The error for an availability refusal; BR-2 names the open maintenance record behind the flag. */
+  private async refusal(db: Queryable, refusal: AvailabilityRefusal, vehicleId: string): Promise<AppError> {
+    switch (refusal.kind) {
+      case 'depot':
+        return depotMismatch(refusal.field);
+      case 'vehicle_not_active':
+        return vehicleNotActive(refusal.status);
+      case 'vehicle_flagged':
+        return vehicleFlagged(await this.deps.maintenance().openRecordFor(db, vehicleId));
+    }
   }
 
   /**

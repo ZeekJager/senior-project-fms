@@ -1,0 +1,407 @@
+openapi: 3.1.0
+info:
+  title: Fleet Management System API
+  version: 1.0.0
+  description: >
+    Machine-readable contract for the endpoints listed here. docs/api-contract.md
+    stays the full reference; an endpoint is added here as its card is built, and
+    test/integration/openapi.test.ts checks that every operation listed is mounted
+    and that every error code named is one the API sends.
+    Started with trip assignment (FMS-31) and vehicle status and availability (FMS-76).
+servers:
+  - url: /api/v1
+security:
+  - session: []
+
+tags:
+  - name: Trips
+  - name: Vehicles
+
+paths:
+  /trips/{trip_id}/assign:
+    post:
+      tags: [Trips]
+      operationId: assignTrip
+      summary: Assign a driver and vehicle to a trip (FMS-31)
+      description: >
+        Needs trip:assign (admin, fleet manager, dispatcher; never drivers). Checks, in order:
+        the vehicle and driver are in the caller's depots (400); fleet availability (FMS-76), after
+        both rows are share-locked: the vehicle and the driver belong to the trip's depot
+        (CONFLICT_DEPOT_MISMATCH), the vehicle is not retired or out of service
+        (CONFLICT_INVALID_STATE_TRANSITION) and not flagged or in the workshop (BR-2,
+        CONFLICT_VEHICLE_FLAGGED); the driver is eligible (CONFLICT_DRIVER_NOT_ELIGIBLE); BR-1 and
+        BR-3 overlaps, touching ends included (CONFLICT_DRIVER_OVERLAP, CONFLICT_VEHICLE_OVERLAP).
+        Publishes TripAssigned. Audited.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [driver_id, vehicle_id, version]
+              properties:
+                driver_id: { type: string, format: uuid }
+                vehicle_id: { type: string, format: uuid }
+                version:
+                  type: integer
+                  minimum: 0
+                  description: The trip's version as the dispatcher saw it.
+      responses:
+        '200':
+          description: Assigned (or already assigned to the same pair, unchanged).
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Trip' }
+                  meta:
+                    type: object
+                    required: [warnings, request_id]
+                    properties:
+                      warnings:
+                        type: array
+                        items: { $ref: '#/components/schemas/AssignmentWarning' }
+                      request_id: { type: string, format: uuid }
+        '400':
+          description: VALIDATION_FAILED (a bad body, or a driver or vehicle outside the caller's depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >
+            CONFLICT_CONCURRENT_MODIFICATION, CONFLICT_INVALID_STATE_TRANSITION, CONFLICT_DEPOT_MISMATCH,
+            CONFLICT_VEHICLE_FLAGGED, CONFLICT_DRIVER_NOT_ELIGIBLE, CONFLICT_DRIVER_OVERLAP or
+            CONFLICT_VEHICLE_OVERLAP. A detail's record_id names the conflicting trip or the open
+            maintenance record.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /vehicles/{vehicle_id}/status:
+    get:
+      tags: [Vehicles]
+      operationId: getVehicleStatus
+      summary: Vehicle status and availability (FMS-76)
+      description: >
+        Needs vehicle:read; same depot scope as GET /vehicles/{id} (404 outside it). Availability is
+        for the window given, or now.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - name: from
+          in: query
+          description: An instant, or a date meaning that Addis Ababa day.
+          schema: { type: string }
+        - name: to
+          in: query
+          description: An instant, or a date meaning the end of that Addis Ababa day. At most 31 days after from.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The vehicle's status.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/VehicleStatus' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_INVALID_DATE_RANGE (the window ends before it starts, or covers more than 31 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Vehicles]
+      operationId: changeVehicleStatus
+      summary: Change a vehicle's status, with the reason (FMS-76)
+      description: >
+        Needs vehicle:write and the depot scope. Audited, kept in the status history, published as
+        VehicleStatusChanged. A vehicle on a trip under way cannot be taken off the road; trips
+        already assigned ahead come back as warnings.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status: { $ref: '#/components/schemas/VehicleStatusValue' }
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        '200':
+          description: Changed (or already in that status, unchanged).
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/VehicleStatus' }
+                  meta:
+                    type: object
+                    required: [warnings, request_id]
+                    properties:
+                      warnings:
+                        type: array
+                        items: { $ref: '#/components/schemas/StatusChangeWarning' }
+                      request_id: { type: string, format: uuid }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (nothing leaves retired), CONFLICT_VEHICLE_IN_USE (on a trip under way; record_id is the trip) or CONFLICT_CONCURRENT_MODIFICATION.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: fms_access
+      description: The httpOnly access cookie set by POST /auth/login and rotated by POST /auth/refresh.
+
+  parameters:
+    TripId:
+      name: trip_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    VehicleId:
+      name: vehicle_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: The version last read, as an ETag ("3"). A newer version is 409 CONFLICT_CONCURRENT_MODIFICATION.
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+
+  headers:
+    ETag:
+      description: The resource's version, quoted ("3").
+      schema: { type: string }
+
+  responses:
+    Unauthenticated:
+      description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Forbidden:
+      description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission).
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    NotFound:
+      description: NOT_FOUND (missing, or outside the caller's depots).
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  schemas:
+    Meta:
+      type: object
+      required: [request_id]
+      properties:
+        request_id: { type: string, format: uuid }
+
+    ErrorEnvelope:
+      type: object
+      required: [error, meta]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, description: 'SCREAMING_SNAKE_CASE, from api-contract §3.6.' }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                required: [reason]
+                properties:
+                  field: { type: string }
+                  reason: { type: string }
+                  record_id:
+                    type: string
+                    format: uuid
+                    description: The record the problem is about (the conflicting trip, the open maintenance record).
+        meta:
+          type: object
+          properties:
+            request_id: { type: string, format: uuid }
+            timestamp: { type: string, format: date-time }
+
+    TripStatus:
+      type: string
+      enum: [draft, scheduled, assigned, en_route, completed, cancelled]
+
+    Trip:
+      type: object
+      required: [id, route_id, depot_id, vehicle_id, driver_id, status, scheduled_start, scheduled_end, stops, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        route_id: { type: [string, 'null'], format: uuid }
+        route_name: { type: [string, 'null'] }
+        depot_id: { type: [string, 'null'], format: uuid }
+        vehicle_id: { type: [string, 'null'], format: uuid }
+        driver_id: { type: [string, 'null'], format: uuid }
+        status: { $ref: '#/components/schemas/TripStatus' }
+        origin: { type: [string, 'null'] }
+        destination: { type: [string, 'null'] }
+        planned_distance_km: { type: [number, 'null'] }
+        planned_duration_seconds: { type: [integer, 'null'] }
+        scheduled_start: { type: [string, 'null'], format: date-time }
+        scheduled_end: { type: [string, 'null'], format: date-time }
+        actual_start: { type: [string, 'null'], format: date-time }
+        actual_end: { type: [string, 'null'], format: date-time }
+        actual_distance_km: { type: [number, 'null'] }
+        stops:
+          type: array
+          items:
+            type: object
+            required: [id, sequence_number, name, status]
+            properties:
+              id: { type: string, format: uuid }
+              sequence_number: { type: integer }
+              name: { type: string }
+              latitude: { type: [number, 'null'] }
+              longitude: { type: [number, 'null'] }
+              status: { type: string, enum: [planned, arrived, completed, skipped] }
+              planned_arrival: { type: [string, 'null'], format: date-time }
+              actual_arrival: { type: [string, 'null'], format: date-time }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AssignmentWarning:
+      oneOf:
+        - type: object
+          description: A trip of the driver or vehicle still under way runs into this one (FMS-31 overrun rule).
+          required: [warning, field, trip_id, expected_end]
+          properties:
+            warning: { const: PREVIOUS_TRIP_OVERRUN }
+            field: { type: string, enum: [driver_id, vehicle_id] }
+            trip_id: { type: string, format: uuid }
+            expected_end: { type: string, format: date-time }
+        - type: object
+          description: The driver is marked absent, on leave or sick on the trip's first day (Addis Ababa).
+          required: [warning, field, attendance]
+          properties:
+            warning: { const: DRIVER_ATTENDANCE }
+            field: { const: driver_id }
+            attendance: { type: string, enum: [absent, on_leave, sick] }
+
+    VehicleStatusValue:
+      type: string
+      description: inactive is out of service; maintenance is in the workshop; retired is final.
+      enum: [active, inactive, maintenance, retired]
+
+    AvailabilityResult:
+      type: object
+      required: [availability, reasons]
+      properties:
+        availability: { type: string, enum: [available, unavailable, available_with_warning] }
+        reasons:
+          type: array
+          items:
+            type: object
+            required: [code, severity]
+            properties:
+              code:
+                type: string
+                enum: [vehicle_retired, vehicle_in_maintenance, vehicle_out_of_service, maintenance_flag, vehicle_other_depot, assigned_to_overlapping_trip]
+              severity: { type: string, enum: [block, warning] }
+              trip_id: { type: string, format: uuid }
+
+    Assignment:
+      type: object
+      required: [trip_id, status, start, end]
+      properties:
+        trip_id: { type: string, format: uuid }
+        status: { type: string, enum: [assigned, en_route] }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+
+    VehicleStatus:
+      type: object
+      required: [vehicle_id, registration_number, depot_id, status, maintenance, availability, current_assignment, next_assignment, last_status_change, version, updated_at]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        depot_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/VehicleStatusValue' }
+        maintenance:
+          type: object
+          required: [flagged, in_workshop, open_record_id]
+          properties:
+            flagged: { type: boolean }
+            in_workshop: { type: boolean }
+            open_record_id: { type: [string, 'null'], format: uuid }
+        availability:
+          allOf:
+            - $ref: '#/components/schemas/AvailabilityResult'
+            - type: object
+              required: [window]
+              properties:
+                window:
+                  type: object
+                  required: [start, end]
+                  properties:
+                    start: { type: string, format: date-time }
+                    end: { type: string, format: date-time }
+        current_assignment:
+          oneOf:
+            - $ref: '#/components/schemas/Assignment'
+            - type: 'null'
+        next_assignment:
+          oneOf:
+            - $ref: '#/components/schemas/Assignment'
+            - type: 'null'
+        last_status_change:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [from_status, to_status, reason, source, maintenance_record_id, changed_at, changed_by]
+              properties:
+                from_status: { $ref: '#/components/schemas/VehicleStatusValue' }
+                to_status: { $ref: '#/components/schemas/VehicleStatusValue' }
+                reason: { type: [string, 'null'] }
+                source: { type: string, enum: [manual, maintenance] }
+                maintenance_record_id: { type: [string, 'null'], format: uuid }
+                changed_at: { type: string, format: date-time }
+                changed_by: { type: [string, 'null'], format: uuid }
+        version: { type: integer }
+        updated_at: { type: string, format: date-time }
+
+    StatusChangeWarning:
+      type: object
+      description: A trip already assigned to a vehicle taken off the road; it needs another vehicle.
+      required: [warning, trip_id, start]
+      properties:
+        warning: { const: ASSIGNED_TRIP_AFFECTED }
+        trip_id: { type: string, format: uuid }
+        start: { type: string, format: date-time }
