@@ -9,17 +9,19 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
-import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, vehicleHasActiveTrip, vehicleOnActiveTripSql } from '../trip';
+import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, tripLookups, vehicleHasActiveTrip, vehicleOnActiveTripSql } from '../trip';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
+import { dvirRouter } from './api/dvir.routes';
 import { vehicleRouter } from './api/vehicle.routes';
 import { AttendanceService } from './application/attendance.service';
 import { DepotService } from './application/depot.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
+import { DvirService } from './application/dvir.service';
 import { ExpiryService } from './application/expiry.service';
 import { DOCUMENT_EVENTS } from './domain/document';
 import type { DriverEligibility } from './domain/driver';
@@ -30,6 +32,7 @@ import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
+import { DvirRepository } from './infrastructure/dvir.repository';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
@@ -46,7 +49,7 @@ const vehicleService = new VehicleService({
 // own transaction; its events are delivered after commit, so the cached
 // vehicle is dropped only once the change is visible. By name: fleet cannot
 // import the maintenance module, which imports fleet.
-for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted']) {
+for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted', 'VehicleFaultDetected']) {
   eventBus.subscribe(type, 'fleet.vehicle-cache', async (event) => {
     if (typeof event.payload.vehicle_id === 'string') await vehicleService.invalidate(event.payload.vehicle_id);
   });
@@ -112,6 +115,17 @@ const attendanceService = new AttendanceService({
   events: eventBus,
 });
 
+// An inspection that finds issues sets the maintenance flag inside its own transaction (FMS-36),
+// so its VehicleFaultDetected event, like the maintenance ones above, drops the cached vehicle.
+const dvirService = new DvirService({
+  reports: new DvirRepository(pool),
+  vehicles: vehicleRepository,
+  drivers: driverRepository,
+  users: userDirectory,
+  trips: tripLookups,
+  events: eventBus,
+});
+
 const depotService = new DepotService({ depots: new DepotRepository(pool), users: userDirectory, events: eventBus });
 
 const router = Router();
@@ -120,6 +134,7 @@ router.use(attendanceRouter(attendanceService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));
+router.use(dvirRouter(dvirService));
 
 /**
  * For the maintenance module (FMS-22): find a vehicle in the caller's scope
