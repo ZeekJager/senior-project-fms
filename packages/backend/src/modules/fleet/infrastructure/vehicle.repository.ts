@@ -74,6 +74,7 @@ export interface LockedVehicle {
   fuelType: FuelType;
   fuelEfficiencyMlPerKm: number | null;
   odometerKm: number;
+  maintenanceFlag: boolean;
   version: number;
 }
 
@@ -235,7 +236,7 @@ export class VehicleRepository extends Repository {
     const res = await client.query<LockedVehicle>(
       `SELECT v.id, v.depot_id AS "depotId", v.is_active AS "isActive", v.fuel_type AS "fuelType",
               v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm",
-              v.version
+              v.maintenance_flag AS "maintenanceFlag", v.version
          FROM fleet.vehicles v
         WHERE v.public_id = $1 AND ${clause.sql}
           FOR UPDATE`,

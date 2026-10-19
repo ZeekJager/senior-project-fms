@@ -327,9 +327,19 @@ Attendance rules (FMS-21):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /dvir` | Legacy-compatible DVIR command | `dvir:write` | `vehicle_id,trip_id,type,items,issues_found`; canonical behavior |
-| `POST /dvir-reports` | Canonical DVIR create | `dvir:write` | `DVIRCreate` -> `DVIRReport` |
-| `GET /vehicles/{vehicle_id}/dvir-reports` | DVIR history | `dvir:read` | Paged `DVIRReport[]` |
+| `POST /dvir` | Legacy-compatible DVIR command | `dvir:write` | Same body, behaviour and `Idempotency-Key` as `POST /dvir-reports` |
+| `POST /dvir-reports` | Canonical DVIR create | `dvir:write` | `vehicle_id,type,items`; optional `trip_id`, `driver_id`, `issues_found`, `submitted_at` -> `201 DVIRReport` (`meta.created: true`), or `200` with the original and `meta.created: false`; `Idempotency-Key` |
+| `GET /vehicles/{vehicle_id}/dvir-reports` | DVIR history | `dvir:read` | `type`, `issues_found`, `from`, `to`, `sort_order` (`desc` default) -> paged `DVIRReport[]` |
+
+DVIR rules (FMS-36):
+
+- **`DVIRCreate`:** `type` is `pre_trip`, `post_trip`, `routine` or `other` (anything else is `400 VALIDATION_INVALID_ENUM`). `items` is the checklist: 1 to 100 entries `{name, passed, notes?}`, a name at most once (any casing; `reason: "duplicate_item"`). `issues_found` is the driver's own answer; any item with `passed: false` forces it `true`, and `true` with every item passed is kept. `submitted_at` is when the driver pressed submit (an offline queue may be late): defaults to now, never in the future (`reason: "in_future"`, 5 minutes of clock drift allowed) and not older than 30 days (`reason: "too_old"`). Any other field is `not_writable`.
+- **`DVIRReport`:** `id`, `vehicle_id`, `driver_id`, `trip_id`, `type`, `status` (`submitted`), `items`, `defects` (the failed items, `{name, notes}`), `issues_found`, `submitted_at`, `created_at`. A report is never edited or deleted here.
+- **Issues found:** `issues_found: true` sets the vehicle's `maintenance_flag` in the same transaction as the report (one audit trail for both) and publishes `VehicleFaultDetected`. The vehicle is flagged, not locked: a technician reviews and clears the flag. A later clean inspection does not clear it.
+- **Duplicates:** with a `trip_id`, an inspection of one type is recorded once per vehicle and trip. Submitting it again (an offline replay) answers `200` with the original report and `meta.created: false`, even if the second checklist differs, and changes nothing. Without a trip there is nothing to match on. `Idempotency-Key` (§19) additionally replays the exact stored response.
+- **Who:** `dvir:write` is held by admin, fleet manager, depot admin, technician and driver. A driver always submits as themselves (`driver_id` omitted or their own; another is `400`, `reason: "not_writable"`), for vehicles of their depot, and reads only their own reports. Everyone else names the driver the inspection is for (`400`, `reason: "required"`; a driver outside their depots is `references_missing_record`). A driver without a driver profile cannot submit.
+- **Vehicle and trip:** the vehicle must be a live vehicle in the caller's depots (`400`, `field: "vehicle_id"`, `references_missing_record` or `vehicle_retired`). `trip_id` must be a trip the caller may see (a driver's own; staff their depots') and, if it has a vehicle, this one (`reason: "trip_vehicle_mismatch"`).
+- **History:** `GET /vehicles/{id}/dvir-reports` is `404` for a vehicle outside the caller's depots (the same body as a missing id); a driver gets their own reports of it. `from` and `to` are Addis Ababa days (as in §3), and `to` includes its whole day.
 
 ## 7. Trips and Routes API
 
