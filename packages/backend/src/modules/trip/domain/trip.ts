@@ -42,11 +42,24 @@ export interface TripView {
   updated_at: Date;
 }
 
+/**
+ * Every trip event carries `trip_id`. Each change of a trip's status,
+ * schedule, vehicle or driver publishes one of these in the change's
+ * transaction: fleet's availability read model is kept from them
+ * (fleet.trip-assignments, FMS-76). A write that skips them leaves it wrong
+ * until the daily rebuild, which logs the drift.
+ */
 export const TRIP_EVENTS = {
   created: 'TripCreated',
   /** Rescheduled or moved to another route; changed_fields says what. */
   updated: 'TripUpdated',
   cancelled: 'TripCancelled',
+  /** A vehicle and driver were assigned (FMS-31). */
+  assigned: 'TripAssigned',
+  /** The driver started the trip: en route (FMS-32). */
+  started: 'TripStarted',
+  /** The driver ended the trip (FMS-32). */
+  completed: 'TripCompleted',
 } as const;
 
 /** States in which the plan (route, schedule) may still change, and from which a trip may be cancelled. */

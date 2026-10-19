@@ -3,7 +3,8 @@ import { AppError } from '../../../shared/errors/app-error';
 /** Enum values exactly as stored (shared.vehicle_type, shared.fuel_type, shared.vehicle_status). */
 export const VEHICLE_TYPES = ['car', 'suv', 'van', 'truck', 'bus', 'motorcycle', 'other'] as const;
 export const FUEL_TYPES = ['petrol', 'diesel', 'hybrid', 'electric', 'cng', 'lpg', 'other'] as const;
-export const VEHICLE_STATUSES = ['active', 'inactive', 'maintenance', 'retired', 'decommissioned'] as const;
+/** `inactive` is out of service; `maintenance` is in the workshop; `retired` is final (FMS-76). */
+export const VEHICLE_STATUSES = ['active', 'inactive', 'maintenance', 'retired'] as const;
 
 export type VehicleType = (typeof VEHICLE_TYPES)[number];
 export type FuelType = (typeof FUEL_TYPES)[number];

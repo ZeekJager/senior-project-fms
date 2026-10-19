@@ -3,6 +3,7 @@ import request, { type Response } from 'supertest';
 import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
+import { rebuildReadModels } from '../../src/modules';
 import { fleetAvailability, fleetModule } from '../../src/modules/fleet';
 import { createEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
@@ -32,7 +33,7 @@ async function auditRows(res: Response) {
   return rows.rows.map((r) => `${r.action} ${r.entity_type}`);
 }
 
-/** A trip event as the trip module publishes it, then delivered to fleet's consumers. */
+/** A trip event as the trip module publishes it (after a direct write to the trip): fleet's projection runs inside publish. */
 async function tripEvent(type: string, tripPublicId: string) {
   const client = await pool.connect();
   try {
@@ -121,6 +122,8 @@ describe('POST /vehicles/{id}/status', () => {
       changed_at: expect.any(String),
       changed_by: res.body.data.last_status_change.changed_by,
       reason: 'Gearbox noise',
+      source: 'manual',
+      maintenance_record_id: null,
     });
     expect(event.aggregate).toBe(`vehicle:${vehicle.public_id}`);
     // The vehicle itself shows the new status (its cache was dropped).
@@ -224,8 +227,122 @@ describe('read model from trip events', () => {
     await pool.query("INSERT INTO fleet.trip_assignments (trip_id, status, during) VALUES ($1, 'assigned', tstzrange(now(), now() + interval '1 hour', '[]'))", [randomUUID()]);
     const job = fleetModule.jobs!.find((j) => j.name === 'trip-assignment-sync')!;
     const result = await job.run({ now: new Date(), correlationId: randomUUID(), runKey: '2026-11-02' });
-    expect(result).toMatchObject({ removed: 1 });
+    // Drift is counted (and logged): a row repaired for the trip written without its event, a stale row removed.
+    expect(result).toMatchObject({ repaired: 1, removed: 1 });
     expect(await readModel(missed.public_id as string)).toEqual([{ status: 'assigned', start: new Date('2099-04-01T06:00:00Z'), end: new Date('2099-04-01T07:00:00Z') }]);
+  });
+});
+
+describe("read model kept in the trip change's transaction (projection)", () => {
+  const fleetManager = () => signIn(['fleet_manager']);
+
+  test('a reschedule through the trip API updates the read model at once, with no event delivery', async () => {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const trip = await createTrip({ vehicle, driver: (await createDriver({ depot })).driver, scheduled_start: '2099-05-01T06:00:00Z', scheduled_end: '2099-05-01T08:00:00Z' });
+    const res = await request(app).patch(`/api/v1/trips/${trip.public_id}`).set('Cookie', await fleetManager()).send({ scheduled_end: '2099-05-01T10:00:00Z' });
+    expect(res.status).toBe(200);
+    // No deliverEvents(): the row was written by the PATCH's own transaction.
+    expect(await readModel(trip.public_id as string)).toEqual([{ status: 'assigned', start: new Date('2099-05-01T06:00:00Z'), end: new Date('2099-05-01T10:00:00Z') }]);
+    const cookie = await signIn(['dispatcher'], depot);
+    expect((await status(cookie, vehicle, '?from=2099-05-01T09:00:00Z&to=2099-05-01T09:30:00Z')).body.data.availability.availability).toBe('unavailable');
+  });
+
+  test('a cancel through the trip API frees the vehicle at once', async () => {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const trip = await createTrip({ vehicle, driver: (await createDriver({ depot })).driver, scheduled_start: '2099-05-02T06:00:00Z', scheduled_end: '2099-05-02T08:00:00Z' });
+    await tripEvent('TripAssigned', trip.public_id as string);
+    expect(await readModel(trip.public_id as string)).toHaveLength(1);
+    const res = await request(app).patch(`/api/v1/trips/${trip.public_id}`).set('Cookie', await fleetManager()).send({ status: 'cancelled' });
+    expect(res.status).toBe(200);
+    expect(await readModel(trip.public_id as string)).toEqual([]);
+  });
+
+  test('every trip event type is projected, so a new publisher (FMS-31, FMS-32) needs no fleet change', () => {
+    for (const type of ['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted']) {
+      expect(eventBus.projections.namesOf(type)).toEqual(['fleet.trip-assignments']);
+      expect(eventBus.subscribers.consumersOf(type)).not.toContain('fleet.trip-assignments');
+    }
+  });
+
+  test('rebuildReadModels rebuilds every module read model, for the seed or an import that wrote without events', async () => {
+    const depot = await createDepot();
+    const trip = await createTrip({ vehicle: await createVehicle({ depot }), driver: (await createDriver({ depot })).driver, scheduled_start: '2099-05-03T06:00:00Z', scheduled_end: '2099-05-03T07:00:00Z' });
+    const results = await rebuildReadModels();
+    expect(Object.keys(results)).toEqual(['fleet.driver_accounts', 'fleet.trip_assignments']);
+    expect(results['fleet.trip_assignments']).toMatchObject({ repaired: expect.any(Number) });
+    expect(await readModel(trip.public_id as string)).toHaveLength(1);
+  });
+});
+
+describe('status follows workshop work', () => {
+  const openWork = async (vehicle: Row, body: object = {}) =>
+    request(app)
+      .post('/api/v1/maintenance')
+      .set('Cookie', await signIn(['fleet_manager']))
+      .send({ vehicle_id: vehicle.public_id, description: 'Clutch replacement', labour_hours: 4, total_cost_cents: 300000, ...body });
+  const updateWork = async (recordId: string, body: object) =>
+    request(app).patch(`/api/v1/maintenance/${recordId}`).set('Cookie', await signIn(['fleet_manager'])).send(body);
+
+  test('work in progress puts the vehicle in the workshop; the last of it ending takes it out', async () => {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const cookie = await signIn(['dispatcher'], depot);
+
+    const first = await openWork(vehicle, { status: 'in_progress' });
+    expect(first.status).toBe(201);
+    let res = await status(cookie, vehicle);
+    expect(res.body.data).toMatchObject({
+      status: 'maintenance',
+      maintenance: { flagged: true, in_workshop: true },
+      last_status_change: { from_status: 'active', to_status: 'maintenance', source: 'maintenance', maintenance_record_id: first.body.data.id, reason: 'Maintenance work started.' },
+    });
+    expect((await publishedEvents('VehicleStatusChanged'))[0].payload).toMatchObject({ new_status: 'maintenance', source: 'maintenance', maintenance_record_id: first.body.data.id });
+
+    const second = await openWork(vehicle);
+    expect((await updateWork(second.body.data.id, { status: 'in_progress' })).status).toBe(200);
+    expect((await updateWork(first.body.data.id, { status: 'completed' })).status).toBe(200);
+    // Other work is still in progress: still in the workshop.
+    expect((await status(cookie, vehicle)).body.data.status).toBe('maintenance');
+
+    expect((await updateWork(second.body.data.id, { status: 'completed' })).status).toBe(200);
+    res = await status(cookie, vehicle);
+    expect(res.body.data).toMatchObject({
+      status: 'active',
+      maintenance: { flagged: false, in_workshop: false },
+      availability: { availability: 'available' },
+      last_status_change: { from_status: 'maintenance', to_status: 'active', source: 'maintenance', maintenance_record_id: second.body.data.id },
+    });
+  });
+
+  test('open (not started) work only flags the vehicle; a status set by hand outlives the work', async () => {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const cookie = await signIn(['depot_admin'], depot);
+    const work = await openWork(vehicle);
+    expect((await status(cookie, vehicle)).body.data).toMatchObject({ status: 'active', maintenance: { flagged: true } });
+
+    expect((await setStatus(cookie, vehicle, { status: 'maintenance', reason: 'Waiting for parts' })).status).toBe(200);
+    expect((await updateWork(work.body.data.id, { status: 'in_progress' })).status).toBe(200);
+    expect((await updateWork(work.body.data.id, { status: 'completed' })).status).toBe(200);
+    expect((await status(cookie, vehicle)).body.data).toMatchObject({ status: 'maintenance', last_status_change: { source: 'manual', reason: 'Waiting for parts' } });
+  });
+
+  test('out of service stays out of service when work starts', async () => {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const cookie = await signIn(['depot_admin'], depot);
+    await setStatus(cookie, vehicle, { status: 'inactive', reason: 'Accident damage' });
+    expect((await openWork(vehicle, { status: 'in_progress' })).status).toBe(201);
+    expect((await status(cookie, vehicle)).body.data.status).toBe('inactive');
+  });
+});
+
+describe('statuses as stored', () => {
+  test('shared.vehicle_status no longer has the legacy decommissioned', async () => {
+    const res = await pool.query<{ values: string }>('SELECT enum_range(NULL::shared.vehicle_status)::text AS values');
+    expect(res.rows[0].values).toBe('{active,inactive,maintenance,retired}');
   });
 });
 
@@ -248,6 +365,18 @@ describe('fleet availability interface (for trip assignment)', () => {
     expect(answer.drivers.get(free.id)).toEqual({ availability: 'available', reasons: [] });
     // The trip being re-assigned is not its own conflict.
     expect((await fleetAvailability.check(pool, { driverIds: [busy.id], window, excludeTripId: trip.public_id as string })).drivers.get(busy.id)?.availability).toBe('available');
+  });
+
+  test("asked for a depot's trip: another depot's vehicle and driver are unavailable", async () => {
+    const depot = await createDepot();
+    const other = await createDepot();
+    const own = { vehicle: await createVehicle({ depot }), driver: (await createDriver({ depot })).driver };
+    const lent = { vehicle: await createVehicle({ depot: other }), driver: (await createDriver({ depot: other })).driver };
+    const answer = await fleetAvailability.check(pool, { vehicleIds: [own.vehicle.id, lent.vehicle.id], driverIds: [own.driver.id, lent.driver.id], window, depotId: depot.id });
+    expect(answer.vehicles.get(own.vehicle.id)?.availability).toBe('available');
+    expect(answer.drivers.get(own.driver.id)?.availability).toBe('available');
+    expect(answer.vehicles.get(lent.vehicle.id)?.reasons).toEqual([{ code: 'vehicle_other_depot', severity: 'block' }]);
+    expect(answer.drivers.get(lent.driver.id)?.reasons).toEqual([{ code: 'driver_other_depot', severity: 'block' }]);
   });
 
   test('vehicles and drivers in one call; an expired licence blocks; unknown ids are absent', async () => {

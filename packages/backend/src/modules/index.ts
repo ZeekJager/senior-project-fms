@@ -33,3 +33,14 @@ export const modules: AppModule[] = [
   integrationModule,
   auditModule,
 ];
+
+/**
+ * Rebuilds every module's read models from their sources, in module order.
+ * For anything that wrote data without publishing its events: the seed, a
+ * bulk import, a restore. Returns what each rebuild changed, by table.
+ */
+export async function rebuildReadModels(): Promise<Record<string, Record<string, unknown>>> {
+  const results: Record<string, Record<string, unknown>> = {};
+  for (const model of modules.flatMap((m) => m.readModels ?? [])) results[model.name] = await model.rebuild();
+  return results;
+}

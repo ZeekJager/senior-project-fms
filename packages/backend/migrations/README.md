@@ -32,6 +32,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 024 | `audit` | `audit_logs.request_source` (channel, IP, user agent; system actor for jobs) and `result` (success, denied, failed), required on new rows (NOT VALID checks; old rows untouched) (FMS-27) |
 | 025 | `audit`, `auth` | Indexes for the audit reader (newest first on `created_at, id`; entity public id); `audit:read` taken from fleet_manager (admin, fleet owner, compliance officer keep it) (FMS-28) |
 | 026 | `events` | Domain events (FMS-73): `events.outbox`, written in the change's transaction and delivered by the relay (dispatched to consumers, published on Redis; retries and dead letters); `events.processed_events`, each event a consumer has handled. Platform-owned, like `api` and `jobs` |
+| 029 | `fleet`, `shared`, `analytics` | Vehicle status and availability (FMS-76): `shared.vehicle_status` without the legacy `decommissioned` (type replaced, `analytics.vehicle_current_status` re-created); `fleet.vehicle_status_history`, each status change with its reason, who, and its source (a person, or maintenance work starting and ending); `fleet.trip_assignments`, the read model of trips holding a vehicle or driver, kept by a projection in each trip change's transaction |
 
 ## Important
 

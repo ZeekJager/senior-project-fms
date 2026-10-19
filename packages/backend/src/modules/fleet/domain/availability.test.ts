@@ -2,8 +2,16 @@ import { describe, expect, test } from 'vitest';
 import { STATUS_TRANSITIONS, canTransition, driverAvailability, vehicleAvailability, type DriverFacts, type VehicleFacts } from './availability';
 import { VEHICLE_STATUSES } from './vehicle';
 
-const vehicle = (f: Partial<VehicleFacts> = {}): VehicleFacts => ({ status: 'active', maintenanceFlag: false, overlappingTrips: [], ...f });
-const driver = (f: Partial<DriverFacts> = {}): DriverFacts => ({ isActive: true, accountStatus: 'active', licenseValid: true, attendance: null, overlappingTrips: [], ...f });
+const vehicle = (f: Partial<VehicleFacts> = {}): VehicleFacts => ({ depotId: '5', status: 'active', maintenanceFlag: false, overlappingTrips: [], ...f });
+const driver = (f: Partial<DriverFacts> = {}): DriverFacts => ({
+  depotId: '5',
+  isActive: true,
+  accountStatus: 'active',
+  licenseValid: true,
+  attendance: null,
+  overlappingTrips: [],
+  ...f,
+});
 
 describe('vehicle availability matrix', () => {
   test('active, not flagged, no overlapping trip: available, no reasons', () => {
@@ -15,7 +23,6 @@ describe('vehicle availability matrix', () => {
     [{ status: 'maintenance' as const }, 'vehicle_in_maintenance'],
     [{ status: 'inactive' as const }, 'vehicle_out_of_service'],
     [{ status: 'retired' as const }, 'vehicle_retired'],
-    [{ status: 'decommissioned' as const }, 'vehicle_retired'],
   ])('%o is unavailable with %s', (facts, code) => {
     expect(vehicleAvailability(vehicle(facts))).toEqual({ availability: 'unavailable', reasons: [{ code, severity: 'block' }] });
   });
@@ -31,8 +38,14 @@ describe('vehicle availability matrix', () => {
   });
 
   test('every reason that applies is reported, not only the first', () => {
-    const result = vehicleAvailability(vehicle({ status: 'maintenance', maintenanceFlag: true, overlappingTrips: ['t-1'] }));
-    expect(result.reasons.map((r) => r.code)).toEqual(['vehicle_in_maintenance', 'maintenance_flag', 'assigned_to_overlapping_trip']);
+    const result = vehicleAvailability(vehicle({ status: 'maintenance', maintenanceFlag: true, overlappingTrips: ['t-1'] }), '6');
+    expect(result.reasons.map((r) => r.code)).toEqual(['vehicle_in_maintenance', 'maintenance_flag', 'vehicle_other_depot', 'assigned_to_overlapping_trip']);
+  });
+
+  test("asked for a depot's trip: only that depot's vehicles are available; without a depot, any", () => {
+    expect(vehicleAvailability(vehicle(), '5').availability).toBe('available');
+    expect(vehicleAvailability(vehicle(), '6')).toEqual({ availability: 'unavailable', reasons: [{ code: 'vehicle_other_depot', severity: 'block' }] });
+    expect(vehicleAvailability(vehicle()).availability).toBe('available');
   });
 });
 
@@ -62,6 +75,13 @@ describe('driver availability matrix', () => {
     expect(driverAvailability(driver(facts))).toEqual({ availability: 'unavailable', reasons: [{ code, severity: 'block' }] });
   });
 
+  test("asked for a depot's trip: a driver of another depot, or with no depot, is unavailable", () => {
+    expect(driverAvailability(driver(), '5').availability).toBe('available');
+    expect(driverAvailability(driver(), '6')).toEqual({ availability: 'unavailable', reasons: [{ code: 'driver_other_depot', severity: 'block' }] });
+    expect(driverAvailability(driver({ depotId: null }), '5').reasons).toEqual([{ code: 'driver_other_depot', severity: 'block' }]);
+    expect(driverAvailability(driver({ depotId: null })).availability).toBe('available');
+  });
+
   test('a block outranks a warning: unavailable, blocks listed first, the warning kept', () => {
     expect(driverAvailability(driver({ attendance: 'absent', overlappingTrips: ['t-9'] }))).toEqual({
       availability: 'unavailable',
@@ -82,14 +102,12 @@ describe('status transitions', () => {
     }
   });
 
-  test('nothing leaves retired or the legacy decommissioned', () => {
-    for (const to of VEHICLE_STATUSES) {
-      expect(canTransition('retired', to)).toBe(false);
-      expect(canTransition('decommissioned', to)).toBe(false);
-    }
+  test('nothing leaves retired', () => {
+    for (const to of VEHICLE_STATUSES) expect(canTransition('retired', to)).toBe(false);
   });
 
-  test('no status can move into decommissioned', () => {
-    expect(Object.values(STATUS_TRANSITIONS).some((targets) => targets.includes('decommissioned'))).toBe(false);
+  test('every status has its transitions, and the legacy decommissioned is gone', () => {
+    expect(Object.keys(STATUS_TRANSITIONS).sort()).toEqual([...VEHICLE_STATUSES].sort());
+    expect(VEHICLE_STATUSES).not.toContain('decommissioned');
   });
 });

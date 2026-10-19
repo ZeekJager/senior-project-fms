@@ -7,7 +7,7 @@ import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/t
 import { server } from '@/test/msw/server'
 import { today } from '@/features/documents/expiry'
 import type { OwnedDocument } from '@/features/documents/types'
-import type { Vehicle } from './types'
+import type { Vehicle, VehicleStatusView } from './types'
 
 const DEPOT_A = '11111111-1111-4111-8111-111111111111'
 const DEPOT_B = '22222222-2222-4222-8222-222222222222'
@@ -731,5 +731,139 @@ describe('Vehicle Management (S-04)', () => {
     expect(screen.queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Decommission / })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Upload a document/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('Vehicle status panel (FMS-76)', () => {
+  function statusView(v: Vehicle, overrides: Partial<VehicleStatusView> = {}): VehicleStatusView {
+    return {
+      vehicle_id: v.id,
+      registration_number: v.registration_number,
+      depot_id: v.depot_id,
+      status: v.status,
+      maintenance: { flagged: false, in_workshop: false, open_record_id: null },
+      availability: { availability: 'available', reasons: [], window: { start: '2026-11-02T06:00:00Z', end: '2026-11-02T06:00:00Z' } },
+      current_assignment: null,
+      next_assignment: null,
+      last_status_change: null,
+      version: v.version,
+      updated_at: v.updated_at,
+      ...overrides,
+    }
+  }
+
+  const TRIP = '7a000000-0000-4000-8000-000000000001'
+
+  async function openStatus(v: Vehicle) {
+    const user = userEvent.setup()
+    await within(table()).findByText(v.registration_number)
+    await user.click(within(rowFor(v.registration_number)).getByRole('button', { name: `Availability of ${v.registration_number}` }))
+    return { user, panel: await screen.findByRole('dialog', { name: `${v.registration_number} status` }) }
+  }
+
+  it('shows availability with every reason, the next trip and the last change', async () => {
+    const v = vehicle({ maintenance_flag: true })
+    serveFleet([v])
+    server.use(
+      http.get(`/api/v1/vehicles/${v.id}/status`, () =>
+        envelope(
+          statusView(v, {
+            maintenance: { flagged: true, in_workshop: false, open_record_id: '9b000000-0000-4000-8000-000000000001' },
+            availability: {
+              availability: 'unavailable',
+              reasons: [
+                { code: 'maintenance_flag', severity: 'block' },
+                { code: 'assigned_to_overlapping_trip', severity: 'block', trip_id: TRIP },
+              ],
+              window: { start: '2026-11-02T06:00:00Z', end: '2026-11-02T06:00:00Z' },
+            },
+            next_assignment: { trip_id: TRIP, status: 'assigned', start: '2026-11-03T05:00:00Z', end: '2026-11-03T08:00:00Z' },
+            last_status_change: {
+              from_status: 'maintenance',
+              to_status: 'active',
+              reason: 'Brakes replaced',
+              source: 'maintenance',
+              maintenance_record_id: '9b000000-0000-4000-8000-000000000002',
+              changed_at: '2026-11-01T09:30:00Z',
+              changed_by: null,
+            },
+          }),
+        ),
+      ),
+    )
+    await openVehicles()
+    const { panel } = await openStatus(v)
+
+    expect(await within(panel).findByText('Not available now')).toBeInTheDocument()
+    expect(within(panel).getByText('Flagged for maintenance: work on it is still open')).toBeInTheDocument()
+    expect(within(panel).getByText('On another trip at that time')).toBeInTheDocument()
+    // Times in Addis Ababa (UTC+3).
+    expect(within(panel).getByText('3 Nov, 08:00 – 3 Nov, 11:00')).toBeInTheDocument()
+    expect(within(panel).getByText('“Brakes replaced”')).toBeInTheDocument()
+    expect(within(panel).getByText(/by maintenance work/)).toBeInTheDocument()
+  })
+
+  it('changes the status with a reason and If-Match, and lists the assigned trips that need another vehicle', async () => {
+    const v = vehicle({ version: 3 })
+    serveFleet([v])
+    let sent: { body: unknown; ifMatch: string | null } | null = null
+    server.use(
+      http.get(`/api/v1/vehicles/${v.id}/status`, () => envelope(statusView(v))),
+      http.post(`/api/v1/vehicles/${v.id}/status`, async ({ request }) => {
+        sent = { body: await request.json(), ifMatch: request.headers.get('If-Match') }
+        return HttpResponse.json({
+          data: statusView({ ...v, status: 'inactive', version: 4 }),
+          meta: { request_id: 'r-1', warnings: [{ warning: 'ASSIGNED_TRIP_AFFECTED', trip_id: TRIP, start: '2026-11-03T05:00:00Z' }] },
+        })
+      }),
+    )
+    await openVehicles()
+    const { user, panel } = await openStatus(v)
+
+    const change = await within(panel).findByRole('button', { name: 'Change status' })
+    expect(change).toBeDisabled()
+    // The current status is shown, not offered.
+    expect(within(panel).getByRole('radio', { name: /^Active/ })).toBeDisabled()
+    await user.click(within(panel).getByRole('radio', { name: /^Out of service/ }))
+    await user.click(change)
+    expect(await within(panel).findByText('Say why, in a few words: it is kept with the change.')).toBeInTheDocument()
+    expect(sent).toBeNull()
+
+    await user.type(within(panel).getByLabelText('Reason'), 'Accident damage, awaiting assessment')
+    await user.click(change)
+    await waitFor(() => expect(sent).not.toBeNull())
+    expect(sent).toEqual({ body: { status: 'inactive', reason: 'Accident damage, awaiting assessment' }, ifMatch: '"3"' })
+    expect(await within(panel).findByText('Assigned trips need another vehicle')).toBeInTheDocument()
+    expect(within(panel).getByText(/starting 3 Nov, 08:00/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(`${v.registration_number} is now out of service`)
+  })
+
+  it('shows a refusal inside the panel: a vehicle under way cannot be taken off the road', async () => {
+    const v = vehicle()
+    serveFleet([v])
+    server.use(
+      http.get(`/api/v1/vehicles/${v.id}/status`, () => envelope(statusView(v))),
+      http.post(`/api/v1/vehicles/${v.id}/status`, () => errorEnvelope(409, 'CONFLICT_VEHICLE_IN_USE')),
+    )
+    await openVehicles()
+    const { user, panel } = await openStatus(v)
+    await user.click(await within(panel).findByRole('radio', { name: /^In the workshop/ }))
+    await user.type(within(panel).getByLabelText('Reason'), 'Service due')
+    await user.click(within(panel).getByRole('button', { name: 'Change status' }))
+    expect(await within(panel).findByRole('alert')).toHaveTextContent('on a trip under way')
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('is read-only without vehicle:write', async () => {
+    const v = vehicle()
+    serveFleet([v])
+    server.use(http.get(`/api/v1/vehicles/${v.id}/status`, () => envelope(statusView(v))))
+    signedInAs(currentUser(['compliance_officer'], ['vehicle:read', 'depot:read', 'document:read']))
+    renderApp('/vehicles')
+    await screen.findByRole('table', { name: 'Vehicles' })
+    const { panel } = await openStatus(v)
+    expect(await within(panel).findByText('Available now')).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: 'Change status' })).not.toBeInTheDocument()
+    expect(within(panel).queryByRole('radio')).not.toBeInTheDocument()
   })
 })

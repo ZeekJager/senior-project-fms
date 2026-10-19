@@ -11,6 +11,7 @@ import {
   invalidStatusTransition,
   vehicleUnderWay,
   type AvailabilityWindow,
+  type StatusChangeSource,
   type StatusChangeWarning,
   type VehicleStatusView,
 } from '../domain/availability';
@@ -64,6 +65,7 @@ export interface VehicleServiceDeps {
     | 'list'
     | 'resolveDepot'
     | 'lockForWrite'
+    | 'lockById'
     | 'hasActiveAssignment'
     | 'insert'
     | 'update'
@@ -245,6 +247,39 @@ export class VehicleService {
     if (retired) await this.invalidate(retired.id);
   }
 
+  /**
+   * The maintenance workflow (FMS-22) on its own transaction, with the vehicle
+   * (internal id) already locked: `inWorkshop` says whether any of its work is
+   * in progress now. Work starting moves an active vehicle to `maintenance`,
+   * unless it is on a trip under way; the last work ending moves it back to
+   * `active`, but only if maintenance put it there: a status someone set by
+   * hand stays until someone changes it. Recorded and published like any
+   * status change, as source `maintenance` with the record. Returns the new
+   * status, or null when nothing changed.
+   */
+  async followWorkshop(client: PoolClient, caller: Caller, vehicleId: string, inWorkshop: boolean, recordId: string): Promise<VehicleStatus | null> {
+    const { vehicles, trips } = this.deps;
+    const current = await vehicles.lockById(client, vehicleId);
+    if (!current || !current.isActive) return null;
+    let to: VehicleStatus;
+    let reason: string;
+    if (inWorkshop) {
+      if (current.status !== 'active') return null;
+      if ((await trips.activeTripsForVehicles(client, [current.id])).get(current.id)?.status === 'en_route') return null;
+      to = 'maintenance';
+      reason = 'Maintenance work started.';
+    } else {
+      if (current.status !== 'maintenance') return null;
+      if ((await vehicles.lastStatusChange(client, current.id))?.source !== 'maintenance') return null;
+      to = 'active';
+      reason = 'Maintenance work finished.';
+    }
+    await vehicles.setStatus(mutationContext(caller), current.id, to, client);
+    const view = await vehicles.findViewById(client, current.id);
+    await this.recordStatusChange(client, caller, current, view, to, reason, { source: 'maintenance', maintenanceRecordId: recordId });
+    return to;
+  }
+
   /** Retires a locked, live vehicle: in-use check, audited change, status history, VehicleRetired and VehicleStatusChanged. */
   private async retireLocked(client: PoolClient, caller: Caller, current: LockedVehicle, reason: string | null): Promise<VehicleView> {
     const { vehicles, trips } = this.deps;
@@ -332,7 +367,15 @@ export class VehicleService {
         current_assignment: assignment(current),
         next_assignment: assignment(next),
         last_status_change: last
-          ? { from_status: last.fromStatus, to_status: last.toStatus, reason: last.reason, changed_at: last.changedAt, changed_by: changedBy }
+          ? {
+              from_status: last.fromStatus,
+              to_status: last.toStatus,
+              reason: last.reason,
+              source: last.source,
+              maintenance_record_id: last.maintenanceRecordId,
+              changed_at: last.changedAt,
+              changed_by: changedBy,
+            }
           : null,
         version: view.version,
         updated_at: view.updated_at,
@@ -341,9 +384,17 @@ export class VehicleService {
   }
 
   /** History row, then VehicleStatusChanged, on the change's transaction. */
-  private async recordStatusChange(client: PoolClient, caller: Caller, before: LockedVehicle, after: VehicleView, to: VehicleStatus, reason: string | null): Promise<void> {
+  private async recordStatusChange(
+    client: PoolClient,
+    caller: Caller,
+    before: LockedVehicle,
+    after: VehicleView,
+    to: VehicleStatus,
+    reason: string | null,
+    origin: { source: StatusChangeSource; maintenanceRecordId: string | null } = { source: 'manual', maintenanceRecordId: null },
+  ): Promise<void> {
     const ctx = mutationContext(caller);
-    const row = await this.deps.vehicles.recordStatusChange(ctx, { vehicleId: before.id, from: before.status, to, reason, changedBy: caller.user.id }, client);
+    const row = await this.deps.vehicles.recordStatusChange(ctx, { vehicleId: before.id, from: before.status, to, reason, changedBy: caller.user.id, ...origin }, client);
     await this.publish(client, caller, VEHICLE_EVENTS.statusChanged, {
       vehicle_id: after.id,
       depot_id: after.depot_id,
@@ -352,6 +403,8 @@ export class VehicleService {
       changed_at: (row.changed_at as Date).toISOString(),
       changed_by: caller.user.publicId,
       reason,
+      source: origin.source,
+      maintenance_record_id: origin.maintenanceRecordId,
     });
   }
 

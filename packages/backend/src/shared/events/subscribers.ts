@@ -17,7 +17,8 @@ interface Subscription {
   handler: EventHandler;
 }
 
-const CONSUMER_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
+/** `<module>.<purpose>` in lower case: consumer and projection names. */
+export const CONSUMER_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 
 /** One or more consumers failed an event; the others have recorded it as handled. */
 export class DispatchError extends Error {

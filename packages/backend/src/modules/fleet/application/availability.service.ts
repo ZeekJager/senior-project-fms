@@ -8,7 +8,7 @@ import {
   type AvailabilityWindow,
 } from '../domain/availability';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import type { availabilityStore as Store, TripState } from '../infrastructure/availability.repository';
+import type { RebuildResult, availabilityStore as Store, TripState } from '../infrastructure/availability.repository';
 
 export interface AvailabilityQuery {
   /** Internal fleet.vehicles ids. */
@@ -18,6 +18,12 @@ export interface AvailabilityQuery {
   window: AvailabilityWindow;
   /** A trip (public id) whose own assignment is not a conflict: the one being re-assigned. */
   excludeTripId?: string;
+  /**
+   * The depot (internal id) of the trip being staffed: a vehicle or driver of
+   * another depot is then unavailable (vehicle_other_depot, driver_other_depot).
+   * Omitted: any depot.
+   */
+  depotId?: string;
 }
 
 /** Per id; ids that do not exist are absent. */
@@ -25,14 +31,6 @@ export interface AvailabilityAnswer {
   vehicles: Map<string, AvailabilityResult>;
   drivers: Map<string, AvailabilityResult>;
 }
-
-/**
- * Trip events fleet.trip-assignments listens to: every change that can make
- * a trip start or stop holding a vehicle or driver. Names from CONVENTIONS.md
- * (Events); fleet does not import the trip module's constants for them, so a
- * missing one costs nothing until the trip module publishes it.
- */
-export const TRIP_ASSIGNMENT_EVENTS = ['TripAssigned', 'TripUpdated', 'TripCancelled', 'TripStarted', 'TripCompleted'] as const;
 
 export interface AvailabilityServiceDeps {
   store: typeof Store;
@@ -49,7 +47,8 @@ export interface AvailabilityServiceDeps {
  * this window", for the dispatcher console (FMS-33) and trip assignment
  * (FMS-31). It combines the vehicle's status and maintenance flag, the
  * driver's account, licence and attendance, and fleet's read model of the
- * trips holding each of them.
+ * trips holding each of them. With a depot, it also keeps each depot's trips
+ * to its own vehicles and drivers.
  */
 export class AvailabilityService {
   constructor(private readonly deps: AvailabilityServiceDeps) {}
@@ -67,23 +66,27 @@ export class AvailabilityService {
     const vehicleFacts = await this.deps.store.vehicleFacts(db, query.vehicleIds ?? [], query.window, query.excludeTripId);
     const driverFacts = await this.deps.store.driverFacts(db, query.driverIds ?? [], query.window, query.excludeTripId);
     return {
-      vehicles: new Map([...vehicleFacts].map(([id, facts]) => [id, vehicleAvailability(facts)])),
-      drivers: new Map([...driverFacts].map(([id, facts]) => [id, driverAvailability(facts)])),
+      vehicles: new Map([...vehicleFacts].map(([id, facts]) => [id, vehicleAvailability(facts, query.depotId)])),
+      drivers: new Map([...driverFacts].map(([id, facts]) => [id, driverAvailability(facts, query.depotId)])),
     };
   }
 
   /**
-   * The fleet.trip-assignments consumer: a trip changed, so bring its row in
-   * the read model in line with the trip's state now. The event says which
-   * trip; the trip module says what is true, so a repeated, late or
-   * out-of-order event never leaves a wrong row.
+   * The fleet.trip-assignments projection: a trip changed, so bring its row
+   * in the read model in line with the trip's state, inside the trip
+   * change's transaction. The event says which trip; the trip module says
+   * what is true, so the row matches the trip whatever the event says.
    */
   async onTripEvent(tx: Queryable, tripPublicId: string): Promise<void> {
     await this.deps.store.apply(tx, await this.deps.trips.tripAssignment(tx, tripPublicId), tripPublicId);
   }
 
-  /** The daily re-sync: rebuilds the read model from the trip module, repairing anything a lost event left behind. */
-  resync(): Promise<{ kept: number; removed: number }> {
+  /**
+   * Rebuilds the read model from the trip module (the daily job, and
+   * rebuildReadModels after the seed or an import). `repaired` or `removed`
+   * above zero means trips changed without their events.
+   */
+  resync(): Promise<RebuildResult> {
     return this.deps.inTransaction(async (client) => this.deps.store.replaceAll(client, await this.deps.trips.activeAssignments(client)));
   }
 }

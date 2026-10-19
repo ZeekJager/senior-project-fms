@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } f
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 import { vehicleQuery, type VehicleFilters } from './filters'
-import type { Vehicle } from './types'
+import type { StatusChangeWarning, Vehicle, VehicleStatus, VehicleStatusView } from './types'
 
 // Server state for the vehicles screen. Every write invalidates what it can
 // have changed, so the table, the counts and the documents stay in step.
@@ -12,6 +12,7 @@ const keys = {
   list: (filters: VehicleFilters) => ['vehicles', 'list', filters] as const,
   counts: (depotId: string) => ['vehicles', 'counts', depotId] as const,
   plate: (plate: string) => ['vehicles', 'plate', plate] as const,
+  status: (id: string) => ['vehicles', 'status', id] as const,
 }
 
 export function useVehicles(filters: VehicleFilters) {
@@ -125,6 +126,36 @@ export function useDecommissionVehicle() {
   const invalidate = useInvalidate()
   return useMutation({
     mutationFn: (id: string) => api.request<void>(`/vehicles/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+  })
+}
+
+/** GET /vehicles/{id}/status: status, availability now, trips, maintenance and the last change (FMS-76). */
+export function useVehicleStatus(id: string | null) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: keys.status(id ?? ''),
+    queryFn: () => api.request<VehicleStatusView>(`/vehicles/${id}/status`),
+    enabled: id !== null,
+  })
+}
+
+/**
+ * POST /vehicles/{id}/status with the reason, If-Match on the version shown.
+ * Resolves with the new status and any trips the change affects.
+ */
+export function useChangeVehicleStatus() {
+  const { api } = useAuth()
+  const invalidate = useInvalidate()
+  return useMutation({
+    mutationFn: async ({ id, version, status, reason }: { id: string; version: number; status: VehicleStatus; reason: string }) => {
+      const { data, meta } = await api.requestEnvelope<VehicleStatusView>(`/vehicles/${id}/status`, {
+        method: 'POST',
+        json: { status, reason },
+        headers: { 'If-Match': `"${version}"` },
+      })
+      return { status: data, warnings: (meta.warnings as StatusChangeWarning[] | undefined) ?? [] }
+    },
     onSuccess: invalidate,
   })
 }

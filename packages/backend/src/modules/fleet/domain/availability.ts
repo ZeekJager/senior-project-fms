@@ -17,6 +17,7 @@ export type AvailabilityReasonCode =
   | 'vehicle_in_maintenance'
   | 'vehicle_out_of_service'
   | 'maintenance_flag'
+  | 'vehicle_other_depot'
   // Drivers
   | 'driver_retired'
   | 'account_not_active'
@@ -24,6 +25,7 @@ export type AvailabilityReasonCode =
   | 'driver_absent'
   | 'driver_on_leave'
   | 'driver_sick'
+  | 'driver_other_depot'
   // Both
   | 'assigned_to_overlapping_trip';
 
@@ -51,6 +53,7 @@ export interface AvailabilityWindow {
 export const MAX_WINDOW_DAYS = 31;
 
 export interface VehicleFacts {
+  depotId: string;
   status: VehicleStatus;
   maintenanceFlag: boolean;
   /** Public ids of assigned or en-route trips whose window touches the one asked about. */
@@ -58,6 +61,8 @@ export interface VehicleFacts {
 }
 
 export interface DriverFacts {
+  /** The depot of the driver's account (auth), null if it has none. */
+  depotId: string | null;
   isActive: boolean;
   accountStatus: string;
   /** The licence is valid on the window's first day (Addis Ababa). */
@@ -77,14 +82,18 @@ function result(reasons: AvailabilityReason[]): AvailabilityResult {
 
 /**
  * A vehicle is available when it is active, not flagged for maintenance and
- * not on another assigned or en-route trip in the window.
+ * not on another assigned or en-route trip in the window. Asked for a trip
+ * of `depotId`, it must also belong to that depot: vehicles and drivers work
+ * their own depot's trips; lending one means moving it to the other depot
+ * first (PATCH /vehicles/{id} depot_id).
  */
-export function vehicleAvailability(f: VehicleFacts): AvailabilityResult {
+export function vehicleAvailability(f: VehicleFacts, depotId?: string): AvailabilityResult {
   const reasons: AvailabilityReason[] = [];
-  if (f.status === 'retired' || f.status === 'decommissioned') reasons.push(block('vehicle_retired'));
+  if (f.status === 'retired') reasons.push(block('vehicle_retired'));
   else if (f.status === 'maintenance') reasons.push(block('vehicle_in_maintenance'));
   else if (f.status === 'inactive') reasons.push(block('vehicle_out_of_service'));
   if (f.maintenanceFlag) reasons.push(block('maintenance_flag'));
+  if (depotId !== undefined && f.depotId !== depotId) reasons.push(block('vehicle_other_depot'));
   for (const trip of f.overlappingTrips) reasons.push(block('assigned_to_overlapping_trip', trip));
   return result(reasons);
 }
@@ -98,14 +107,16 @@ const ATTENDANCE_WARNINGS: Partial<Record<AttendanceStatus, AvailabilityReasonCo
 
 /**
  * A driver is available when not retired, their account is active, their
- * licence is valid and they are on no other trip in the window. Being marked
+ * licence is valid and they are on no other trip in the window; asked for a
+ * trip of `depotId`, their account must be in that depot. Being marked
  * absent, on leave or sick that day is a warning, not a block.
  */
-export function driverAvailability(f: DriverFacts): AvailabilityResult {
+export function driverAvailability(f: DriverFacts, depotId?: string): AvailabilityResult {
   const reasons: AvailabilityReason[] = [];
   if (!f.isActive) reasons.push(block('driver_retired'));
   if (f.accountStatus !== 'active') reasons.push(block('account_not_active'));
   if (!f.licenseValid) reasons.push(block('license_expired'));
+  if (depotId !== undefined && f.depotId !== depotId) reasons.push(block('driver_other_depot'));
   for (const trip of f.overlappingTrips) reasons.push(block('assigned_to_overlapping_trip', trip));
   const attendance = f.attendance ? ATTENDANCE_WARNINGS[f.attendance] : undefined;
   if (attendance) reasons.push(warn(attendance));
@@ -115,22 +126,20 @@ export function driverAvailability(f: DriverFacts): AvailabilityResult {
 // ---------------------------------------------------------------------------
 // Status transitions
 
-/** Statuses a vehicle can be moved between with POST /vehicles/{id}/status. Retired is final. */
-export const SETTABLE_STATUSES = ['active', 'maintenance', 'inactive', 'retired'] as const;
-export type SettableStatus = (typeof SETTABLE_STATUSES)[number];
-
 /**
- * Allowed moves. active, maintenance and inactive (out of service) move
- * freely between each other and to retired; nothing leaves retired (or the
- * legacy decommissioned).
+ * Allowed moves with POST /vehicles/{id}/status. active, maintenance and
+ * inactive (out of service) move freely between each other and to retired;
+ * nothing leaves retired.
  */
 export const STATUS_TRANSITIONS: Record<VehicleStatus, readonly VehicleStatus[]> = {
   active: ['maintenance', 'inactive', 'retired'],
   maintenance: ['active', 'inactive', 'retired'],
   inactive: ['active', 'maintenance', 'retired'],
   retired: [],
-  decommissioned: [],
 };
+
+/** Who moved a vehicle: a person (POST /status, DELETE), or the maintenance workflow as work starts and ends. */
+export type StatusChangeSource = 'manual' | 'maintenance';
 
 export function canTransition(from: VehicleStatus, to: VehicleStatus): boolean {
   return STATUS_TRANSITIONS[from].includes(to);
@@ -152,7 +161,7 @@ export interface VehicleStatusView {
   maintenance: {
     /** maintenance_flag: open work from the maintenance module. */
     flagged: boolean;
-    /** status is `maintenance`: in the workshop. */
+    /** status is `maintenance`: in the workshop (set by hand, or by work in progress). */
     in_workshop: boolean;
     /** The open maintenance record behind the flag, if any. */
     open_record_id: string | null;
@@ -162,7 +171,16 @@ export interface VehicleStatusView {
   current_assignment: AssignmentView | null;
   /** The next assigned trip after now. */
   next_assignment: AssignmentView | null;
-  last_status_change: { from_status: VehicleStatus; to_status: VehicleStatus; reason: string | null; changed_at: Date; changed_by: string | null } | null;
+  last_status_change: {
+    from_status: VehicleStatus;
+    to_status: VehicleStatus;
+    reason: string | null;
+    source: StatusChangeSource;
+    /** The maintenance record (public id) behind a change by the maintenance workflow. */
+    maintenance_record_id: string | null;
+    changed_at: Date;
+    changed_by: string | null;
+  } | null;
   version: number;
   updated_at: Date;
 }

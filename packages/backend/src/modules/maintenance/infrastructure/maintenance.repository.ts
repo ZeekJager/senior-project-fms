@@ -150,6 +150,15 @@ export class MaintenanceRepository extends Repository {
   }
 
   /** Other unfinished work on the vehicle; while there is any, its flag stays set. */
+  /** Whether any work on the vehicle is in progress: it is in the workshop (FMS-76). */
+  async hasInProgress(db: Queryable, vehicleId: string): Promise<boolean> {
+    const res = await db.query<{ busy: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM maintenance.maintenance_records WHERE vehicle_id = $1 AND status = 'in_progress') AS busy`,
+      [vehicleId],
+    );
+    return res.rows[0].busy;
+  }
+
   async hasOtherOpen(db: Queryable, vehicleId: string, exceptRecordId: string): Promise<boolean> {
     const res = await db.query<{ open: boolean }>(
       `SELECT EXISTS (

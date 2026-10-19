@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { pageQuery } from '../../../shared/http/pagination';
 import { FLOAT_IN_MONEY_PATH } from '../../../shared/http/validate';
-import { SETTABLE_STATUSES } from '../domain/availability';
 import {
   FUEL_TYPES,
   VEHICLE_STATUSES,
@@ -118,7 +117,7 @@ export const vehicleStatusQuery = z
 
 /** POST /vehicles/{id}/status (FMS-76): the new status and why. `inactive` is out of service; `retired` is final. */
 export const vehicleStatusBody = z.strictObject({
-  status: z.enum(SETTABLE_STATUSES),
+  status: z.enum(VEHICLE_STATUSES),
   reason: z.string().trim().min(3).max(500),
 });
 

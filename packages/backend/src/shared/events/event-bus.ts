@@ -7,6 +7,7 @@ import { RedisEventBroadcaster } from './broadcaster';
 import type { DomainEvent } from './domain-event';
 import { appendToOutbox } from './outbox';
 import { OutboxRelay, type OutboxRelayOptions } from './outbox-relay';
+import { ProjectionRegistry } from './projections';
 import { SubscriberRegistry, type EventHandler } from './subscribers';
 
 export type { EventHandler } from './subscribers';
@@ -29,17 +30,35 @@ export interface EventBus {
    * Returns a function that removes the subscription.
    */
   subscribe(type: string, consumer: string, handler: EventHandler): () => void;
+  /**
+   * A projection: a read model kept inside `publish`, on the publishing
+   * transaction, so it commits or rolls back with the change and is never
+   * behind it. A failing projection fails the change. Keep it to the
+   * module's own tables and quick queries (no network, no other module's
+   * writes). There is no redelivery, so a projection is paired with a rebuild
+   * from the source (AppModule.readModels). `name` is `<module>.<purpose>`,
+   * unique per event type. Returns a function that removes it.
+   */
+  project(type: string, name: string, handler: EventHandler): () => void;
 }
 
 export class OutboxEventBus implements EventBus {
-  constructor(readonly subscribers: SubscriberRegistry = new SubscriberRegistry()) {}
+  constructor(
+    readonly subscribers: SubscriberRegistry = new SubscriberRegistry(),
+    readonly projections: ProjectionRegistry = new ProjectionRegistry(),
+  ) {}
 
-  publish(tx: PoolClient, events: readonly DomainEvent[]): Promise<void> {
-    return appendToOutbox(tx, events);
+  async publish(tx: PoolClient, events: readonly DomainEvent[]): Promise<void> {
+    await appendToOutbox(tx, events);
+    await this.projections.apply(tx, events);
   }
 
   subscribe(type: string, consumer: string, handler: EventHandler): () => void {
     return this.subscribers.subscribe(type, consumer, handler);
+  }
+
+  project(type: string, name: string, handler: EventHandler): () => void {
+    return this.projections.register(type, name, handler);
   }
 }
 

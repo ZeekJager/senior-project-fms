@@ -33,6 +33,8 @@ function harness(
     currentTrip?: { id: string; status: 'assigned' | 'en_route' };
     /** Assigned trips ahead (read model). */
     ahead?: { tripId: string; start: Date }[];
+    /** Who made the latest status change. */
+    lastSource?: 'manual' | 'maintenance';
   } = {},
 ) {
   const calls: string[] = [];
@@ -51,6 +53,7 @@ function harness(
     list: async () => ({ items: [], total: 0 }),
     resolveDepot: async (_db, publicId) => (publicId === DEPOT_PUBLIC ? '5' : null),
     lockForWrite: async () => locked,
+    lockById: async () => locked,
     hasActiveAssignment: async () => options.activeAssignment ?? false,
     insert: async () => {
       calls.push('insert');
@@ -70,10 +73,21 @@ function harness(
       return { id };
     },
     recordStatusChange: async (_ctx, change) => {
-      calls.push(`history:${change.from}->${change.to}:${change.reason ?? ''}`);
+      calls.push(`history:${change.from}->${change.to}:${change.reason ?? ''}${change.source === 'maintenance' ? `:${change.maintenanceRecordId}` : ''}`);
       return { id: '1', changed_at: new Date('2026-11-02T06:00:00Z') };
     },
-    lastStatusChange: async () => null,
+    lastStatusChange: async () =>
+      options.lastSource
+        ? {
+            fromStatus: 'active',
+            toStatus: 'maintenance',
+            reason: 'x',
+            source: options.lastSource,
+            maintenanceRecordId: options.lastSource === 'maintenance' ? 'rec-1' : null,
+            changedBy: '10',
+            changedAt: new Date(),
+          }
+        : null,
   };
   const trips = {
     vehicleHasActiveTrip: async () => options.activeTrip ?? false,
@@ -205,6 +219,8 @@ describe('status changes (FMS-76)', () => {
       changed_at: '2026-11-02T06:00:00.000Z',
       changed_by: depotAdmin.publicId,
       reason: 'Gearbox noise',
+      source: 'manual',
+      maintenance_record_id: null,
     });
   });
 
@@ -257,5 +273,41 @@ describe('status changes (FMS-76)', () => {
   test('a stale If-Match is 409 CONFLICT_CONCURRENT_MODIFICATION', async () => {
     const { service } = harness({ locked: { version: 4 } });
     expect(await codeOf(service.changeStatus(caller, VEHICLE, { status: 'inactive', reason: 'x' }, 3))).toBe('CONFLICT_CONCURRENT_MODIFICATION');
+  });
+});
+
+describe('status follows workshop work (FMS-76)', () => {
+  test('work starting puts an active vehicle in the workshop, recorded as maintenance with the record', async () => {
+    const { service, calls, published, tx } = harness();
+    expect(await service.followWorkshop(tx, caller, '7', true, 'rec-1')).toBe('maintenance');
+    expect(calls).toEqual(['status:7:maintenance', 'history:active->maintenance:Maintenance work started.:rec-1']);
+    expect(published[0].payload).toMatchObject({ previous_status: 'active', new_status: 'maintenance', source: 'maintenance', maintenance_record_id: 'rec-1' });
+  });
+
+  test('work starting leaves alone a vehicle out of service, already in the workshop, retired, or on a trip under way', async () => {
+    for (const locked of [{ status: 'inactive' as const }, { status: 'maintenance' as const }, { status: 'retired' as const, isActive: false }]) {
+      const { service, calls } = harness({ locked });
+      expect(await service.followWorkshop({} as PoolClient, caller, '7', true, 'rec-1')).toBeNull();
+      expect(calls).toEqual([]);
+    }
+    const underWay = harness({ currentTrip: { id: 'trip-1', status: 'en_route' } });
+    expect(await underWay.service.followWorkshop(underWay.tx, caller, '7', true, 'rec-1')).toBeNull();
+    expect(underWay.calls).toEqual([]);
+  });
+
+  test('the last work ending returns the vehicle to active only when maintenance put it in the workshop', async () => {
+    const byMaintenance = harness({ locked: { status: 'maintenance' }, lastSource: 'maintenance' });
+    expect(await byMaintenance.service.followWorkshop(byMaintenance.tx, caller, '7', false, 'rec-1')).toBe('active');
+    expect(byMaintenance.calls).toEqual(['status:7:active', 'history:maintenance->active:Maintenance work finished.:rec-1']);
+
+    const byHand = harness({ locked: { status: 'maintenance' }, lastSource: 'manual' });
+    expect(await byHand.service.followWorkshop(byHand.tx, caller, '7', false, 'rec-1')).toBeNull();
+    expect(byHand.calls).toEqual([]);
+  });
+
+  test('other work still in progress keeps the vehicle in the workshop', async () => {
+    const { service, calls } = harness({ locked: { status: 'maintenance' }, lastSource: 'maintenance' });
+    expect(await service.followWorkshop({} as PoolClient, caller, '7', true, 'rec-2')).toBeNull();
+    expect(calls).toEqual([]);
   });
 });
