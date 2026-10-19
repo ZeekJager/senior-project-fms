@@ -436,12 +436,25 @@ Document rules (FMS-17):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /fuel-logs` | Record fuel event | `fuel:write` | `vehicle_id,trip_id,fuel_ml,cost_cents,odometer_km`, optional `fuel_type` (defaults to the vehicle's); integer money |
-| `GET /fuel-logs` | Search fuel history | `fuel:read` | Paged `FuelLog[]` |
+| `POST /fuel-logs` | Record fuel event | `fuel:write` | `vehicle_id,quantity_ml,total_cost_cents,odometer_km`; optional `trip_id`, `driver_id`, `fuel_type` (defaults to the vehicle's), `unit_price_cents`, `station_name` -> `201 FuelLog`; `Idempotency-Key`; integer ml and cents |
+| `GET /fuel-logs` | Search fuel history | `fuel:read` | `vehicle_id`, `driver_id`, `trip_id`, `from`, `to`, `sort_order` (`desc` default) -> paged `FuelLog[]` |
+| `GET /fuel-logs/{fuel_log_id}` | Get a fuel log | `fuel:read` | `FuelLog`; `404` outside your scope |
 | `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary | `fuel:read` | `FuelSummary` |
 | `GET /fuel-anomalies` | List anomalies | `fuel-anomaly:read` | Paged `FuelAnomaly[]` |
 | `GET /fuel-anomalies/{anomaly_id}` | Anomaly detail | `fuel-anomaly:read` | `FuelAnomaly` |
 | `POST /fuel-anomalies/{anomaly_id}/resolve` | Resolve anomaly | `fuel-anomaly:write` | `FuelAnomaly` |
+
+Fuel log rules (FMS-39):
+
+- **Who:** drivers hold `fuel:read` and `fuel:write` and are limited by scope, not permission. A driver records only for themselves (`driver_id` is theirs; naming another driver is `400`, `reason: "not_writable"`), only for vehicles of their depot, and lists and fetches only their own logs. Another driver's log by id is `404 NOT_FOUND`, the same body as a missing id. Staff (`admin`, `fleet_manager`, `fleet_owner` and `compliance_officer` see every depot; `depot_admin` and `finance_clerk` their own) see the logs of their depots' vehicles. A driver without a driver profile sees nothing and cannot log.
+- **`FuelLog`:** `id`, `vehicle_id`, `driver_id` (null when a clerk logs a purchase for nobody), `trip_id`, `fuel_type`, `quantity_ml`, `unit_price_cents`, `total_cost_cents`, `odometer_km`, `station_name`, `source` (`manual`), `recorded_at`, `created_at`. `source` and the time are the server's: a log is recorded when it is received, so they are `not_writable` like any other unknown field. A log is never edited or deleted.
+- **Values:** `quantity_ml` is a whole number from 1 to 2,000,000 and `total_cost_cents` from 0 to 100,000,000; a fraction (`23500.5`) in any ml or cents field, by any name, is `400 VALIDATION_FLOAT_IN_MONEY_PATH`, and a value outside the range is `400 VALIDATION_FAILED` with `reason: "out_of_range"`. `odometer_km` is required, not negative, with at most one decimal.
+- **Odometer:** a reading never goes down. One below the vehicle's odometer or below the highest reading any fuel log gave for it is `409 CONFLICT_ODOMETER_REGRESSION` and records nothing; the same reading is fine. The vehicle row is locked while the log is checked, so two logs cannot both pass against the same reading.
+- **Vehicle and fuel type:** the vehicle must be a live vehicle in the caller's depots (`400`, `field: "vehicle_id"`, `reason: "references_missing_record"` for one that is missing or elsewhere, `vehicle_retired` for a retired one). An electric vehicle takes no fuel log (`400`, `field: "fuel_type"`, `reason: "not_a_liquid_fuel"`); `fuel_type` defaults to the vehicle's.
+- **Trip:** `trip_id`, if sent, must be a trip the caller may see (a driver's own; staff their depots') and, if the trip has a vehicle, this one (`400`, `reason: "trip_vehicle_mismatch"`).
+- **Retries:** `Idempotency-Key` (§19) makes a retried POST return the first log with `Idempotent-Replayed: true`; without a key two identical bodies are two fill-ups.
+- **Event:** `FuelLogged` (after commit, ordered per vehicle) carries `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km` (the log before this one, null for a vehicle's first) and `recorded_at`. The anomaly rules (FMS-82) read it.
+- **Vehicle odometer:** a fuel log does not change `fleet.vehicles.odometer_km`; the vehicle's own odometer changes through the vehicle API.
 
 ### 9.2 Fuel reconciliation
 

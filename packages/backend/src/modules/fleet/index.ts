@@ -9,6 +9,7 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
+import { depotInScope } from '../../shared/authz/scope';
 import { activeTripsForDrivers, activeTripsForVehicles, driverHasActiveTrip, tripLookups, vehicleHasActiveTrip, vehicleOnActiveTripSql } from '../trip';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
@@ -168,6 +169,32 @@ export const tripRefs = {
     idOf: async (db: Queryable, publicId: string) => (await driverRepository.findByPublicId(db, publicId))?.id ?? null,
     idOfUser: async (db: Queryable, userId: string) => (await driverRepository.findByUserId(db, userId))?.id ?? null,
     publicIds: (db: Queryable, ids: readonly string[]) => driverRepository.publicIdsByIds(db, ids),
+  },
+};
+
+/**
+ * For the fuel module (FMS-39): lock a vehicle in the caller's scope for a
+ * fuel log (its current odometer and fuel type with it), find one without
+ * locking, list a scope's vehicle ids, and name vehicles in responses. The
+ * driver lookup answers whether a driver's depot is inside the caller's scope.
+ */
+export const fuelRefs = {
+  vehicles: {
+    lockInScope: (client: PoolClient, publicId: string, scope: Scope) => vehicleRepository.lockForWrite(client, publicId, scope),
+    refInScope: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findRef(db, { publicId }, scope),
+    idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
+    publicIds: tripRefs.vehicles.publicIds,
+  },
+  drivers: {
+    idOfUser: tripRefs.drivers.idOfUser,
+    publicIds: tripRefs.drivers.publicIds,
+    /** The driver's internal id if they exist and their depot (the account's) is inside the scope. */
+    findInScope: async (db: Queryable, publicId: string, scope: Scope): Promise<string | null> => {
+      const row = await driverRepository.findByPublicId(db, publicId);
+      if (!row) return null;
+      const [account] = await userDirectory.findByIds(db, [row.userId]);
+      return account && depotInScope(scope, account.depotId) ? row.id : null;
+    },
   },
 };
 
