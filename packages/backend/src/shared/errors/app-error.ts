@@ -43,6 +43,8 @@ export interface ErrorDetail {
   reason: string;
   /** The public id of the record the problem is about: the conflicting trip, the open maintenance record. */
   record_id?: string;
+  /** For an invalid state transition: the states the record can move to from where it is. */
+  allowed_transitions?: string[];
 }
 
 /** An error the API reports to the client as-is (status, code, message). */

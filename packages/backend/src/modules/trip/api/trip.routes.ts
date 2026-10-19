@@ -7,6 +7,7 @@ import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { Caller } from '../application/route.service';
 import type { TripService } from '../application/trip.service';
+import { COMMAND_STATUSES } from '../domain/lifecycle';
 import { TRIP_STATUSES, tripNotFound } from '../domain/trip';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -47,6 +48,12 @@ const assignBody = z.strictObject({
   version: z.number().int().min(0),
 });
 
+/** POST /trips/{id}/start and /end take no body (an empty JSON object is fine). */
+const noBody = z.strictObject({});
+
+/** POST /trips/{id}/status: the explicit transition (FMS-32). */
+const statusBody = z.strictObject({ status: z.enum(COMMAND_STATUSES) });
+
 const historyQuery = z
   .object({
     /** One status or several, comma-separated: status=scheduled,assigned. */
@@ -81,8 +88,11 @@ function tripId(req: Request): string {
  * Trips and trip history (api-contract §7.2, FMS-30). Reads need trip:read;
  * staff see their depots' trips and a driver only their own. Writes need
  * trip:write (admin, fleet manager, dispatcher); assignment trip:assign
- * (FMS-31; drivers excluded). The POSTs take an optional Idempotency-Key, so
- * a retry never makes a second trip or a second assignment.
+ * (FMS-31; drivers excluded). The lifecycle commands, start, end and status
+ * (FMS-32), need trip:execute: a driver moves only their own trips, and
+ * scheduling or cancelling through /status also needs trip:write. The POSTs
+ * take an optional Idempotency-Key, so a retry never makes a second trip, a
+ * second assignment or a second move.
  */
 export function tripRouter(service: TripService): Router {
   const router = Router();
@@ -140,6 +150,28 @@ export function tripRouter(service: TripService): Router {
       res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { warnings, request_id: req.correlationId } });
     }),
   );
+
+  // Lifecycle commands (FMS-32). Optional If-Match: a trip that changed since is 409.
+  const command = (path: string, run: (req: Request, id: string, version: number | null) => ReturnType<TripService['start']>) =>
+    router.post(
+      `/trips/:tripId/${path}`,
+      authorize('trip:execute'),
+      idempotent(),
+      asyncHandler(async (req, res) => {
+        const id = tripId(req);
+        const { trip, warnings } = await run(req, id, ifMatchVersion(req.get('If-Match')));
+        res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { warnings, request_id: req.correlationId } });
+      }),
+    );
+  command('start', (req, id, version) => {
+    parseInput(noBody, req.body ?? {});
+    return service.start(caller(req), id, version);
+  });
+  command('end', (req, id, version) => {
+    parseInput(noBody, req.body ?? {});
+    return service.end(caller(req), id, version);
+  });
+  command('status', (req, id, version) => service.changeStatus(caller(req), id, parseInput(statusBody, req.body).status, version));
 
   return router;
 }

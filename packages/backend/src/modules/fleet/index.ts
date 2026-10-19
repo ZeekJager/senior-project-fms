@@ -99,7 +99,7 @@ async function rebuildTripAssignments(): Promise<Record<string, unknown>> {
 
 // The cached vehicle (GET /vehicles/{id}) carries its maintenance flag and
 // its current trip. Maintenance sets and clears the flag, and the trip module
-// assigns and cancels trips, inside their own transactions; their events are
+// assigns, starts, ends and cancels trips, inside their own transactions; their events are
 // delivered after commit, so the vehicle is dropped only once the change is
 // visible. An assignment also drops the vehicle it replaced. Maintenance
 // events by name: fleet cannot import the maintenance module, which imports fleet.
@@ -110,6 +110,8 @@ for (const type of [
   'VehicleFaultDetected',
   TRIP_EVENTS.assigned,
   TRIP_EVENTS.cancelled,
+  TRIP_EVENTS.started,
+  TRIP_EVENTS.completed,
 ]) {
   eventBus.subscribe(type, 'fleet.vehicle-cache', async (event) => {
     for (const key of ['vehicle_id', 'previous_vehicle_id']) {

@@ -74,6 +74,10 @@ export interface TripWrite {
   planned_duration_seconds?: number | null;
   scheduled_start?: Date;
   scheduled_end?: Date;
+  /** Set by the lifecycle commands (FMS-32): start, end. */
+  actual_start?: Date;
+  actual_end?: Date;
+  actual_duration_seconds?: number;
 }
 
 export interface TripHistoryFilter {

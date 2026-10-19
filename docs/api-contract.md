@@ -75,7 +75,7 @@ A client value is used only if it is a well-formed UUID; anything else is ignore
 }
 ```
 
-A detail may carry `record_id`: the public id of the record the problem is about, such as the trip a driver is already on (`CONFLICT_DRIVER_OVERLAP`) or the open maintenance record of a flagged vehicle (`CONFLICT_VEHICLE_FLAGGED`).
+A detail may carry `record_id`: the public id of the record the problem is about, such as the trip a driver is already on (`CONFLICT_DRIVER_OVERLAP`) or the open maintenance record of a flagged vehicle (`CONFLICT_VEHICLE_FLAGGED`). A refused state change (`CONFLICT_INVALID_STATE_TRANSITION` from the trip commands) carries `allowed_transitions`: the states the record can move to from where it is, empty when it is in a final state.
 
 ### 3.5 Identifiers, timestamps and dates
 
@@ -386,9 +386,9 @@ Route rules (FMS-83):
 | `GET /trips/{trip_id}` | Get trip | `trip:read` | `Trip` |
 | `PATCH /trips/{trip_id}` | Update trip | `trip:write` | `TripUpdate` -> `Trip` |
 | `POST /trips/{trip_id}/assign` | Assign driver and vehicle | `trip:assign` | Runs overlap + vehicle maintenance/flag rules; 409 conflicts |
-| `POST /trips/{trip_id}/start` | Start trip | `trip:execute` | Valid state transition -> `Trip` |
-| `POST /trips/{trip_id}/end` | End trip | `trip:execute` | Valid state transition -> `Trip` |
-| `POST /trips/{trip_id}/status` | Explicit status transition | `trip:execute` | `{status}`; `scheduled/assigned/en_route/completed/cancelled` |
+| `POST /trips/{trip_id}/start` | Start trip | `trip:execute` | Valid state transition -> `Trip`; `If-Match`, `Idempotency-Key`; `meta.warnings` |
+| `POST /trips/{trip_id}/end` | End trip | `trip:execute` | Valid state transition -> `Trip`; `If-Match`, `Idempotency-Key` |
+| `POST /trips/{trip_id}/status` | Explicit status transition | `trip:execute` | `{status}`; `scheduled/assigned/en_route/completed/cancelled`; `If-Match`, `Idempotency-Key` |
 | `POST /trips/{trip_id}/stops/{stop_id}/complete` | Complete trip stop | `trip:execute` | Stop completion -> `TripStop` |
 | `GET /trips/{trip_id}/live` | Live trip state | `trip:read` | `TripLiveState` |
 
@@ -417,6 +417,17 @@ Assignment rules (FMS-31):
 - **Attendance warning:** a driver marked `absent`, `on_leave` or `sick` on the trip's first day (Addis Ababa) is still assigned, with `meta.warnings: [{ warning: "DRIVER_ATTENDANCE", field: "driver_id", attendance }]` (FMS-21, through fleet availability).
 - **Response:** `200` with the `Trip` (new `version` and ETag) and `meta.warnings` (empty when none). Assigning the same driver and vehicle again changes nothing.
 - **Event:** `TripAssigned` (`trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `scheduled_end`). Live updates to screens (Socket.IO) arrive in Sprint 4 from this event.
+
+Trip lifecycle (FMS-32):
+
+- **States:** `draft` → `scheduled` → `assigned` → `en_route` → `completed`; `cancelled` from `draft`, `scheduled` or `assigned`. `completed` and `cancelled` are final. A trip under way is ended, never cancelled. Nothing moves back to `draft`.
+- **Refusal:** a move the table does not allow is `409 CONFLICT_INVALID_STATE_TRANSITION` with `details: [{ field: "status", reason: "<from>_to_<to>", allowed_transitions: [...] }]` (empty for a final state). Starting a `scheduled` trip says `allowed_transitions: ["assigned", "cancelled"]`.
+- **Who:** `trip:execute` (admin, fleet manager, dispatcher, driver). A driver moves only the trips they drive (others are `404`). Scheduling a draft and cancelling are dispatch decisions and also need `trip:write`: a driver gets `403 FORBIDDEN_INSUFFICIENT_ROLE`.
+- **Start** (`POST /trips/{id}/start`, or `/status` with `en_route`): `assigned` → `en_route`, `actual_start` = now. The assignment rules are read again, since things may have changed: the vehicle flagged (a pre-trip inspection), in the workshop, out of service, retired or moved to another depot, or the driver's licence expired, refuse the start with the same `409`s as assignment. Another trip of the driver or vehicle still under way is a warning (`PREVIOUS_TRIP_OVERRUN`), and so is the driver's attendance (`DRIVER_ATTENDANCE`), in `meta.warnings`.
+- **End** (`POST /trips/{id}/end`, or `/status` with `completed`): `en_route` → `completed`, `actual_end` = now (never before `actual_start`), and the actual duration is stored.
+- **`/status`:** `{ "status" }` is one of `scheduled` (a draft with both times; without them `409`, `reason: "schedule_required"`), `assigned` (always `409`, `reason: "assign_required"`: use `POST /trips/{id}/assign`, which runs the assignment rules), `en_route` (start), `completed` (end), `cancelled`. `draft` or anything else is `400`.
+- **Requests:** start and end take no body (`{}` or none; any field is `400`). All three take `If-Match` (a trip changed since is `409 CONFLICT_CONCURRENT_MODIFICATION`) and `Idempotency-Key` (a retry replays the first answer). Every move is audited.
+- **Events:** `TripStarted` (`trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`), `TripCompleted` (the same, with `actual_end` and `duration_seconds`), `TripCancelled` (as for `PATCH`), and `TripUpdated` (`changed_fields: ["status"]`) when a draft is scheduled. Fleet's availability and the cached vehicle follow them.
 
 ### 7.3 Trip creation example
 

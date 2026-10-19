@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { depotScope, ownDriverScope } from '../../../shared/authz/scope';
 import type { AppError } from '../../../shared/errors/app-error';
 import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
@@ -32,6 +33,7 @@ import {
 import type { RequestUser } from '../../../types/express';
 import type { TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
 import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
+import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleRequired, type CommandStatus } from '../domain/lifecycle';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
 
 export interface TripCreate {
@@ -316,6 +318,143 @@ export class TripService {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Lifecycle commands (FMS-32): each is one move in TRIP_TRANSITIONS.
+
+  /**
+   * POST /trips/{id}/start: assigned → en_route, `actual_start` now. The
+   * trip's driver (their own trips only) or dispatch. The rules that held at
+   * assignment are read again, as things may have changed since: the vehicle
+   * may have been flagged (a pre-trip inspection), taken out of service or
+   * moved to another depot, the driver's licence may have expired. Another
+   * trip of the driver or vehicle still under way is a warning, not a block
+   * (FMS-31 overrun rule), and so is the driver's attendance.
+   */
+  async start(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+    return this.move(caller, tripId, 'en_route', expectedVersion, async (client, row) => {
+      const now = this.now();
+      const fleet = this.deps.fleet();
+      const vehicleId = row.vehicleId!;
+      const driverId = row.driverId!;
+      const answer = await fleet.availability.check(client, {
+        vehicleIds: [vehicleId],
+        driverIds: [driverId],
+        window: { start: now, end: now },
+        excludeTripId: row.publicId,
+        ...(row.depotId ? { depotId: row.depotId } : {}),
+      });
+      const availability = readAvailability(answer.vehicles.get(vehicleId)!, answer.drivers.get(driverId)!);
+      if (availability.refusal) throw await this.refusal(client, availability.refusal, vehicleId);
+      const eligibility = await fleet.drivers.eligibility(client, driverId, now, vehicleId);
+      if (!eligibility.eligible) throw driverNotEligible(eligibility.reasons);
+      const warnings = [
+        ...availability.warnings,
+        ...(await this.overruns(client, 'driver_id', driverId, row.id, now)),
+        ...(await this.overruns(client, 'vehicle_id', vehicleId, row.id, now)),
+      ];
+      return {
+        data: { status: 'en_route', actual_start: now },
+        event: TRIP_EVENTS.started,
+        payload: (view) => ({ ...lifecyclePayload(view), actual_start: now.toISOString() }),
+        warnings,
+      };
+    });
+  }
+
+  /**
+   * POST /trips/{id}/end: en_route → completed, `actual_end` now (never
+   * before `actual_start`, whatever the clocks say), and the actual duration.
+   */
+  async end(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+    return this.move(caller, tripId, 'completed', expectedVersion, async (_client, row) => {
+      const startedAt = row.actualStart;
+      const end = startedAt && this.now() < startedAt ? startedAt : this.now();
+      const duration = startedAt ? Math.round((end.getTime() - startedAt.getTime()) / 1000) : undefined;
+      return {
+        data: { status: 'completed', actual_end: end, ...(duration !== undefined ? { actual_duration_seconds: duration } : {}) },
+        event: TRIP_EVENTS.completed,
+        payload: (view) => ({
+          ...lifecyclePayload(view),
+          actual_start: startedAt?.toISOString() ?? null,
+          actual_end: end.toISOString(),
+          duration_seconds: duration ?? null,
+        }),
+        warnings: [],
+      };
+    });
+  }
+
+  /**
+   * POST /trips/{id}/status: the explicit form of the same moves.
+   * `en_route` is start and `completed` is end. `scheduled` (from a draft
+   * with both times) and `cancelled` are dispatch decisions: trip:write.
+   * `assigned` is the assignment itself: 409, use POST /trips/{id}/assign.
+   */
+  async changeStatus(
+    caller: Caller,
+    tripId: string,
+    status: CommandStatus,
+    expectedVersion: number | null = null,
+  ): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+    if (status === 'en_route') return this.start(caller, tripId, expectedVersion);
+    if (status === 'completed') return this.end(caller, tripId, expectedVersion);
+    if (status !== 'assigned' && !caller.user.permissions.includes('trip:write')) throw dispatchOnly();
+    return this.move(caller, tripId, status, expectedVersion, async (_client, row) => {
+      if (status === 'assigned') throw assignRequired(row.status);
+      if (status === 'scheduled') {
+        if (!row.scheduledStart || !row.scheduledEnd) throw scheduleRequired();
+        return {
+          data: { status: 'scheduled' },
+          event: TRIP_EVENTS.updated,
+          payload: (view) => ({ changed_fields: ['status'], status: view.status }),
+          warnings: [],
+        };
+      }
+      return {
+        data: { status: 'cancelled' },
+        event: TRIP_EVENTS.cancelled,
+        payload: (view) => ({ previous_status: row.status, route_id: view.route_id, driver_id: view.driver_id, vehicle_id: view.vehicle_id }),
+        warnings: [],
+      };
+    });
+  }
+
+  /**
+   * One lifecycle move, in one transaction: the trip row locked (a driver
+   * sees only their own trips; anyone else's is 404), If-Match checked, the
+   * move checked against TRIP_TRANSITIONS (409 with the allowed moves), then
+   * the step's own rules, the audited update and its event.
+   */
+  private async move(
+    caller: Caller,
+    tripId: string,
+    to: TripStatus,
+    expectedVersion: number | null,
+    step: (client: PoolClient, row: TripRow) => Promise<{
+      data: TripWrite;
+      event: string;
+      payload: (view: TripView) => Record<string, unknown>;
+      warnings: AssignmentWarning[];
+    }>,
+  ): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+    const { trips } = this.deps;
+    return trips.inTransaction(async (client) => {
+      const row = await trips.findVisible(client, tripId, await this.visibility(client, caller), true);
+      if (!row) throw tripNotFound();
+      if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
+      if (!canMove(row.status, to)) throw invalidTripTransition(row.status, to);
+      const { data, event, payload, warnings } = await step(client, row);
+      await trips.update(mutationContext(caller), row.id, data, client);
+      const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
+      await this.deps.events.publish(client, [tripEvent(caller, event, { trip_id: view.id, ...payload(view) })]);
+      return { trip: view, warnings };
+    });
+  }
+
+  private now(): Date {
+    return (this.deps.now ?? (() => new Date()))();
+  }
+
   /** The error for an availability refusal; BR-2 names the open maintenance record behind the flag. */
   private async refusal(db: Queryable, refusal: AvailabilityRefusal, vehicleId: string): Promise<AppError> {
     switch (refusal.kind) {
@@ -405,6 +544,11 @@ export class TripService {
 }
 
 /** A trip event, ordered per trip in the outbox (FMS-73). */
+/** What TripStarted and TripCompleted say about the trip: who, with what, from where. */
+function lifecyclePayload(view: TripView): Record<string, unknown> {
+  return { driver_id: view.driver_id, vehicle_id: view.vehicle_id, route_id: view.route_id, depot_id: view.depot_id, scheduled_start: view.scheduled_start?.toISOString() ?? null };
+}
+
 function tripEvent(caller: Caller, type: string, payload: { trip_id: string } & Record<string, unknown>): DomainEvent {
   return createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId }, { aggregate: aggregateKey('trip', payload.trip_id) });
 }
