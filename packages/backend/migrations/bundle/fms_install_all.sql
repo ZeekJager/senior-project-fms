@@ -2013,3 +2013,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_trip_routes_depot_name
     WHERE is_active;
 
 CREATE INDEX IF NOT EXISTS idx_trip_routes_depot ON trip.routes (depot_id);
+
+-- ===== 028_trip_history.sql =====
+CREATE INDEX IF NOT EXISTS idx_trip_trips_history
+    ON trip.trips ((COALESCE(scheduled_start, created_at)), id);
+
+CREATE INDEX IF NOT EXISTS idx_trip_trips_route
+    ON trip.trips (route_id);
