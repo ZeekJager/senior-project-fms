@@ -76,12 +76,11 @@ export class TripService {
       const fleet = this.deps.fleet();
       // Public ids to internal ids: undefined when not filtered, null when not found.
       // A filter naming something unknown (or outside scope) matches nothing: an empty page, not an error.
-      const [driverId, vehicleId, routeId, depotId] = await Promise.all([
-        query.driver_id ? fleet.drivers.idOf(client, query.driver_id) : undefined,
-        query.vehicle_id ? fleet.vehicles.idOf(client, query.vehicle_id) : undefined,
-        query.route_id ? trips.routeId(client, query.route_id) : undefined,
-        query.depot_id ? fleet.depots.resolveInScope(client, query.depot_id, depotScope(caller.user)) : undefined,
-      ]);
+      // One after another: queries on one client never run concurrently.
+      const driverId = query.driver_id ? await fleet.drivers.idOf(client, query.driver_id) : undefined;
+      const vehicleId = query.vehicle_id ? await fleet.vehicles.idOf(client, query.vehicle_id) : undefined;
+      const routeId = query.route_id ? await trips.routeId(client, query.route_id) : undefined;
+      const depotId = query.depot_id ? await fleet.depots.resolveInScope(client, query.depot_id, depotScope(caller.user)) : undefined;
       if ([driverId, vehicleId, routeId, depotId].includes(null)) return { items: [], nextCursor: null };
 
       const { rows, more } = await trips.history(client, {
@@ -217,12 +216,11 @@ export class TripService {
   private async views(db: Queryable, rows: TripRow[]): Promise<TripView[]> {
     const fleet = this.deps.fleet();
     const ids = (pick: (r: TripRow) => string | null) => [...new Set(rows.flatMap((r) => (pick(r) ? [pick(r) as string] : [])))];
-    const [depots, vehicles, drivers, stops] = await Promise.all([
-      fleet.depots.publicIds(db, ids((r) => r.depotId)),
-      fleet.vehicles.publicIds(db, ids((r) => r.vehicleId)),
-      fleet.drivers.publicIds(db, ids((r) => r.driverId)),
-      this.deps.trips.stops(db, rows.map((r) => r.id)),
-    ]);
+    // Sequential: `db` is often a transaction's client, which runs one query at a time.
+    const depots = await fleet.depots.publicIds(db, ids((r) => r.depotId));
+    const vehicles = await fleet.vehicles.publicIds(db, ids((r) => r.vehicleId));
+    const drivers = await fleet.drivers.publicIds(db, ids((r) => r.driverId));
+    const stops = await this.deps.trips.stops(db, rows.map((r) => r.id));
     return rows.map((r) => ({
       id: r.publicId,
       route_id: r.routePublicId,
