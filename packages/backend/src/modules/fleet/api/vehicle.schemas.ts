@@ -88,6 +88,39 @@ export const vehicleUpdateBody = z
 
 const SORT_KEYS = Object.keys(VEHICLE_SORT_COLUMNS) as [VehicleSortKey, ...VehicleSortKey[]];
 
+/** Addis Ababa is UTC+3 all year: a date means that local day (as in GET /audit-logs). */
+const ADDIS_OFFSET = '+03:00';
+
+/** An instant, or a date: `from` is that day's start, `to` its end (the next local midnight). */
+function windowBound(value: string, end: boolean): Date {
+  if (value.includes('T')) return new Date(value);
+  if (!end) return new Date(`${value}T00:00:00${ADDIS_OFFSET}`);
+  const next = new Date(`${value}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return new Date(`${next.toISOString().slice(0, 10)}T00:00:00${ADDIS_OFFSET}`);
+}
+
+const instantOrDate = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
+
+/**
+ * GET /vehicles/{id}/status (FMS-76): the window availability is checked for.
+ * Neither: now. Only `from`: that instant (or day). Only `to`: now until then.
+ */
+export const vehicleStatusQuery = z
+  .object({ from: instantOrDate.optional(), to: instantOrDate.optional() })
+  .transform(({ from, to }) => {
+    if (!from && !to) return undefined;
+    const start = from ? windowBound(from, false) : new Date();
+    const end = to ? windowBound(to, true) : from && !from.includes('T') ? windowBound(from, true) : start;
+    return { start, end };
+  });
+
+/** POST /vehicles/{id}/status (FMS-76): the new status and why. `inactive` is out of service; `retired` is final. */
+export const vehicleStatusBody = z.strictObject({
+  status: z.enum(VEHICLE_STATUSES),
+  reason: z.string().trim().min(3).max(500),
+});
+
 /** GET /vehicles query (api-contract §6.2, §18). An empty `search` means no search. */
 export const vehicleListQuery = z.object({
   ...pageQuery,

@@ -37,7 +37,6 @@ Money is stored as integer Ethiopian cents and fuel as integer millilitres (api-
 | `maintenance` (vehicle) | orange |
 | `open` (maintenance) | blue |
 | `in_progress` (maintenance) | yellow |
-| `decommissioned` (vehicle) | red |
 
 The badge always shows its label as text, so colour is never the only signal.
 

@@ -39,6 +39,8 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 export interface ErrorDetail {
   field?: string;
   reason: string;
+  /** The public id of the record the problem is about: the conflicting trip, the open maintenance record. */
+  record_id?: string;
 }
 
 /** An error the API reports to the client as-is (status, code, message). */

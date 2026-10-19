@@ -92,6 +92,12 @@ Today's consumers:
 | `fleet.driver-accounts` | `UserAccountChanged` | Refreshes fleet's copy of the driver's account, on `tx` |
 | `fleet.document-expiry` | `DocumentUploaded` | Raises `DocumentExpiring` at once for a document already inside the 30-day window, on `tx` |
 
+Today's projections (`eventBus.project`): they run inside `publish`, on the transaction that makes the change, and commit or roll back with it. No outbox delivery, no retries; a rebuild from the source repairs anything written without its events.
+
+| Projection | Reacts to | Does | Rebuilt by |
+|---|---|---|---|
+| `fleet.trip-assignments` | Every trip event (`TRIP_EVENTS`: `TripCreated`, `TripUpdated`, `TripCancelled`, `TripAssigned`, `TripStarted`, `TripCompleted`) | Re-reads the trip from the trip module and updates `fleet.trip_assignments`, the availability read model (FMS-76). The event says which trip; the trip says what is true | `trip-assignment-sync` (daily, logs drift); `rebuildReadModels()` |
+
 ## Redis channels
 
 | Channel | Message |

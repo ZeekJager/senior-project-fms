@@ -4,6 +4,7 @@ import type { MutationContext, Row } from '../../../shared/infrastructure/audite
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
 import type { FuelType, VehicleStatus, VehicleTrip, VehicleType, VehicleView } from '../domain/vehicle';
+import type { StatusChangeSource } from '../domain/availability';
 import { EXPIRY_WINDOW_DAYS } from '../domain/expiry';
 import { operatingToday } from '../domain/attendance';
 import { resolveDepotInScope } from './depot.queries';
@@ -67,10 +68,28 @@ export interface VehicleWrite {
 }
 
 /** What a write needs to know about the current row, read under a row lock. */
+const LOCKED_COLUMNS = `SELECT v.id, v.depot_id AS "depotId", v.is_active AS "isActive", v.status, v.fuel_type AS "fuelType",
+       v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm",
+       v.maintenance_flag AS "maintenanceFlag", v.version
+  FROM fleet.vehicles v`;
+
+/** A status change as fleet.vehicle_status_history keeps it (FMS-76). */
+export interface StatusChangeRow {
+  fromStatus: VehicleStatus;
+  toStatus: VehicleStatus;
+  reason: string | null;
+  source: StatusChangeSource;
+  maintenanceRecordId: string | null;
+  /** Internal user id. */
+  changedBy: string | null;
+  changedAt: Date;
+}
+
 export interface LockedVehicle {
   id: string;
   depotId: string;
   isActive: boolean;
+  status: VehicleStatus;
   fuelType: FuelType;
   fuelEfficiencyMlPerKm: number | null;
   odometerKm: number;
@@ -233,15 +252,13 @@ export class VehicleRepository extends Repository {
   /** Reads and row-locks a vehicle in the caller's scope, for a write in the same transaction. */
   async lockForWrite(client: PoolClient, publicId: string, scope: Scope): Promise<LockedVehicle | null> {
     const clause = scopeClause(scope, 'v.depot_id', 2);
-    const res = await client.query<LockedVehicle>(
-      `SELECT v.id, v.depot_id AS "depotId", v.is_active AS "isActive", v.fuel_type AS "fuelType",
-              v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.odometer_km::float8 AS "odometerKm",
-              v.maintenance_flag AS "maintenanceFlag", v.version
-         FROM fleet.vehicles v
-        WHERE v.public_id = $1 AND ${clause.sql}
-          FOR UPDATE`,
-      [publicId, ...clause.params],
-    );
+    const res = await client.query<LockedVehicle>(`${LOCKED_COLUMNS} WHERE v.public_id = $1 AND ${clause.sql} FOR UPDATE`, [publicId, ...clause.params]);
+    return res.rows[0] ?? null;
+  }
+
+  /** The same by internal id, for another module's workflow that has already checked scope (maintenance). */
+  async lockById(client: PoolClient, id: string): Promise<LockedVehicle | null> {
+    const res = await client.query<LockedVehicle>(`${LOCKED_COLUMNS} WHERE v.id = $1 FOR UPDATE`, [id]);
     return res.rows[0] ?? null;
   }
 
@@ -342,5 +359,54 @@ export class VehicleRepository extends Repository {
   /** Soft retirement: `is_active = FALSE` and `status = 'retired'` in one audited change. */
   retire(ctx: MutationContext, id: string, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'fleet.vehicles', 'DELETE', id, { status: 'retired' }, client);
+  }
+
+  /** A status change other than retirement (FMS-76): one audited UPDATE. */
+  setStatus(ctx: MutationContext, id: string, status: VehicleStatus, client: PoolClient): Promise<Row> {
+    return this.mutate(ctx, 'fleet.vehicles', 'UPDATE', id, { status }, client);
+  }
+
+  /** Records why and by whom a status changed (fleet.vehicle_status_history); audited like every write. */
+  recordStatusChange(
+    ctx: MutationContext,
+    change: {
+      vehicleId: string;
+      from: VehicleStatus;
+      to: VehicleStatus;
+      reason: string | null;
+      changedBy: string | null;
+      source: StatusChangeSource;
+      maintenanceRecordId: string | null;
+    },
+    client: PoolClient,
+  ): Promise<Row> {
+    return this.mutate(
+      ctx,
+      'fleet.vehicle_status_history',
+      'INSERT',
+      null,
+      {
+        vehicle_id: change.vehicleId,
+        from_status: change.from,
+        to_status: change.to,
+        reason: change.reason,
+        changed_by: change.changedBy,
+        source: change.source,
+        maintenance_record_id: change.maintenanceRecordId,
+        correlation_id: ctx.correlationId,
+      },
+      client,
+    );
+  }
+
+  /** The latest status change of a vehicle, if any; `changedBy` is the internal user id. */
+  async lastStatusChange(db: Queryable, vehicleId: string): Promise<StatusChangeRow | null> {
+    const res = await db.query<StatusChangeRow>(
+      `SELECT from_status AS "fromStatus", to_status AS "toStatus", reason, source, maintenance_record_id AS "maintenanceRecordId",
+              changed_by AS "changedBy", changed_at AS "changedAt"
+         FROM fleet.vehicle_status_history WHERE vehicle_id = $1 ORDER BY changed_at DESC, id DESC LIMIT 1`,
+      [vehicleId],
+    );
+    return res.rows[0] ?? null;
   }
 }

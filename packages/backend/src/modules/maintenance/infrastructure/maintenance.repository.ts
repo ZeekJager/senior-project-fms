@@ -150,6 +150,15 @@ export class MaintenanceRepository extends Repository {
   }
 
   /** Other unfinished work on the vehicle; while there is any, its flag stays set. */
+  /** Whether any work on the vehicle is in progress: it is in the workshop (FMS-76). */
+  async hasInProgress(db: Queryable, vehicleId: string): Promise<boolean> {
+    const res = await db.query<{ busy: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM maintenance.maintenance_records WHERE vehicle_id = $1 AND status = 'in_progress') AS busy`,
+      [vehicleId],
+    );
+    return res.rows[0].busy;
+  }
+
   async hasOtherOpen(db: Queryable, vehicleId: string, exceptRecordId: string): Promise<boolean> {
     const res = await db.query<{ open: boolean }>(
       `SELECT EXISTS (
@@ -159,6 +168,17 @@ export class MaintenanceRepository extends Repository {
       [vehicleId, exceptRecordId, OPEN_STATUSES],
     );
     return res.rows[0].open;
+  }
+
+  /** The public id of the vehicle's open record that keeps its flag set (the most recent), if any. */
+  async openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> {
+    const res = await db.query<{ public_id: string }>(
+      `SELECT public_id FROM maintenance.maintenance_records
+        WHERE vehicle_id = $1 AND status = ANY($2::maintenance.maintenance_status[])
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [vehicleId, OPEN_STATUSES],
+    );
+    return res.rows[0]?.public_id ?? null;
   }
 
   /** Row-locks the parts by public id, in id order (two repairs using the same parts never deadlock). */

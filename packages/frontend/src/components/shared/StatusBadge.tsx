@@ -18,7 +18,6 @@ export const STATUSES = [
   'inactive',
   'maintenance',
   'retired',
-  'decommissioned',
   // Maintenance work (scheduled, completed and cancelled are shared with trips)
   'open',
   'in_progress',
@@ -60,7 +59,6 @@ export const STATUS_STYLES: Record<Status, StatusStyle> = {
   inactive: style('grey', 'Inactive'),
   maintenance: style('orange', 'Maintenance'),
   retired: style('grey', 'Retired'),
-  decommissioned: style('red', 'Decommissioned'),
   open: style('blue', 'Open'),
   in_progress: style('yellow', 'In progress'),
 }

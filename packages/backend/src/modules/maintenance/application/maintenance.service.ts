@@ -91,13 +91,26 @@ export interface MaintenanceListQuery {
 export interface MaintenanceServiceDeps {
   records: Pick<
     MaintenanceRepository,
-    'inTransaction' | 'list' | 'findByPublicId' | 'findById' | 'lockForWrite' | 'partLines' | 'hasOtherOpen' | 'lockParts' | 'insertRecord' | 'updateRecord' | 'consumePart'
+    | 'inTransaction'
+    | 'list'
+    | 'findByPublicId'
+    | 'findById'
+    | 'lockForWrite'
+    | 'partLines'
+    | 'hasOtherOpen'
+    | 'hasInProgress'
+    | 'lockParts'
+    | 'insertRecord'
+    | 'updateRecord'
+    | 'consumePart'
   >;
   vehicles: {
     findInScope(db: Queryable, by: { publicId: string } | { id: string }, scope: Scope, lock?: boolean): Promise<MaintenanceVehicle | null>;
     refsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; registrationNumber: string }>>;
     idsInScope(db: Queryable, scope: Scope): Promise<string[] | null>;
     setMaintenanceFlag(client: PoolClient, ctx: MutationContext, id: string, flag: boolean): Promise<unknown>;
+    /** Moves the vehicle's status with its workshop work (FMS-76): `inWorkshop` is whether any work on it is in progress now. */
+    followWorkshop(client: PoolClient, caller: Caller, vehicleId: string, inWorkshop: boolean, recordId: string): Promise<unknown>;
   };
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   depots: { publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>> };
@@ -112,7 +125,8 @@ const CLOCK_SKEW_MS = 5 * 60 * 1000;
  * Maintenance records (FMS-22): every repair on every vehicle, permanently and
  * audited. Opening work flags the vehicle for maintenance in the same
  * transaction; finishing the last open work on it clears the flag in the
- * same transaction. Parts used come off the shelf; using more than the
+ * same transaction. Work in progress puts the vehicle in the workshop
+ * (status `maintenance`), and the last of it ending takes it out (FMS-76). Parts used come off the shelf; using more than the
  * stock record holds is recorded in full, stock stops at zero, and the
  * shortfall comes back as a LOW_STOCK warning, never a refusal.
  */
@@ -220,6 +234,7 @@ export class MaintenanceService {
 
       if (!vehicle.maintenanceFlag) await vehicles.setMaintenanceFlag(client, ctx, vehicle.id, true);
       const record = (await this.views(client, [await records.findById(client, row.id as string)]))[0];
+      if (status === 'in_progress') await vehicles.followWorkshop(client, caller, vehicle.id, true, record.id);
       if (record.total_cost_cents < record.parts_cost_cents) {
         warnings.push({ warning: 'COST_BELOW_PARTS', total_cost_cents: record.total_cost_cents, parts_cost_cents: record.parts_cost_cents });
       }
@@ -279,6 +294,9 @@ export class MaintenanceService {
         cleared = true;
       }
       const view = (await this.views(client, [await records.findById(client, row.id)]))[0];
+      if (data.status !== undefined && data.status !== row.status && (data.status === 'in_progress' || row.status === 'in_progress')) {
+        await vehicles.followWorkshop(client, caller, row.vehicleId, await records.hasInProgress(client, row.vehicleId), view.id);
+      }
       const event =
         data.status === 'completed'
           ? this.event(caller, MAINTENANCE_EVENTS.completed, { maintenance_record_id: view.id, vehicle_id: view.vehicle_id, maintenance_flag_cleared: cleared })

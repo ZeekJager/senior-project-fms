@@ -1,7 +1,7 @@
-import { AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Truck, type LucideIcon } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Truck, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
-import { Badge, Button, cn, Skeleton } from '@/components/ui'
+import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
 import type { DocumentHealth } from '@/features/documents/expiry'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
 
@@ -24,6 +24,8 @@ export interface ColumnContext {
   showStatus?: boolean
   onEdit: (vehicle: Vehicle) => void
   onOpenDocuments: (vehicle: Vehicle) => void
+  /** Status and availability (FMS-76): everyone who sees the list may open it. */
+  onStatus: (vehicle: Vehicle) => void
 }
 
 /**
@@ -164,24 +166,23 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
     })
   }
 
-  if (ctx.canWrite) {
-    columns.push({
-      key: 'actions',
-      header: <span className="sr-only">Actions</span>,
-      width: 'w-[104px] coarse:w-[112px]',
-      align: 'right',
-      cell: (v) => (
-        <div className="flex justify-end">
-          {ctx.canWrite && v.status !== 'retired' && (
-            <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit ${v.registration_number}`} onClick={() => ctx.onEdit(v)}>
-              Edit
-            </Button>
-          )}
-        </div>
-      ),
-      skeleton: <span />,
-    })
-  }
+  columns.push({
+    key: 'actions',
+    header: <span className="sr-only">Actions</span>,
+    width: ctx.canWrite ? 'w-[144px] coarse:w-[156px]' : 'w-[56px] coarse:w-[64px]',
+    align: 'right',
+    cell: (v) => (
+      <div className="flex items-center justify-end gap-1.5">
+        <IconButton size="sm" label={`Availability of ${v.registration_number}`} icon={<Activity className="h-4 w-4" />} onClick={() => ctx.onStatus(v)} />
+        {ctx.canWrite && v.status !== 'retired' && (
+          <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit ${v.registration_number}`} onClick={() => ctx.onEdit(v)}>
+            Edit
+          </Button>
+        )}
+      </div>
+    ),
+    skeleton: <span />,
+  })
   return ctx.showStatus === false ? columns.filter((c) => c.key !== 'status') : columns
 }
 

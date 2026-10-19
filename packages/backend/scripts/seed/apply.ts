@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { config } from '../../src/config';
 import { pool } from '../../src/db';
+import { rebuildReadModels } from '../../src/modules';
 import { hashPassword } from '../../src/modules/auth';
 import { auditedMutation, type MutationContext } from '../../src/shared/infrastructure/audited-mutation';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
@@ -66,6 +67,8 @@ export async function runSeed(options: SeedOptions): Promise<SeedSummary> {
     await api.signIn(SEED_ADMIN_EMAIL, options.password);
     const ids = await writeThroughApi(api, plan, options.password, log);
     await writeDirect(plan, ids, { userId: String(admin.id), correlationId: randomUUID() }, log);
+    // Trips and the rest were written without events: rebuild every read model from its source.
+    for (const [table, result] of Object.entries(await rebuildReadModels())) log(`${table}: ${JSON.stringify(result)}`);
   } finally {
     await api.close();
   }

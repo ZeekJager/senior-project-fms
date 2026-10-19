@@ -6,7 +6,7 @@ import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { Caller, VehicleService } from '../application/vehicle.service';
 import { vehicleNotFound } from '../domain/vehicle';
-import { vehicleCreateBody, vehicleListQuery, vehicleUpdateBody } from './vehicle.schemas';
+import { vehicleCreateBody, vehicleListQuery, vehicleStatusBody, vehicleStatusQuery, vehicleUpdateBody } from './vehicle.schemas';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -21,7 +21,7 @@ function vehicleId(req: Request): string {
   return id;
 }
 
-/** Vehicles (api-contract §6.2): list, register, read, update and retire. */
+/** Vehicles (api-contract §6.2): list, register, read, update and retire; status and availability (FMS-76). */
 export function vehicleRouter(service: VehicleService): Router {
   const router = Router();
 
@@ -65,6 +65,28 @@ export function vehicleRouter(service: VehicleService): Router {
       const expected = ifMatchVersion(req.get('If-Match'));
       const vehicle = await service.update(caller(req), id, parseInput(vehicleUpdateBody, req.body), expected);
       res.set('ETag', etagFor(vehicle.version)).json({ data: vehicle, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // Status and availability for a window (FMS-76). vehicle:read and the same depot scope as GET /vehicles/{id}.
+  router.get(
+    '/vehicles/:vehicleId/status',
+    authorize('vehicle:read'),
+    asyncHandler(async (req, res) => {
+      const id = vehicleId(req);
+      const status = await service.status(caller(req), id, parseInput(vehicleStatusQuery, req.query));
+      res.set('ETag', etagFor(status.version)).json({ data: status, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // A status change with its reason (FMS-76): audited, kept in the status history, published as VehicleStatusChanged.
+  router.post(
+    '/vehicles/:vehicleId/status',
+    authorize('vehicle:write'),
+    asyncHandler(async (req, res) => {
+      const id = vehicleId(req);
+      const { status, warnings } = await service.changeStatus(caller(req), id, parseInput(vehicleStatusBody, req.body), ifMatchVersion(req.get('If-Match')));
+      res.set('ETag', etagFor(status.version)).json({ data: status, meta: { warnings, request_id: req.correlationId } });
     }),
   );
 

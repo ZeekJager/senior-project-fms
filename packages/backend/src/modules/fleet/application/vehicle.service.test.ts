@@ -6,6 +6,7 @@ import type { RequestUser } from '../../../types/express';
 import type { VehicleView } from '../domain/vehicle';
 import type { LockedVehicle } from '../infrastructure/vehicle.repository';
 import { NoCache } from '../../../shared/cache/cache';
+import type { AvailabilityService } from './availability.service';
 import { VehicleService, type Caller, type VehicleServiceDeps } from './vehicle.service';
 
 const VEHICLE = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
@@ -23,14 +24,26 @@ const caller: Caller = { user: depotAdmin, correlationId: '22222222-2222-4222-82
 const view = { id: VEHICLE, depot_id: DEPOT_PUBLIC } as VehicleView;
 
 /** A service over fakes. `locked` is what the row lock finds (null: not in scope). */
-function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?: boolean; activeAssignment?: boolean } = {}) {
+function harness(
+  options: {
+    locked?: Partial<LockedVehicle> | null;
+    activeTrip?: boolean;
+    activeAssignment?: boolean;
+    /** The trip the vehicle is on (en route first), for status changes. */
+    currentTrip?: { id: string; status: 'assigned' | 'en_route' };
+    /** Assigned trips ahead (read model). */
+    ahead?: { tripId: string; start: Date }[];
+    /** Who made the latest status change. */
+    lastSource?: 'manual' | 'maintenance';
+  } = {},
+) {
   const calls: string[] = [];
   const events = new RecordingEventBus();
   const tx = {} as PoolClient;
   const locked =
     options.locked === null
       ? null
-      : { id: '7', depotId: '5', isActive: true, fuelType: 'diesel' as const, fuelEfficiencyMlPerKm: 320, odometerKm: 1000, maintenanceFlag: false, version: 0, ...options.locked };
+      : { id: '7', depotId: '5', isActive: true, status: 'active' as const, fuelType: 'diesel' as const, fuelEfficiencyMlPerKm: 320, odometerKm: 1000, maintenanceFlag: false, version: 0, ...options.locked };
 
   const vehicles: VehicleServiceDeps['vehicles'] = {
     inTransaction: (fn) => fn(tx),
@@ -40,6 +53,7 @@ function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?:
     list: async () => ({ items: [], total: 0 }),
     resolveDepot: async (_db, publicId) => (publicId === DEPOT_PUBLIC ? '5' : null),
     lockForWrite: async () => locked,
+    lockById: async () => locked,
     hasActiveAssignment: async () => options.activeAssignment ?? false,
     insert: async () => {
       calls.push('insert');
@@ -53,9 +67,45 @@ function harness(options: { locked?: Partial<LockedVehicle> | null; activeTrip?:
       calls.push(`retire:${id}:${ctx.userId}`);
       return { id };
     },
+    findRef: async () => ({ id: '7', publicId: VEHICLE }),
+    setStatus: async (_ctx, id, status) => {
+      calls.push(`status:${id}:${status}`);
+      return { id };
+    },
+    recordStatusChange: async (_ctx, change) => {
+      calls.push(`history:${change.from}->${change.to}:${change.reason ?? ''}${change.source === 'maintenance' ? `:${change.maintenanceRecordId}` : ''}`);
+      return { id: '1', changed_at: new Date('2026-11-02T06:00:00Z') };
+    },
+    lastStatusChange: async () =>
+      options.lastSource
+        ? {
+            fromStatus: 'active',
+            toStatus: 'maintenance',
+            reason: 'x',
+            source: options.lastSource,
+            maintenanceRecordId: options.lastSource === 'maintenance' ? 'rec-1' : null,
+            changedBy: '10',
+            changedAt: new Date(),
+          }
+        : null,
   };
-  const trips = { vehicleHasActiveTrip: async () => options.activeTrip ?? false };
-  return { service: new VehicleService({ vehicles, trips, events, cache: new NoCache() }), calls, published: events.published, events, tx };
+  const trips = {
+    vehicleHasActiveTrip: async () => options.activeTrip ?? false,
+    activeTripsForVehicles: async () =>
+      new Map(options.currentTrip ? [['7', { ...options.currentTrip, origin: null, destination: null, scheduled_start: null }]] : []),
+  };
+  const availability = { check: async () => ({ vehicles: new Map([['7', { availability: 'available', reasons: [] }]]), drivers: new Map() }) } as unknown as AvailabilityService;
+  const service = new VehicleService({
+    vehicles,
+    trips,
+    events,
+    cache: new NoCache(),
+    availability,
+    assignments: { vehicleAssignments: async () => ({ current: null, next: null }), assignedAfter: async () => options.ahead ?? [] },
+    users: { findByIds: async () => [] },
+    maintenance: () => null,
+  });
+  return { service, calls, published: events.published, events, tx };
 }
 
 async function codeOf(promise: Promise<unknown>): Promise<string> {
@@ -71,11 +121,12 @@ describe('retire rule', () => {
   test('an idle vehicle is retired once, attributed, and announced', async () => {
     const { service, calls, published, events, tx } = harness();
     await service.retire(caller, VEHICLE);
-    expect(calls).toEqual(['retire:7:10']);
+    expect(calls).toEqual(['retire:7:10', 'history:active->retired:']);
     // In the retirement's transaction (the outbox, FMS-73), ordered per vehicle.
-    expect(events.clients).toEqual([tx]);
+    expect(events.clients).toEqual([tx, tx]);
     expect(published[0].aggregate).toBe(`vehicle:${VEHICLE}`);
-    expect(published.map((e) => e.type)).toEqual(['VehicleRetired']);
+    // A retirement is also a status change (FMS-76).
+    expect(published.map((e) => e.type)).toEqual(['VehicleRetired', 'VehicleStatusChanged']);
     expect(published[0]).toMatchObject({ actor: depotAdmin.publicId, correlation_id: caller.correlationId, payload: { vehicle_id: VEHICLE } });
   });
 
@@ -149,6 +200,114 @@ describe('create rules', () => {
   test('a depot outside the scope is a missing record', async () => {
     const { service, calls } = harness();
     expect(await codeOf(service.create(caller, { ...input, fuel_type: 'electric', depot_id: VEHICLE }))).toBe('VALIDATION_FAILED');
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('status changes (FMS-76)', () => {
+  test('active to maintenance: written, kept with its reason, published with who and why', async () => {
+    const { service, calls, published } = harness();
+    const { warnings } = await service.changeStatus(caller, VEHICLE, { status: 'maintenance', reason: 'Gearbox noise' });
+    expect(calls).toEqual(['status:7:maintenance', 'history:active->maintenance:Gearbox noise']);
+    expect(warnings).toEqual([]);
+    expect(published.map((e) => e.type)).toEqual(['VehicleStatusChanged']);
+    expect(published[0].payload).toEqual({
+      vehicle_id: VEHICLE,
+      depot_id: DEPOT_PUBLIC,
+      previous_status: 'active',
+      new_status: 'maintenance',
+      changed_at: '2026-11-02T06:00:00.000Z',
+      changed_by: depotAdmin.publicId,
+      reason: 'Gearbox noise',
+      source: 'manual',
+      maintenance_record_id: null,
+    });
+  });
+
+  test.each([
+    ['active', 'inactive'],
+    ['inactive', 'active'],
+    ['maintenance', 'active'],
+    ['inactive', 'maintenance'],
+  ] as const)('%s to %s is allowed', async (from, to) => {
+    const { service, calls } = harness({ locked: { status: from } });
+    await service.changeStatus(caller, VEHICLE, { status: to, reason: 'Checked' });
+    expect(calls[0]).toBe(`status:7:${to}`);
+  });
+
+  test('nothing leaves retired: 409 CONFLICT_INVALID_STATE_TRANSITION, nothing written', async () => {
+    const { service, calls, published } = harness({ locked: { status: 'retired', isActive: false } });
+    expect(await codeOf(service.changeStatus(caller, VEHICLE, { status: 'active', reason: 'Back' }))).toBe('CONFLICT_INVALID_STATE_TRANSITION');
+    expect(calls).toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  test('the same status again changes nothing and publishes nothing', async () => {
+    const { service, calls, published } = harness({ locked: { status: 'maintenance' } });
+    await service.changeStatus(caller, VEHICLE, { status: 'maintenance', reason: 'Still' });
+    expect(calls).toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  test('a vehicle under way cannot be taken off the road; trips assigned ahead are warnings, not blocks', async () => {
+    const underWay = harness({ currentTrip: { id: 'trip-1', status: 'en_route' } });
+    expect(await codeOf(underWay.service.changeStatus(caller, VEHICLE, { status: 'inactive', reason: 'Parked' }))).toBe('CONFLICT_VEHICLE_IN_USE');
+    expect(underWay.calls).toEqual([]);
+
+    const start = new Date('2026-11-03T06:00:00Z');
+    const ahead = harness({ currentTrip: { id: 'trip-2', status: 'assigned' }, ahead: [{ tripId: 'trip-2', start }] });
+    const { warnings } = await ahead.service.changeStatus(caller, VEHICLE, { status: 'maintenance', reason: 'Service' });
+    expect(warnings).toEqual([{ warning: 'ASSIGNED_TRIP_AFFECTED', trip_id: 'trip-2', start }]);
+    expect(ahead.calls[0]).toBe('status:7:maintenance');
+  });
+
+  test('retiring through the status has the in-use rule of DELETE, and keeps the reason', async () => {
+    const busy = harness({ activeTrip: true });
+    expect(await codeOf(busy.service.changeStatus(caller, VEHICLE, { status: 'retired', reason: 'Sold' }))).toBe('CONFLICT_VEHICLE_IN_USE');
+    const idle = harness();
+    await idle.service.changeStatus(caller, VEHICLE, { status: 'retired', reason: 'Sold' });
+    expect(idle.calls).toEqual(['retire:7:10', 'history:active->retired:Sold']);
+    expect(idle.published.map((e) => e.type)).toEqual(['VehicleRetired', 'VehicleStatusChanged']);
+  });
+
+  test('a stale If-Match is 409 CONFLICT_CONCURRENT_MODIFICATION', async () => {
+    const { service } = harness({ locked: { version: 4 } });
+    expect(await codeOf(service.changeStatus(caller, VEHICLE, { status: 'inactive', reason: 'x' }, 3))).toBe('CONFLICT_CONCURRENT_MODIFICATION');
+  });
+});
+
+describe('status follows workshop work (FMS-76)', () => {
+  test('work starting puts an active vehicle in the workshop, recorded as maintenance with the record', async () => {
+    const { service, calls, published, tx } = harness();
+    expect(await service.followWorkshop(tx, caller, '7', true, 'rec-1')).toBe('maintenance');
+    expect(calls).toEqual(['status:7:maintenance', 'history:active->maintenance:Maintenance work started.:rec-1']);
+    expect(published[0].payload).toMatchObject({ previous_status: 'active', new_status: 'maintenance', source: 'maintenance', maintenance_record_id: 'rec-1' });
+  });
+
+  test('work starting leaves alone a vehicle out of service, already in the workshop, retired, or on a trip under way', async () => {
+    for (const locked of [{ status: 'inactive' as const }, { status: 'maintenance' as const }, { status: 'retired' as const, isActive: false }]) {
+      const { service, calls } = harness({ locked });
+      expect(await service.followWorkshop({} as PoolClient, caller, '7', true, 'rec-1')).toBeNull();
+      expect(calls).toEqual([]);
+    }
+    const underWay = harness({ currentTrip: { id: 'trip-1', status: 'en_route' } });
+    expect(await underWay.service.followWorkshop(underWay.tx, caller, '7', true, 'rec-1')).toBeNull();
+    expect(underWay.calls).toEqual([]);
+  });
+
+  test('the last work ending returns the vehicle to active only when maintenance put it in the workshop', async () => {
+    const byMaintenance = harness({ locked: { status: 'maintenance' }, lastSource: 'maintenance' });
+    expect(await byMaintenance.service.followWorkshop(byMaintenance.tx, caller, '7', false, 'rec-1')).toBe('active');
+    expect(byMaintenance.calls).toEqual(['status:7:active', 'history:maintenance->active:Maintenance work finished.:rec-1']);
+
+    const byHand = harness({ locked: { status: 'maintenance' }, lastSource: 'manual' });
+    expect(await byHand.service.followWorkshop(byHand.tx, caller, '7', false, 'rec-1')).toBeNull();
+    expect(byHand.calls).toEqual([]);
+  });
+
+  test('other work still in progress keeps the vehicle in the workshop', async () => {
+    const { service, calls } = harness({ locked: { status: 'maintenance' }, lastSource: 'maintenance' });
+    expect(await service.followWorkshop({} as PoolClient, caller, '7', true, 'rec-2')).toBeNull();
     expect(calls).toEqual([]);
   });
 });

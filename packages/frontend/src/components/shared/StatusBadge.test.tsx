@@ -13,7 +13,6 @@ describe('StatusBadge colour vocabulary', () => {
         "assigned": "blue",
         "cancelled": "red",
         "completed": "green",
-        "decommissioned": "red",
         "draft": "grey",
         "en_route": "yellow",
         "flagged": "orange",

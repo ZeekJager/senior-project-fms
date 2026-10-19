@@ -6,6 +6,16 @@ import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
+import {
+  canTransition,
+  invalidStatusTransition,
+  vehicleUnderWay,
+  type AvailabilityWindow,
+  type StatusChangeSource,
+  type StatusChangeWarning,
+  type VehicleStatusView,
+} from '../domain/availability';
+import type { AvailabilityService } from './availability.service';
 import type { Caller } from './caller';
 import {
   VEHICLE_EVENTS,
@@ -17,10 +27,13 @@ import {
   vehicleNotFound,
   vehicleRetired,
   type FuelType,
+  type VehicleStatus,
+  type VehicleTrip,
   type VehicleType,
   type VehicleView,
 } from '../domain/vehicle';
-import type { VehicleListQuery, VehicleRepository, VehicleWrite } from '../infrastructure/vehicle.repository';
+import type { availabilityStore } from '../infrastructure/availability.repository';
+import type { LockedVehicle, VehicleListQuery, VehicleRepository, VehicleWrite } from '../infrastructure/vehicle.repository';
 
 export type { Caller } from './caller';
 
@@ -52,16 +65,36 @@ export interface VehicleServiceDeps {
     | 'list'
     | 'resolveDepot'
     | 'lockForWrite'
+    | 'lockById'
     | 'hasActiveAssignment'
     | 'insert'
     | 'update'
     | 'retire'
+    | 'findRef'
+    | 'setStatus'
+    | 'recordStatusChange'
+    | 'lastStatusChange'
   >;
-  /** The trip module's answer (through its index.ts): is the vehicle on an assigned or en-route trip? */
-  trips: { vehicleHasActiveTrip(db: Queryable, vehicleId: string): Promise<boolean> };
+  /**
+   * The trip module's answers (through its index.ts): is the vehicle on an
+   * assigned or en-route trip, and which (en route first). Read live, not from
+   * the read model: taking a vehicle off the road must see a trip that started
+   * a moment ago.
+   */
+  trips: {
+    vehicleHasActiveTrip(db: Queryable, vehicleId: string): Promise<boolean>;
+    activeTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, VehicleTrip>>;
+  };
   events: EventBus;
   /** GET /vehicles/{id} reads through it (FMS-72); writes invalidate after commit. */
   cache: Cache;
+  availability: AvailabilityService;
+  assignments: Pick<typeof availabilityStore, 'vehicleAssignments' | 'assignedAfter'>;
+  /** Public ids of users by internal id (the auth module): who changed a status. */
+  users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
+  /** The maintenance module's open record behind a flag, connected by src/modules/index.ts (maintenance imports fleet). */
+  maintenance: () => { openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> } | null;
+  now?: () => Date;
 }
 
 /**
@@ -203,22 +236,180 @@ export class VehicleService {
    * from that side.
    */
   async retire(caller: Caller, vehicleId: string): Promise<void> {
-    const { vehicles, trips } = this.deps;
+    const { vehicles } = this.deps;
     const retired = await vehicles.inTransaction(async (client) => {
       const current = await vehicles.lockForWrite(client, vehicleId, depotScope(caller.user));
       if (!current) throw vehicleNotFound();
       if (!current.isActive) return null;
-
-      if ((await trips.vehicleHasActiveTrip(client, current.id)) || (await vehicles.hasActiveAssignment(client, current.id))) {
-        throw vehicleInUse();
-      }
-      await vehicles.retire(mutationContext(caller), current.id, client);
-      const view = await vehicles.findViewById(client, current.id);
-      await this.publish(client, caller, VEHICLE_EVENTS.retired, { vehicle_id: view.id, depot_id: view.depot_id });
-      return view;
+      return this.retireLocked(client, caller, current, null);
     });
 
     if (retired) await this.invalidate(retired.id);
+  }
+
+  /**
+   * The maintenance workflow (FMS-22) on its own transaction, with the vehicle
+   * (internal id) already locked: `inWorkshop` says whether any of its work is
+   * in progress now. Work starting moves an active vehicle to `maintenance`,
+   * unless it is on a trip under way; the last work ending moves it back to
+   * `active`, but only if maintenance put it there: a status someone set by
+   * hand stays until someone changes it. Recorded and published like any
+   * status change, as source `maintenance` with the record. Returns the new
+   * status, or null when nothing changed.
+   */
+  async followWorkshop(client: PoolClient, caller: Caller, vehicleId: string, inWorkshop: boolean, recordId: string): Promise<VehicleStatus | null> {
+    const { vehicles, trips } = this.deps;
+    const current = await vehicles.lockById(client, vehicleId);
+    if (!current || !current.isActive) return null;
+    let to: VehicleStatus;
+    let reason: string;
+    if (inWorkshop) {
+      if (current.status !== 'active') return null;
+      if ((await trips.activeTripsForVehicles(client, [current.id])).get(current.id)?.status === 'en_route') return null;
+      to = 'maintenance';
+      reason = 'Maintenance work started.';
+    } else {
+      if (current.status !== 'maintenance') return null;
+      if ((await vehicles.lastStatusChange(client, current.id))?.source !== 'maintenance') return null;
+      to = 'active';
+      reason = 'Maintenance work finished.';
+    }
+    await vehicles.setStatus(mutationContext(caller), current.id, to, client);
+    const view = await vehicles.findViewById(client, current.id);
+    await this.recordStatusChange(client, caller, current, view, to, reason, { source: 'maintenance', maintenanceRecordId: recordId });
+    return to;
+  }
+
+  /** Retires a locked, live vehicle: in-use check, audited change, status history, VehicleRetired and VehicleStatusChanged. */
+  private async retireLocked(client: PoolClient, caller: Caller, current: LockedVehicle, reason: string | null): Promise<VehicleView> {
+    const { vehicles, trips } = this.deps;
+    if ((await trips.vehicleHasActiveTrip(client, current.id)) || (await vehicles.hasActiveAssignment(client, current.id))) {
+      throw vehicleInUse();
+    }
+    await vehicles.retire(mutationContext(caller), current.id, client);
+    const view = await vehicles.findViewById(client, current.id);
+    await this.publish(client, caller, VEHICLE_EVENTS.retired, { vehicle_id: view.id, depot_id: view.depot_id });
+    await this.recordStatusChange(client, caller, current, view, 'retired', reason);
+    return view;
+  }
+
+  /**
+   * POST /vehicles/{id}/status (FMS-76): active, maintenance, inactive (out of
+   * service) or retired, with a reason. Allowed moves are STATUS_TRANSITIONS;
+   * retired is final, and retiring has the same in-use rule as DELETE. A
+   * vehicle under way cannot be taken off the road (409 naming the trip); one
+   * with trips assigned ahead can, and each such trip comes back as a warning.
+   * The same status again changes nothing. Every change is audited, kept in
+   * fleet.vehicle_status_history with its reason, and published as
+   * VehicleStatusChanged.
+   */
+  async changeStatus(
+    caller: Caller,
+    vehicleId: string,
+    input: { status: VehicleStatus; reason: string },
+    expectedVersion: number | null = null,
+  ): Promise<{ status: VehicleStatusView; warnings: StatusChangeWarning[] }> {
+    const { vehicles, trips } = this.deps;
+    const warnings: StatusChangeWarning[] = [];
+    const changed = await vehicles.inTransaction(async (client) => {
+      const current = await vehicles.lockForWrite(client, vehicleId, depotScope(caller.user));
+      if (!current) throw vehicleNotFound();
+      if (expectedVersion !== null && expectedVersion !== current.version) throw staleVersion();
+      if (input.status === current.status) return false;
+      if (!canTransition(current.status, input.status)) throw invalidStatusTransition(current.status, input.status);
+
+      if (input.status === 'retired') {
+        await this.retireLocked(client, caller, current, input.reason);
+        return true;
+      }
+      if (input.status !== 'active') {
+        const trip = (await trips.activeTripsForVehicles(client, [current.id])).get(current.id);
+        if (trip?.status === 'en_route') throw vehicleUnderWay(trip.id);
+        for (const ahead of await this.deps.assignments.assignedAfter(client, current.id, this.now())) {
+          warnings.push({ warning: 'ASSIGNED_TRIP_AFFECTED', trip_id: ahead.tripId, start: ahead.start });
+        }
+      }
+      await vehicles.setStatus(mutationContext(caller), current.id, input.status, client);
+      const view = await vehicles.findViewById(client, current.id);
+      await this.recordStatusChange(client, caller, current, view, input.status, input.reason);
+      return true;
+    });
+    if (changed) await this.invalidate(vehicleId);
+    return { status: await this.status(caller, vehicleId), warnings };
+  }
+
+  /**
+   * GET /vehicles/{id}/status (FMS-76): status, maintenance, availability for
+   * a window (default: now), the trip under way or next, and the last status
+   * change. Same scope as GET /vehicles/{id}: out of scope is 404.
+   */
+  async status(caller: Caller, vehicleId: string, window?: AvailabilityWindow): Promise<VehicleStatusView> {
+    const { vehicles, availability, assignments } = this.deps;
+    const now = this.now();
+    const span = window ?? { start: now, end: now };
+    return vehicles.inTransaction(async (client) => {
+      const ref = await vehicles.findRef(client, { publicId: vehicleId }, depotScope(caller.user));
+      if (!ref) throw vehicleNotFound();
+      const view = await vehicles.findViewById(client, ref.id);
+      const answer = (await availability.check(client, { vehicleIds: [ref.id], window: span })).vehicles.get(ref.id)!;
+      const { current, next } = await assignments.vehicleAssignments(client, ref.id, now);
+      const last = await vehicles.lastStatusChange(client, ref.id);
+      const changedBy = last?.changedBy ? ((await this.deps.users.findByIds(client, [last.changedBy]))[0]?.publicId ?? null) : null;
+      const openRecord = view.maintenance_flag ? ((await this.deps.maintenance()?.openRecordFor(client, ref.id)) ?? null) : null;
+      const assignment = (a: typeof current) => (a ? { trip_id: a.tripId, status: a.status, start: a.start, end: a.end } : null);
+      return {
+        vehicle_id: view.id,
+        registration_number: view.registration_number,
+        depot_id: view.depot_id,
+        status: view.status,
+        maintenance: { flagged: view.maintenance_flag, in_workshop: view.status === 'maintenance', open_record_id: openRecord },
+        availability: { ...answer, window: { start: span.start, end: span.end } },
+        current_assignment: assignment(current),
+        next_assignment: assignment(next),
+        last_status_change: last
+          ? {
+              from_status: last.fromStatus,
+              to_status: last.toStatus,
+              reason: last.reason,
+              source: last.source,
+              maintenance_record_id: last.maintenanceRecordId,
+              changed_at: last.changedAt,
+              changed_by: changedBy,
+            }
+          : null,
+        version: view.version,
+        updated_at: view.updated_at,
+      };
+    });
+  }
+
+  /** History row, then VehicleStatusChanged, on the change's transaction. */
+  private async recordStatusChange(
+    client: PoolClient,
+    caller: Caller,
+    before: LockedVehicle,
+    after: VehicleView,
+    to: VehicleStatus,
+    reason: string | null,
+    origin: { source: StatusChangeSource; maintenanceRecordId: string | null } = { source: 'manual', maintenanceRecordId: null },
+  ): Promise<void> {
+    const ctx = mutationContext(caller);
+    const row = await this.deps.vehicles.recordStatusChange(ctx, { vehicleId: before.id, from: before.status, to, reason, changedBy: caller.user.id, ...origin }, client);
+    await this.publish(client, caller, VEHICLE_EVENTS.statusChanged, {
+      vehicle_id: after.id,
+      depot_id: after.depot_id,
+      previous_status: before.status,
+      new_status: to,
+      changed_at: (row.changed_at as Date).toISOString(),
+      changed_by: caller.user.publicId,
+      reason,
+      source: origin.source,
+      maintenance_record_id: origin.maintenanceRecordId,
+    });
+  }
+
+  private now(): Date {
+    return (this.deps.now ?? (() => new Date()))();
   }
 
   /** A depot the caller may put vehicles in, or 400: an unknown depot and one outside the scope look the same. */

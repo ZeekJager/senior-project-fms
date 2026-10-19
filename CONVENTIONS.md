@@ -164,6 +164,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
   - Keep a consumer's name once it is released: a renamed consumer sees every retained event again.
 - **A failing consumer is retried** with backoff (1 s, 2 s, 4 s ... up to 5 minutes). After 10 attempts its event is dead-lettered and `/health/ready` reports `outbox: "degraded"`. See docs/events.md to retry one.
 - **A scheduled job** gives a fact a fixed id with `deterministicEventId(...)`: the outbox keeps one row per id, so a rerun or a second server repeats the id, not the fact.
+- **Projections:** a read model that must never be behind its source is kept with `eventBus.project(type, '<module>.<purpose>', handler)` instead of `subscribe`: the handler runs inside `publish`, on the publishing transaction, so it commits or rolls back with the change. A failing projection fails the change, so keep it to the module's own tables and quick queries. There is no redelivery: pair it with a rebuild from the source, declared in `AppModule.readModels`, which the daily job and `rebuildReadModels()` (after the seed or a bulk import) run.
 - **Tests:** `publishedEvents(...types)` reads what a test published; `deliverEvents()` runs the relay so consumers react (`test/support/events.ts`). Unit tests over fakes use `RecordingEventBus`.
 
 **Catalogue.** Add a row when you add an event; payloads carry public ids.
@@ -176,6 +177,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `AttendanceRecorded` | fleet (FMS-21) | attendance | `attendance_id`, `driver_id`, `date`, `status`, `previous_status` | |
 | `DocumentUploaded` | fleet (FMS-17) | document | `document_id`, `owner_type`, `owner_id`, `document_type`, `expires_on` | `fleet.document-expiry` |
 | `DocumentExpiring`, `LicenceExpiring` | fleet (FMS-26) | document, driver | `level` (amber, red), `days_left`, the expiry date, owner or driver ids | |
+| `VehicleStatusChanged` | fleet (FMS-76) | vehicle | `vehicle_id`, `depot_id`, `previous_status`, `new_status`, `changed_at`, `changed_by`, `reason`, `source` (`manual`, or `maintenance` as work starts and ends), `maintenance_record_id` (also on `DELETE /vehicles`, with `VehicleRetired`) | |
 | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | maintenance (FMS-22) | maintenance | `maintenance_record_id`, `vehicle_id`; `changed_fields`, `maintenance_flag_cleared` | `fleet.vehicle-cache` |
 | `InventoryPartCreated`, `InventoryPartUpdated`, `InventoryStockAdjusted`, `InventoryReorderNeeded` | maintenance (FMS-23) | part | `part_id`; stock and threshold on adjust and reorder | |
 | `RouteCreated`, `RouteUpdated` | trip (FMS-83) | route | `route_id`, `depot_id`; `name`, `distance_km` on create; `changed_fields`, `is_active` on update (retiring is an update) | |
@@ -184,7 +186,9 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration later (telematics) | vehicle | `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set` | `fleet.vehicle-cache` |
 | `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
 
-Planned, named here so modules agree on them: `TripAssigned`, `TripStarted`, `TripCompleted` (trip), `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
+Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` (FMS-31) and `TripStarted`, `TripCompleted` (FMS-32) are named there for their publishers. A write that skips them is repaired by the daily rebuild, which logs it as drift.
+
+Planned, named here so modules agree on them: `TripAssigned`, `TripStarted`, `TripCompleted` (trip; see above), `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
 
 ## API
 

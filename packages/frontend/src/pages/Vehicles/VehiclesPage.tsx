@@ -14,6 +14,7 @@ import { describeFilters } from '@/lib/describeFilters'
 import { useFleetCounts, useVehicles } from './api'
 import { vehicleColumns } from './columns'
 import { DecommissionDialog } from './DecommissionDialog'
+import { VehicleStatusDrawer } from './VehicleStatusDrawer'
 import { hasActiveFilters, readFilters, writeFilters, type SortKey, type VehicleFilters } from './filters'
 import { VehicleFormDrawer } from './VehicleFormDrawer'
 import { VEHICLE_TYPE_LABELS, type Vehicle, type VehicleStatus } from './types'
@@ -83,6 +84,7 @@ export function VehiclesPage() {
   const [editing, setEditing] = useState<Vehicle | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [decommissioning, setDecommissioning] = useState<Vehicle | null>(null)
+  const [statusFor, setStatusFor] = useState<Vehicle | null>(null)
   const [docsFor, setDocsFor] = useState<Vehicle | null>(null)
   const { toast } = useToast()
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
@@ -105,6 +107,7 @@ export function VehiclesPage() {
       setFormOpen(true)
     },
     onOpenDocuments: setDocsFor,
+    onStatus: setStatusFor,
   })
 
   function exportSelected() {
@@ -133,7 +136,7 @@ export function VehiclesPage() {
   const showDepotFilter = (depots.data?.length ?? 0) > 1
   const filtered = hasActiveFilters(filters)
   const hasToolbarFilters = Boolean(filters.search || filters.depotId)
-  const viewLabel = { all: '', ready: 'Ready to dispatch', flagged: 'Flagged', docs: 'Documents due', maintenance: 'Workshop', active: 'Active', inactive: 'Inactive', retired: 'Retired', decommissioned: 'Decommissioned' }[viewOf(filters) ?? 'all']
+  const viewLabel = { all: '', ready: 'Ready to dispatch', flagged: 'Flagged', docs: 'Documents due', maintenance: 'Workshop', active: 'Active', inactive: 'Inactive', retired: 'Retired' }[viewOf(filters) ?? 'all']
   const scopeName = filters.depotId ? depotMap.get(filters.depotId)?.name : depots.data?.length === 1 ? depots.data[0].name : null
 
   return (
@@ -287,6 +290,19 @@ export function VehiclesPage() {
             ? () => {
                 setFormOpen(false)
                 setDecommissioning(editing)
+              }
+            : undefined
+        }
+      />
+      <VehicleStatusDrawer
+        vehicle={statusFor}
+        onClose={() => setStatusFor(null)}
+        canWrite={canWrite}
+        onDecommission={
+          statusFor && canDelete && statusFor.status !== 'retired'
+            ? () => {
+                setStatusFor(null)
+                setDecommissioning(statusFor)
               }
             : undefined
         }

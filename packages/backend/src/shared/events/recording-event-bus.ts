@@ -5,8 +5,8 @@ import type { EventBus } from './event-bus';
 /**
  * For unit tests of a service over fakes: records what it publishes, in
  * order, and whether it published inside its transaction (`tx` is the
- * client the fake transaction handed out). Subscriptions are accepted and
- * never called; consumers are tested through the relay.
+ * client the fake transaction handed out). Subscriptions and projections are
+ * accepted and never called; they are tested against the database.
  */
 export class RecordingEventBus implements EventBus {
   readonly published: DomainEvent[] = [];
@@ -20,6 +20,10 @@ export class RecordingEventBus implements EventBus {
   }
 
   subscribe(): () => void {
+    return () => {};
+  }
+
+  project(): () => void {
     return () => {};
   }
 }
