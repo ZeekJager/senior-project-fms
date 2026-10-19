@@ -162,6 +162,13 @@ export class TripRepository extends Repository {
     return res.rows[0];
   }
 
+  /** Public ids by internal id, for other modules' responses (fuel logs name their trip). */
+  async publicIdsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; publicId: string }>('SELECT id, public_id AS "publicId" FROM trip.trips WHERE id = ANY($1::bigint[])', [ids]);
+    return new Map(res.rows.map((r) => [r.id, r.publicId]));
+  }
+
   /** Stops of these trips, in travel order. */
   async stops(db: Queryable, tripIds: readonly string[]): Promise<StopRow[]> {
     if (tripIds.length === 0) return [];

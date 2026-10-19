@@ -18,6 +18,7 @@ import {
   type TripStatus,
   type TripView,
 } from '../domain/trip';
+import type { RequestUser } from '../../../types/express';
 import type { TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
 import type { Caller, FleetRefs } from './route.service';
 
@@ -108,6 +109,16 @@ export class TripService {
       if (!row) throw tripNotFound();
       return (await this.views(client, [row]))[0];
     });
+  }
+
+  /**
+   * For other modules (fuel logs name a trip): the trip with this public id if
+   * `user` may see it (staff: their depots' trips; a driver: their own), with
+   * the internal ids to compare against. Null when missing or out of scope.
+   */
+  async refVisibleTo(db: Queryable, user: RequestUser, publicId: string): Promise<{ id: string; vehicleId: string | null; driverId: string | null } | null> {
+    const row = await this.deps.trips.findVisible(db, publicId, await this.visibility(db, { user, correlationId: '' }));
+    return row ? { id: row.id, vehicleId: row.vehicleId, driverId: row.driverId } : null;
   }
 
   async create(caller: Caller, input: TripCreate): Promise<TripView> {
