@@ -39,6 +39,9 @@ const appSchema = z
     REDIS_PORT: port.default(6379),
     REDIS_PASSWORD: z.string().min(1).optional(),
     REDIS_KEY_PREFIX: z.string().trim().regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and hyphens').default('fms'),
+    // Trip assignment (FMS-31): minutes a driver or vehicle needs after an
+    // en-route trip before the next one; less raises an overrun warning.
+    TRIP_OVERRUN_GRACE_MINUTES: z.coerce.number().int().min(0).max(1440).default(0),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -81,6 +84,7 @@ export interface AppConfig {
   storage: StorageConfig;
   /** Null when REDIS_HOST is not set (development and tests may run without Redis). */
   redis: RedisConfig | null;
+  trips: { overrunGraceMinutes: number };
 }
 
 export interface RedisConfig {
@@ -141,6 +145,7 @@ export function loadAppConfig(env: Env): AppConfig {
             secretAccessKey: e.S3_SECRET_ACCESS_KEY!,
           }
         : { driver: 'local', localDir: e.STORAGE_LOCAL_DIR },
+    trips: { overrunGraceMinutes: e.TRIP_OVERRUN_GRACE_MINUTES },
   };
 }
 

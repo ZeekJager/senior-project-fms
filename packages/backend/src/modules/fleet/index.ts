@@ -97,13 +97,25 @@ async function rebuildTripAssignments(): Promise<Record<string, unknown>> {
   return { ...result };
 }
 
-// The maintenance module sets and clears the maintenance flag inside its
-// own transaction; its events are delivered after commit, so the cached
-// vehicle is dropped only once the change is visible. By name: fleet cannot
-// import the maintenance module, which imports fleet.
-for (const type of ['MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted', 'VehicleFaultDetected']) {
+// The cached vehicle (GET /vehicles/{id}) carries its maintenance flag and
+// its current trip. Maintenance sets and clears the flag, and the trip module
+// assigns and cancels trips, inside their own transactions; their events are
+// delivered after commit, so the vehicle is dropped only once the change is
+// visible. An assignment also drops the vehicle it replaced. Maintenance
+// events by name: fleet cannot import the maintenance module, which imports fleet.
+for (const type of [
+  'MaintenanceRecordOpened',
+  'MaintenanceRecordUpdated',
+  'MaintenanceRecordCompleted',
+  'VehicleFaultDetected',
+  TRIP_EVENTS.assigned,
+  TRIP_EVENTS.cancelled,
+]) {
   eventBus.subscribe(type, 'fleet.vehicle-cache', async (event) => {
-    if (typeof event.payload.vehicle_id === 'string') await vehicleService.invalidate(event.payload.vehicle_id);
+    for (const key of ['vehicle_id', 'previous_vehicle_id']) {
+      const id = event.payload[key];
+      if (typeof id === 'string') await vehicleService.invalidate(id);
+    }
   });
 }
 
@@ -226,20 +238,25 @@ export const fleetAvailability = {
 export const depotRefs = { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds };
 
 /**
- * For the trip module (FMS-30): depots, vehicles and drivers between public
- * and internal ids, and the driver profile of a signed-in user (a driver
- * sees only their own trips).
+ * For the trip module (FMS-30, FMS-31): depots, vehicles and drivers between
+ * public and internal ids, the driver profile of a signed-in user (a driver
+ * sees only their own trips), and for assignment the vehicle's state, the
+ * driver in scope and their eligibility.
  */
 export const tripRefs = {
   depots: depotRefs,
+  availability: fleetAvailability,
   vehicles: {
     idOf: async (db: Queryable, publicId: string) => (await vehicleRepository.findRef(db, { publicId }, { kind: 'all' }))?.id ?? null,
+    forAssignment: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findForTrip(db, publicId, scope),
     publicIds: async (db: Queryable, ids: readonly string[]) =>
       new Map([...(await vehicleRepository.refsByIds(db, ids))].map(([id, ref]) => [id, ref.publicId])),
   },
   drivers: {
     idOf: async (db: Queryable, publicId: string) => (await driverRepository.findByPublicId(db, publicId))?.id ?? null,
     idOfUser: async (db: Queryable, userId: string) => (await driverRepository.findByUserId(db, userId))?.id ?? null,
+    forAssignment: (db: Queryable, publicId: string, scope: Scope) => driverRepository.findForTrip(db, publicId, scope),
+    eligibility: (db: Queryable, driverId: string, at: Date, vehicleId: string) => driverService.checkEligibility(db, driverId, at, vehicleId),
     publicIds: (db: Queryable, ids: readonly string[]) => driverRepository.publicIdsByIds(db, ids),
   },
 };

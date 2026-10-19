@@ -9,7 +9,7 @@ import { cache, redis, redisKey } from '../../src/shared/cache';
 import { PostgresJobLock } from '../../src/shared/jobs/job-lock';
 import { RedisJobLock } from '../../src/shared/jobs/redis-job-lock';
 import { deliverEvents } from '../support/events';
-import { createDepot, createUser, createVehicle, type RoleName } from '../support/factories';
+import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
 
 // FMS-72 against a real Redis. CI starts one (scripts/ci/start-redis.sh);
 // locally, set REDIS_HOST/REDIS_PORT/REDIS_PASSWORD to run these.
@@ -105,6 +105,38 @@ describe.skipIf(!configured)('vehicle cache', () => {
     await deliverEvents();
     expect(await redis!.exists(vehicleKey(id))).toBe(0);
     expect((await request(app).get(`/api/v1/vehicles/${id}`).set('Cookie', cookie)).body.data.maintenance_flag).toBe(true);
+  });
+
+  test('assigning a trip drops the cached vehicle and the one it replaced, so the current trip shows', async () => {
+    const depot = await createDepot();
+    const [first, second] = [await createVehicle({ depot }), await createVehicle({ depot })];
+    const { driver } = await createDriver({ depot, license_categories: ['C'] });
+    const route = (await pool.query("INSERT INTO trip.routes (name, depot_id) VALUES ('Cache route ' || gen_random_uuid(), $1) RETURNING id", [depot.id])).rows[0];
+    const start = new Date(Date.now() + 60 * 60 * 1000);
+    const trip = (
+      await pool.query("INSERT INTO trip.trips (route_id, status, scheduled_start, scheduled_end) VALUES ($1, 'scheduled', $2, $3) RETURNING public_id", [
+        route.id,
+        start,
+        new Date(start.getTime() + 2 * 60 * 60 * 1000),
+      ])
+    ).rows[0];
+    const cookie = await signIn(['admin']);
+    const view = (vehicle: Record<string, unknown>) => request(app).get(`/api/v1/vehicles/${String(vehicle.public_id)}`).set('Cookie', cookie);
+    expect((await view(first)).body.data.current_trip).toBeNull();
+
+    const assign = (vehicle: Record<string, unknown>, version: number) =>
+      request(app).post(`/api/v1/trips/${trip.public_id}/assign`).set('Cookie', cookie).send({ driver_id: driver.public_id, vehicle_id: vehicle.public_id, version });
+    expect((await assign(first, 0)).status).toBe(200);
+    await deliverEvents();
+    expect((await view(first)).body.data.current_trip).toMatchObject({ id: trip.public_id, status: 'assigned' });
+
+    // Moved to the second vehicle: the first, cached with the trip, is dropped too.
+    expect((await view(second)).body.data.current_trip).toBeNull();
+    expect((await assign(second, 1)).status).toBe(200);
+    await deliverEvents();
+    expect(await redis!.exists(vehicleKey(String(first.public_id)))).toBe(0);
+    expect((await view(first)).body.data.current_trip).toBeNull();
+    expect((await view(second)).body.data.current_trip).toMatchObject({ id: trip.public_id });
   });
 });
 

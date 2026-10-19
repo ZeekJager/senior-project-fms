@@ -306,6 +306,25 @@ export class VehicleRepository extends Repository {
     return res.rows[0] ?? null;
   }
 
+  /**
+   * A vehicle for trip assignment (FMS-31): in the caller's scope, with its
+   * status and maintenance flag, share-locked. Opening a maintenance record
+   * locks the row to set the flag, so the two wait for each other.
+   */
+  async findForTrip(
+    db: Queryable,
+    publicId: string,
+    scope: Scope,
+  ): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean } | null> {
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const res = await db.query<{ id: string; publicId: string; status: string; maintenanceFlag: boolean }>(
+      `SELECT v.id, v.public_id AS "publicId", v.status, v.maintenance_flag AS "maintenanceFlag"
+         FROM fleet.vehicles v WHERE v.public_id = $1 AND ${clause.sql} FOR SHARE`,
+      [publicId, ...clause.params],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Public id and plate of vehicles by internal id, for maintenance responses. */
   async refsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; registrationNumber: string }>> {
     if (ids.length === 0) return new Map();

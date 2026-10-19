@@ -15,6 +15,7 @@ import {
   type RouteStop,
   type RouteView,
 } from '../domain/route';
+import type { AvailabilityAnswer } from '../domain/assignment';
 import type { RouteRepository, RouteRow, RouteWrite } from '../infrastructure/route.repository';
 
 export interface Caller {
@@ -62,13 +63,36 @@ export interface FleetRefs {
   vehicles: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+    /** For assignment: a vehicle in the scope with its state, share-locked. */
+    forAssignment(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean } | null>;
   };
   drivers: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;
     /** The driver profile of a user account (internal user id). */
     idOfUser(db: Queryable, userId: string): Promise<string | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+    /** For assignment: a driver in the scope (home depot), share-locked. */
+    forAssignment(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string } | null>;
+    /** Whether the driver may drive this vehicle at `at`, and every reason if not (FMS-76). */
+    eligibility(db: Queryable, driverId: string, at: Date, vehicleId: string): Promise<{ eligible: boolean; reasons: string[] }>;
   };
+  /**
+   * Fleet availability (FMS-76): vehicles and drivers (internal ids) for a
+   * window, with every reason. With `depotId` (internal), only that depot's
+   * are available. Pass the transaction's client to read inside it.
+   */
+  availability: {
+    check(
+      db: Queryable,
+      query: { vehicleIds?: readonly string[]; driverIds?: readonly string[]; window: { start: Date; end: Date }; excludeTripId?: string; depotId?: string },
+    ): Promise<{ vehicles: Map<string, AvailabilityAnswer>; drivers: Map<string, AvailabilityAnswer> }>;
+  };
+}
+
+/** What the trip module needs from maintenance (FMS-31), connected by src/modules/index.ts. */
+export interface MaintenanceRefs {
+  /** The public id of the open record behind a vehicle's maintenance flag, if any. */
+  openRecordFor(db: Queryable, vehicleId: string): Promise<string | null>;
 }
 
 export interface RouteServiceDeps {

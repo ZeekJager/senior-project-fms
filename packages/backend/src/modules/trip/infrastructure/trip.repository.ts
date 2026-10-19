@@ -66,6 +66,8 @@ export interface RoutePlan {
 export interface TripWrite {
   route_id?: string;
   status?: TripStatus;
+  driver_id?: string;
+  vehicle_id?: string;
   origin?: string | null;
   destination?: string | null;
   planned_distance_km?: number | null;
@@ -192,6 +194,33 @@ export class TripRepository extends Repository {
       [publicId, depotId],
     );
     return res.rows[0] ?? null;
+  }
+
+  /**
+   * The first assigned or en-route trip of this driver or vehicle, other than
+   * `exceptTripId`, whose window touches [start, end] (FMS-31 BR-1, BR-3).
+   * Both ends count, as in ex_trip_driver_overlap and ex_trip_vehicle_overlap
+   * (migration 030): a 0-minute gap is an overlap.
+   */
+  async overlapping(db: Queryable, column: 'driver_id' | 'vehicle_id', id: string, start: Date, end: Date, exceptTripId: string): Promise<string | null> {
+    const res = await db.query<{ public_id: string }>(
+      `SELECT public_id FROM trip.trips
+        WHERE ${column} = $1 AND id <> $2 AND status IN ('assigned', 'en_route')
+          AND tstzrange(scheduled_start, scheduled_end, '[]') && tstzrange($3, $4, '[]')
+        ORDER BY scheduled_start, id LIMIT 1`,
+      [id, exceptTripId, start, end],
+    );
+    return res.rows[0]?.public_id ?? null;
+  }
+
+  /** En-route trips of this driver or vehicle other than `exceptTripId`, for the overrun warning. */
+  async underWay(db: Queryable, column: 'driver_id' | 'vehicle_id', id: string, exceptTripId: string): Promise<{ publicId: string; scheduledEnd: Date | null }[]> {
+    const res = await db.query<{ publicId: string; scheduledEnd: Date | null }>(
+      `SELECT public_id AS "publicId", scheduled_end AS "scheduledEnd" FROM trip.trips
+        WHERE ${column} = $1 AND id <> $2 AND status = 'en_route' ORDER BY scheduled_end NULLS LAST, id`,
+      [id, exceptTripId],
+    );
+    return res.rows;
   }
 
   /** A route's internal id by public id, for the history filter. */

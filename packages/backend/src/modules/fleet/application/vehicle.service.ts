@@ -98,10 +98,11 @@ export interface VehicleServiceDeps {
 }
 
 /**
- * How long a cached vehicle may be served. Writes through this service and
- * maintenance events invalidate it at once; the TTL bounds what nothing
- * invalidates yet (its current trip: the trip API, FMS-27+, must invalidate
- * when it assigns or ends a trip).
+ * How long a cached vehicle may be served. Writes through this service,
+ * maintenance events and trip assignment and cancellation (fleet.vehicle-cache)
+ * invalidate it at once; the TTL bounds what nothing invalidates yet (a
+ * reschedule's new start, and starting or ending a trip until FMS-32
+ * publishes TripStarted and TripCompleted).
  */
 export const VEHICLE_CACHE_TTL_SECONDS = 60;
 

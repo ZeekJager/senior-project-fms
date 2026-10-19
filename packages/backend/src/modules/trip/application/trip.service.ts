@@ -1,13 +1,24 @@
 import { depotScope, ownDriverScope } from '../../../shared/authz/scope';
+import type { AppError } from '../../../shared/errors/app-error';
 import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import {
+  ASSIGNABLE_STATUSES,
   OPEN_STATUSES,
   TRIP_EVENTS,
+  assignmentRefNotFound,
   cannotCancelEnRoute,
+  depotMismatch,
+  driverNotEligible,
+  driverOverlap,
+  notAssignable,
+  vehicleFlagged,
+  vehicleNotActive,
+  vehicleOverlap,
+  type AssignmentWarning,
   decodeCursor,
   encodeCursor,
   invalidDateRange,
@@ -20,7 +31,8 @@ import {
 } from '../domain/trip';
 import type { RequestUser } from '../../../types/express';
 import type { TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
-import type { Caller, FleetRefs } from './route.service';
+import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
+import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
 
 export interface TripCreate {
   /** Public id of an active route in the caller's depots. Its plan (ends, distance, time, stops) is copied onto the trip. */
@@ -49,11 +61,25 @@ export interface TripHistoryQuery {
   cursor?: string;
 }
 
+/** POST /trips/{id}/assign: who drives what, against the version the dispatcher saw. */
+export interface TripAssignment {
+  driver_id: string;
+  vehicle_id: string;
+  version: number;
+}
+
 export interface TripServiceDeps {
-  trips: Pick<TripRepository, 'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop'>;
-  /** The fleet module's lookups, connected by src/modules/index.ts. */
+  trips: Pick<
+    TripRepository,
+    'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop' | 'overlapping' | 'underWay'
+  >;
+  /** The fleet and maintenance modules' lookups, connected by src/modules/index.ts. */
   fleet: () => FleetRefs;
+  maintenance: () => MaintenanceRefs;
   events: EventBus;
+  /** Minutes a driver or vehicle needs after a trip under way before the next (TRIP_OVERRUN_GRACE_MINUTES). */
+  overrunGraceMinutes: number;
+  now?: () => Date;
 }
 
 /**
@@ -198,6 +224,127 @@ export class TripService {
       if (events.length > 0) await this.deps.events.publish(client, events);
       return view;
     });
+  }
+
+  /**
+   * POST /trips/{id}/assign (FMS-31): a driver and vehicle for a scheduled
+   * trip, or new ones for an assigned trip. Checks, in order:
+   *
+   * - the version the dispatcher saw (409 CONFLICT_CONCURRENT_MODIFICATION);
+   * - the vehicle is in scope and active, and BR-2 not flagged for maintenance
+   *   (409 CONFLICT_VEHICLE_FLAGGED naming the open record);
+   * - the driver is in scope and eligible for this vehicle on the trip's start
+   *   (409 CONFLICT_DRIVER_NOT_ELIGIBLE with every reason);
+   * - BR-1 and BR-3: neither is on another assigned or en-route trip that
+   *   overlaps, touching ends included (409 naming that trip).
+   *
+   * The trip row is locked first, so two assignments of one trip run one after
+   * the other and the second sees the new version. Two trips claiming one
+   * driver or vehicle at once both pass the checks; the exclusion constraints
+   * reject the second when it saves (409, mapped from 23P01). The vehicle and
+   * driver rows are share-locked, so a maintenance flag or a retirement cannot
+   * land in between.
+   *
+   * A trip still under way that runs into this one is a warning, never a block.
+   */
+  async assign(caller: Caller, tripId: string, input: TripAssignment): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+    const { trips } = this.deps;
+    return trips.inTransaction(async (client) => {
+      const row = await trips.findVisible(client, tripId, await this.visibility(client, caller), true);
+      if (!row) throw tripNotFound();
+      if (input.version !== row.version) throw staleVersion();
+      if (!ASSIGNABLE_STATUSES.includes(row.status) || !row.scheduledStart || !row.scheduledEnd) throw notAssignable(row.status);
+      const start = row.scheduledStart;
+      const end = row.scheduledEnd;
+      const scope = depotScope(caller.user);
+      const fleet = this.deps.fleet();
+
+      // Share-locked: a maintenance flag, status change or retirement cannot land mid-assignment.
+      const vehicle = await fleet.vehicles.forAssignment(client, input.vehicle_id, scope);
+      if (!vehicle) throw assignmentRefNotFound('vehicle_id');
+      const driver = await fleet.drivers.forAssignment(client, input.driver_id, scope);
+      if (!driver) throw assignmentRefNotFound('driver_id');
+
+      // Fleet availability (FMS-76), read on this transaction after the locks: the
+      // vehicle's status and flag (BR-2), the trip's depot, the driver's attendance.
+      // At the trip's start: what it reads here does not depend on the window's end.
+      const answer = await fleet.availability.check(client, {
+        vehicleIds: [vehicle.id],
+        driverIds: [driver.id],
+        window: { start, end: start },
+        excludeTripId: row.publicId,
+        ...(row.depotId ? { depotId: row.depotId } : {}),
+      });
+      const availability = readAvailability(answer.vehicles.get(vehicle.id)!, answer.drivers.get(driver.id)!);
+      if (availability.refusal) throw await this.refusal(client, availability.refusal, vehicle.id);
+
+      const eligibility = await fleet.drivers.eligibility(client, driver.id, start, vehicle.id);
+      if (!eligibility.eligible) throw driverNotEligible(eligibility.reasons);
+
+      const driverClash = await trips.overlapping(client, 'driver_id', driver.id, start, end, row.id);
+      if (driverClash) throw driverOverlap(driverClash);
+      const vehicleClash = await trips.overlapping(client, 'vehicle_id', vehicle.id, start, end, row.id);
+      if (vehicleClash) throw vehicleOverlap(vehicleClash);
+
+      const warnings = [
+        ...availability.warnings,
+        ...(await this.overruns(client, 'driver_id', driver.id, row.id, start)),
+        ...(await this.overruns(client, 'vehicle_id', vehicle.id, row.id, start)),
+      ];
+
+      const changed = row.driverId !== driver.id || row.vehicleId !== vehicle.id || row.status !== 'assigned';
+      if (changed) await trips.update(mutationContext(caller), row.id, { driver_id: driver.id, vehicle_id: vehicle.id, status: 'assigned' }, client);
+      const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
+      if (changed) {
+        const previousDriver = row.driverId ? ((await fleet.drivers.publicIds(client, [row.driverId])).get(row.driverId) ?? null) : null;
+        const previousVehicle = row.vehicleId ? ((await fleet.vehicles.publicIds(client, [row.vehicleId])).get(row.vehicleId) ?? null) : null;
+        await this.deps.events.publish(client, [
+          tripEvent(caller, TRIP_EVENTS.assigned, {
+            trip_id: view.id,
+            driver_id: view.driver_id,
+            vehicle_id: view.vehicle_id,
+            previous_driver_id: previousDriver,
+            previous_vehicle_id: previousVehicle,
+            route_id: view.route_id,
+            depot_id: view.depot_id,
+            scheduled_start: start.toISOString(),
+            scheduled_end: end.toISOString(),
+          }),
+        ]);
+      }
+      return { trip: view, warnings };
+    });
+  }
+
+  /** The error for an availability refusal; BR-2 names the open maintenance record behind the flag. */
+  private async refusal(db: Queryable, refusal: AvailabilityRefusal, vehicleId: string): Promise<AppError> {
+    switch (refusal.kind) {
+      case 'depot':
+        return depotMismatch(refusal.field);
+      case 'vehicle_not_active':
+        return vehicleNotActive(refusal.status);
+      case 'vehicle_flagged':
+        return vehicleFlagged(await this.deps.maintenance().openRecordFor(db, vehicleId));
+    }
+  }
+
+  /**
+   * Overrun (FMS-31): a trip of this driver or vehicle still under way is
+   * expected to end at its scheduled end, or now if it is already late. If
+   * that plus the grace buffer runs past this trip's start, warn: assignment
+   * and start still go ahead. (A hard block would throw here instead.)
+   */
+  private async overruns(db: Queryable, field: 'driver_id' | 'vehicle_id', id: string, tripId: string, start: Date): Promise<AssignmentWarning[]> {
+    const now = (this.deps.now ?? (() => new Date()))();
+    const graceMs = this.deps.overrunGraceMinutes * 60_000;
+    const warnings: AssignmentWarning[] = [];
+    for (const other of await this.deps.trips.underWay(db, field, id, tripId)) {
+      const expectedEnd = new Date(Math.max(other.scheduledEnd?.getTime() ?? now.getTime(), now.getTime()));
+      if (expectedEnd.getTime() + graceMs > start.getTime()) {
+        warnings.push({ warning: 'PREVIOUS_TRIP_OVERRUN', field, trip_id: other.publicId, expected_end: expectedEnd.toISOString() });
+      }
+    }
+    return warnings;
   }
 
   /** Staff: their depots' trips (via the route). A driver (and nothing else): the trips they drive. */

@@ -6,7 +6,8 @@ import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
 import { routeRouter } from './api/route.routes';
 import { tripRouter } from './api/trip.routes';
-import { RouteService, type FleetRefs } from './application/route.service';
+import { config } from '../../config';
+import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
 import { TripService } from './application/trip.service';
 import { RouteRepository } from './infrastructure/route.repository';
 import { TripRepository } from './infrastructure/trip.repository';
@@ -21,14 +22,32 @@ export function provideFleetRefs(refs: FleetRefs): void {
   fleetRefs = refs;
 }
 
+let maintenanceRefs: MaintenanceRefs | null = null;
+
+/** Connects the maintenance module's lookup (it imports fleet, which imports trip). Called once by src/modules/index.ts. */
+export function provideMaintenanceRefs(refs: MaintenanceRefs): void {
+  maintenanceRefs = refs;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
 }
 
+function maintenance(): MaintenanceRefs {
+  if (!maintenanceRefs) throw new Error('trip: no maintenance lookup provided; src/modules/index.ts connects the maintenance module');
+  return maintenanceRefs;
+}
+
 const routeService = new RouteService({ routes: new RouteRepository(pool), fleet, events: eventBus });
 const tripRepository = new TripRepository(pool);
-const tripService = new TripService({ trips: tripRepository, fleet, events: eventBus });
+const tripService = new TripService({
+  trips: tripRepository,
+  fleet,
+  maintenance,
+  events: eventBus,
+  overrunGraceMinutes: config.trips.overrunGraceMinutes,
+});
 
 const router = Router();
 router.use(routeRouter(routeService));

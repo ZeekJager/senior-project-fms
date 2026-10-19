@@ -2112,3 +2112,20 @@ SELECT public_id, vehicle_id, driver_id, status::text, tstzrange(scheduled_start
   FROM trip.trips
  WHERE status IN ('assigned', 'en_route') AND scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL
 ON CONFLICT (trip_id) DO NOTHING;
+
+-- ===== 030_trip_overlap_inclusive.sql =====
+ALTER TABLE trip.trips DROP CONSTRAINT IF EXISTS ex_trip_driver_overlap;
+ALTER TABLE trip.trips
+    ADD CONSTRAINT ex_trip_driver_overlap
+    EXCLUDE USING gist (
+        driver_id WITH =,
+        tstzrange(scheduled_start, scheduled_end, '[]') WITH &&
+    ) WHERE (status IN ('assigned', 'en_route'));
+
+ALTER TABLE trip.trips DROP CONSTRAINT IF EXISTS ex_trip_vehicle_overlap;
+ALTER TABLE trip.trips
+    ADD CONSTRAINT ex_trip_vehicle_overlap
+    EXCLUDE USING gist (
+        vehicle_id WITH =,
+        tstzrange(scheduled_start, scheduled_end, '[]') WITH &&
+    ) WHERE (status IN ('assigned', 'en_route'));

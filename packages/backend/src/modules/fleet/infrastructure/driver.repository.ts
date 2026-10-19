@@ -110,6 +110,20 @@ export class DriverRepository extends Repository {
     return res.rows;
   }
 
+  /**
+   * A driver for trip assignment (FMS-31): in the caller's scope (by home
+   * depot), share-locked so a retirement cannot slip in before the trip is saved.
+   */
+  async findForTrip(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string } | null> {
+    const clause = scopeClause(scope, 'a.depot_id', 2);
+    const res = await db.query<{ id: string; publicId: string }>(
+      `SELECT d.id, d.public_id AS "publicId" FROM fleet.drivers d JOIN fleet.driver_accounts a ON a.user_id = d.user_id
+        WHERE d.public_id = $1 AND ${clause.sql} FOR SHARE OF d`,
+      [publicId, ...clause.params],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Public ids by internal id, for other modules' responses. */
   async publicIdsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> {
     if (ids.length === 0) return new Map();

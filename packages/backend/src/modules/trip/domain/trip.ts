@@ -51,16 +51,19 @@ export interface TripView {
  */
 export const TRIP_EVENTS = {
   created: 'TripCreated',
-  /** Rescheduled or moved to another route; changed_fields says what. */
+  /** Rescheduled; changed_fields says which times. */
   updated: 'TripUpdated',
   cancelled: 'TripCancelled',
-  /** A vehicle and driver were assigned (FMS-31). */
+  /** A driver and vehicle were assigned (or changed) (FMS-31). */
   assigned: 'TripAssigned',
   /** The driver started the trip: en route (FMS-32). */
   started: 'TripStarted',
   /** The driver ended the trip (FMS-32). */
   completed: 'TripCompleted',
 } as const;
+
+/** States a trip can be assigned (or re-assigned) in. A draft needs its times first. */
+export const ASSIGNABLE_STATUSES: readonly TripStatus[] = ['scheduled', 'assigned'];
 
 /** States in which the plan (route, schedule) may still change, and from which a trip may be cancelled. */
 export const OPEN_STATUSES: readonly TripStatus[] = ['draft', 'scheduled', 'assigned'];
@@ -83,6 +86,65 @@ export const tripClosed = (status: TripStatus) =>
 
 export const cannotCancelEnRoute = () =>
   new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', 'A trip under way cannot be cancelled: end it instead.', [{ field: 'status', reason: 'trip_en_route' }]);
+
+// Assignment (FMS-31). Each conflict names the record behind it in `record_id`.
+
+/** BR-1: the driver is on another assigned or en-route trip that overlaps (touching ends included). */
+export const driverOverlap = (tripId: string) =>
+  new AppError(409, 'CONFLICT_DRIVER_OVERLAP', 'The driver is already on a trip at that time.', [{ field: 'driver_id', reason: 'overlapping_trip', record_id: tripId }]);
+
+/** BR-3: the vehicle is on another assigned or en-route trip that overlaps (touching ends included). */
+export const vehicleOverlap = (tripId: string) =>
+  new AppError(409, 'CONFLICT_VEHICLE_OVERLAP', 'The vehicle is already on a trip at that time.', [{ field: 'vehicle_id', reason: 'overlapping_trip', record_id: tripId }]);
+
+/** BR-2: the vehicle is flagged for maintenance (or in the workshop); record_id is its open maintenance record. */
+export const vehicleFlagged = (maintenanceRecordId: string | null) =>
+  new AppError(409, 'CONFLICT_VEHICLE_FLAGGED', 'The vehicle is flagged for maintenance and cannot be dispatched.', [
+    { field: 'vehicle_id', reason: 'maintenance_flag', ...(maintenanceRecordId ? { record_id: maintenanceRecordId } : {}) },
+  ]);
+
+export const driverNotEligible = (reasons: readonly string[]) =>
+  new AppError(409, 'CONFLICT_DRIVER_NOT_ELIGIBLE', 'The driver cannot drive this trip.', reasons.map((reason) => ({ field: 'driver_id', reason })));
+
+export const vehicleNotActive = (status: string) =>
+  new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', `A vehicle that is ${status} cannot be dispatched.`, [{ field: 'vehicle_id', reason: `vehicle_${status}` }]);
+
+/** A trip is staffed from its own depot (FMS-76): the vehicle or driver belongs to another. */
+export const depotMismatch = (field: 'driver_id' | 'vehicle_id') =>
+  new AppError(409, 'CONFLICT_DEPOT_MISMATCH', `The ${field === 'driver_id' ? 'driver' : 'vehicle'} belongs to another depot than the trip.`, [
+    { field, reason: 'other_depot' },
+  ]);
+
+export const assignmentRefNotFound = (field: 'driver_id' | 'vehicle_id') =>
+  new AppError(400, 'VALIDATION_FAILED', `The ${field === 'driver_id' ? 'driver' : 'vehicle'} does not exist or is outside your depots.`, [
+    { field, reason: 'references_missing_record' },
+  ]);
+
+export const notAssignable = (status: TripStatus) =>
+  new AppError(
+    409,
+    'CONFLICT_INVALID_STATE_TRANSITION',
+    status === 'draft' ? 'Schedule the trip before assigning it.' : `A ${status.replace('_', ' ')} trip cannot be assigned.`,
+    [{ field: 'status', reason: `trip_${status}` }],
+  );
+
+/** Warnings on a successful assignment: they never block. */
+export type AssignmentWarning =
+  | {
+      /** FMS-31 overrun rule: a trip of the driver or vehicle still under way runs into this one. */
+      warning: 'PREVIOUS_TRIP_OVERRUN';
+      field: 'driver_id' | 'vehicle_id';
+      /** The trip still under way. */
+      trip_id: string;
+      /** When it is now expected to end: its scheduled end, or now if it is already late. */
+      expected_end: string;
+    }
+  | {
+      /** The driver is marked absent, on leave or sick on the trip's first day (FMS-21, via fleet availability). */
+      warning: 'DRIVER_ATTENDANCE';
+      field: 'driver_id';
+      attendance: 'absent' | 'on_leave' | 'sick';
+    };
 
 /** A position in the history order: the trip's start (microseconds, UTC) and id. */
 export interface TripCursor {
