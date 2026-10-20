@@ -28,6 +28,20 @@ The four portals of the architecture (§6, §7) are the sections of the route ta
 
 Both layouts work at 375px without sideways scrolling.
 
+## The driver app (installable, offline)
+
+Card: FMS-34 (SE-70). Code: `packages/frontend/src/{service-worker.ts,pwa/}`, `packages/frontend/build/pwa.ts`, `packages/frontend/public/{manifest.json,offline.html,icons/}`.
+
+The driver portal installs to the home screen and opens without a connection, because route buses cross areas with no signal.
+
+- **Only the driver portal.** The driver layout links the web app manifest and registers the service worker (production builds only; the dev server has none). Staff screens never link the manifest or register a worker, and no staff page is ever answered from a cache.
+- **Install.** `manifest.json`: "FMS Driver", `start_url` `/driver`, `display: standalone`, brand-coloured icons (192, 512, and a maskable 512). Chrome on Android shows its own "Add to Home Screen" offer, and the driver portal shows an Install card too (dismissible, remembered on the phone).
+- **What works offline.** At install the worker caches the built app (scripts, styles, fonts, icons, `index.html`, `offline.html`), one cache per build, and deletes the previous build's. A `/driver...` page tries the network for 4 seconds, then opens from the cache, so the Driver Home loads in airplane mode. Any other page goes to the network, and offline shows `offline.html` (a link back to My day, and Try again). API reads and writes are not cached; screens that queue work offline (DVIR, fuel: FMS-35+) add their own storage.
+- **Staying signed in.** See docs/auth.md, Frontend session handling: the driver's session body is kept for up to 7 days and answers a refresh when there is no connection.
+- **Offline banner.** "You are offline" shows under the top bar when the phone has no network, or when the server's answers are coming from the saved copy (a network with no internet).
+- **No framework.** `build/pwa.ts` lists the built files with a content hash after `vite build`, then bundles `src/service-worker.ts` with that list into `/sw.js`; a changed file changes the worker, so phones pick up each release. The routing rules live in `src/pwa/routing.ts`, unit-tested.
+- **Hosting.** Whatever serves the built app in production must send `/sw.js` (and `/manifest.json`) with `Cache-Control: no-cache`, or phones keep an old worker for up to a day. Nothing in the repo serves the build yet (only the dev servers).
+
 ## Menus are built from permissions
 
 A menu link appears only if the user holds the route's permission (the same codes the API enforces). A portal's section appears only if it has at least one such link. Nobody sees a link that ends in nothing. Routes stay protected on their own (`RoleGate`, FMS-09): a screen opened by URL without the permission renders nothing, and the API refuses its data.

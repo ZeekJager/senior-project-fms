@@ -2,6 +2,7 @@ import { HelpCircle, Menu } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/shared'
+import { DriverAppBanners } from '@/pwa/DriverAppBanners'
 import { cn, Drawer, IconButton, ToastProvider } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferences'
@@ -126,6 +127,9 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
           </button>
         </div>
       </header>
+
+      {/* Installable and offline-capable (FMS-34): the driver portal only. */}
+      <DriverAppBanners />
 
       <Content className={cn('mx-auto w-full max-w-lg px-4 py-5', tabs && 'pb-24')} />
 

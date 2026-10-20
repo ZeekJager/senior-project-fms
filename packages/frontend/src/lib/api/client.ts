@@ -46,6 +46,14 @@ export interface ApiClient {
   refresh<T = unknown>(): Promise<T>
   /** Called when the session can no longer be recovered. Returns an unsubscribe function. */
   onSessionEnded(handler: () => void): () => void
+  /**
+   * Whether the latest answer came from the driver app's saved copy, not the
+   * server (the service worker marks it `X-FMS-Offline`, FMS-34): the phone
+   * cannot reach the server, whatever `navigator.onLine` says.
+   */
+  servedOffline(): boolean
+  /** Called when that changes. Returns an unsubscribe function. */
+  onServedOfflineChange(handler: (offline: boolean) => void): () => void
 }
 
 /**
@@ -65,7 +73,17 @@ export function clientChannel(): 'web' | 'pwa' {
  */
 export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...args)): ApiClient {
   const sessionEndedHandlers = new Set<() => void>()
+  const offlineHandlers = new Set<(offline: boolean) => void>()
   let inflightRefresh: Promise<unknown> | undefined
+  let offline = false
+
+  /** Every answer says where it came from: the server, or the worker's saved copy. */
+  function noteSource(res: Response) {
+    const fromCopy = res.headers?.get('X-FMS-Offline') === 'true'
+    if (fromCopy === offline) return
+    offline = fromCopy
+    offlineHandlers.forEach((handler) => handler(offline))
+  }
 
   const endSession = () => sessionEndedHandlers.forEach((handler) => handler())
 
@@ -83,6 +101,7 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
       },
       body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
     })
+    noteSource(res)
     if (!res.ok) throw await toApiError(res)
     if (res.status === 204) return { data: undefined as T, meta: {} }
     const body = (await res.json()) as Partial<Envelope<T>>
@@ -143,6 +162,11 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     onSessionEnded(handler) {
       sessionEndedHandlers.add(handler)
       return () => sessionEndedHandlers.delete(handler)
+    },
+    servedOffline: () => offline,
+    onServedOfflineChange(handler) {
+      offlineHandlers.add(handler)
+      return () => offlineHandlers.delete(handler)
     },
   }
 }

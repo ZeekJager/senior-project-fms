@@ -26,5 +26,7 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The service worker runs in a worker, not a page: tsconfig.sw.json checks it.
+  "exclude": ["src/service-worker.ts"]
 }
