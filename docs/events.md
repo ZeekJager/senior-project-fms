@@ -11,7 +11,7 @@ service, inside the change's transaction
                                               (commits or rolls back with the change)
                          after commit
 outbox relay (one per instance; one active at a time)
-  1. broadcast  ──►  Redis PUBLISH fms:events:<EventType>  ──►  real-time gateway (Socket.IO, later)
+  1. broadcast  ──►  Redis PUBLISH fms:events:<EventType>  ──►  real-time gateway (Socket.IO, docs/realtime.md)
   2. dispatch   ──►  in-process consumers, each in its own transaction
                      with its events.processed_events row
 ```
@@ -104,7 +104,7 @@ Today's projections (`eventBus.project`): they run inside `publish`, on the tran
 |---|---|
 | `<prefix>:events:<EventType>` (`fms:events:VehicleRetired`) | The JSON envelope `{ id, type, version, occurred_at, actor, correlation_id, payload }` |
 
-`eventChannel(type)` names a channel. A gateway subscribes to the types it forwards, or to `fms:events:*` with `PSUBSCRIBE`. Pub/sub keeps nothing: a gateway that was not connected when an event went out never gets it. So a client that reconnects reloads its state through the API, and events stay hints, not records. After a Redis outage the relay sends the backlog in order. A gateway may drop events whose `occurred_at` is too old to be worth showing.
+`eventChannel(type)` names a channel. A gateway subscribes to the types it forwards, or to `fms:events:*` with `PSUBSCRIBE`; the Socket.IO gateway (FMS-43) does the latter on every instance. Pub/sub keeps nothing: a gateway that was not connected when an event went out never gets it. So a client that reconnects reloads its state through the API, and events stay hints, not records. After a Redis outage the relay sends the backlog in order. A gateway may drop events whose `occurred_at` is too old to be worth showing.
 
 ## Lag and health
 

@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import type { AssignmentWarning, DispatchBoard, Trip } from './types'
 
-// Server state for the dispatcher console (S-07). Wave 2 keeps it current by
-// polling; live updates over Socket.IO arrive with FMS-45.
+// Server state for the dispatcher console (S-07). Socket events mark it stale
+// (RealtimeProvider, FMS-43: trip.updated, vehicle.status.changed); polling
+// keeps it current when the socket is down.
 
 /** How often the trips and the board refresh while the console is open. */
 export const POLL_MS = 30_000

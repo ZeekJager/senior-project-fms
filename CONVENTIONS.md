@@ -190,7 +190,16 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 
 Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31), `TripStarted` and `TripCompleted` by the lifecycle commands (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
 
-Planned, named here so modules agree on them: `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
+Planned, named here so modules agree on them: `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated`, `AlertAcknowledged`, `AlertResolved` (alert), `IncidentReported` (incident), `BatteryThresholdExceeded` (ev).
+
+**Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it, so the planned ones it forwards must carry:
+
+- `VehicleLocationUpdated` (FMS-88): `vehicle_id`, `depot_id`, `trip_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at`.
+- `AlertCreated` (FMS-92): `alert_id`, `depot_id`, `alert_type`, `severity`, `status`, `entity_type`, `entity_id`, `message`.
+- `AlertAcknowledged` and `AlertResolved` (FMS-92): `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by`.
+- `IncidentReported` (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `occurred_at`.
+
+To show a new event live, add it to the gateway's map as well.
 
 ## API
 

@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/shared'
 import { Card, FilterSelect, useToast, ViewTabs } from '@/components/ui'
 import { useDepots } from '@/features/depots'
 import { ApiError } from '@/lib/api/errors'
+import { useRealtimeStatus } from '@/lib/realtime/context'
 import { POLL_MS, useAssignTrip, useDispatchBoard, useDispatchTrips } from './api'
 import { AssignmentPanel } from './AssignmentPanel'
 import { CandidatesSkeleton, DriverList, VehicleList } from './Candidates'
@@ -17,8 +18,8 @@ type View = 'unassigned' | 'assigned'
 /**
  * Dispatcher trip console (FMS-33, S-07): the depot's trips on the left, its
  * drivers and vehicles on the right with what they are doing now and whether
- * they are free for the chosen trip, and one panel to assign. Refreshes
- * every 30 seconds while open (Socket.IO arrives with FMS-45).
+ * they are free for the chosen trip, and one panel to assign. Refreshes as
+ * trips and vehicles change (Socket.IO, FMS-43), and every 30 seconds anyway.
  */
 export function DispatchPage() {
   const [params, setParams] = useSearchParams()
@@ -32,6 +33,8 @@ export function DispatchPage() {
     setParams(next, { replace: true })
   }
 
+  // trip.updated and vehicle.status.changed refresh the board at once (FMS-43); polling stays the fallback.
+  const live = useRealtimeStatus() === 'live'
   const trips = useDispatchTrips(depotId)
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null)
   const allTrips = trips.data ?? []
@@ -100,9 +103,19 @@ export function DispatchPage() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {updatedAt > 0 && (
-            <p className="flex items-center gap-1.5 text-xs text-ink-subtle" title={`Refreshes every ${POLL_MS / 1000} seconds`}>
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-              Updated {formatTime(new Date(updatedAt).toISOString())}
+            <p
+              className="flex items-center gap-1.5 text-xs text-ink-subtle"
+              title={live ? 'Changes arrive as they happen' : `Refreshes every ${POLL_MS / 1000} seconds`}
+            >
+              {live ? (
+                <span className="relative flex h-2 w-2" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                </span>
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {live ? 'Live · ' : ''}Updated {formatTime(new Date(updatedAt).toISOString())}
             </p>
           )}
           {(depots.data?.length ?? 0) > 1 && (

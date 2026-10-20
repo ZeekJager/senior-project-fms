@@ -618,6 +618,13 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `vehicle_position` | Server -> client (legacy event name) | `vehicleId,tripId,lat,lng,speedKmh,bearing,lastSeen` | Compatibility alias for `vehicle.location.updated` |
 | `alert_created` | Server -> client (legacy event name) | `alertType,entityId,message,severity` | Compatibility alias for `alert.created` |
 
+Real-time rules (FMS-43; details in docs/realtime.md):
+
+- **Connection:** Socket.IO at `/api/v1/socket.io` on the API's server. The handshake carries the session cookie and is checked like any API call (`connect_error` message `AUTH_TOKEN_INVALID`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_REVOKED` or `AUTH_ACCOUNT_DISABLED`). A browser `Origin` must be the API's own or listed in `REALTIME_ALLOWED_ORIGINS`. The server closes the socket when the access token expires and when the account is deactivated or its roles or account change; the client renews the session and reconnects.
+- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` needs `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
+- **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, version, updated_at` and `change` (the domain event). `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
+- **Client -> server:** only the legacy `location_update`, off unless `REALTIME_LEGACY_LOCATION=true`, acknowledged `{ok}` or `{ok: false, error: {code, message}}`. Every client event is rate limited (5 at once, then 1 per second; `RATE_LIMITED`); a socket that keeps exceeding it is closed.
+
 ## 12. Alerts, Notifications and Incidents
 
 An alert is a business event requiring attention. A notification is a delivery attempt for an alert through email, SMS, push or another channel. Incidents represent operational or safety events requiring investigation and lifecycle management.

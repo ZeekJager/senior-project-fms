@@ -42,6 +42,15 @@ const appSchema = z
     // Trip assignment (FMS-31): minutes a driver or vehicle needs after an
     // en-route trip before the next one; less raises an overrun warning.
     TRIP_OVERRUN_GRACE_MINUTES: z.coerce.number().int().min(0).max(1440).default(0),
+    // Real-time (FMS-43): page origins other than the API's own that may open
+    // a socket (the Vite dev server, a separate web host). Comma-separated.
+    REALTIME_ALLOWED_ORIGINS: z
+      .string()
+      .default('')
+      .transform((v) => v.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean))
+      .pipe(z.array(z.url({ protocol: /^https?$/, error: 'must be http(s) origins, comma-separated' }))),
+    // The legacy client->server `location_update` socket event (api-contract §11.2). Off unless a legacy client needs it.
+    REALTIME_LEGACY_LOCATION: z.enum(['true', 'false']).default('false'),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -85,6 +94,14 @@ export interface AppConfig {
   /** Null when REDIS_HOST is not set (development and tests may run without Redis). */
   redis: RedisConfig | null;
   trips: { overrunGraceMinutes: number };
+  realtime: RealtimeConfig;
+}
+
+export interface RealtimeConfig {
+  /** Origins besides the API's own host allowed to open a socket. */
+  allowedOrigins: string[];
+  /** Accept the legacy `location_update` event (api-contract §11.2). */
+  legacyLocation: boolean;
 }
 
 export interface RedisConfig {
@@ -146,6 +163,7 @@ export function loadAppConfig(env: Env): AppConfig {
           }
         : { driver: 'local', localDir: e.STORAGE_LOCAL_DIR },
     trips: { overrunGraceMinutes: e.TRIP_OVERRUN_GRACE_MINUTES },
+    realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
   };
 }
 

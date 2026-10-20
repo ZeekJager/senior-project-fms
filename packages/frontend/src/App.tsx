@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/context/AuthContext'
 import { createQueryClient } from '@/lib/query'
+import { RealtimeProvider } from '@/lib/realtime/RealtimeProvider'
 import { AppRouter } from '@/router/AppRouter'
 
 function App() {
@@ -11,7 +12,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <AppRouter />
+          {/* Live updates over Socket.IO while signed in (FMS-43). */}
+          <RealtimeProvider>
+            <AppRouter />
+          </RealtimeProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

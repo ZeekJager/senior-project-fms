@@ -28,6 +28,7 @@ import {
   tripRouteNotFound,
   tripRouteRetired,
   type TripStatus,
+  type TripSummary,
   type TripView,
 } from '../domain/trip';
 import type { RequestUser } from '../../../types/express';
@@ -146,6 +147,31 @@ export class TripService {
   async refVisibleTo(db: Queryable, user: RequestUser, publicId: string): Promise<{ id: string; vehicleId: string | null; driverId: string | null } | null> {
     const row = await this.deps.trips.findVisible(db, publicId, await this.visibility(db, { user, correlationId: '' }));
     return row ? { id: row.id, vehicleId: row.vehicleId, driverId: row.driverId } : null;
+  }
+
+  /**
+   * For the real-time gateway (FMS-43): the trip's current summary, read with
+   * no caller. The gateway decides who receives it from `depot_id` and
+   * `driver_id`. Null when there is no such trip.
+   */
+  async summary(db: Queryable, publicId: string): Promise<TripSummary | null> {
+    const row = await this.deps.trips.findVisible(db, publicId, { kind: 'all' });
+    if (!row) return null;
+    const [v] = await this.views(db, [row]);
+    return {
+      trip_id: v.id,
+      status: v.status,
+      route_name: v.route_name,
+      depot_id: v.depot_id,
+      vehicle_id: v.vehicle_id,
+      driver_id: v.driver_id,
+      scheduled_start: v.scheduled_start,
+      scheduled_end: v.scheduled_end,
+      actual_start: v.actual_start,
+      actual_end: v.actual_end,
+      version: v.version,
+      updated_at: v.updated_at,
+    };
   }
 
   async create(caller: Caller, input: TripCreate): Promise<TripView> {

@@ -82,6 +82,14 @@ export const authorize = authorizeWith(authenticate, (req, codes) =>
 /** Any signed-in user, no particular permission. */
 export const authenticated = authenticatedWith(authenticate);
 
+/**
+ * For the real-time gateway (FMS-43): the caller behind an access token, with
+ * the same checks as `authenticate` (signature, expiry, active account,
+ * session not revoked). Throws the same 401/403 AppErrors.
+ */
+export const authenticateAccessToken = (accessToken: string | undefined) => authService.authenticate(accessToken);
+export { ACCESS_COOKIE } from './api/session-cookies';
+
 export { publicRoute } from '../../shared/authz/route-policy';
 export { depotScope, ownDriverScope, scopeClause, type Scope } from '../../shared/authz/scope';
 

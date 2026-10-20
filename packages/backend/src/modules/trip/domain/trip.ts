@@ -16,6 +16,25 @@ export interface TripStopView {
 }
 
 /** A trip as the API returns it (api-contract §16.2). Public ids only. */
+/**
+ * A trip as a live board needs it (FMS-43, `trip.updated`): public ids, status
+ * and times, nothing about people beyond ids.
+ */
+export interface TripSummary {
+  trip_id: string;
+  status: TripStatus;
+  route_name: string | null;
+  depot_id: string | null;
+  vehicle_id: string | null;
+  driver_id: string | null;
+  scheduled_start: Date | null;
+  scheduled_end: Date | null;
+  actual_start: Date | null;
+  actual_end: Date | null;
+  version: number;
+  updated_at: Date;
+}
+
 export interface TripView {
   id: string;
   route_id: string | null;
