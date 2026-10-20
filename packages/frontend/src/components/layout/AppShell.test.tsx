@@ -35,7 +35,7 @@ describe('portals', () => {
     signedInAs(driver)
     renderApp('/')
     await waitFor(() => expect(location()).toBe('/driver'))
-    expect(await screen.findByRole('heading', { name: 'Driver Home' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'My day' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Vehicles' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Fleet management' })).not.toBeInTheDocument()
 

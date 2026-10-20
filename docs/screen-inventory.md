@@ -13,7 +13,7 @@ All screens must handle 5 states: Loading (Skeleton), Empty, Error (Boundary), S
 | S-08 | Technician Repair Log | `/maintenance` | Admin, Tech | Form to log repairs, deduct stock, and clear maintenance flags. |
 | S-09 | Spare Parts Console | `/inventory` | Admin, Depot Admin, Tech | Live stock counts with 'OUT OF STOCK' / 'LOW' highlights. |
 | S-10 | Audit Log UI | `/audit` | Admin, Fleet Owner, Compliance | Read-only diff view of system mutations. |
-| S-11 | Driver Mobile Home | `/driver` | Driver | Mobile PWA shell. Shows today's assigned trip with START/END toggle. |
+| S-11 | Driver Mobile Home | `/driver` | Driver (`trip:execute`) | "My day" in large type: the trip under way, or the next one assigned today (times in Addis Ababa, from and to, the vehicle's plate, stops), other trips later today, and one large button: START TRIP (`POST /trips/{id}/start`), then END TRIP (`/end`), which leads to the post-trip inspection prompt (S-12). Refusals (flagged vehicle, expired licence) show under the button. Today only: no past trips. Works at 375px; with no signal it shows the day as last saved on the phone and START/END wait for signal (FMS-35). |
 | S-12 | Driver DVIR Form | `/driver/dvir` | Driver | Offline-first pre/post trip inspection checklist (IndexedDB synced). |
 | S-13 | Driver Incident Form | `/driver/incident` | Driver | Quick-report form for breakdowns/accidents. |
 | S-14 | Driver Fuel Entry | `/driver/fuel` | Driver | Offline-first form taking integer litres/cost and odometer. |

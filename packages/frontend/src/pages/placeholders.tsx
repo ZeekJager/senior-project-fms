@@ -1,4 +1,4 @@
-import { Compass, Fuel, Home, LayoutDashboard, Radar, type LucideIcon } from 'lucide-react'
+import { ClipboardCheck, Compass, Fuel, LayoutDashboard, Radar, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
 import { Card } from '@/components/ui'
@@ -22,8 +22,8 @@ export const DashboardPage = () => (
   <Placeholder title="Dashboard" icon={LayoutDashboard} description="Fleet KPIs arrive with the analytics dashboard (S-18). Use the menu to open your screens." />
 )
 
-export const DriverHomePage = () => (
-  <Placeholder title="Driver Home" icon={Home} description="Your assigned trip, with start and end, arrives with the driver app (S-11)." />
+export const DriverDvirPage = () => (
+  <Placeholder title="Vehicle inspection" icon={ClipboardCheck} description="The pre- and post-trip checklist arrives with the inspection form (S-12)." />
 )
 
 export const FuelReconciliationPage = () => (
