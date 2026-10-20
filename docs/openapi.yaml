@@ -7,7 +7,8 @@ info:
     stays the full reference; an endpoint is added here as its card is built, and
     test/integration/openapi.test.ts checks that every operation listed is mounted
     and that every error code named is one the API sends.
-    Started with trip assignment (FMS-31) and vehicle status and availability (FMS-76).
+    Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
+    trip lifecycle commands (FMS-32).
 servers:
   - url: /api/v1
 security:
@@ -83,6 +84,96 @@ paths:
             CONFLICT_VEHICLE_OVERLAP. A detail's record_id names the conflicting trip or the open
             maintenance record.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /trips/{trip_id}/start:
+    post:
+      tags: [Trips]
+      operationId: startTrip
+      summary: Start a trip (FMS-32)
+      description: >
+        assigned → en_route, actual_start now. Needs trip:execute; a driver only on their own trips.
+        The assignment rules are read again: a vehicle flagged, in the workshop, out of service, retired or
+        in another depot since, or an expired licence, refuse with the assignment's 409s. Another trip of the
+        driver or vehicle still under way (PREVIOUS_TRIP_OVERRUN) and the driver's attendance
+        (DRIVER_ATTENDANCE) are warnings. Publishes TripStarted.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200': { $ref: '#/components/responses/TripMoved' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TripMoveRefused' }
+
+  /trips/{trip_id}/end:
+    post:
+      tags: [Trips]
+      operationId: endTrip
+      summary: End a trip (FMS-32)
+      description: >
+        en_route → completed, actual_end now (never before actual_start); the duration is stored. Needs
+        trip:execute; a driver only on their own trips. Publishes TripCompleted.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200': { $ref: '#/components/responses/TripMoved' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TripMoveRefused' }
+
+  /trips/{trip_id}/status:
+    post:
+      tags: [Trips]
+      operationId: changeTripStatus
+      summary: Explicit trip status transition (FMS-32)
+      description: >
+        en_route is start and completed is end. scheduled (a draft with both times) and cancelled also need
+        trip:write, so a driver gets 403 FORBIDDEN_INSUFFICIENT_ROLE. assigned is always 409 (reason
+        assign_required): use POST /trips/{trip_id}/assign.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { type: string, enum: [scheduled, assigned, en_route, completed, cancelled] }
+      responses:
+        '200': { $ref: '#/components/responses/TripMoved' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TripMoveRefused' }
 
   /vehicles/{vehicle_id}/status:
     get:
@@ -210,6 +301,31 @@ components:
       schema: { type: string }
 
   responses:
+    TripMoved:
+      description: The trip after the move.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/Trip' }
+              meta:
+                type: object
+                required: [warnings, request_id]
+                properties:
+                  warnings:
+                    type: array
+                    items: { $ref: '#/components/schemas/AssignmentWarning' }
+                  request_id: { type: string, format: uuid }
+    TripMoveRefused:
+      description: >
+        CONFLICT_INVALID_STATE_TRANSITION (details[].allowed_transitions lists where the trip can go; empty for
+        completed and cancelled), CONFLICT_CONCURRENT_MODIFICATION, or on start the assignment's
+        CONFLICT_DEPOT_MISMATCH, CONFLICT_VEHICLE_FLAGGED and CONFLICT_DRIVER_NOT_ELIGIBLE.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Unauthenticated:
       description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
@@ -249,6 +365,10 @@ components:
                     type: string
                     format: uuid
                     description: The record the problem is about (the conflicting trip, the open maintenance record).
+                  allowed_transitions:
+                    type: array
+                    items: { type: string }
+                    description: For a refused state change, the states the record can move to from where it is.
         meta:
           type: object
           properties:

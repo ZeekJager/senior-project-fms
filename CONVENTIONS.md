@@ -184,12 +184,13 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | `fleet.vehicle-cache` (`TripCancelled`) |
 | `FuelLogged` | fuel (FMS-39) | vehicle | `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km`, `recorded_at` | |
 | `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration later (telematics) | vehicle | `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set` | `fleet.vehicle-cache` |
+| `TripStarted`, `TripCompleted` | trip (FMS-32) | trip | `trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`; `actual_end`, `duration_seconds` on complete | `fleet.vehicle-cache` |
 | `TripAssigned` | trip (FMS-31) | trip | `trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, the schedule | `fleet.vehicle-cache` |
 | `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
 
-Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31); `TripStarted` and `TripCompleted` are named there for their publisher (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
+Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31), `TripStarted` and `TripCompleted` by the lifecycle commands (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
 
-Planned, named here so modules agree on them: `TripStarted`, `TripCompleted` (trip; see above), `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
+Planned, named here so modules agree on them: `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
 
 ## API
 

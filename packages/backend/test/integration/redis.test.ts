@@ -107,7 +107,7 @@ describe.skipIf(!configured)('vehicle cache', () => {
     expect((await request(app).get(`/api/v1/vehicles/${id}`).set('Cookie', cookie)).body.data.maintenance_flag).toBe(true);
   });
 
-  test('assigning a trip drops the cached vehicle and the one it replaced, so the current trip shows', async () => {
+  test('assigning, starting and ending a trip drop the cached vehicle (and the one an assignment replaced), so the current trip shows', async () => {
     const depot = await createDepot();
     const [first, second] = [await createVehicle({ depot }), await createVehicle({ depot })];
     const { driver } = await createDriver({ depot, license_categories: ['C'] });
@@ -137,6 +137,14 @@ describe.skipIf(!configured)('vehicle cache', () => {
     expect(await redis!.exists(vehicleKey(String(first.public_id)))).toBe(0);
     expect((await view(first)).body.data.current_trip).toBeNull();
     expect((await view(second)).body.data.current_trip).toMatchObject({ id: trip.public_id });
+
+    // Starting and ending the trip (FMS-32) drop it again: under way, then no current trip.
+    expect((await request(app).post(`/api/v1/trips/${trip.public_id}/start`).set('Cookie', cookie).send({})).status).toBe(200);
+    await deliverEvents();
+    expect((await view(second)).body.data.current_trip).toMatchObject({ id: trip.public_id, status: 'en_route' });
+    expect((await request(app).post(`/api/v1/trips/${trip.public_id}/end`).set('Cookie', cookie).send({})).status).toBe(200);
+    await deliverEvents();
+    expect((await view(second)).body.data.current_trip).toBeNull();
   });
 });
 
