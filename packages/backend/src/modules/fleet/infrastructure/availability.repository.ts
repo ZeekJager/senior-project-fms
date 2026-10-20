@@ -2,7 +2,8 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { AvailabilityWindow, DriverFacts, VehicleFacts } from '../domain/availability';
 import type { AttendanceStatus } from '../domain/attendance';
 import { OPERATING_TIME_ZONE } from '../domain/driver';
-import type { VehicleStatus } from '../domain/vehicle';
+import type { VehicleStatus, VehicleType } from '../domain/vehicle';
+import type { BoardTrip } from '../domain/dispatch';
 
 /** An assignment as the read model holds it. */
 export interface AssignmentRow {
@@ -151,6 +152,48 @@ export const availabilityStore = {
       [trip.tripId, trip.vehicleId, trip.driverId, trip.status, trip.scheduledStart, trip.scheduledEnd],
     );
     return (res.rowCount ?? 0) > 0;
+  },
+
+  // The dispatcher's board (FMS-33): who and what a depot can staff trips with.
+
+  /** The depot's active drivers (their account's depot), by name. */
+  async depotDrivers(db: Queryable, depotId: string): Promise<{ id: string; publicId: string; fullName: string; licenseCategories: string[] }[]> {
+    const res = await db.query<{ id: string; publicId: string; fullName: string; licenseCategories: string[] }>(
+      `SELECT d.id, d.public_id AS "publicId", acc.full_name AS "fullName", d.license_categories AS "licenseCategories"
+         FROM fleet.drivers d JOIN fleet.driver_accounts acc ON acc.user_id = d.user_id
+        WHERE acc.depot_id = $1 AND d.is_active
+        ORDER BY acc.full_name, d.id`,
+      [depotId],
+    );
+    return res.rows;
+  },
+
+  /** The depot's vehicles that are not retired, by plate. */
+  async depotVehicles(
+    db: Queryable,
+    depotId: string,
+  ): Promise<{ id: string; publicId: string; registrationNumber: string; make: string; model: string; vehicleType: VehicleType; status: VehicleStatus; maintenanceFlag: boolean }[]> {
+    const res = await db.query<{ id: string; publicId: string; registrationNumber: string; make: string; model: string; vehicleType: VehicleType; status: VehicleStatus; maintenanceFlag: boolean }>(
+      `SELECT id, public_id AS "publicId", registration_number AS "registrationNumber", make, model, vehicle_type AS "vehicleType",
+              status, maintenance_flag AS "maintenanceFlag"
+         FROM fleet.vehicles WHERE depot_id = $1 AND is_active
+        ORDER BY registration_number, id`,
+      [depotId],
+    );
+    return res.rows;
+  },
+
+  /** The trip each of these drivers or vehicles (internal ids) is under way on now, from the read model. */
+  async underWay(db: Queryable, column: 'driver_id' | 'vehicle_id', ids: readonly string[]): Promise<Map<string, BoardTrip>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; tripId: string; end: Date }>(
+      `SELECT DISTINCT ON (${column}) ${column} AS id, trip_id AS "tripId", upper(during) AS "end"
+         FROM fleet.trip_assignments
+        WHERE ${column} = ANY($1::bigint[]) AND status = 'en_route'
+        ORDER BY ${column}, lower(during)`,
+      [ids],
+    );
+    return new Map(res.rows.map((r) => [r.id, { tripId: r.tripId, end: r.end }]));
   },
 
   /** Replaces the read model with these trips (the daily re-sync): stale rows go, the rest are refreshed. */

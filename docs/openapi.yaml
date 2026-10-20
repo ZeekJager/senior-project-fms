@@ -8,7 +8,7 @@ info:
     test/integration/openapi.test.ts checks that every operation listed is mounted
     and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
-    trip lifecycle commands (FMS-32).
+    trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33).
 servers:
   - url: /api/v1
 security:
@@ -17,6 +17,7 @@ security:
 tags:
   - name: Trips
   - name: Vehicles
+  - name: Dispatch
 
 paths:
   /trips/{trip_id}/assign:
@@ -174,6 +175,48 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TripMoveRefused' }
+
+  /dispatch/availability:
+    get:
+      tags: [Dispatch]
+      operationId: getDispatchBoard
+      summary: Dispatcher board (FMS-33)
+      description: >
+        A depot's drivers and vehicles with their state now (the console's colours) and their availability for
+        the trip being staffed. Needs trip:assign. depot_id defaults to the caller's own depot; someone who sees
+        several must give one (400 VALIDATION_FAILED, reason required).
+      parameters:
+        - name: depot_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          description: The trip's start (an instant, or a date meaning that Addis Ababa day). None means now.
+          schema: { type: string }
+        - name: to
+          in: query
+          description: The trip's end. At most 31 days after from.
+          schema: { type: string }
+        - name: exclude_trip_id
+          in: query
+          description: The trip being staffed; its own assignment is not a conflict.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The board.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/DispatchBoard' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (depot required or outside your depots) or VALIDATION_INVALID_DATE_RANGE.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /vehicles/{vehicle_id}/status:
     get:
@@ -453,7 +496,20 @@ components:
             properties:
               code:
                 type: string
-                enum: [vehicle_retired, vehicle_in_maintenance, vehicle_out_of_service, maintenance_flag, vehicle_other_depot, assigned_to_overlapping_trip]
+                enum:
+                  - vehicle_retired
+                  - vehicle_in_maintenance
+                  - vehicle_out_of_service
+                  - maintenance_flag
+                  - vehicle_other_depot
+                  - driver_retired
+                  - account_not_active
+                  - license_expired
+                  - driver_other_depot
+                  - driver_absent
+                  - driver_on_leave
+                  - driver_sick
+                  - assigned_to_overlapping_trip
               severity: { type: string, enum: [block, warning] }
               trip_id: { type: string, format: uuid }
 
@@ -516,6 +572,75 @@ components:
                 changed_by: { type: [string, 'null'], format: uuid }
         version: { type: integer }
         updated_at: { type: string, format: date-time }
+
+    BoardTrip:
+      oneOf:
+        - type: 'null'
+        - type: object
+          description: The trip under way now.
+          required: [trip_id, end]
+          properties:
+            trip_id: { type: string, format: uuid }
+            end: { type: string, format: date-time, description: Its scheduled end. }
+
+    DispatchBoard:
+      type: object
+      required: [depot_id, window, drivers, vehicles]
+      properties:
+        depot_id: { type: string, format: uuid }
+        window:
+          type: object
+          required: [start, end]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        drivers:
+          type: array
+          items:
+            type: object
+            required: [driver_id, full_name, license_categories, vehicle_types, state, attendance, availability, current_trip]
+            properties:
+              driver_id: { type: string, format: uuid }
+              full_name: { type: string }
+              license_categories: { type: array, items: { type: string } }
+              vehicle_types: { type: array, items: { type: string }, description: The vehicle types the licence covers. }
+              state:
+                type: string
+                description: idle green, near_end amber, en_route red, absent grey (still assignable), unavailable (blocked for the window).
+                enum: [idle, near_end, en_route, absent, unavailable]
+              attendance: { type: [string, 'null'], enum: [present, absent, late, on_leave, sick, other, null] }
+              availability: { $ref: '#/components/schemas/AvailabilityResult' }
+              current_trip: { $ref: '#/components/schemas/BoardTrip' }
+        vehicles:
+          type: array
+          items:
+            type: object
+            required: [vehicle_id, registration_number, make, model, vehicle_type, status, state, availability, open_work, current_trip]
+            properties:
+              vehicle_id: { type: string, format: uuid }
+              registration_number: { type: string }
+              make: { type: string }
+              model: { type: string }
+              vehicle_type: { type: string }
+              status: { $ref: '#/components/schemas/VehicleStatusValue' }
+              state:
+                type: string
+                description: idle green, flagged red (flag or workshop), en_route grey, unavailable (blocked for the window).
+                enum: [idle, flagged, en_route, unavailable]
+              availability: { $ref: '#/components/schemas/AvailabilityResult' }
+              open_work:
+                oneOf:
+                  - type: 'null'
+                  - type: object
+                    description: The open maintenance record behind the flag.
+                    required: [id, description, status, priority, opened_at]
+                    properties:
+                      id: { type: string, format: uuid }
+                      description: { type: string }
+                      status: { type: string }
+                      priority: { type: string }
+                      opened_at: { type: string, format: date-time }
+              current_trip: { $ref: '#/components/schemas/BoardTrip' }
 
     StatusChangeWarning:
       type: object

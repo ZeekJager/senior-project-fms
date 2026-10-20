@@ -2,6 +2,10 @@
 export interface ApiErrorDetail {
   field?: string
   reason?: string
+  /** The record the problem is about: the conflicting trip, the open maintenance record. */
+  record_id?: string
+  /** For a refused state change: where the record can move from here. */
+  allowed_transitions?: string[]
 }
 
 /** Thrown for every non-2xx response, shaped like the contract's error envelope. */

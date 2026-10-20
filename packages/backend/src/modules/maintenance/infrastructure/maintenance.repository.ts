@@ -181,6 +181,25 @@ export class MaintenanceRepository extends Repository {
     return res.rows[0]?.public_id ?? null;
   }
 
+  /**
+   * The open record behind each vehicle's flag (the most recent), summarized
+   * for dispatch (FMS-33), by internal vehicle id.
+   */
+  async openRecordSummaries(
+    db: Queryable,
+    vehicleIds: readonly string[],
+  ): Promise<Map<string, { id: string; description: string; status: string; priority: string; opened_at: Date }>> {
+    if (vehicleIds.length === 0) return new Map();
+    const res = await db.query<{ vehicleId: string; id: string; description: string; status: string; priority: string; opened_at: Date }>(
+      `SELECT DISTINCT ON (vehicle_id) vehicle_id AS "vehicleId", public_id AS id, description, status::text, priority::text, created_at AS opened_at
+         FROM maintenance.maintenance_records
+        WHERE vehicle_id = ANY($1::bigint[]) AND status = ANY($2::maintenance.maintenance_status[])
+        ORDER BY vehicle_id, created_at DESC, id DESC`,
+      [vehicleIds, OPEN_STATUSES],
+    );
+    return new Map(res.rows.map(({ vehicleId, ...summary }) => [vehicleId, summary]));
+  }
+
   /** Row-locks the parts by public id, in id order (two repairs using the same parts never deadlock). */
   async lockParts(client: PoolClient, publicIds: readonly string[]): Promise<LockedPart[]> {
     if (publicIds.length === 0) return [];
