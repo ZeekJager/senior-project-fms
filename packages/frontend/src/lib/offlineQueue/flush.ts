@@ -53,11 +53,13 @@ async function exclusively(work: () => Promise<FlushResult>): Promise<FlushResul
  * none is left or one cannot go yet. A submission leaves the queue only once
  * the server has answered 2xx; every attempt carries the same
  * Idempotency-Key, so one that reached the server before the answer was lost
- * is replayed, not recorded twice.
+ * is replayed, not recorded twice. `signal` stops it before the next one
+ * (the one on its way finishes): the rest wait for the next flush.
  */
-export function flushQueue(ownerId: string, send: (submission: Submission) => Promise<Outcome>): Promise<FlushResult> {
+export function flushQueue(ownerId: string, send: (submission: Submission) => Promise<Outcome>, signal?: AbortSignal): Promise<FlushResult> {
   return exclusively(async () => {
     for (;;) {
+      if (signal?.aborted) return 'retry'
       const next = await nextPending(ownerId)
       if (!next) return 'done'
       const outcome = await send(next).catch((): Outcome => ({ kind: 'retry' }))

@@ -80,19 +80,19 @@ export function OfflineQueueProvider({ children }: { children: ReactNode }) {
   /** Answers for submissions a `submit` call is waiting on. */
   const answers = useRef(new Map<number, unknown>())
 
-  const refresh = useCallback(() => {
-    if (!ownerId) return
-    submissionsOf(ownerId).then(
-      (found) => {
-        setItems(found)
-        setUnavailable(false)
-      },
-      () => setUnavailable(true),
-    )
-  }, [ownerId])
-
   useEffect(() => {
     if (!ownerId) return
+    // IndexedDB answers after an unmount (sign-out, or a test ending) are dropped: no state is set on a page that is gone.
+    let mounted = true
+    const refresh = () =>
+      submissionsOf(ownerId).then(
+        (found) => {
+          if (!mounted) return
+          setItems(found)
+          setUnavailable(false)
+        },
+        () => mounted && setUnavailable(true),
+      )
     const send = (submission: Submission) => sendFromPage(api, submission, answers.current)
     const current = createQueueRunner({ ownerId, send, onSending: setSending })
     runner.current = current
@@ -100,12 +100,13 @@ export function OfflineQueueProvider({ children }: { children: ReactNode }) {
     void current.run()
     const stopListening = listen((message) => (message.type === 'changed' ? refresh() : void current.run()))
     return () => {
+      mounted = false
       current.stop()
       stopListening()
       runner.current = null
       setItems([])
     }
-  }, [ownerId, api, refresh])
+  }, [ownerId, api])
 
   // Back online (airplane mode off, or the server answering again): send now, not after the backoff.
   useEffect(() => {

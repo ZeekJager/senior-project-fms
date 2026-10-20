@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { useRef, useState } from 'react'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { enqueue, MAX_PENDING, submissionsOf } from '@/lib/offlineQueue'
 import { createQueryClient } from '@/lib/query'
@@ -254,5 +254,41 @@ describe('offline queue in the driver app (FMS-81)', () => {
     // The shell's top bar: the first banner (the screen has its own header).
     const [bar] = await screen.findAllByRole('banner')
     expect(await within(bar).findByRole('button', { name: '1 waiting to send' })).toBeInTheDocument()
+  })
+
+  it('unmounting stops the queue: nothing is sent and no state is set afterwards (a test file may end mid-flush)', async () => {
+    for (let n = 1; n <= 3; n++) await enqueue({ ownerId: ME, ...report(n) })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const sent: unknown[] = []
+    server.use(
+      http.post('/api/v1/dvir-reports', async ({ request }) => {
+        sent.push(await request.json())
+        await gate
+        return HttpResponse.json({ data: {}, meta: {} }, { status: 201 })
+      }),
+    )
+    const view = renderQueue()
+    await waitFor(() => expect(sent).toHaveLength(1))
+    view.unmount()
+
+    // As when Vitest tears the environment down under work still in flight: React would throw on any state update.
+    const failures: unknown[] = []
+    const caught = (reason: unknown) => failures.push(reason)
+    // Node's own process (tests run in Node; the app's types have no Node).
+    const node = (globalThis as unknown as { process: { on(e: string, f: (r: unknown) => void): void; off(e: string, f: (r: unknown) => void): void } }).process
+    node.on('unhandledRejection', caught)
+    vi.stubGlobal('window', undefined)
+    try {
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    } finally {
+      vi.unstubAllGlobals()
+      node.off('unhandledRejection', caught)
+    }
+    expect(failures).toEqual([])
+    // The one already on its way finished; the rest wait for the next session.
+    expect(sent).toHaveLength(1)
+    expect((await submissionsOf(ME)).map((s) => s.label)).toEqual(['Pre-trip inspection 2', 'Pre-trip inspection 3'])
   })
 })

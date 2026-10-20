@@ -25,6 +25,9 @@ export function createQueueRunner(options: {
   let failures = 0
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
+  const stopping = new AbortController()
+  // Nothing is reported once stopped: the page that listened may be gone.
+  const report = (sending: boolean) => void (stopped || options.onSending?.(sending))
   let chain: Promise<FlushResult> = Promise.resolve('done')
 
   function later(ms: number) {
@@ -37,9 +40,10 @@ export function createQueueRunner(options: {
     chain = chain.then(async (): Promise<FlushResult> => {
       if (stopped) return 'done'
       clearTimeout(timer)
-      options.onSending?.(true)
-      const result = await flushQueue(options.ownerId, options.send).catch((): FlushResult => 'retry')
-      options.onSending?.(false)
+      report(true)
+      const result = await flushQueue(options.ownerId, options.send, stopping.signal).catch((): FlushResult => 'retry')
+      report(false)
+      if (stopped) return result
       if (result === 'retry') later(backoffMs(++failures))
       else if (result === 'busy') later(BUSY_RETRY_MS)
       else failures = 0
@@ -54,8 +58,10 @@ export function createQueueRunner(options: {
       failures = 0
       return run()
     },
+    /** No more sending, retries or reports; a submission already on its way still completes. */
     stop() {
       stopped = true
+      stopping.abort()
       clearTimeout(timer)
     },
   }
