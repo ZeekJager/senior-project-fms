@@ -127,7 +127,7 @@ describe('Driver Home (S-11)', () => {
   })
 
   it('the post-trip prompt stays until the driver puts it off', async () => {
-    localStorage.setItem('fms-driver-post-trip', trip().id)
+    localStorage.setItem('fms-driver-post-trip', JSON.stringify({ userId: driver.user.id, tripId: trip().id, vehicleId: VEHICLE, routeName: 'Addis Ababa - Adama' }))
     serveDay({ underWay: [], assigned: [] })
     await openHome()
     const prompt = await screen.findByRole('region', { name: 'Post-trip inspection' })

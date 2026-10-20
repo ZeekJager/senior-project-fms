@@ -6,6 +6,8 @@ import { useAuth } from '@/context/AuthContext'
 import { ApiError } from '@/lib/api/errors'
 import { useConnectivity } from '@/pwa/useConnectivity'
 import { useTodayTrips, useTripCommand, useTripVehicle, type DriverTrip, type TripWarning } from './api'
+import { readPostTrip, writePostTrip, type PostTrip } from './checklist'
+import { Note, Panel } from './parts'
 
 // Addis Ababa, 24-hour clock: what the driver's watch says.
 const TZ = 'Africa/Addis_Ababa'
@@ -13,27 +15,14 @@ const timeFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit'
 const dayFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' })
 const time = (iso: string | null) => (iso ? timeFmt.format(new Date(iso)) : '--:--')
 
-const POST_TRIP_KEY = 'fms-driver-post-trip'
-
 /** The trip whose post-trip inspection is still to do, kept across reloads until done or put off. */
-function usePostTrip(): [string | null, (tripId: string | null) => void] {
-  const [tripId, setTripId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(POST_TRIP_KEY)
-    } catch {
-      return null
-    }
-  })
-  const set = (id: string | null) => {
-    setTripId(id)
-    try {
-      if (id) localStorage.setItem(POST_TRIP_KEY, id)
-      else localStorage.removeItem(POST_TRIP_KEY)
-    } catch {
-      // Private mode: it lasts for this visit.
-    }
+function usePostTrip(userId: string): [PostTrip | null, (postTrip: PostTrip | null) => void] {
+  const [postTrip, setPostTrip] = useState<PostTrip | null>(() => readPostTrip(userId))
+  const set = (next: PostTrip | null) => {
+    setPostTrip(next)
+    writePostTrip(next)
   }
-  return [tripId, set]
+  return [postTrip, set]
 }
 
 const REFUSALS: Record<string, string> = {
@@ -77,7 +66,7 @@ export function DriverHome() {
   const start = useTripCommand('start')
   const end = useTripCommand('end')
   const [warnings, setWarnings] = useState<TripWarning[]>([])
-  const [postTrip, setPostTrip] = usePostTrip()
+  const [postTrip, setPostTrip] = usePostTrip(session?.user.id ?? '')
 
   const trips = today.data ?? []
   const current = trips.find((t) => t.status === 'en_route') ?? trips[0] ?? null
@@ -96,7 +85,7 @@ export function DriverHome() {
         setWarnings((await start.mutateAsync(trip)).warnings)
       } else {
         await end.mutateAsync(trip)
-        setPostTrip(trip.id)
+        setPostTrip({ userId: session?.user.id ?? '', tripId: trip.id, vehicleId: trip.vehicle_id, routeName: trip.route_name })
       }
     } catch {
       // Shown under the button.
@@ -118,7 +107,7 @@ export function DriverHome() {
         </p>
       )}
 
-      {postTrip && <PostTripPrompt tripId={postTrip} onLater={() => setPostTrip(null)} />}
+      {postTrip && <PostTripPrompt tripId={postTrip.tripId} onLater={() => setPostTrip(null)} />}
 
       {today.isPending && today.fetchStatus === 'paused' ? (
         <Panel icon={<WifiOff />} title="No signal" tone="neutral">
@@ -132,6 +121,15 @@ export function DriverHome() {
         </Panel>
       ) : current ? (
         <TripCard trip={current}>
+          {current.status === 'assigned' && current.vehicle_id && (
+            <Link
+              to={`/driver/dvir?trip=${current.id}&type=pre_trip`}
+              className="focus-ring flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface text-base font-semibold text-ink shadow-soft hover:bg-surface-muted"
+            >
+              <ClipboardCheck className="h-5 w-5 text-brand-ink" aria-hidden="true" />
+              Pre-trip inspection
+            </Link>
+          )}
           <ActionButton trip={current} busy={busy} online={online} onPress={() => void act(current)} />
           <div role="alert" className="empty:hidden">
             {error != null && (
@@ -295,31 +293,5 @@ function PostTripPrompt({ tripId, onLater }: { tripId: string; onLater: () => vo
         Later
       </button>
     </section>
-  )
-}
-
-function Panel({ icon, title, tone, children }: { icon: ReactNode; title: string; tone: 'danger' | 'neutral'; children: ReactNode }) {
-  return (
-    <div className="flex flex-col items-center rounded-card border border-line bg-surface px-6 py-12 text-center shadow-card">
-      <span className={cn('mb-4 [&_svg]:h-10 [&_svg]:w-10 [&_svg]:stroke-[1.5]', tone === 'danger' ? 'text-danger' : 'text-brand-ink')} aria-hidden="true">
-        {icon}
-      </span>
-      <h2 className="text-lg font-semibold text-ink">{title}</h2>
-      <p className="mt-1.5 max-w-xs text-base text-ink-muted">{children}</p>
-    </div>
-  )
-}
-
-function Note({ tone, icon, children }: { tone: 'danger' | 'warning'; icon: ReactNode; children: ReactNode }) {
-  return (
-    <p
-      className={cn(
-        'flex items-start gap-2.5 rounded-control border px-3.5 py-3 text-base [&>svg]:mt-0.5 [&>svg]:h-5 [&>svg]:w-5 [&>svg]:shrink-0',
-        tone === 'danger' ? 'border-danger/25 bg-danger-soft text-danger' : 'border-warning/30 bg-warning-soft text-warning',
-      )}
-    >
-      {icon}
-      <span>{children}</span>
-    </p>
   )
 }

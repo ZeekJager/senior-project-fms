@@ -1,4 +1,4 @@
-import { Boxes, CalendarCheck, Fuel, Home, LayoutDashboard, Radar, Route, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
@@ -6,8 +6,8 @@ import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { DriverHome } from '@/pages/Driver'
-import { CommandCenterPage, DashboardPage, DriverDvirPage, FuelReconciliationPage } from '@/pages/placeholders'
+import { DriverHome, DriverInspection } from '@/pages/Driver'
+import { CommandCenterPage, DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -127,8 +127,8 @@ export const portals: Portal[] = [
     routes: [
       // S-11 (FMS-35): today's trip, START and END.
       { path: '/driver', element: <DriverHome />, permission: 'trip:execute', nav: { label: 'My day', icon: Home } },
-      // S-12 (FMS-37): the inspection form. Reached from the post-trip prompt; not in the menu until it is built.
-      { path: '/driver/dvir', element: <DriverDvirPage />, permission: 'dvir:write' },
+      // S-12 (FMS-37): the pre- and post-trip inspection, submitted through the offline queue.
+      { path: '/driver/dvir', element: <DriverInspection />, permission: 'dvir:write', nav: { label: 'Inspection', icon: ClipboardCheck } },
     ],
   },
 ]

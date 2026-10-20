@@ -42,10 +42,13 @@ export interface Submission {
 
 export type NewSubmission = Pick<Submission, 'ownerId' | 'kind' | 'label' | 'path' | 'body'>
 
+/** What the driver is told when the queue is full: by the refusal, and by forms that disable their submit button. */
+export const QUEUE_FULL_MESSAGE = `${MAX_PENDING} submissions are already waiting to send. Get signal to send them before adding another.`
+
 export class QueueFullError extends Error {
   readonly code = 'OFFLINE_QUEUE_FULL'
   constructor() {
-    super(`${MAX_PENDING} submissions are already waiting to send. Get signal to send them before adding another.`)
+    super(QUEUE_FULL_MESSAGE)
     this.name = 'QueueFullError'
   }
 }
