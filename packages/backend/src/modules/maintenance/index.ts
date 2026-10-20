@@ -38,6 +38,8 @@ export const maintenanceModule: AppModule = { name: 'maintenance', router };
 /** For the fleet (FMS-76) and trip (FMS-31) modules: the open record behind a vehicle's maintenance flag, named in CONFLICT_VEHICLE_FLAGGED. */
 export const maintenanceRefs = {
   openRecordFor: (db: Queryable, vehicleId: string) => maintenanceRepository.openRecordFor(db, vehicleId),
+  /** The open work behind each vehicle's flag, summarized for the dispatcher's board (FMS-33). */
+  openRecordSummaries: (db: Queryable, vehicleIds: readonly string[]) => maintenanceRepository.openRecordSummaries(db, vehicleIds),
 };
 
 export { INVENTORY_EVENTS } from './domain/inventory';

@@ -36,7 +36,7 @@ export const errorEnvelope = (
   status: number,
   code: string,
   message = code,
-  details?: { field?: string; reason: string }[],
+  details?: { field?: string; reason: string; record_id?: string; allowed_transitions?: string[] }[],
 ) => HttpResponse.json({ error: { code, message, ...(details ? { details } : {}) }, meta: { request_id: 'r-1' } }, { status })
 
 /** The silent refresh on load succeeds with this user (the session cookie exists). */

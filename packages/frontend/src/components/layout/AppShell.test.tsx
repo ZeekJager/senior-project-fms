@@ -23,7 +23,7 @@ describe('portals', () => {
 
     const menu = mainMenu()
     expect(within(menu).getAllByRole('heading').map((h) => h.textContent)).toEqual(['Fleet management', 'Command center'])
-    expect(within(menu).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'DispatchSoon', 'Live mapSoon'])
+    expect(within(menu).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Dispatch', 'Live mapSoon'])
     // "Soon" is decoration: the links keep their plain names for assistive technology.
     expect(within(menu).getByRole('link', { name: 'Live map' })).toBeInTheDocument()
     // Not the driver's portal, though dispatchers hold trip:execute.

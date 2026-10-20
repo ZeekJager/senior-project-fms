@@ -1,4 +1,4 @@
-import { Compass, Fuel, Home, LayoutDashboard, Radar, Route, type LucideIcon } from 'lucide-react'
+import { Compass, Fuel, Home, LayoutDashboard, Radar, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
 import { Card } from '@/components/ui'
@@ -28,10 +28,6 @@ export const DriverHomePage = () => (
 
 export const FuelReconciliationPage = () => (
   <Placeholder title="Fuel Reconciliation" icon={Fuel} description="Expected against actual fuel per vehicle arrives with S-15." />
-)
-
-export const DispatchPage = () => (
-  <Placeholder title="Dispatch" icon={Route} description="Scheduled trips beside available drivers and vehicles arrive with the trip console (S-07)." />
 )
 
 export const CommandCenterPage = () => (

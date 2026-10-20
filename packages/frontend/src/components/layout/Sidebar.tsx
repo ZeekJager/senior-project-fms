@@ -72,7 +72,7 @@ export function Brand({ compact, onDark, rail = false, collapsed = false }: { co
 }
 
 /** Screens that are placeholders until their backend work lands. */
-const SOON = new Set(['/dispatch', '/command-center', '/fuel-reconciliation'])
+const SOON = new Set(['/command-center', '/fuel-reconciliation'])
 
 export function NavItems({ routes, onNavigate, rail = false, collapsed = false }: { routes: AppRoute[]; onNavigate?: () => void; rail?: boolean; collapsed?: boolean }) {
   return (

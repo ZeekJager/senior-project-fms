@@ -24,6 +24,7 @@ import {
 } from '../trip';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
+import { dispatchRouter } from './api/dispatch.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
 import { dvirRouter } from './api/dvir.routes';
@@ -31,12 +32,14 @@ import { vehicleRouter } from './api/vehicle.routes';
 import { AttendanceService } from './application/attendance.service';
 import { AvailabilityService, type AvailabilityQuery } from './application/availability.service';
 import { DepotService } from './application/depot.service';
+import { DispatchService } from './application/dispatch.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
 import { DvirService } from './application/dvir.service';
 import { ExpiryService } from './application/expiry.service';
 import { DOCUMENT_EVENTS } from './domain/document';
+import type { OpenWorkSummary } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
 import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
@@ -59,7 +62,10 @@ const availabilityService = new AvailabilityService({
 });
 
 /** The open record behind a vehicle's maintenance flag (FMS-76 status), connected by src/modules/index.ts. */
-type MaintenanceLookup = { openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> };
+type MaintenanceLookup = {
+  openRecordFor(db: Queryable, vehicleId: string): Promise<string | null>;
+  openRecordSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, OpenWorkSummary>>;
+};
 let maintenanceLookup: MaintenanceLookup | null = null;
 
 /** Connects the maintenance module's lookup. Called once by src/modules/index.ts: fleet cannot import maintenance, which imports fleet. */
@@ -194,8 +200,19 @@ const dvirService = new DvirService({
 
 const depotService = new DepotService({ depots: new DepotRepository(pool), users: userDirectory, events: eventBus });
 
+// The dispatcher's board (FMS-33): drivers and vehicles of a depot, with their state and availability.
+const dispatchService = new DispatchService({
+  store: availabilityStore,
+  availability: availabilityService,
+  attendance: attendanceRepository,
+  depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
+  maintenance: () => maintenanceLookup,
+  inTransaction: (fn) => vehicleRepository.inTransaction(fn),
+});
+
 const router = Router();
 router.use(depotRouter(depotService));
+router.use(dispatchRouter(dispatchService));
 router.use(attendanceRouter(attendanceService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
