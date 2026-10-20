@@ -34,6 +34,7 @@
     --c-danger: 180 35 24;
     --c-danger-soft: 254 243 242;
     --c-danger-solid: 205 40 28;
+    --c-success-solid: 4 120 87;
     --c-info: 23 92 211;
     --c-info-soft: 239 248 255;
     --c-neutral: 52 60 84;
@@ -69,6 +70,7 @@
     --c-danger: 249 112 102;
     --c-danger-soft: 52 17 15;
     --c-danger-solid: 205 40 28;
+    --c-success-solid: 4 120 87;
     --c-info: 83 177 253;
     --c-info-soft: 11 36 64;
     --c-neutral: 205 213 223;
@@ -106,6 +108,7 @@
       --c-danger: 249 112 102;
       --c-danger-soft: 52 17 15;
       --c-danger-solid: 205 40 28;
+      --c-success-solid: 4 120 87;
       --c-info: 83 177 253;
       --c-info-soft: 11 36 64;
       --c-neutral: 205 213 223;

@@ -36,7 +36,7 @@ export default {
         side: { DEFAULT: token('side'), line: token('side-line'), ink: token('side-ink'), active: token('side-active') },
         focus: token('focus'),
         overlay: token('overlay'),
-        success: { DEFAULT: token('success'), soft: token('success-soft') },
+        success: { DEFAULT: token('success'), soft: token('success-soft'), solid: token('success-solid') },
         warning: { DEFAULT: token('warning'), soft: token('warning-soft') },
         danger: { DEFAULT: token('danger'), soft: token('danger-soft'), solid: token('danger-solid') },
         info: { DEFAULT: token('info'), soft: token('info-soft') },

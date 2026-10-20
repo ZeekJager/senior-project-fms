@@ -24,7 +24,7 @@ greys, so light and dark mode both work. The theme is `data-theme` on `<html>`: 
 | `ink`, `ink-muted`, `ink-subtle` | Headings and values; body text; captions and placeholders |
 | `brand` | Solid fills under white text (primary buttons, the active toggle) |
 | `brand-ink`, `brand-soft` | Accent text and icons; tinted backgrounds (an active filter) |
-| `success`, `warning`, `danger`, `info`, `neutral` (+ `-soft`) | Status text and tinted backgrounds; `danger-solid` for destructive buttons |
+| `success`, `warning`, `danger`, `info`, `neutral` (+ `-soft`) | Status text and tinted backgrounds; `danger-solid` for destructive buttons, `success-solid` for a go-ahead button (the driver's START TRIP) |
 | `overlay` | The dimmed backdrop behind dialogs and drawers |
 
 Every text and background pair meets WCAG AA (4.5:1). The weakest pair,

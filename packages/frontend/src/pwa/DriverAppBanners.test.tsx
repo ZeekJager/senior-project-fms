@@ -26,7 +26,7 @@ describe('driver app shell (FMS-34)', () => {
   it('the driver portal links the manifest; staff screens never do', async () => {
     signedInAs(driver)
     const view = renderApp('/driver')
-    await screen.findByRole('heading', { name: 'Driver Home' })
+    await screen.findByRole('heading', { name: 'My day' })
     expect(manifestLink()).toHaveAttribute('href', '/manifest.json')
     expect(document.head.querySelector('meta[name="theme-color"]')).toHaveAttribute('content', '#4F46E5')
     view.unmount()
@@ -41,7 +41,7 @@ describe('driver app shell (FMS-34)', () => {
   it('shows "You are offline" while the phone has no signal, and hides it when it is back', async () => {
     signedInAs(driver)
     renderApp('/driver')
-    await screen.findByRole('heading', { name: 'Driver Home' })
+    await screen.findByRole('heading', { name: 'My day' })
     expect(screen.queryByText('You are offline.')).not.toBeInTheDocument()
     act(() => void window.dispatchEvent(new Event('offline')))
     expect(await screen.findByText('You are offline.')).toBeInTheDocument()
@@ -52,7 +52,7 @@ describe('driver app shell (FMS-34)', () => {
   it("offers to install when Chrome does, and Install opens Chrome's prompt once", async () => {
     signedInAs(driver)
     renderApp('/driver')
-    await screen.findByRole('heading', { name: 'Driver Home' })
+    await screen.findByRole('heading', { name: 'My day' })
     const offer = installOffer()
     act(() => void window.dispatchEvent(offer))
     const user = userEvent.setup()
@@ -64,7 +64,7 @@ describe('driver app shell (FMS-34)', () => {
   it('"Not now" hides the offer, and it stays hidden next time', async () => {
     signedInAs(driver)
     const first = renderApp('/driver')
-    await screen.findByRole('heading', { name: 'Driver Home' })
+    await screen.findByRole('heading', { name: 'My day' })
     act(() => void window.dispatchEvent(installOffer()))
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Not now' }))
@@ -73,7 +73,7 @@ describe('driver app shell (FMS-34)', () => {
 
     signedInAs(driver)
     renderApp('/driver')
-    await screen.findByRole('heading', { name: 'Driver Home' })
+    await screen.findByRole('heading', { name: 'My day' })
     act(() => void window.dispatchEvent(installOffer()))
     expect(screen.queryByText('Install FMS Driver')).not.toBeInTheDocument()
   })

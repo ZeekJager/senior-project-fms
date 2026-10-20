@@ -6,7 +6,8 @@ import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { CommandCenterPage, DashboardPage, DriverHomePage, FuelReconciliationPage } from '@/pages/placeholders'
+import { DriverHome } from '@/pages/Driver'
+import { CommandCenterPage, DashboardPage, DriverDvirPage, FuelReconciliationPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -123,6 +124,11 @@ export const portals: Portal[] = [
   {
     id: 'driver',
     name: 'Driver',
-    routes: [{ path: '/driver', element: <DriverHomePage />, permission: 'trip:execute', nav: { label: 'My day', icon: Home } }],
+    routes: [
+      // S-11 (FMS-35): today's trip, START and END.
+      { path: '/driver', element: <DriverHome />, permission: 'trip:execute', nav: { label: 'My day', icon: Home } },
+      // S-12 (FMS-37): the inspection form. Reached from the post-trip prompt; not in the menu until it is built.
+      { path: '/driver/dvir', element: <DriverDvirPage />, permission: 'dvir:write' },
+    ],
   },
 ]

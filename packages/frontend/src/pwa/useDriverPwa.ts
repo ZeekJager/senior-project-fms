@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { CurrentUser } from '@/context/AuthContext'
 import type { ApiClient } from '@/lib/api/client'
 import { SESSION_MESSAGE } from './routing'
+import { useConnectivity } from './useConnectivity'
 
 /**
  * The driver app (FMS-34): installable, and its pages open without a
@@ -68,27 +69,18 @@ const standalone = () => window.matchMedia?.('(display-mode: standalone)').match
  * phone has a network but the server's answers come from the saved copy.
  */
 export function useDriverPwa(session: CurrentUser | null, api: Pick<ApiClient, 'servedOffline' | 'onServedOfflineChange'>): { online: boolean; installable: boolean; install: () => Promise<void> } {
-  const [networkUp, setOnline] = useState(() => navigator.onLine)
-  const [fromCopy, setFromCopy] = useState(() => api.servedOffline())
-  useEffect(() => api.onServedOfflineChange(setFromCopy), [api])
-  const online = networkUp && !fromCopy
+  const online = useConnectivity(api)
   const [offer, setOffer] = useState<InstallPromptEvent | null>(null)
 
   useEffect(() => {
     const unlink = linkDriverManifest()
     void registerDriverServiceWorker()
-    const up = () => setOnline(true)
-    const down = () => setOnline(false)
     const offered = (event: Event) => setOffer(event as InstallPromptEvent)
     const installed = () => setOffer(null)
-    window.addEventListener('online', up)
-    window.addEventListener('offline', down)
     window.addEventListener('beforeinstallprompt', offered)
     window.addEventListener('appinstalled', installed)
     return () => {
       unlink()
-      window.removeEventListener('online', up)
-      window.removeEventListener('offline', down)
       window.removeEventListener('beforeinstallprompt', offered)
       window.removeEventListener('appinstalled', installed)
     }
