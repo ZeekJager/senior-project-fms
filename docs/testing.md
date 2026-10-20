@@ -100,6 +100,8 @@ server.use(
 
 Mocks that most tests need can go in `src/test/msw/handlers.ts`.
 
+jsdom has no IndexedDB: `src/test/setup.ts` adds [fake-indexeddb](https://github.com/dumbmatter/fakeIndexedDB) and gives each test an empty one, so the driver app's offline queue (FMS-81) starts empty in every test.
+
 ## Coverage
 
 Coverage is reported (text summary in the CI log, HTML report as the `backend-coverage` / `frontend-coverage` artifacts) but has no minimum yet.

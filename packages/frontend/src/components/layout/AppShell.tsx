@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/shared'
 import { DriverAppBanners } from '@/pwa/DriverAppBanners'
+import { OfflineQueueProvider } from '@/pwa/OfflineQueue'
+import { PendingSubmissions } from '@/pwa/PendingSubmissions'
 import { cn, Drawer, IconButton, ToastProvider } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferences'
@@ -115,6 +117,7 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
       <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-surface px-3">
         <Brand compact />
         <div className="flex items-center gap-1">
+          <PendingSubmissions />
           <ThemeToggle />
           <NotificationBell />
           <button
@@ -175,7 +178,14 @@ export function AppShell() {
 
   return (
     <ToastProvider>
-      {isDriverPortalUser(viewer) ? <DriverShell routes={sections.flatMap((s) => s.routes)} /> : <StaffShell sections={sections} />}
+      {isDriverPortalUser(viewer) ? (
+        // Submissions made offline wait on the phone and are sent when it can (FMS-81).
+        <OfflineQueueProvider>
+          <DriverShell routes={sections.flatMap((s) => s.routes)} />
+        </OfflineQueueProvider>
+      ) : (
+        <StaffShell sections={sections} />
+      )}
     </ToastProvider>
   )
 }
