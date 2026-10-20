@@ -83,6 +83,19 @@ await deliverEvents(); // consumers react: the driver-account copy, the cache, t
 
 Unit tests of a service over fakes pass a `RecordingEventBus` (`src/shared/events/recording-event-bus.ts`). It records the events and the client they were published on, so a test can check they went out inside the transaction.
 
+### Assignment rules (FMS-31, FMS-62)
+
+The rules that decide whether a driver and vehicle may be put on a trip are tested in three places, each for what it can prove:
+
+| What | Where | How |
+|---|---|---|
+| The order of the checks, what each refusal says, that a refusal writes and publishes nothing, the expired-licence block, warnings | `src/modules/trip/application/trip.service.assign.test.ts` | Unit: `TripService` over fakes. Runs in well under a second. |
+| Fleet's reading of availability (which reason becomes which refusal) | `src/modules/trip/domain/assignment.test.ts` | Unit: a pure function. |
+| The interval arithmetic of BR-1 (driver) and BR-3 (vehicle): exact, partial, contained, around, the 0-minute gap that counts as an overlap, the 1-minute gap that does not, which statuses hold a trip | `test/integration/trip-overlap.test.ts` | Database: the range query `TripRepository.overlapping`. |
+| The same rule end to end, and the exclusion constraints that backstop it | `test/integration/trip-assignment.test.ts`, `trip-assignment-race.test.ts` | HTTP, with real concurrency. |
+
+The overlap decision is SQL (`tstzrange(..., '[]')`), not a function, so a unit test with a faked repository could only check its own stub. That is why the interval cases run against PostgreSQL. A unit test here answers "does the service do the right thing with that answer", never "is that the right answer".
+
 ## Frontend
 
 Component tests sit next to the component as `*.test.tsx` and run in `jsdom` with [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/). Query the page the way a user sees it (`getByRole`, `getByLabelText`), not by class names.
