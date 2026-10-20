@@ -31,6 +31,22 @@ describe('api client', () => {
     expect(channels).toEqual(['web', 'pwa'])
   })
 
+  it("notes when an answer came from the driver app's saved copy, not the server (FMS-34)", async () => {
+    const api = testApi()
+    const seen: boolean[] = []
+    api.onServedOfflineChange((offline) => seen.push(offline))
+    expect(api.servedOffline()).toBe(false)
+
+    server.use(http.post('/api/v1/auth/refresh', () => HttpResponse.json({ data: { roles: ['driver'] }, meta: {} }, { headers: { 'X-FMS-Offline': 'true' } })))
+    await api.refresh()
+    expect(api.servedOffline()).toBe(true)
+
+    server.use(http.get('/api/v1/ping', ok))
+    await api.request('/ping')
+    expect(api.servedOffline()).toBe(false)
+    expect(seen).toEqual([true, false])
+  })
+
   describe('idempotencyKey', () => {
     it('sends no key by default, a fresh UUID for `true`, and a given string as is', async () => {
       const keys: (string | null)[] = []

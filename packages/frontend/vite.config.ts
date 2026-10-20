@@ -1,6 +1,7 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { driverPwa } from './build/pwa.ts'
 
 // Backend for the dev-server /api proxy. The default matches running both
 // apps on the host; docker-compose sets API_PROXY_TARGET to the backend
@@ -8,7 +9,8 @@ import react from '@vitejs/plugin-react'
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:3000'
 
 export default defineConfig({
-  plugins: [react()],
+  // driverPwa: the driver app's service worker, production builds only (FMS-34).
+  plugins: [react(), driverPwa()],
   resolve: {
     alias: {
       // @/components, @/lib, @/hooks, ... -> src/ (mirrors tsconfig paths)

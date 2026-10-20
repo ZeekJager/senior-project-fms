@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#4F46E5" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>You are offline · FMS Driver</title>
+    <!-- Served by the driver app's service worker (FMS-34) for a page it has not
+         saved, while there is no connection. Self-contained: no scripts, no fonts, nothing a strict CSP would block. -->
+    <style>
+      :root {
+        --canvas: #f6f7fb;
+        --surface: #ffffff;
+        --ink: #0f172a;
+        --muted: #475569;
+        --line: #e2e8f0;
+        --brand: #4f46e5;
+        --brand-soft: #eef2ff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --canvas: #0b0d14;
+          --surface: #131722;
+          --ink: #e2e8f0;
+          --muted: #94a3b8;
+          --line: #263041;
+          --brand: #818cf8;
+          --brand-soft: rgba(129, 140, 248, 0.12);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+        background: var(--canvas);
+        color: var(--ink);
+        font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      main {
+        width: 100%;
+        max-width: 400px;
+        padding: 32px 24px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 12px 32px -12px rgba(15, 23, 42, 0.18);
+        text-align: center;
+      }
+      .mark {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 20px;
+        display: grid;
+        place-items: center;
+        border-radius: 16px;
+        background: var(--brand-soft);
+        color: var(--brand);
+      }
+      h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+      p { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+      .actions { display: grid; gap: 8px; margin-top: 24px; }
+      a {
+        display: block;
+        min-height: 48px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        font: inherit;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      a { border: 1px solid var(--line); color: var(--ink); }
+      /* The brand indigo in both themes: white on it is 6.3:1. */
+      a.primary { border-color: #4f46e5; background: #4f46e5; color: #fff; }
+      a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h.01" />
+          <path d="M8.5 16.43a5 5 0 0 1 7 0" />
+          <path d="M5 12.86a10 10 0 0 1 5.17-2.69" />
+          <path d="M19 12.86a10 10 0 0 0-2-1.43" />
+          <path d="M2 8.82a15 15 0 0 1 4.18-2.65" />
+          <path d="M22 8.82a15 15 0 0 0-11.29-3.76" />
+          <path d="m2 2 20 20" />
+        </svg>
+      </div>
+      <h1>You are offline</h1>
+      <p>This page needs a connection. My day still opens on this phone without one.</p>
+      <div class="actions">
+        <a href="/driver">Open My day</a>
+        <!-- The worker serves this page in place of the one asked for: "" reloads that page. -->
+        <a class="primary" href="">Try again</a>
+      </div>
+    </main>
+  </body>
+</html>
