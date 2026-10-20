@@ -96,12 +96,23 @@ describe('MoneyInput', () => {
     expect(field()).not.toHaveAttribute('aria-invalid')
   })
 
-  it.each(['abc', '1e3', '-5', '1,5'])('rejects %j as a bad format', async (text) => {
+  it.each(['abc', '1e3', '1,5'])('rejects %j as a bad format', async (text) => {
     render(<Harness Input={MoneyInput} />)
 
     await userEvent.setup().type(field(), text)
 
     expect(screen.getByText('Enter an amount like 149.99.')).toBeInTheDocument()
+  })
+
+  it('blocks a negative amount with its own message, and emits nothing', async () => {
+    const spy = vi.fn()
+    render(<Harness Input={MoneyInput} spy={spy} />)
+
+    await userEvent.setup().type(field(), '-5')
+
+    expect(screen.getByText('An amount cannot be negative.')).toBeInTheDocument()
+    expect(field()).toHaveAttribute('aria-invalid', 'true')
+    expect(spy).not.toHaveBeenCalledWith(expect.any(Number))
   })
 
   it('pads to two decimals on blur', async () => {

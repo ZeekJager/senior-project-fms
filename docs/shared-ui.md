@@ -8,8 +8,9 @@ Money is stored as integer Ethiopian cents and fuel as integer millilitres (api-
 |---|---|---|
 | `MoneyDisplay` | `amountMinorUnits` (cents), `unit="ETB"` | `ETB 1,234.50`, right-aligned, tabular digits |
 | `FuelDisplay` | `amountMinorUnits` (ml), `unit="L"`, `decimals` 2 or 3 | 23500 ml is `23.50 L`. Litres is the assumed default until the unit setting exists (SE-75) |
-| `MoneyInput` | `label`, `value` (cents or null), `onChange(cents or null)`, `required`, `error`, `disabled`, `name`, `hint`, `hideLabel` | Typing `149.99` emits `14999`; at most 2 decimals. Floating-label look with `ETB` inside the field (FMS-24) |
+| `MoneyInput` | `label`, `value` (cents or null), `onChange(cents or null)`, `required`, `error`, `disabled`, `name`, `hint`, `hideLabel` | Typing `149.99` emits `14999`; at most 2 decimals. A minus sign is refused with its own message ("An amount cannot be negative.") and emits `null`. Floating-label look with `ETB` inside the field (FMS-24) |
 | `FuelInput` | same, millilitres | Typing `23.5` emits `23500`; at most 3 decimals |
+| `OdometerInput` | same, tenths of a km | Typing `123456.7` emits `1234567`; at most 1 decimal; `km` inside the field. Send `tenths / 10` as `odometer_km` (FMS-40) |
 | `StatusBadge` | `status` | One colour per status; see below |
 
 ## Rules the components enforce

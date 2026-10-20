@@ -2,6 +2,7 @@ import { DecimalInput, type DecimalInputProps } from './DecimalInput'
 
 const MESSAGES = {
   format: 'Enter an amount like 149.99.',
+  negative: 'An amount cannot be negative.',
   too_many_decimals: 'Use at most 2 decimal places.',
   too_large: 'That amount is too large.',
 }

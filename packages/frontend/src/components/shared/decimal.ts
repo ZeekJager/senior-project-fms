@@ -2,7 +2,8 @@
 // becomes 14999 by joining digit strings, because 1.005 * 100 is 100.49999...
 // in a double and a multiplication would silently store the wrong amount.
 
-export type ParseError = 'format' | 'too_many_decimals' | 'too_large'
+/** `negative`: a minus sign. Volumes, amounts and readings entered here are never below zero. */
+export type ParseError = 'format' | 'negative' | 'too_many_decimals' | 'too_large'
 
 export type ParseResult = { ok: true; minor: number | null } | { ok: false; error: ParseError }
 
@@ -19,6 +20,8 @@ const MAX_WHOLE_DIGITS = 12
 export function parseDecimal(text: string, decimals: number): ParseResult {
   const trimmed = text.trim()
   if (trimmed === '') return { ok: true, minor: null }
+
+  if (/^-\s*[\d.]/.test(trimmed)) return { ok: false, error: 'negative' }
 
   const match = DECIMAL.exec(trimmed)
   const whole = match?.[1] ?? ''
