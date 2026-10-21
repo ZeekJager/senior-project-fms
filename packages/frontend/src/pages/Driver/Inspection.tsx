@@ -1,13 +1,13 @@
-import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, CloudUpload, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, CloudUpload } from 'lucide-react'
 import { useId, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Skeleton, cn } from '@/components/ui'
+import { cn } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { QUEUE_FULL_MESSAGE, QueueFullError } from '@/lib/offlineQueue'
 import { useOfflineQueue } from '@/pwa/OfflineQueue'
-import { useTripVehicle } from './api'
-import { Note, Panel } from './parts'
-import { CHECKLISTS, INSPECTION_NAMES, inspectionBody, readPostTrip, useInspectedTrip, writePostTrip, type Answer, type InspectedTrip, type InspectionType } from './checklist'
+import { useTripVehicle, useWorkingTrip, type WorkingTrip } from './api'
+import { FormHeader, Note, Panel, TripGate, VehicleCard } from './parts'
+import { CHECKLISTS, INSPECTION_NAMES, inspectionBody, readPostTrip, writePostTrip, type Answer, type InspectionType } from './checklist'
 
 type Done = { status: 'sent' | 'queued'; type: InspectionType; defects: number }
 
@@ -23,48 +23,35 @@ const typeParam = (value: string | null): InspectionType | null => (value === 'p
 export function DriverInspection() {
   const [params] = useSearchParams()
   const tripId = params.get('trip')
-  const { trip, loading, offline } = useInspectedTrip(tripId)
+  const working = useWorkingTrip(tripId)
   const [done, setDone] = useState<Done | null>(null)
 
   return (
     <div className="space-y-5">
-      <header>
-        <Link to="/driver" className="focus-ring -ml-1 inline-flex items-center gap-1 rounded-control px-1 py-1 text-sm font-medium text-ink-muted hover:text-ink">
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          My day
-        </Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink">Vehicle inspection</h1>
-      </header>
-
+      <FormHeader title="Vehicle inspection" />
       {done ? (
         <Result done={done} />
-      ) : loading ? (
-        <Skeleton className="h-96 w-full rounded-card" />
-      ) : offline ? (
-        <Panel icon={<WifiOff />} title="No signal" tone="neutral">
-          This trip is not saved on this phone yet. Open it again when you have signal; after that the form works offline.
-        </Panel>
-      ) : !trip ? (
-        <Panel icon={<AlertCircle />} title="No vehicle to inspect" tone="neutral">
-          {tripId ? 'This trip is not one of yours, or it no longer exists.' : 'Inspections are for the vehicle of your trip. When dispatch assigns one, it shows here.'}
-        </Panel>
-      ) : !trip.vehicleId ? (
-        <Panel icon={<Truck />} title="No vehicle on this trip yet" tone="neutral">
-          Dispatch has not given this trip a vehicle. Call dispatch.
-        </Panel>
       ) : (
-        <InspectionForm
-          key={`${trip.id}:${params.get('type') ?? ''}`}
-          trip={trip as InspectedTrip & { vehicleId: string }}
-          initialType={typeParam(params.get('type')) ?? (trip.status === 'assigned' ? 'pre_trip' : 'post_trip')}
-          onDone={setDone}
-        />
+        <TripGate
+          state={working}
+          tripId={tripId}
+          noTrip={{ title: 'No vehicle to inspect', text: 'Inspections are for the vehicle of your trip. When dispatch assigns one, it shows here.' }}
+        >
+          {(trip) => (
+            <InspectionForm
+              key={`${trip.id}:${params.get('type') ?? ''}`}
+              trip={trip}
+              initialType={typeParam(params.get('type')) ?? (trip.status === 'assigned' ? 'pre_trip' : 'post_trip')}
+              onDone={setDone}
+            />
+          )}
+        </TripGate>
       )}
     </div>
   )
 }
 
-function InspectionForm({ trip, initialType, onDone }: { trip: InspectedTrip & { vehicleId: string }; initialType: InspectionType; onDone: (done: Done) => void }) {
+function InspectionForm({ trip, initialType, onDone }: { trip: WorkingTrip & { vehicleId: string }; initialType: InspectionType; onDone: (done: Done) => void }) {
   const { session } = useAuth()
   const { submit, full, online } = useOfflineQueue()
   const vehicle = useTripVehicle(trip.vehicleId)
@@ -115,13 +102,7 @@ function InspectionForm({ trip, initialType, onDone }: { trip: InspectedTrip & {
         void send()
       }}
     >
-      <div className="flex items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-card">
-        <Truck className="h-6 w-6 shrink-0 text-brand-ink" aria-hidden="true" />
-        <span className="min-w-0">
-          <span className="block truncate text-lg font-semibold tracking-wide text-ink">{plate ?? 'Your vehicle'}</span>
-          <span className="block truncate text-sm text-ink-muted">{[vehicle.data ? `${vehicle.data.make} ${vehicle.data.model}` : null, trip.routeName].filter(Boolean).join(' · ') || 'The vehicle of your trip'}</span>
-        </span>
-      </div>
+      <VehicleCard trip={trip} />
 
       <fieldset>
         <legend className="sr-only">Inspection</legend>

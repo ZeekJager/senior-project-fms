@@ -6,7 +6,7 @@ import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { DriverHome, DriverInspection } from '@/pages/Driver'
+import { DriverFuel, DriverHome, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage, DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
@@ -129,6 +129,8 @@ export const portals: Portal[] = [
       { path: '/driver', element: <DriverHome />, permission: 'trip:execute', nav: { label: 'My day', icon: Home } },
       // S-12 (FMS-37): the pre- and post-trip inspection, submitted through the offline queue.
       { path: '/driver/dvir', element: <DriverInspection />, permission: 'dvir:write', nav: { label: 'Inspection', icon: ClipboardCheck } },
+      // S-14 (FMS-40): a fill-up at the pump, submitted through the offline queue.
+      { path: '/driver/fuel', element: <DriverFuel />, permission: 'fuel:write', nav: { label: 'Fuel', icon: Fuel } },
     ],
   },
 ]

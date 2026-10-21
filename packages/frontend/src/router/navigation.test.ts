@@ -43,7 +43,7 @@ describe('menus per role (seeded grants)', () => {
       { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Routes', 'Fuel reconciliation'], Administration: ['Users & roles'] },
     ],
     ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Routes'], 'Command center': ['Live map'] }],
-    ['driver', { Driver: ['My day', 'Inspection'] }],
+    ['driver', { Driver: ['My day', 'Inspection', 'Fuel'] }],
   ])('%s sees exactly the screens its permissions open', (role, expected) => {
     expect(menu(role)).toEqual(expected)
   })

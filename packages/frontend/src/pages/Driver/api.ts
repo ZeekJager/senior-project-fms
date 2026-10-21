@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
+import { readPostTrip } from './checklist'
 
 // The driver's day (FMS-35, S-11): today's trips, and start and end with one tap.
 
@@ -116,4 +117,53 @@ export function useTripCommand(command: 'start' | 'end') {
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['driver', 'today'] }),
   })
+}
+
+/** The trip a driver form is about (an inspection, a fill-up), as much as the form needs. */
+export interface WorkingTrip {
+  id: string
+  routeName: string | null
+  vehicleId: string | null
+  status: string
+}
+
+const fromDriverTrip = (t: DriverTrip): WorkingTrip => ({ id: t.id, routeName: t.route_name, vehicleId: t.vehicle_id, status: t.status })
+
+/**
+ * Which trip, and so which vehicle: a driver inspects or fuels only the
+ * vehicle of their own trip. `?trip=` names it (the post-trip prompt); without it, the
+ * trip under way or the next one today. Looked up on the phone first (today's
+ * saved trips, the post-trip reminder), then from the server.
+ */
+export function useWorkingTrip(tripId: string | null) {
+  const { api, session } = useAuth()
+  const today = useTodayTrips()
+  const trips = today.data ?? []
+  const local = tripId
+    ? (() => {
+        const listed = trips.find((t) => t.id === tripId)
+        if (listed) return fromDriverTrip(listed)
+        const ended = readPostTrip(session?.user.id ?? '')
+        return ended?.tripId === tripId && ended.vehicleId ? { id: tripId, routeName: ended.routeName, vehicleId: ended.vehicleId, status: 'completed' } : null
+      })()
+    : null
+  const fetched = useQuery({
+    queryKey: ['driver', 'trip', tripId],
+    queryFn: async () => fromDriverTrip(await api.request<DriverTrip>(`/trips/${tripId}`)),
+    // Asked only once today's trips are known not to have it.
+    enabled: tripId !== null && local === null && !today.isPending,
+    retry: false,
+  })
+
+  if (tripId) {
+    if (local) return { trip: local, loading: false, offline: false }
+    if (today.isPending) return { trip: null, loading: today.fetchStatus !== 'paused', offline: today.fetchStatus === 'paused' }
+    return { trip: fetched.data ?? null, loading: fetched.isPending && fetched.fetchStatus !== 'paused' && !fetched.isError, offline: fetched.fetchStatus === 'paused' }
+  }
+  const current = trips.find((t) => t.status === 'en_route') ?? trips[0]
+  return {
+    trip: current ? fromDriverTrip(current) : null,
+    loading: today.isPending && today.fetchStatus !== 'paused',
+    offline: today.isPending && today.fetchStatus === 'paused',
+  }
 }

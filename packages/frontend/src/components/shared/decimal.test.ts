@@ -30,7 +30,11 @@ describe('parseDecimal (money, 2 decimals)', () => {
     expect(minor('0.001', 2)).toBe('too_many_decimals')
   })
 
-  it.each(['abc', '1e3', '-5', '+5', '1,5', '1.2.3', '.', '12 34', '١٢'])('rejects %j as a bad format', (text) => {
+  it.each(['-5', '-0.5', '- 23.5', '-.5'])('rejects %j as negative', (text) => {
+    expect(parseDecimal(text, 2)).toEqual({ ok: false, error: 'negative' })
+  })
+
+  it.each(['abc', '1e3', '-', '-x', '+5', '1,5', '1.2.3', '.', '12 34', '١٢'])('rejects %j as a bad format', (text) => {
     expect(minor(text, 2)).toBe('format')
   })
 
