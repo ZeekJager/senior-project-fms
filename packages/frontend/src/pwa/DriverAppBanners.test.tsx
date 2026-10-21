@@ -17,6 +17,20 @@ function installOffer(outcome: 'accepted' | 'dismissed' = 'accepted') {
 
 const manifestLink = () => document.head.querySelector('link[rel="manifest"]')
 
+/**
+ * The driver portal, once its shell is live. "My day" can appear a moment
+ * before the shell's effects have run (the head tags go in, the online/offline
+ * and install listeners attach, all in one pass), and an event fired or a tag
+ * read in that gap is lost. The manifest link is the sign the pass is done.
+ */
+async function openDriverPortal(path = '/driver') {
+  signedInAs(driver)
+  const view = renderApp(path)
+  await screen.findByRole('heading', { name: 'My day' })
+  await waitFor(() => expect(manifestLink()).not.toBeNull())
+  return view
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   localStorage.clear()
@@ -24,9 +38,7 @@ afterEach(() => {
 
 describe('driver app shell (FMS-34)', () => {
   it('the driver portal links the manifest; staff screens never do', async () => {
-    signedInAs(driver)
-    const view = renderApp('/driver')
-    await screen.findByRole('heading', { name: 'My day' })
+    const view = await openDriverPortal()
     expect(manifestLink()).toHaveAttribute('href', '/manifest.json')
     expect(document.head.querySelector('meta[name="theme-color"]')).toHaveAttribute('content', '#4F46E5')
     view.unmount()
@@ -39,9 +51,7 @@ describe('driver app shell (FMS-34)', () => {
   })
 
   it('shows "You are offline" while the phone has no signal, and hides it when it is back', async () => {
-    signedInAs(driver)
-    renderApp('/driver')
-    await screen.findByRole('heading', { name: 'My day' })
+    await openDriverPortal()
     expect(screen.queryByText('You are offline.')).not.toBeInTheDocument()
     act(() => void window.dispatchEvent(new Event('offline')))
     expect(await screen.findByText('You are offline.')).toBeInTheDocument()
@@ -50,9 +60,7 @@ describe('driver app shell (FMS-34)', () => {
   })
 
   it("offers to install when Chrome does, and Install opens Chrome's prompt once", async () => {
-    signedInAs(driver)
-    renderApp('/driver')
-    await screen.findByRole('heading', { name: 'My day' })
+    await openDriverPortal()
     const offer = installOffer()
     act(() => void window.dispatchEvent(offer))
     const user = userEvent.setup()
@@ -62,18 +70,14 @@ describe('driver app shell (FMS-34)', () => {
   })
 
   it('"Not now" hides the offer, and it stays hidden next time', async () => {
-    signedInAs(driver)
-    const first = renderApp('/driver')
-    await screen.findByRole('heading', { name: 'My day' })
+    const first = await openDriverPortal()
     act(() => void window.dispatchEvent(installOffer()))
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Not now' }))
     expect(screen.queryByText('Install FMS Driver')).not.toBeInTheDocument()
     first.unmount()
 
-    signedInAs(driver)
-    renderApp('/driver')
-    await screen.findByRole('heading', { name: 'My day' })
+    await openDriverPortal()
     act(() => void window.dispatchEvent(installOffer()))
     expect(screen.queryByText('Install FMS Driver')).not.toBeInTheDocument()
   })
