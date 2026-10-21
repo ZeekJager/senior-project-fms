@@ -87,3 +87,37 @@ In development, `DataTable` warns in the console when data rows come out taller 
 - A polite live region (no status role, so the toast region keeps it) announces loading, the rows shown ("Drivers: 26–50 of 112.") or "nothing to show". A filter that empties the table is heard, not just seen.
 - `ErrorState` is an alert. Copying the details is announced.
 - Dialogs trap focus, start on the type-to-confirm field when there is one, close on Escape and give focus back on close.
+
+## Fleet map
+
+Card: FMS-44 (SE-80). Code: `packages/frontend/src/components/FleetMap/`. Import from `@/components/FleetMap`. Leaflet 1.9 with react-leaflet 4 (react-leaflet 5 needs React 19), over OpenStreetMap tiles. Example on `/dev/ui`.
+
+The map only draws what it is given. The page that shows it (the Fleet Command Center, FMS-45) owns the socket and passes the vehicles as a prop; the map never connects to Socket.IO.
+
+| Prop | Notes |
+|---|---|
+| `vehicles` | `{vehicleId, lat, lng, speedKmh, lastSeen, plateNumber?, heading?, stoppedSince?, breakdown?}[]`. From `vehicle.location.updated` (`docs/realtime.md`): `vehicle_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at` as `lastSeen` |
+| `onVehicleClick` | Called with the `vehicleId` when a marker is clicked, or focused and activated with Enter or Space |
+| `className` | Sizes the map; it fills the box and needs a height (at least 256px) |
+| `label` | The map region's accessible name; "Fleet map" by default |
+| `ref` | The Leaflet map once it exists, so the page can pan to a vehicle (`flyTo`) |
+
+**Marker colours.** Each marker is worked out from the vehicle's last ping, in this order:
+
+| State | Colour | When |
+|---|---|---|
+| Breakdown | red, with a ring | `breakdown` is set (FMS-50). Shown even when the phone has gone quiet |
+| Offline | grey | No ping for more than 2 minutes. The map re-checks every 10 s, so a vehicle turns grey without new data |
+| Idling | amber | 0 km/h for more than 5 minutes |
+| Stopped | green, no arrow | 0 km/h for 5 minutes or less |
+| Moving | green, arrow turned to `heading` | Any other speed. A ping without a speed counts as moving, never as stopped |
+
+"Stopped since" is the server's `stoppedSince` when given (the idling rule, FMS-46). Without it, the map counts from the first 0 km/h ping it saw, so a vehicle already idling when the page opened turns amber 5 minutes later.
+
+**Hover or focus** shows the plate, status, speed and last seen. The tooltip opens below a marker near the top edge. A legend in the corner counts the vehicles in each colour.
+
+**Tiles load only on screen.** The Leaflet map is created the first time the map scrolls into view (IntersectionObserver). Its tile layer is removed whenever it scrolls out, so panning or zooming then fetches nothing; markers stay. In the dark theme, the tiles are inverted to a dim map.
+
+**View.** The map opens on Addis Ababa at zoom 12. It fits the view to the vehicles the first time any are given, and never again, so a dispatcher's own panning wins.
+
+**Tile server.** OpenStreetMap's tiles need no key, but their usage policy is for light use. A production deployment points `VITE_MAP_TILE_URL` (and `VITE_MAP_TILE_ATTRIBUTION`) at its own tile server or a provider. Tile requests are cross-origin, so the driver app's service worker never caches them.
