@@ -6,6 +6,7 @@ export {
   getSubmission,
   MAX_PENDING,
   nextPending,
+  QUEUE_FULL_MESSAGE,
   QueueFullError,
   removeSubmission,
   submissionsOf,

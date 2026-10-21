@@ -31,7 +31,7 @@ describe('portals', () => {
     expect(within(menu).getByRole('link', { name: 'Dispatch' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('a driver lands on /driver in the mobile driver portal: no staff menu, account sheet with sign out', async () => {
+  it('a driver lands on /driver in the mobile driver portal: no staff menu, tabs at the bottom, account sheet with sign out', async () => {
     signedInAs(driver)
     renderApp('/')
     await waitFor(() => expect(location()).toBe('/driver'))
@@ -39,11 +39,15 @@ describe('portals', () => {
     expect(screen.queryByRole('link', { name: 'Vehicles' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Fleet management' })).not.toBeInTheDocument()
 
+    const tabs = screen.getByRole('navigation', { name: 'Main' })
+    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['My day', 'Inspection'])
+
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Account' }))
     const sheet = await screen.findByRole('dialog', { name: 'Account' })
     expect(within(sheet).getByText('Sam Tester')).toBeInTheDocument()
-    expect(within(sheet).getAllByRole('link').map((a) => a.textContent)).toEqual(['My day'])
+    // The menu is the tab bar: the sheet does not repeat it.
+    expect(within(sheet).queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
     expect(within(sheet).getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 
