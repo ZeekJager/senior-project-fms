@@ -94,6 +94,6 @@ npm run simulate:gps -- --speeding 0.2 --idling 0.1 --api http://localhost:3000/
 
 ## Not yet
 
-- **No read endpoints:** `GET /tracking/vehicles/current` and the history endpoint (api-contract §11.1) come with the live map (FMS-45).
+- **History:** `GET /vehicles/{id}/tracking` (api-contract §11.1) is not built yet. The current positions are read by the live map ([live-map.md](live-map.md)).
 - **Phone timing:** a phone's pings are refused once its trip has ended, even if they were recorded during the trip.
 - **Old pings:** `tracking.gps_pings` keeps its default partition; monthly partitions and a retention job come with the data volume.

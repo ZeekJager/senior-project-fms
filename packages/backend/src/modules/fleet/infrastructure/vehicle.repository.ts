@@ -142,6 +142,17 @@ export interface TrackingVehicle {
   isActive: boolean;
 }
 
+/** A vehicle as the live map lists it (FMS-45). */
+export interface LiveMapVehicle {
+  id: string;
+  publicId: string;
+  registrationNumber: string;
+  vehicleType: string;
+  status: string;
+  maintenanceFlag: boolean;
+  depotPublicId: string | null;
+}
+
 export class VehicleRepository extends Repository {
   constructor(
     db: Pool,
@@ -347,6 +358,21 @@ export class VehicleRepository extends Repository {
          LEFT JOIN fleet.depots d ON d.id = v.depot_id
         WHERE ${'publicIds' in by ? 'v.public_id = ANY($1::uuid[])' : 'v.id = ANY($1::bigint[])'} AND ${clause.sql}`,
       [list, ...clause.params],
+    );
+    return res.rows;
+  }
+
+  /** The vehicles in a scope that are not retired, optionally of one depot (internal id), by plate. */
+  async liveMap(db: Queryable, scope: Scope, depotId: string | null): Promise<LiveMapVehicle[]> {
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const res = await db.query<LiveMapVehicle>(
+      `SELECT v.id, v.public_id AS "publicId", v.registration_number AS "registrationNumber", v.vehicle_type::text AS "vehicleType",
+              v.status::text AS status, v.maintenance_flag AS "maintenanceFlag", d.public_id AS "depotPublicId"
+         FROM fleet.vehicles v
+         LEFT JOIN fleet.depots d ON d.id = v.depot_id
+        WHERE v.status <> 'retired' AND ($1::bigint IS NULL OR v.depot_id = $1) AND ${clause.sql}
+        ORDER BY v.registration_number, v.id`,
+      [depotId, ...clause.params],
     );
     return res.rows;
   }

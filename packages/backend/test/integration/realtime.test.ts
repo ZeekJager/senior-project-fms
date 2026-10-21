@@ -2,11 +2,12 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import request from 'supertest';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createApp } from '../../src/app';
 import { config } from '../../src/config';
 import { pool } from '../../src/db';
 import { redis } from '../../src/shared/cache';
+import { logger } from '../../src/shared/logging/logger';
 import { RedisEventBroadcaster } from '../../src/shared/events/broadcaster';
 import { createEvent } from '../../src/shared/events/domain-event';
 import { eventChannel } from '../../src/shared/events/event-bus';
@@ -130,6 +131,25 @@ describe('real-time gateway (FMS-43)', () => {
     const { cookie } = await signIn(['dispatcher'], depot);
     await request(app).post('/api/v1/auth/logout').set('Cookie', cookie);
     expect((await refused(socket(url, { cookie }))).message).toBe('AUTH_TOKEN_REVOKED');
+  });
+
+  test('opening and closing a socket is logged, with why it closed: a closed tab says goodbye (FMS-45)', async () => {
+    const info = vi.spyOn(logger, 'info');
+    try {
+      const { url } = await start();
+      const { cookie } = await signIn(['dispatcher'], await createDepot());
+      const s = socket(url, { cookie });
+      await connected(s);
+      const id = s.id;
+      // What socket.io-client does on a page unload with closeOnBeforeunload (the web app sets it).
+      s.disconnect();
+      await quiet(200);
+      const logged = info.mock.calls.map(([fields, message]) => ({ fields, message }));
+      expect(logged).toContainEqual({ fields: expect.objectContaining({ socket_id: id }), message: 'socket connected' });
+      expect(logged).toContainEqual({ fields: expect.objectContaining({ socket_id: id, reason: 'client namespace disconnect' }), message: 'socket disconnected' });
+    } finally {
+      info.mockRestore();
+    }
   });
 
   test('only the API host and allow-listed origins may open a socket', async () => {

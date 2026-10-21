@@ -117,7 +117,13 @@ export class RealtimeGateway {
 
     // The session's access token runs out: close, so a revoked or downgraded session never outlives it.
     const expiry = setTimeout(() => socket.disconnect(true), Math.max(0, (socket.data.expiresAt as number) - this.now()));
-    socket.on('disconnect', () => clearTimeout(expiry));
+    // Opened and closed sockets are logged with the reason: a closed browser tab is "client namespace disconnect"
+    // (the client says goodbye, FMS-45), a dropped network "transport close" or "ping timeout".
+    this.deps.log('info', 'socket connected', { user_id: identity.userId, socket_id: socket.id });
+    socket.on('disconnect', (reason) => {
+      clearTimeout(expiry);
+      this.deps.log('info', 'socket disconnected', { user_id: identity.userId, socket_id: socket.id, reason });
+    });
 
     const limit = new RateLimit(BURST, PER_SECOND, this.now);
     let refusals = 0;

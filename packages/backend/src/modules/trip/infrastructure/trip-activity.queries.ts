@@ -137,3 +137,32 @@ export async function enRouteTripOfDriver(db: Queryable, driverId: string): Prom
   );
   return res.rows[0] ?? null;
 }
+
+/** A trip under way as the live map shows it (FMS-45): the route's name, and the driver by internal id (fleet names them). */
+export interface LiveTrip {
+  vehicleId: string;
+  /** Public id. */
+  tripId: string;
+  routeName: string | null;
+  origin: string | null;
+  destination: string | null;
+  driverId: string | null;
+  actualStart: Date | null;
+  scheduledEnd: Date | null;
+}
+
+/** The en-route trip of each vehicle (internal ids) that has one, keyed by vehicle id. */
+export async function liveTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, LiveTrip>> {
+  if (vehicleIds.length === 0) return new Map();
+  const res = await db.query<LiveTrip>(
+    `SELECT DISTINCT ON (t.vehicle_id)
+            t.vehicle_id AS "vehicleId", t.public_id AS "tripId", r.name AS "routeName", t.origin, t.destination,
+            t.driver_id AS "driverId", t.actual_start AS "actualStart", t.scheduled_end AS "scheduledEnd"
+       FROM trip.trips t
+       LEFT JOIN trip.routes r ON r.id = t.route_id
+      WHERE t.vehicle_id = ANY($1::bigint[]) AND t.status = 'en_route'
+      ORDER BY t.vehicle_id, t.actual_start DESC NULLS LAST, t.id DESC`,
+    [vehicleIds],
+  );
+  return new Map(res.rows.map((r) => [r.vehicleId, r]));
+}

@@ -153,6 +153,21 @@ describe('RealtimeProvider (FMS-43)', () => {
     expect(fake.connects).toBe(1)
   })
 
+  it('closing the tab says goodbye to the server; a page restored from the back/forward cache reconnects', async () => {
+    signedInAs(dispatcher)
+    const fake = new FakeSocket()
+    renderProvider(fake)
+    await waitFor(() => expect(fake.connects).toBe(1))
+    fake.fire('connect')
+    act(() => void window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })))
+    expect(fake.disconnects).toBe(1)
+    act(() => void window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })))
+    expect(fake.connects).toBe(2)
+    // A fresh load (not from the cache) is the provider's first connect, not this.
+    act(() => void window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })))
+    expect(fake.connects).toBe(2)
+  })
+
   it('outside the provider the hooks do nothing', () => {
     const seen: unknown[] = []
     render(<Probe seen={seen} />)

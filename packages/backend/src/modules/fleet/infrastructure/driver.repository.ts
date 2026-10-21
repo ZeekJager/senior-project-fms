@@ -131,6 +131,19 @@ export class DriverRepository extends Repository {
     return new Map(res.rows.map((r) => [r.id, r.publicId]));
   }
 
+  /** Public id and name (the account's) of drivers by internal id, for the live map (FMS-45). */
+  async namesByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; fullName: string | null }>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; publicId: string; fullName: string | null }>(
+      `SELECT d.id, d.public_id AS "publicId", a.full_name AS "fullName"
+         FROM fleet.drivers d
+         LEFT JOIN fleet.driver_accounts a ON a.user_id = d.user_id
+        WHERE d.id = ANY($1::bigint[])`,
+      [ids],
+    );
+    return new Map(res.rows.map(({ id, ...rest }) => [id, rest]));
+  }
+
   /** The driver profile of a user account (internal user id), if any. */
   async findByUserId(db: Queryable, userId: string): Promise<DriverRow | null> {
     const res = await db.query<DriverRow>(`${ROW_SQL} WHERE d.user_id = $1`, [userId]);

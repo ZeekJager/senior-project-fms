@@ -159,7 +159,7 @@ describe('FleetMap', () => {
     })
     expect(stateOf('AA 3-12345')).toBe('offline')
     const legend = screen.getByRole('list', { name: 'Map legend' })
-    expect(within(legend).getByText('No ping 2+ min').nextSibling).toHaveTextContent('2')
+    expect(within(legend).getByText('No ping 2+ min').closest('li')!.lastElementChild).toHaveTextContent('2')
   })
 
   it('shows a reported breakdown in red', () => {

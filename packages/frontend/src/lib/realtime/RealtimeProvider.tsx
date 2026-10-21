@@ -13,8 +13,8 @@ export const SOCKET_PATH = '/api/v1/socket.io'
  * permissions and scope, so an event never has to carry a whole record.
  */
 const STALE: Record<string, readonly (readonly string[])[]> = {
-  'trip.updated': [['dispatch'], ['driver', 'today'], ['trips']],
-  'vehicle.status.changed': [['dispatch'], ['vehicles']],
+  'trip.updated': [['dispatch'], ['driver', 'today'], ['trips'], ['tracking']],
+  'vehicle.status.changed': [['dispatch'], ['vehicles'], ['tracking']],
   'alert.created': [['alerts'], ['notifications']],
   'alert.updated': [['alerts'], ['notifications']],
   'incident.created': [['incidents']],
@@ -80,10 +80,21 @@ export function RealtimeProvider({ children, connect = connectToApi }: { childre
       handlers.current.get(event)?.forEach((handler) => handler(payload))
     })
 
+    // Closing or leaving the tab says goodbye (a disconnect packet: the server logs "client namespace
+    // disconnect" at once, not a ping timeout later). A page restored from the back/forward cache reconnects.
+    const leave = () => socket.disconnect()
+    const back = (e: PageTransitionEvent) => {
+      if (e.persisted && !closed) socket.connect()
+    }
+    window.addEventListener('pagehide', leave)
+    window.addEventListener('pageshow', back)
+
     setStatus('connecting')
     socket.connect()
     return () => {
       closed = true
+      window.removeEventListener('pagehide', leave)
+      window.removeEventListener('pageshow', back)
       socket.removeAllListeners()
       socket.disconnect()
       setStatus('off')

@@ -17,9 +17,13 @@ export interface FleetMapVehicle {
   stoppedSince?: string | null
   /** A breakdown is reported for the vehicle (FMS-50). */
   breakdown?: boolean
+  /** An open speeding flag (the telemetry rules, FMS-46): the marker pulses red. */
+  speeding?: boolean
+  /** More about the vehicle for its popup, such as the driver and the route (the Fleet Command Center, FMS-45). */
+  details?: readonly { label: string; value: string }[]
 }
 
-export type MarkerState = 'moving' | 'stopped' | 'idling' | 'breakdown' | 'offline'
+export type MarkerState = 'moving' | 'stopped' | 'idling' | 'speeding' | 'breakdown' | 'offline'
 
 /** No ping for longer than this: the position is stale and the marker turns grey. */
 export const OFFLINE_AFTER_MS = 2 * 60_000
@@ -30,18 +34,21 @@ export const STATE_LABELS: Record<MarkerState, string> = {
   moving: 'Moving',
   stopped: 'Stopped',
   idling: 'Idling',
+  speeding: 'Speeding',
   breakdown: 'Breakdown',
   offline: 'Offline',
 }
 
 /**
  * A breakdown shows above everything, because someone has to act on it even when the phone has gone quiet.
- * Then offline (the rest would describe a position that is out of date), then idling, then stopped or moving.
+ * Then offline (the rest would describe a position that is out of date), then speeding, then idling, then
+ * stopped or moving.
  */
 export function markerState(vehicle: FleetMapVehicle, now: number, stoppedSince: number | null): MarkerState {
   if (vehicle.breakdown) return 'breakdown'
   const seen = Date.parse(vehicle.lastSeen)
   if (Number.isNaN(seen) || now - seen > OFFLINE_AFTER_MS) return 'offline'
+  if (vehicle.speeding) return 'speeding'
   if (vehicle.speedKmh !== 0) return 'moving'
   return stoppedSince !== null && now - stoppedSince > IDLE_AFTER_MS ? 'idling' : 'stopped'
 }

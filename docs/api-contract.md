@@ -596,11 +596,20 @@ The ML service never directly updates fleet master data. The Node.js core valida
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /tracking/vehicles/current` | Current fleet locations | `tracking:read` | `VehicleLocation[]` |
+| `GET /tracking/vehicles/current` | Current fleet locations (the live map, FMS-45) | `tracking:read` | `depot_id?` -> `VehicleLocation[]`; cached 5 s |
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
 | `GET /vehicles/{vehicle_id}/tracking` | Historical GPS | `tracking:read` | `from,to,limit,cursor` -> `GPSPoint[]` |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings | `tracking:read` | `TelemetryFlag[]` |
 | `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
+
+**Live map snapshot (FMS-45).** `GET /tracking/vehicles/current` lists the caller's vehicles (depot scope; `depot_id` narrows it, and a depot outside the scope gives `[]`) that are not retired and have a position or a trip under way, by plate. How the command center uses it: [docs/live-map.md](live-map.md).
+
+- **`VehicleLocation`** (out):
+  - the vehicle: `vehicle_id`, `registration_number`, `vehicle_type`, `vehicle_status`, `maintenance_flag`, `depot_id`;
+  - `position`: `{lat, lng, speed_kmh, heading, accuracy_m, ignition_on, recorded_at, stopped_since}`, or `null` for a vehicle on a trip that has not reported yet. `stopped_since` is set while at 0 km/h: the first stopped ping after it last moved, within 2 hours;
+  - `trip`: `{trip_id, route_name, origin, destination, started_at, scheduled_end, driver: {driver_id, full_name}}` for the trip under way, or `null`;
+  - `flags`: open, unresolved telemetry flags, the newest of each type: `{flag_type, severity, observed_at}`.
+- **Freshness.** Cached in Redis for 5 s, one snapshot per depot shown (`integration:live-map:<depot public id>`, or `all`), shared by everyone who sees it. Trip and vehicle events drop it after commit. Positions move on through `vehicle.location.updated` meanwhile.
 
 **GPS ingestion (FMS-88).** How it works, the webhook format and the simulator: [docs/gps-ingestion.md](gps-ingestion.md).
 
