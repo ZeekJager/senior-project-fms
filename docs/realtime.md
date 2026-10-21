@@ -52,7 +52,7 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 |---|---|---|---|
 | `VehicleStatusChanged` | `vehicle.status.changed` | vehicles | `vehicle_id`, `status`, `previous_status`, `reason`, `source`, `changed_at` |
 | `TripCreated`, `TripUpdated`, `TripCancelled`, `TripAssigned`, `TripStarted`, `TripCompleted` | `trip.updated` | trips | The trip as it is now: `trip_id`, `status`, `route_name`, `depot_id`, `vehicle_id`, `driver_id`, schedule, actual times, `version`, `updated_at`, plus `change` (the event type). It goes to the trip's depot, its driver, and a driver it was taken from. |
-| `VehicleLocationUpdated` (FMS-88) | `vehicle.location.updated`, legacy `vehicle_position` | tracking | `vehicle_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at`; legacy: `vehicleId`, `tripId`, `lat`, `lng`, `speedKmh`, `bearing`, `lastSeen` |
+| `VehicleLocationUpdated` (published since FMS-88, at most one per vehicle per 5 s) | `vehicle.location.updated`, legacy `vehicle_position` | tracking | `vehicle_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at`; legacy: `vehicleId`, `tripId`, `lat`, `lng`, `speedKmh`, `bearing`, `lastSeen` |
 | `AlertCreated` (FMS-92) | `alert.created`, legacy `alert_created` | alerts | `alert_id`, `alert_type`, `severity`, `status`, `entity_type`, `entity_id`, `message`, `created_at`; legacy: `alertType`, `entityId`, `message`, `severity` |
 | `AlertAcknowledged`, `AlertResolved` (FMS-92) | `alert.updated` | alerts | `alert_id`, `status`, `acknowledged_at`/`_by`, `resolved_at`/`_by` |
 | `IncidentReported` (FMS-38) | `incident.created` | incidents | `incident_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `occurred_at` |
@@ -69,7 +69,7 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 When it is enabled:
 - the caller needs `trip:execute` or `tracking:ingest`;
 - the body is checked: `tripId`, `lat` and `lng` are required; `speedKmh`, `bearing` and `accuracyM` are optional;
-- the update is handed to GPS ingestion (FMS-88, which also checks that the trip is the sender's). Until FMS-88 provides it, the answer is `NOT_AVAILABLE`.
+- the update goes through GPS ingestion as a driver's phone (docs/gps-ingestion.md), stamped when it arrives: `tripId` must be the sender's trip under way (`FORBIDDEN_INSUFFICIENT_ROLE` otherwise), and a refused position answers `VALIDATION_FAILED` with the reason.
 
 **Rate limit:** every client event counts. A socket may send 5 at once, then 1 a second. An event over the limit is refused (`RATE_LIMITED` in its acknowledgement), and after 20 refusals the socket is closed.
 

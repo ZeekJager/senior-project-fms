@@ -306,6 +306,19 @@ export const fuelRefs = {
   },
 };
 
+/**
+ * For GPS ingestion (FMS-88, integration module): vehicles by public or internal ids in a scope, with
+ * their depot's public id and whether they are live, and the driver profile of a signed-in user.
+ */
+export const trackingRefs = {
+  vehicles: {
+    byPublicIds: (db: Queryable, publicIds: readonly string[], scope: Scope) => vehicleRepository.trackingRefs(db, { publicIds }, scope),
+    byIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.trackingRefs(db, { ids }, { kind: 'all' }),
+  },
+  drivers: { idOfUser: tripRefs.drivers.idOfUser },
+};
+export type { TrackingVehicle } from './infrastructure/vehicle.repository';
+
 export const fleetModule: AppModule = {
   name: 'fleet',
   router,

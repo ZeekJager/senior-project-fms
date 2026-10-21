@@ -597,10 +597,22 @@ The ML service never directly updates fleet master data. The Node.js core valida
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
 | `GET /tracking/vehicles/current` | Current fleet locations | `tracking:read` | `VehicleLocation[]` |
-| `POST /tracking/gps-pings` | Telemetry ingestion | `tracking:ingest` | `GPSPoint`; high-volume endpoint; accepted/queued |
+| `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
 | `GET /vehicles/{vehicle_id}/tracking` | Historical GPS | `tracking:read` | `from,to,limit,cursor` -> `GPSPoint[]` |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings | `tracking:read` | `TelemetryFlag[]` |
 | `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
+
+**GPS ingestion (FMS-88).** How it works, the webhook format and the simulator: [docs/gps-ingestion.md](gps-ingestion.md).
+
+- **`GPSPoint`** (in): `recorded_at` (ISO with offset), `lat`, `lng`, `speed_kmh` (0-300, rounded to whole km/h), and optionally `heading`, `accuracy_m`, `altitude_m`, `ignition_on`, `odometer_km`. A user with `tracking:ingest` adds `vehicle_id`; for a device or a phone it is implied.
+- **Who may report what.**
+  - A device (`Authorization: Bearer fmsd_...`) reports for its own vehicle only.
+  - A driver's phone (`trip:execute`) reports for the vehicle of the driver's trip under way only.
+  - Naming another vehicle, or having no trip under way, refuses the whole batch: `403 FORBIDDEN_INSUFFICIENT_ROLE`, reason `not_your_vehicle` or `no_trip_under_way`.
+  - An unknown device token is `401 AUTH_TOKEN_INVALID`.
+- **Validation.** Out of range or unknown fields: `400`, the whole batch, naming `pings.<i>.<field>`. A readable ping that cannot be used is refused alone in `rejected[]`: `future_timestamp` (over 2 min ahead), `too_old` (over 7 days), `low_accuracy` (over 500 m), `vehicle_retired`, `unknown_vehicle`.
+- **Duplicates.** A ping of a vehicle at an instant already stored is skipped (`(vehicle_id, recorded_at)`, §15), so a retried batch counts as `duplicates` and stores nothing.
+- **Event.** `VehicleLocationUpdated` announces each vehicle's newest position at most once per `TRACKING_EVENT_INTERVAL_SECONDS` (5) of its pings; it reaches clients as `vehicle.location.updated` (§11.2).
 
 The previous contract defined a client-to-server Socket.IO `location_update` event. In the canonical contract, high-volume telemetry ingestion is REST/webhook based and Socket.IO is used for server-to-client fan-out. This is a deliberate replacement, not a loss of the capability.
 
@@ -614,7 +626,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `alert.updated` | Server -> client | Alert patch | Acknowledge/resolve update |
 | `incident.created` | Server -> client | `Incident` | New active incident |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
-| `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion; canonical ingestion is REST/webhook |
+| `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion (`REALTIME_LEGACY_LOCATION`); canonical ingestion is REST/webhook. Goes through GPS ingestion as a phone: `tripId` must be the sender's trip under way |
 | `vehicle_position` | Server -> client (legacy event name) | `vehicleId,tripId,lat,lng,speedKmh,bearing,lastSeen` | Compatibility alias for `vehicle.location.updated` |
 | `alert_created` | Server -> client (legacy event name) | `alertType,entityId,message,severity` | Compatibility alias for `alert.created` |
 

@@ -76,7 +76,7 @@ export class IntegrationService {
     const outcomes = await repo.outcomes(repo.pool(), providers.map((p) => p.id));
     return providers.map((p) => {
       const o = outcomes.get(p.id)!;
-      const adapter = registry.adapter(p.code);
+      const adapter = registry.adapterFor(p);
       const circuit = registry.circuitOf(p);
       const health = registry.healthOf(p);
       return {
@@ -108,7 +108,7 @@ export class IntegrationService {
     const provider = await repo.findProvider(repo.pool(), providerPublicId);
     if (!provider) throw providerNotFound();
     if (!provider.isActive) throw providerInactive();
-    const adapter = registry.adapter(provider.code);
+    const adapter = registry.adapterFor(provider);
     if (!adapter?.sync) throw syncNotSupported();
     const breaker = registry.breakerFor(provider);
     if (breaker.state === 'open') throw providerUnavailable(breaker.retryInMs());
@@ -149,7 +149,7 @@ export class IntegrationService {
   async receiveWebhook(delivery: WebhookDelivery): Promise<{ id: string; duplicate: boolean }> {
     const { repo, registry, log } = this.deps;
     const provider = await repo.findProviderByCode(repo.pool(), delivery.code);
-    const adapter = provider ? registry.adapter(provider.code) : undefined;
+    const adapter = provider ? registry.adapterFor(provider) : undefined;
     const secret = provider ? registry.secretsFor(provider.code).webhookSecret : undefined;
     if (!provider || provider.providerType !== delivery.providerType || !provider.isActive || !adapter?.normalize || !secret) {
       if (provider && provider.providerType === delivery.providerType && provider.isActive) {
@@ -247,7 +247,7 @@ export class IntegrationService {
 
   private async runSync(provider: ProviderRow, started: SyncLogRow, ctx: MutationContext): Promise<void> {
     const { repo, registry, log } = this.deps;
-    const adapter = registry.adapter(provider.code)!;
+    const adapter = registry.adapterFor(provider)!;
     let update;
     try {
       const outcome = await adapter.sync!(registry.context(provider, ctx.correlationId));
@@ -272,7 +272,7 @@ export class IntegrationService {
 
   private async checkHealth(provider: ProviderRow, correlationId: string): Promise<void> {
     const { registry } = this.deps;
-    const adapter = registry.adapter(provider.code);
+    const adapter = registry.adapterFor(provider);
     if (!adapter?.healthCheck) return;
     let error: string | null = null;
     try {

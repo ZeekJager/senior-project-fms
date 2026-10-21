@@ -51,6 +51,8 @@ const appSchema = z
       .pipe(z.array(z.url({ protocol: /^https?$/, error: 'must be http(s) origins, comma-separated' }))),
     // The legacy client->server `location_update` socket event (api-contract §11.2). Off unless a legacy client needs it.
     REALTIME_LEGACY_LOCATION: z.enum(['true', 'false']).default('false'),
+    // GPS ingestion (FMS-88): VehicleLocationUpdated at most once per vehicle per this many seconds of its pings.
+    TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -96,6 +98,7 @@ export interface AppConfig {
   trips: { overrunGraceMinutes: number };
   realtime: RealtimeConfig;
   integrations: IntegrationsConfig;
+  tracking: { eventIntervalSeconds: number };
 }
 
 /** Provider secrets (FMS-85), by provider code. Never stored in the database, never returned by the API. */
@@ -212,6 +215,7 @@ export function loadAppConfig(env: Env): AppConfig {
     trips: { overrunGraceMinutes: e.TRIP_OVERRUN_GRACE_MINUTES },
     realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
     integrations: { secrets: integrations.secrets },
+    tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
   };
 }
 
