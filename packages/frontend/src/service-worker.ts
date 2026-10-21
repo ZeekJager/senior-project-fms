@@ -11,12 +11,20 @@
 // - The driver's last session (the body of /auth/refresh or /auth/login, never
 //   a token) is kept, so a refresh that cannot reach the server is answered
 //   from it and the driver stays signed in offline. Sign-out drops it.
+// - Submissions the driver made offline (FMS-81) are sent from here on a
+//   Background Sync, so they go when the signal returns even with the app
+//   closed; the page sends them too, whichever comes first.
 
 import { APP_SHELL, NAVIGATION_TIMEOUT_MS, OFFLINE_PAGE, SESSION_KEY, SESSION_MESSAGE, cacheNames, isDriverSession, routeFor, sessionUsable } from './pwa/routing'
+import { announce, flushQueue, outcomeOf, requestFor, SYNC_TAG, type Outcome, type Submission } from './lib/offlineQueue'
 
 declare const self: ServiceWorkerGlobalScope
 declare const __PRECACHE_MANIFEST__: { url: string; revision: string }[]
 declare const __BUILD_ID__: string
+/** Chrome's Background Sync event (not in the worker typings). */
+interface SyncEvent extends ExtendableEvent {
+  readonly tag: string
+}
 
 // Named once, so the build inlines the list once.
 const MANIFEST = __PRECACHE_MANIFEST__
@@ -52,6 +60,12 @@ self.addEventListener('message', (event) => {
   if (message?.type !== SESSION_MESSAGE) return
   const body = { data: message.session, meta: {} }
   if (isDriverSession(body)) event.waitUntil(adoptSession(body))
+})
+
+// The connection is back: send the driver's queue, oldest first.
+self.addEventListener('sync', (event) => {
+  const sync = event as SyncEvent
+  if (sync.tag === SYNC_TAG) sync.waitUntil(sendQueue())
 })
 
 self.addEventListener('fetch', (event) => {
@@ -143,4 +157,27 @@ async function adoptSession(body: { data: unknown }): Promise<void> {
 async function sessionEnd(request: Request): Promise<Response> {
   await (await caches.open(CACHES.session)).delete(SESSION_KEY)
   return fetch(request)
+}
+
+/**
+ * Sends the queue of the driver whose session is saved here: never another
+ * driver's, and nothing when no driver is signed in. A failure rejects, so
+ * the browser runs the sync again later. The worker never renews a session
+ * (the page and the worker refreshing at once would look like a stolen
+ * token, docs/auth.md): on a 401 it leaves the queue to an open page.
+ */
+async function sendQueue(): Promise<void> {
+  const saved = await (await caches.open(CACHES.session)).match(SESSION_KEY)
+  const ownerId = saved ? ((await saved.json().catch(() => null)) as { data?: { user?: { id?: unknown } } } | null)?.data?.user?.id : undefined
+  if (typeof ownerId !== 'string') return
+  const result = await flushQueue(ownerId, sendOne)
+  if (result === 'signed-out') announce({ type: 'flush' })
+  if (result === 'retry') throw new Error('The queue could not be sent yet.')
+}
+
+async function sendOne(submission: Submission): Promise<Outcome> {
+  const { url, init } = requestFor(submission, 'pwa')
+  const res = await fetch(url, init)
+  const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null
+  return outcomeOf(res.status, body?.error?.code, body?.error?.message)
 }
