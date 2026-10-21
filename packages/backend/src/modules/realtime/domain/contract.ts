@@ -150,11 +150,16 @@ const FORWARDERS: Record<string, Forwarder> = {
       },
     ];
   },
-  // Published by the alert engine (FMS-92): alert_id, depot_id, alert_type, severity, status, entity_type, entity_id, message.
+  // Published by the alert engine (FMS-92): alert_id, depot_id, alert_type, severity, priority, status, entity_type, entity_id, title, message.
   AlertCreated: (e) => {
     const depotId = str(e.payload.depot_id);
     return [
-      { event: SOCKET_EVENTS.alertCreated, channel: 'alerts', depotId, payload: pick(e.payload, ['alert_id', 'alert_type', 'severity', 'status', 'entity_type', 'entity_id', 'message', 'created_at']) },
+      {
+        event: SOCKET_EVENTS.alertCreated,
+        channel: 'alerts',
+        depotId,
+        payload: pick(e.payload, ['alert_id', 'alert_type', 'severity', 'priority', 'status', 'entity_type', 'entity_id', 'vehicle_id', 'title', 'message', 'created_at']),
+      },
       {
         event: SOCKET_EVENTS.legacyAlertCreated,
         channel: 'alerts',
@@ -163,8 +168,11 @@ const FORWARDERS: Record<string, Forwarder> = {
       },
     ];
   },
+  // A repeat of the source (one more occurrence) and an escalation are patches like acknowledge and resolve.
+  AlertUpdated: (e) => [alertPatch(e)],
   AlertAcknowledged: (e) => [alertPatch(e)],
   AlertResolved: (e) => [alertPatch(e)],
+  AlertEscalated: (e) => [alertPatch(e)],
   // Published by incident reporting (FMS-38): incident_id, depot_id, vehicle_id, trip_id, severity, incident_type, status, occurred_at.
   IncidentReported: (e) => [
     {
@@ -182,7 +190,20 @@ function alertPatch(e: EventEnvelope): Delivery {
     event: SOCKET_EVENTS.alertUpdated,
     channel: 'alerts',
     depotId: str(e.payload.depot_id),
-    payload: pick(e.payload, ['alert_id', 'status', 'acknowledged_at', 'acknowledged_by', 'resolved_at', 'resolved_by']),
+    payload: pick(e.payload, [
+      'alert_id',
+      'status',
+      'severity',
+      'priority',
+      'occurrence_count',
+      'last_occurred_at',
+      'escalation_level',
+      'escalated_at',
+      'acknowledged_at',
+      'acknowledged_by',
+      'resolved_at',
+      'resolved_by',
+    ]),
   };
 }
 

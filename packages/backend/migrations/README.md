@@ -36,6 +36,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 030 | `trip` | Trip assignment rules (FMS-31): `ex_trip_driver_overlap` and `ex_trip_vehicle_overlap` include both ends (`'[]'`), so a 0-minute gap between two trips is an overlap |
 | 031 | `integration` | Integration gateway (FMS-85): `external_providers.code`, the provider's slug in webhook URLs and secret names (secrets stay in the environment); inbound `sync_logs` unique on `(provider_id, external_reference)`, so a redelivered webhook is a duplicate; index for a provider's running sync |
 | 032 | `integration`, `tracking` | GPS ingestion (FMS-88): `gps_devices.public_id` and a device token (its SHA-256 only), so a device reports for its own vehicle; `vehicle_current_location.event_recorded_at`, the last position announced as `VehicleLocationUpdated`, which throttles the event per vehicle across instances |
+| 033 | `alert` | Alert engine (FMS-92): `alerts.depot_id` (scope), `trip_id`, `entity_type`/`entity_id` (the subject's public id), `dedup_key` with `occurrence_count` and `last_occurred_at` (a repeat within the rule's window updates the active alert), `escalation_level`/`escalated_at`, `acknowledged_by`/`resolved_by`, `details`; indexes for de-duplication, a depot's alerts and escalation |
 
 ## Important
 

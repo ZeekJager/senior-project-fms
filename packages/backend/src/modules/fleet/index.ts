@@ -326,6 +326,26 @@ export const trackingRefs = {
 };
 export type { LiveMapVehicle, TrackingVehicle } from './infrastructure/vehicle.repository';
 
+/**
+ * For the alert engine (FMS-92): an alert's subject (a vehicle or driver by public id, with the depot whose
+ * alert it is), a depot by public id, and public ids and plates for alert responses.
+ */
+export const alertRefs = {
+  vehicles: {
+    subject: (db: Queryable, publicId: string) => vehicleRepository.alertSubject(db, publicId),
+    refsByIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.refsByIds(db, ids),
+  },
+  drivers: {
+    subject: (db: Queryable, publicId: string) => driverRepository.alertSubject(db, publicId),
+    publicIds: (db: Queryable, ids: readonly string[]) => driverRepository.publicIdsByIds(db, ids),
+  },
+  depots: {
+    idOf: (db: Queryable, publicId: string) => resolveDepotInScope(db, publicId, { kind: 'all' }),
+    resolveInScope: resolveDepotInScope,
+    publicIds: depotPublicIds,
+  },
+};
+
 export const fleetModule: AppModule = {
   name: 'fleet',
   router,

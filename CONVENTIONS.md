@@ -179,28 +179,37 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `DepotCreated`, `DepotUpdated`, `DepotDeactivated`, `DepotReactivated` | fleet (FMS-20) | depot | `depot_id`; `changed_fields` on update | |
 | `AttendanceRecorded` | fleet (FMS-21) | attendance | `attendance_id`, `driver_id`, `date`, `status`, `previous_status` | |
 | `DocumentUploaded` | fleet (FMS-17) | document | `document_id`, `owner_type`, `owner_id`, `document_type`, `expires_on` | `fleet.document-expiry` |
-| `DocumentExpiring`, `LicenceExpiring` | fleet (FMS-26) | document, driver | `level` (amber, red), `days_left`, the expiry date, owner or driver ids | |
+| `DocumentExpiring`, `LicenceExpiring` | fleet (FMS-26) | document, driver | `level` (amber, red), `days_left`, the expiry date, owner or driver ids | `alert.engine` |
 | `VehicleStatusChanged` | fleet (FMS-76) | vehicle | `vehicle_id`, `depot_id`, `previous_status`, `new_status`, `changed_at`, `changed_by`, `reason`, `source` (`manual`, or `maintenance` as work starts and ends), `maintenance_record_id` (also on `DELETE /vehicles`, with `VehicleRetired`) | |
 | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | maintenance (FMS-22) | maintenance | `maintenance_record_id`, `vehicle_id`; `changed_fields`, `maintenance_flag_cleared` | `fleet.vehicle-cache` |
 | `InventoryPartCreated`, `InventoryPartUpdated`, `InventoryStockAdjusted`, `InventoryReorderNeeded` | maintenance (FMS-23) | part | `part_id`; stock and threshold on adjust and reorder | |
 | `RouteCreated`, `RouteUpdated` | trip (FMS-83) | route | `route_id`, `depot_id`; `name`, `distance_km` on create; `changed_fields`, `is_active` on update (retiring is an update) | |
 | `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | `fleet.vehicle-cache` (`TripCancelled`) |
 | `FuelLogged` | fuel (FMS-39) | vehicle | `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km`, `recorded_at` | |
-| `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration later (telematics) | vehicle | `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set` | `fleet.vehicle-cache` |
+| `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration later (telematics) | vehicle | `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set`; optional `severity` | `fleet.vehicle-cache`, `alert.engine` |
 | `TripStarted`, `TripCompleted` | trip (FMS-32) | trip | `trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`; `actual_end`, `duration_seconds` on complete | `fleet.vehicle-cache` |
 | `TripAssigned` | trip (FMS-31) | trip | `trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, the schedule | `fleet.vehicle-cache` |
 | `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
 | `VehicleLocationUpdated` | integration (FMS-88, GPS ingestion) | vehicle | `vehicle_id`, `depot_id`, `trip_id`, `lat`, `lng`, `speed` (km/h), `heading`, `recorded_at`. At most one per vehicle per `TRACKING_EVENT_INTERVAL_SECONDS` of its pings, and only when the ping became the current position | real-time gateway (`vehicle.location.updated`) |
+| `AlertCreated` | alert (FMS-92) | alert | `alert_id`, `depot_id`, `alert_type`, `severity`, `priority`, `status`, `entity_type`, `entity_id`, `vehicle_id`, `title`, `message`, `created_at` | real-time gateway (`alert.created`) |
+| `AlertUpdated` | alert (FMS-92): a repeat of the alert's source | alert | `alert_id`, `depot_id`, `status`, `severity`, `priority`, `occurrence_count`, `last_occurred_at` | real-time gateway (`alert.updated`) |
+| `AlertAcknowledged`, `AlertResolved` | alert (FMS-92) | alert | `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by` (user public ids) | real-time gateway (`alert.updated`) |
+| `AlertEscalated` | alert (FMS-92): a critical alert left unacknowledged | alert | `alert_id`, `depot_id`, `status`, `severity`, `escalation_level`, `escalated_at` | real-time gateway (`alert.updated`) |
 | `IntegrationWebhookReceived` | integration (FMS-85) | provider | `sync_log_id`, `provider_id`, `provider_code`, `provider_type`, `event_id`, `kind`, `occurred_at`. The data is not in the event: read it with `webhookDeliveries.find(tx, sync_log_id)`. One event per provider event id (a fixed id) | `integration.telematics-pings` (telematics `positions`, FMS-88); fuel card and EV later |
 
 Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31), `TripStarted` and `TripCompleted` by the lifecycle commands (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
 
-Planned, named here so modules agree on them: `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated`, `AlertAcknowledged`, `AlertResolved` (alert), `IncidentReported` (incident), `BatteryThresholdExceeded` (ev).
+Planned, named here so modules agree on them. The alert engine (FMS-92, docs/alerts.md) already has a rule for each, reading these payload fields (public ids), so an alert follows as soon as the event is published:
+
+- `VehicleFaultDetected` (integration, from telematics; the DVIR one is above).
+- `FuelAnomalyDetected` (fuel, FMS-82): `anomaly_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_log_id`, `anomaly_type`, `severity`.
+- `TelemetryFlagRaised` (integration, the telemetry rules FMS-46): `flag_id`, `vehicle_id`, `driver_id`, `trip_id`, `depot_id`, `flag_type` (speeding, idling, harsh_braking, geofence_violation ...), `severity`, `observed_at`.
+- `MaintenanceRiskDetected` (maintenance, FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
+- `BatteryThresholdExceeded` (ev, FMS-96): `vehicle_id`, `trip_id`, `metric`, `value`, `threshold`, `severity`.
+- `IncidentReported` (incident, FMS-38): below.
 
 **Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it, so the planned ones it forwards must carry:
 
-- `AlertCreated` (FMS-92): `alert_id`, `depot_id`, `alert_type`, `severity`, `status`, `entity_type`, `entity_id`, `message`.
-- `AlertAcknowledged` and `AlertResolved` (FMS-92): `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by`.
 - `IncidentReported` (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `occurred_at`.
 
 To show a new event live, add it to the gateway's map as well.

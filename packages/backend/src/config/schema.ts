@@ -53,6 +53,8 @@ const appSchema = z
     REALTIME_LEGACY_LOCATION: z.enum(['true', 'false']).default('false'),
     // GPS ingestion (FMS-88): VehicleLocationUpdated at most once per vehicle per this many seconds of its pings.
     TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
+    // Alert engine (FMS-92): a critical alert unacknowledged this many minutes escalates to the next tier, and again after as many more.
+    ALERT_ESCALATION_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -99,6 +101,7 @@ export interface AppConfig {
   realtime: RealtimeConfig;
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number };
+  alerts: { escalationMinutes: number };
 }
 
 /** Provider secrets (FMS-85), by provider code. Never stored in the database, never returned by the API. */
@@ -216,6 +219,7 @@ export function loadAppConfig(env: Env): AppConfig {
     realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
     integrations: { secrets: integrations.secrets },
     tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
+    alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
   };
 }
 

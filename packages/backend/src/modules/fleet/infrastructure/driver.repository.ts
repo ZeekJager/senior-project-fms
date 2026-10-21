@@ -131,6 +131,18 @@ export class DriverRepository extends Repository {
     return new Map(res.rows.map((r) => [r.id, r.publicId]));
   }
 
+  /** A driver by public id with their name and home depot (the account's, internal id): the subject of an alert (FMS-92). */
+  async alertSubject(db: Queryable, publicId: string): Promise<{ id: string; publicId: string; fullName: string | null; depotId: string | null } | null> {
+    const res = await db.query<{ id: string; publicId: string; fullName: string | null; depotId: string | null }>(
+      `SELECT d.id, d.public_id AS "publicId", a.full_name AS "fullName", a.depot_id AS "depotId"
+         FROM fleet.drivers d
+         LEFT JOIN fleet.driver_accounts a ON a.user_id = d.user_id
+        WHERE d.public_id = $1`,
+      [publicId],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Public id and name (the account's) of drivers by internal id, for the live map (FMS-45). */
   async namesByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; fullName: string | null }>> {
     if (ids.length === 0) return new Map();

@@ -9,6 +9,7 @@ import { redis, redisKey } from './shared/cache';
 import { createOutboxRelay } from './shared/events/event-bus';
 import { outboxCleanupJob } from './shared/events/outbox-cleanup';
 import { idempotencyPurgeJob } from './shared/http/idempotency-purge';
+import { jobRunsCleanupJob } from './shared/jobs/job-runs-cleanup';
 import { PostgresJobLock } from './shared/jobs/job-lock';
 import { RedisJobLock } from './shared/jobs/redis-job-lock';
 import { startScheduler } from './shared/jobs/scheduler';
@@ -30,7 +31,7 @@ const runs = new PostgresJobLock(pool);
 const lock = redis ? new RedisJobLock(redis, runs, (job, day) => redisKey('lock', 'job', job, day)) : runs;
 
 startScheduler(
-  [...modules.flatMap((m) => m.jobs ?? []), idempotencyPurgeJob(pool), outboxCleanupJob(pool)],
+  [...modules.flatMap((m) => m.jobs ?? []), idempotencyPurgeJob(pool), outboxCleanupJob(pool), jobRunsCleanupJob(pool)],
   {
     lock,
     audit: pool,

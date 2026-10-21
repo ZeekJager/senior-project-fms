@@ -63,6 +63,8 @@ export const tripModule: AppModule = { name: 'trip', router };
 export const tripLookups = {
   find: (db: Queryable, user: RequestUser, publicId: string) => tripService.refVisibleTo(db, user, publicId),
   publicIds: (db: Queryable, ids: readonly string[]) => tripRepository.publicIdsByIds(db, ids),
+  /** Internal ids by public id, for the alert engine's trip column (FMS-92). */
+  idsByPublicIds: (db: Queryable, publicIds: readonly string[]) => tripRepository.idsByPublicIds(db, publicIds),
   /** For the real-time gateway (FMS-43): a trip's summary for `trip.updated`, with no caller. */
   summary: (db: Queryable, publicId: string) => tripService.summary(db, publicId),
 };

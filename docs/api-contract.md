@@ -654,11 +654,13 @@ An alert is a business event requiring attention. A notification is a delivery a
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /alerts` | Search alerts | `alert:read` | Paged `Alert[]` |
+| `GET /alerts` | Search alerts | `alert:read` | `status`, `severity`, `type` (comma-separated), `vehicle_id`, `depot_id`, `sort` (`newest`, `priority`), `page`, `page_size` -> Paged `Alert[]`; depot scope |
 | `GET /alerts/{alert_id}` | Alert detail | `alert:read` | `Alert` |
-| `POST /alerts/{alert_id}/acknowledge` | Acknowledge alert | `alert:ack` | `Alert` |
-| `POST /alerts/{alert_id}/resolve` | Resolve alert | `alert:resolve` | `Alert` |
+| `POST /alerts/{alert_id}/acknowledge` | Acknowledge alert | `alert:ack` | `{comment?}` -> `Alert`; only an `open` alert (`409 CONFLICT_INVALID_STATE_TRANSITION` otherwise) |
+| `POST /alerts/{alert_id}/resolve` | Resolve alert | `alert:resolve` | `{comment?}` -> `Alert`; an `open` or `acknowledged` alert |
 | `GET /notifications` | Notification delivery history | `notification:read` | Paged `Notification[]` |
+
+**Alert engine (FMS-92).** Alerts are raised from domain events by rule, de-duplicated per source within a window, notified in-app to the roles of the alert's depot, and escalated when critical and unacknowledged (fleet managers after `ALERT_ESCALATION_MINUTES`, 15, then admins). Rules, recipients and escalation: [docs/alerts.md](alerts.md).
 
 ### 12.2 Incidents
 
@@ -826,6 +828,8 @@ Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING
   "resolved_at": null
 }
 ```
+
+Since FMS-92 an alert also carries `priority` (1 critical to 4 low), `depot_id`, `driver_id`, `trip_id`, `entity_type` and `entity_id` (what it is about, by public id), `source` (`module`, `event_type`), `occurrence_count`, `last_occurred_at`, `escalation_level`, `escalated_at`, `acknowledged_by` and `resolved_by` (users' public ids). `message` is the alert's description.
 
 ## 17. Validation and Business Rules
 
