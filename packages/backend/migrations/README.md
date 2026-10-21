@@ -34,6 +34,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 026 | `events` | Domain events (FMS-73): `events.outbox`, written in the change's transaction and delivered by the relay (dispatched to consumers, published on Redis; retries and dead letters); `events.processed_events`, each event a consumer has handled. Platform-owned, like `api` and `jobs` |
 | 029 | `fleet`, `shared`, `analytics` | Vehicle status and availability (FMS-76): `shared.vehicle_status` without the legacy `decommissioned` (type replaced, `analytics.vehicle_current_status` re-created); `fleet.vehicle_status_history`, each status change with its reason, who, and its source (a person, or maintenance work starting and ending); `fleet.trip_assignments`, the read model of trips holding a vehicle or driver, kept by a projection in each trip change's transaction |
 | 030 | `trip` | Trip assignment rules (FMS-31): `ex_trip_driver_overlap` and `ex_trip_vehicle_overlap` include both ends (`'[]'`), so a 0-minute gap between two trips is an overlap |
+| 031 | `integration` | Integration gateway (FMS-85): `external_providers.code`, the provider's slug in webhook URLs and secret names (secrets stay in the environment); inbound `sync_logs` unique on `(provider_id, external_reference)`, so a redelivered webhook is a duplicate; index for a provider's running sync |
 
 ## Important
 

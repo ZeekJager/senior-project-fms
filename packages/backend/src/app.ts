@@ -8,6 +8,7 @@ import { requestContext } from './middleware/requestContext';
 import { requestSource } from './middleware/requestSource';
 import { requestLogger } from './middleware/requestLogger';
 import { modules as defaultModules } from './modules';
+import { integrationGateway, keepsRawBody } from './modules/integration';
 import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
 import { cache } from './shared/cache';
 import { outboxHealth } from './shared/events/outbox-health';
@@ -19,7 +20,7 @@ export interface AppOptions {
   readinessChecks?: Record<string, ReadinessCheck>;
   /** Reported by /health/ready but never a reason for 503. Defaults to Redis (the app's cache) and the event outbox. */
   optionalDependencies?: Record<string, OptionalDependency>;
-  /** Numbers /health/ready reports. Defaults to the event outbox's lag. */
+  /** Numbers /health/ready reports. Defaults to the event outbox's lag and the integration circuits. */
   metrics?: Record<string, HealthMetrics>;
   /** The modules to mount. Defaults to every module; tests pass their own routes. */
   modules?: AppModule[];
@@ -34,7 +35,15 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(requestContext);
   app.use(requestLogger);
   app.use(cors({ exposedHeaders: ['X-Request-Id'] }));
-  app.use(express.json({ limit: '1mb' }));
+  app.use(
+    express.json({
+      limit: '1mb',
+      // A webhook's signature covers its exact bytes, which parsing loses (FMS-85).
+      verify: (req, _res, buf) => {
+        if (keepsRawBody(req as express.Request)) (req as express.Request).rawBody = Buffer.from(buf);
+      },
+    }),
+  );
   // Unsigned: session cookies hold a signed JWT or an opaque token whose
   // hash is checked against the database.
   app.use(cookieParser());
@@ -44,7 +53,7 @@ export function createApp(options: AppOptions = {}): Express {
 
   const outbox = outboxHealth(pool);
   app.use(
-    healthRouter(readinessChecks, undefined, options.optionalDependencies ?? { redis: cache, outbox }, options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }) }),
+    healthRouter(readinessChecks, undefined, options.optionalDependencies ?? { redis: cache, outbox }, options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }), integrations: integrationGateway.metrics }),
   );
 
   for (const mod of options.modules ?? defaultModules) {

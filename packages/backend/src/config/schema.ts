@@ -95,6 +95,19 @@ export interface AppConfig {
   redis: RedisConfig | null;
   trips: { overrunGraceMinutes: number };
   realtime: RealtimeConfig;
+  integrations: IntegrationsConfig;
+}
+
+/** Provider secrets (FMS-85), by provider code. Never stored in the database, never returned by the API. */
+export interface IntegrationsConfig {
+  secrets: Record<string, ProviderSecrets>;
+}
+
+export interface ProviderSecrets {
+  /** HMAC key the provider signs its webhooks with. */
+  webhookSecret?: string;
+  /** Credential the adapter sends on outbound calls. */
+  apiKey?: string;
 }
 
 export interface RealtimeConfig {
@@ -133,6 +146,38 @@ export class ConfigError extends Error {
 
 type Env = Record<string, string | undefined>;
 
+/**
+ * `INTEGRATION_<CODE>_WEBHOOK_SECRET` and `INTEGRATION_<CODE>_API_KEY`: a provider's secrets, where
+ * <CODE> is its `external_providers.code` in upper case with `_` for `-` (`mock-telematics` is
+ * `INTEGRATION_MOCK_TELEMATICS_WEBHOOK_SECRET`). Any number of providers, so read by pattern.
+ */
+const PROVIDER_SECRET = /^INTEGRATION_([A-Z0-9]+(?:_[A-Z0-9]+)*)_(WEBHOOK_SECRET|API_KEY)$/;
+/** A webhook HMAC key shorter than this is guessable. */
+export const MIN_WEBHOOK_SECRET_LENGTH = 32;
+
+/** The env-var stem of a provider code: `mock-telematics` is `MOCK_TELEMATICS`. */
+export const providerEnvName = (code: string) => code.toUpperCase().replace(/-/g, '_');
+
+function integrationSecrets(env: Env, production: boolean): { secrets: Record<string, ProviderSecrets>; problems: string[] } {
+  const secrets: Record<string, ProviderSecrets> = {};
+  const problems: string[] = [];
+  for (const [key, raw] of Object.entries(env)) {
+    const match = PROVIDER_SECRET.exec(key);
+    const value = raw?.trim();
+    if (!match || !value) continue;
+    const code = match[1].toLowerCase().replace(/_/g, '-');
+    const entry = (secrets[code] ??= {});
+    if (match[2] === 'WEBHOOK_SECRET') {
+      if (value.length < MIN_WEBHOOK_SECRET_LENGTH) problems.push(`${key}: must be at least ${MIN_WEBHOOK_SECRET_LENGTH} characters`);
+      entry.webhookSecret = value;
+    } else {
+      entry.apiKey = value;
+    }
+    if (production && value.includes(PLACEHOLDER)) problems.push(`${key}: still contains the '${PLACEHOLDER}' placeholder`);
+  }
+  return { secrets, problems };
+}
+
 function parse<S extends z.ZodType>(schema: S, env: Env): z.infer<S> {
   const result = schema.safeParse(env);
   if (!result.success) {
@@ -144,6 +189,8 @@ function parse<S extends z.ZodType>(schema: S, env: Env): z.infer<S> {
 /** Settings for the API server. Pure: pass the environment explicitly. */
 export function loadAppConfig(env: Env): AppConfig {
   const e = parse(appSchema, env);
+  const integrations = integrationSecrets(env, e.NODE_ENV === 'production');
+  if (integrations.problems.length > 0) throw new ConfigError(integrations.problems);
   return {
     nodeEnv: e.NODE_ENV,
     port: e.PORT,
@@ -164,6 +211,7 @@ export function loadAppConfig(env: Env): AppConfig {
         : { driver: 'local', localDir: e.STORAGE_LOCAL_DIR },
     trips: { overrunGraceMinutes: e.TRIP_OVERRUN_GRACE_MINUTES },
     realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
+    integrations: { secrets: integrations.secrets },
   };
 }
 

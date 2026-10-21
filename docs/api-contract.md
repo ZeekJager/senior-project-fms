@@ -693,6 +693,41 @@ Analytics reads should prefer PostgreSQL read replicas or precomputed analytics 
 
 Webhook handlers verify signatures, validate schema and version, create a correlation id, normalize provider payloads, and persist/enqueue work. They return quickly so provider retries do not create duplicate business work. Idempotency is required for retried external events.
 
+### 15.2 Integration gateway (FMS-85)
+
+How it works and how to add a provider: [docs/integrations.md](integrations.md).
+
+- **Signature.** A webhook carries `X-FMS-Timestamp` (Unix seconds) and `X-FMS-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<raw body>` with the provider's shared secret (`INTEGRATION_<CODE>_WEBHOOK_SECRET`, never in the database). `{provider}` in the path is the provider's `code`.
+- **Refusals.**
+  - `404 NOT_FOUND`: no active provider of the path's type with that code, or one without a secret or an adapter. The same answer in each case.
+  - `401 AUTH_TOKEN_INVALID`: the signature is missing, malformed or wrong (`details[].reason` `missing_signature`, `malformed_signature`, `signature_mismatch`).
+  - `401 AUTH_TOKEN_EXPIRED`: a genuine signature whose timestamp is more than 5 minutes from the server clock. This is a replay, `reason` `stale_timestamp`.
+  - `400 VALIDATION_FAILED`: a body the provider's adapter cannot read (recorded as a failed sync log).
+  - `415 UNSUPPORTED_MEDIA_TYPE`: not JSON.
+
+  Nothing is stored for a refused signature.
+- **Acceptance.** `202 { data: { id, status: "accepted", duplicate }, meta }`, where `id` is the inbound sync log.
+  - A redelivery of an event id already stored is `202` with `duplicate: true` and the first delivery's `id`; nothing is stored or announced again. The key is `(provider_id, external_reference)` on inbound `integration.sync_logs`.
+  - The delivery is announced as `IntegrationWebhookReceived` for the module that processes it.
+- **`Provider`** (`GET /integrations/providers`, `?check=true` runs health checks first):
+  - `id`, `code`, `name`, `provider_type`, `is_active`;
+  - `status` (`operational`, `degraded`, `down` while the circuit is open, `unknown`, `inactive`);
+  - `capabilities` (`sync`, `webhooks`, `health_check`), `webhook_secret_configured`;
+  - `last_success_at`, `last_failure_at`, `last_error`, `last_sync`;
+  - `circuit` (this API instance's breaker: `state`, `opened_at`, `retry_at`, the 60 s window's counts, `latency_mean_ms`; null until the instance has called it);
+  - `health`.
+
+  `configuration` and secrets are never returned.
+- **`SyncLog`:** `id`, `provider_id`, `direction` (`inbound`, `outbound`), `status` (`started`, `succeeded`, `failed`, `partial`), `trigger` (`manual`, `webhook`), `kind`, `records`, `external_reference`, `request_id`, `started_at`, `completed_at`, `error_message`. The error message is ours (a status, a timeout), never the provider's response.
+- **Manual sync.** `POST /integrations/providers/{id}/sync` answers `202` with a `started` sync log and runs the sync after the response.
+  - A sync already running is returned instead (`meta.already_running: true`).
+  - `400 VALIDATION_FAILED` with `provider_inactive` or `sync_not_supported`.
+  - `503 UPSTREAM_UNAVAILABLE` with `Retry-After` while the provider's circuit is open.
+- **Calls to providers.** Every attempt has a timeout (5 s by default).
+  - **Retries:** idempotent calls only, after a timeout, a network error, 408, 429 or 5xx; at most 2, with full-jitter exponential backoff.
+  - **Breaker:** it opens once its 60 s window holds at least 5 calls and more than half failed (5 failures in a row always do), and calls then fail fast without reaching the provider. A trial call after 30 s closes or reopens it.
+  - Settings per provider: `timeout_ms`, `max_retries` and `reset_timeout_ms` in `configuration`.
+
 Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING`:
 
 | Event | De-duplication key |
