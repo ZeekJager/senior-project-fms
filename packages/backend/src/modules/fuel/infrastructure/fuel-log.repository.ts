@@ -41,6 +41,8 @@ export interface FuelLogWrite {
   odometer_km: number;
   station_name: string | null;
   source: FuelSource;
+  /** When the fill-up happened (FMS-115). */
+  recorded_at: Date;
 }
 
 export interface FuelLogFilter {
@@ -123,9 +125,21 @@ export class FuelLogRepository extends Repository {
     return res.rows[0];
   }
 
-  /** The highest odometer reading any fuel log gave for a vehicle, or null if it has none. */
-  async lastOdometer(db: Queryable, vehicleId: string): Promise<number | null> {
-    const res = await db.query<{ km: number | null }>('SELECT max(odometer_km)::float8 AS km FROM fuel.fuel_logs WHERE vehicle_id = $1', [vehicleId]);
+  /** The highest odometer reading of a vehicle's fuel logs recorded at or before `at`, or null if none. */
+  async lastOdometer(db: Queryable, vehicleId: string, at: Date): Promise<number | null> {
+    const res = await db.query<{ km: number | null }>('SELECT max(odometer_km)::float8 AS km FROM fuel.fuel_logs WHERE vehicle_id = $1 AND recorded_at <= $2', [
+      vehicleId,
+      at,
+    ]);
+    return res.rows[0].km;
+  }
+
+  /** The lowest odometer reading of a vehicle's fuel logs recorded after `at` (a back-dated log's later neighbours), or null. */
+  async nextOdometer(db: Queryable, vehicleId: string, at: Date): Promise<number | null> {
+    const res = await db.query<{ km: number | null }>('SELECT min(odometer_km)::float8 AS km FROM fuel.fuel_logs WHERE vehicle_id = $1 AND recorded_at > $2', [
+      vehicleId,
+      at,
+    ]);
     return res.rows[0].km;
   }
 

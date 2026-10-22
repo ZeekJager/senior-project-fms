@@ -30,8 +30,9 @@ const odometer = z
   .refine((n) => /^\d+(\.\d)?$/.test(String(n)), { message: 'At most one decimal.', params: { reason: 'too_many_decimals' } });
 
 /**
- * POST /fuel-logs (api-contract §9.1). `source` and the time are the server's:
- * a log is recorded when it is received. Anything else is `not_writable`.
+ * POST /fuel-logs (api-contract §9.1). `source` is the server's. `fueled_at` is when the fill-up happened
+ * (FMS-115): a form sends it so a log queued offline keeps its pump time; without it the log is recorded when
+ * received. Anything else (`recorded_at` included) is `not_writable`.
  */
 const createBody = rejectFractionalMoney(
   z.strictObject({
@@ -44,6 +45,10 @@ const createBody = rejectFractionalMoney(
     unit_price_cents: cents.optional(),
     odometer_km: odometer,
     station_name: z.string().trim().min(1).max(255).optional(),
+    fueled_at: z.iso
+      .datetime({ offset: true })
+      .transform((s) => new Date(s))
+      .optional(),
   }),
 );
 

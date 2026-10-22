@@ -7,6 +7,14 @@ export type FuelType = (typeof FUEL_TYPES)[number];
 export const FUEL_SOURCES = ['pump', 'fuel_card', 'bulk', 'manual'] as const;
 export type FuelSource = (typeof FUEL_SOURCES)[number];
 
+/**
+ * `fueled_at` (FMS-115): when the fill-up happened, sent by a form that may have queued it offline. At most
+ * this many days old, as a DVIR's `submitted_at` (FMS-36): the offline queue keeps nothing longer.
+ */
+export const MAX_FUELED_AGE_DAYS = 30;
+/** How far ahead of the server clock `fueled_at` may be: a phone clock running a little fast. */
+export const CLOCK_SKEW_MS = 5 * 60_000;
+
 /** A fuel purchase as the API returns it (api-contract §9.1). Public ids only; volume in millilitres, money in cents. */
 export interface FuelLogView {
   id: string;
@@ -21,6 +29,7 @@ export interface FuelLogView {
   odometer_km: number | null;
   station_name: string | null;
   source: FuelSource;
+  /** When the fill-up happened: `fueled_at` if given, else when the server received it. */
   recorded_at: Date;
   created_at: Date;
 }
@@ -57,8 +66,23 @@ export const driverNotWritable = () =>
 export const noDriverProfile = () =>
   new AppError(400, 'VALIDATION_FAILED', 'Your account has no driver profile, so it cannot log fuel.', [{ field: 'driver_id', reason: 'no_driver_profile' }]);
 
-/** The odometer only goes up (api-contract §17): lower than the vehicle's reading or its last fuel log is refused. */
+export const fueledInFuture = () =>
+  new AppError(400, 'VALIDATION_FAILED', 'fueled_at cannot be in the future.', [{ field: 'fueled_at', reason: 'in_future' }]);
+
+export const fueledTooOld = () =>
+  new AppError(400, 'VALIDATION_FAILED', `fueled_at cannot be more than ${MAX_FUELED_AGE_DAYS} days ago.`, [{ field: 'fueled_at', reason: 'too_old' }]);
+
+/**
+ * The odometer only goes up with time (api-contract §17): a reading lower than the vehicle's, or than a fuel log
+ * from before this fill-up, is refused.
+ */
 export const odometerRegression = (lastKm: number) =>
   new AppError(409, 'CONFLICT_ODOMETER_REGRESSION', `The odometer reading is lower than the last recorded one (${lastKm} km).`, [
     { field: 'odometer_km', reason: 'below_last_reading' },
+  ]);
+
+/** A back-dated fill-up (FMS-115) reading more than a fuel log from after it: one of the two readings is wrong. */
+export const odometerAheadOfLater = (laterKm: number) =>
+  new AppError(409, 'CONFLICT_ODOMETER_REGRESSION', `The odometer reading is higher than a later fill-up's (${laterKm} km).`, [
+    { field: 'odometer_km', reason: 'above_later_reading' },
   ]);

@@ -21,6 +21,7 @@ tags:
   - name: Dispatch
   - name: Integrations
   - name: Tracking
+  - name: Fuel
   - name: Alerts
   - name: Incidents
   - name: Notifications
@@ -779,6 +780,65 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '409':
           description: CONFLICT_INVALID_STATE_TRANSITION, reason alert_<status>.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /fuel-logs:
+    post:
+      tags: [Fuel]
+      operationId: logFuel
+      summary: Record a fill-up (FMS-39)
+      description: >
+        A driver logs for themselves, for a vehicle of their depot; staff may name a driver in their depots, or
+        none. fueled_at (FMS-115) is when the fill-up happened: the driver form sends the moment the driver
+        pressed submit, so a fill-up queued offline keeps its pump time; without it the log is recorded when
+        received. The odometer never goes down with time: it is checked against the vehicle's reading and the
+        fuel logs before and after fueled_at. Publishes FuelLogged. api-contract §9.1.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vehicle_id, quantity_ml, total_cost_cents, odometer_km]
+              properties:
+                vehicle_id: { type: string, format: uuid, description: A live vehicle in the caller's depots. }
+                trip_id: { type: string, format: uuid, description: A trip the caller may see; if it has a vehicle, this one. }
+                driver_id: { type: string, format: uuid, description: Staff only; a driver is always themselves. }
+                fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other], description: "The vehicle's by default; electric is refused." }
+                quantity_ml: { type: integer, minimum: 1, maximum: 2000000, description: Whole millilitres. }
+                total_cost_cents: { type: integer, minimum: 0, maximum: 100000000, description: Whole cents. }
+                unit_price_cents: { type: integer, minimum: 0, maximum: 100000000 }
+                odometer_km: { type: number, minimum: 0, description: At most one decimal. }
+                station_name: { type: string, minLength: 1, maxLength: 255, description: Trimmed. }
+                fueled_at: { type: string, format: date-time, description: 'When the fill-up happened (FMS-115). Default now; not in the future (5 minutes of clock drift allowed), not over 30 days ago.' }
+      responses:
+        '201':
+          description: Logged. Location names the log.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelLog' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a field that is not writable, recorded_at and source included; fueled_at in_future or
+            too_old; a value out_of_range; a vehicle, trip or driver references_missing_record; vehicle_retired;
+            not_a_liquid_fuel; trip_vehicle_mismatch), VALIDATION_FLOAT_IN_MONEY_PATH (a fraction of a ml or cent)
+            or VALIDATION_INVALID_ENUM.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: >
+            CONFLICT_ODOMETER_REGRESSION (below_last_reading: lower than the vehicle's reading or a log before
+            fueled_at; above_later_reading: higher than a log after it), CONFLICT_IDEMPOTENCY_KEY_REUSED or
+            CONFLICT_IDEMPOTENCY_IN_PROGRESS.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /incidents:
@@ -1645,6 +1705,25 @@ components:
         acknowledged_by: { type: [string, 'null'], format: uuid }
         resolved_at: { type: [string, 'null'], format: date-time }
         resolved_by: { type: [string, 'null'], format: uuid }
+
+    FuelLog:
+      type: object
+      description: A fill-up (FMS-39). Volume in millilitres, money in cents.
+      required: [id, vehicle_id, driver_id, trip_id, fuel_type, quantity_ml, unit_price_cents, total_cost_cents, odometer_km, station_name, source, recorded_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        driver_id: { type: [string, 'null'], format: uuid }
+        trip_id: { type: [string, 'null'], format: uuid }
+        fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other] }
+        quantity_ml: { type: integer }
+        unit_price_cents: { type: [integer, 'null'] }
+        total_cost_cents: { type: integer }
+        odometer_km: { type: [number, 'null'] }
+        station_name: { type: [string, 'null'] }
+        source: { type: string, enum: [pump, fuel_card, bulk, manual] }
+        recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
+        created_at: { type: string, format: date-time, description: When the server received it. }
 
     Incident:
       type: object

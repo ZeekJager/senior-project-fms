@@ -34,8 +34,12 @@ export function checkFillUp(f: FillUp): FillUpErrors {
   return errors
 }
 
-/** The body, once `checkFillUp` found nothing. `odometer_km` keeps its one decimal: 1234567 tenths is 123456.7. */
-export function fuelLogBody(f: FillUp, vehicleId: string, tripId: string) {
+/**
+ * The body, once `checkFillUp` found nothing. `odometer_km` keeps its one decimal: 1234567 tenths is 123456.7.
+ * `fueled_at` is the moment the driver pressed submit (FMS-115): a fill-up queued in a dead zone keeps its pump
+ * time however late the queue delivers it.
+ */
+export function fuelLogBody(f: FillUp, vehicleId: string, tripId: string, now: Date) {
   const station = f.station.trim()
   return {
     vehicle_id: vehicleId,
@@ -44,6 +48,7 @@ export function fuelLogBody(f: FillUp, vehicleId: string, tripId: string) {
     total_cost_cents: f.totalCents!,
     odometer_km: f.odometerTenths! / 10,
     ...(station ? { station_name: station } : {}),
+    fueled_at: now.toISOString(),
   }
 }
 

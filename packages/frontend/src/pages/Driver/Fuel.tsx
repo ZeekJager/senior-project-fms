@@ -77,7 +77,7 @@ function FuelForm({ trip, onDone }: { trip: WorkingTrip & { vehicleId: string };
         kind: 'fuel',
         label: `Fuel, ${litres(fillUp.quantityMl!)}, ${vehicle.data?.registration_number ?? trip.routeName ?? 'your vehicle'}`,
         path: '/fuel-logs',
-        body: fuelLogBody(fillUp, trip.vehicleId, trip.id),
+        body: fuelLogBody(fillUp, trip.vehicleId, trip.id, new Date()),
       })
       if (result.status === 'rejected') {
         setError(`It was not accepted: ${result.rejection.message}`)
