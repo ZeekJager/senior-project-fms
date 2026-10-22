@@ -191,7 +191,8 @@ describe('FleetMap', () => {
 
   it('shows the plate, speed and last seen on hover', async () => {
     const user = userEvent.setup()
-    render(<FleetMap vehicles={[bole]} />)
+    // Seen as the test renders: the fixture's time is from when the file loaded, which a slow run leaves behind.
+    render(<FleetMap vehicles={[{ ...bole, lastSeen: ago(0) }]} />)
     scroll(true)
 
     await user.hover(marker('AA 3-12345'))
