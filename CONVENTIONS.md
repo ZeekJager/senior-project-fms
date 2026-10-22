@@ -190,7 +190,9 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `TripStarted`, `TripCompleted` | trip (FMS-32) | trip | `trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`; `actual_end`, `duration_seconds` on complete | `fleet.vehicle-cache` |
 | `TripAssigned` | trip (FMS-31) | trip | `trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, the schedule | `fleet.vehicle-cache` |
 | `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
-| `VehicleLocationUpdated` | integration (FMS-88, GPS ingestion) | vehicle | `vehicle_id`, `depot_id`, `trip_id`, `lat`, `lng`, `speed` (km/h), `heading`, `recorded_at`. At most one per vehicle per `TRACKING_EVENT_INTERVAL_SECONDS` of its pings, and only when the ping became the current position | real-time gateway (`vehicle.location.updated`) |
+| `VehicleLocationUpdated` | integration (FMS-88, GPS ingestion) | vehicle | `vehicle_id`, `depot_id`, `trip_id`, `lat`, `lng`, `speed` (km/h), `heading`, `recorded_at`. At most one per vehicle per `TRACKING_EVENT_INTERVAL_SECONDS` of its pings, and only when the ping became the current position | real-time gateway (`vehicle.location.updated`), `integration.telemetry-rules` |
+| `TelemetryFlagRaised` | integration (FMS-46, the telemetry rules) | vehicle | `flag_id`, `vehicle_id`, `depot_id`, `trip_id`, `driver_id`, `flag_type` (`speeding`, `idling`), `severity`, `observed_at` (when the condition began), `details` (`speed_limit_kmh`, `speed_kmh`, `consecutive_pings`, or `idle_minutes`; `lat`, `lng`, `flagged_at`) | `alert.engine`, `integration.live-map-cache`, real-time gateway (`vehicle.flag.changed`) |
+| `TelemetryFlagResolved` | integration (FMS-46): the flag's condition ended | vehicle | as `TelemetryFlagRaised`, plus `resolved_at`; `details` adds `end_reason` (`cleared`, `moving`, `engine_off`, `signal_lost`), `duration_seconds` and, for speeding, `max_speed_kmh` | `integration.live-map-cache`, real-time gateway (`vehicle.flag.changed`) |
 | `NotificationUnreadChanged` | alert (FMS-48) | inbox (per user) | `user_id`, `unread_count`, `reason` (`delivered`, `read`, `read_all`), `changed_at` | real-time gateway (`notifications.unread`, to that user's room only) |
 | `AlertCreated` | alert (FMS-92) | alert | `alert_id`, `depot_id`, `alert_type`, `severity`, `priority`, `status`, `entity_type`, `entity_id`, `vehicle_id`, `title`, `message`, `created_at` | real-time gateway (`alert.created`) |
 | `AlertUpdated` | alert (FMS-92): a repeat of the alert's source | alert | `alert_id`, `depot_id`, `status`, `severity`, `priority`, `occurrence_count`, `last_occurred_at` | real-time gateway (`alert.updated`) |
@@ -205,7 +207,6 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 
 - `VehicleFaultDetected` (integration, from telematics; the DVIR one is above).
 - `FuelAnomalyDetected` (fuel, FMS-82): `anomaly_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_log_id`, `anomaly_type`, `severity`.
-- `TelemetryFlagRaised` (integration, the telemetry rules FMS-46): `flag_id`, `vehicle_id`, `driver_id`, `trip_id`, `depot_id`, `flag_type` (speeding, idling, harsh_braking, geofence_violation ...), `severity`, `observed_at`.
 - `MaintenanceRiskDetected` (maintenance, FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
 - `BatteryThresholdExceeded` (ev, FMS-96): `vehicle_id`, `trip_id`, `metric`, `value`, `threshold`, `severity`.
 
@@ -222,12 +223,13 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 
 ## Redis
 
-Redis (FMS-72) holds the cache, the shared login throttle and job leases, and carries domain events to the real-time layer (FMS-73). It is **never the system of record**. Every use has a PostgreSQL or in-process fallback: if Redis is down, the API serves from PostgreSQL, throttles logins per process, locks jobs in `jobs.job_runs`, and domain events wait in the outbox (consumers still get them). `/health/ready` then reports `redis: "degraded"` and stays `200`.
+Redis (FMS-72) holds the cache, the shared login throttle, job leases and the telemetry rules' counters (FMS-46), and carries domain events to the real-time layer (FMS-73). It is **never the system of record**. Every use has a PostgreSQL or in-process fallback: if Redis is down, the API serves from PostgreSQL, throttles logins per process, locks jobs in `jobs.job_runs`, and domain events wait in the outbox (consumers still get them). `/health/ready` then reports `redis: "degraded"` and stays `200`.
 
 - **Keys:** `<prefix>:<namespace>:<module>:<entity>:<id>`, lowercase, `:`-separated. The prefix is `REDIS_KEY_PREFIX` (default `fms`; tests use `fms-test`).
   - `cache`: `fms:cache:fleet:vehicle:<public_id>` (`cache.key('fleet', 'vehicle', id)`).
   - `throttle`: `fms:throttle:login:<sha256>` (`redisKey('throttle', ...)`).
   - `lock`: `fms:lock:job:<job>:<day>` (`redisKey('lock', ...)`).
+  - `state`: `fms:state:integration:telemetry:<vehicle public id>` (`redisKey('state', ...)`): the telemetry rules' counters between pings (FMS-46), kept 24 hours. Not a cache: an outage does not drop it, and while Redis is down the rules count in process.
   - `events`: pub/sub channels, not keys: `fms:events:<EventType>` (`eventChannel(type)`), one per event type, carrying the JSON envelope.
   - Public ids in keys, never internal ids. Never an email, name or other personal data: hash it, as the throttle does.
 - **Every key has a TTL.** Redis evicts by least-recent use among keys with a TTL (`volatile-lru`) and saves nothing to disk.

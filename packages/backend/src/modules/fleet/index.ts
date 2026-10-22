@@ -312,7 +312,8 @@ export const fuelRefs = {
  * For GPS ingestion (FMS-88, integration module): vehicles by public or internal ids in a scope, with
  * their depot's public id and whether they are live, and the driver profile of a signed-in user.
  * For the live map (FMS-45): the scope's vehicles that are not retired, drivers' names, and a depot
- * filter checked against the scope.
+ * filter checked against the scope. For the telemetry rules (FMS-46): a vehicle's depot (internal id) and
+ * drivers' public ids.
  */
 export const trackingRefs = {
   vehicles: {
@@ -323,6 +324,7 @@ export const trackingRefs = {
   drivers: {
     idOfUser: tripRefs.drivers.idOfUser,
     names: (db: Queryable, ids: readonly string[]) => driverRepository.namesByIds(db, ids),
+    publicIds: tripRefs.drivers.publicIds,
   },
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
 };

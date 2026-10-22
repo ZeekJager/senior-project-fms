@@ -58,6 +58,7 @@ After the insert, each vehicle's newest stored ping is announced if it became th
 
 - **Payload:** `vehicle_id`, `depot_id` (who receives it), `trip_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at`. Aggregate `vehicle`.
 - **Real-time:** the gateway forwards it as `vehicle.location.updated` (and the legacy `vehicle_position`) to the depot's `tracking` room.
+- **Telemetry rules:** `integration.telemetry-rules` reads every ping up to the announced one, not only the announced one, so the throttle does not hide a ping from the speeding and idling rules ([telemetry-rules.md](telemetry-rules.md)).
 
 ## Telematics webhooks
 

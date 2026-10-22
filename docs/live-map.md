@@ -33,12 +33,12 @@ It is cached in Redis for 5 seconds (`LIVE_MAP_CACHE_TTL_SECONDS`): one snapshot
 
 **Re-reading the snapshot.**
 - Every 30 seconds. This is the fallback while the socket is down.
-- On `trip.updated` or `vehicle.status.changed`: the realtime provider marks `['tracking']` stale.
+- On `trip.updated`, `vehicle.status.changed` or `vehicle.flag.changed`: the realtime provider marks `['tracking']` stale.
 - After the socket reconnects.
 - When a position names a vehicle the page does not have, or a different trip. Throttled to once every 5 seconds.
 - A snapshot older than a position the socket already brought keeps that position.
 
-**Speeding and idling flags** come from the telemetry rules (FMS-46), which raise `tracking.telemetry_flags`. Until those rules publish their own event, a new flag reaches the page with the next re-read: within 30 seconds, or sooner on a trip or vehicle change.
+**Speeding and idling flags** come from the telemetry rules (FMS-46, [telemetry-rules.md](telemetry-rules.md)), which open and close `tracking.telemetry_flags`. A flag opening or closing drops the cached snapshot and reaches the page as `vehicle.flag.changed`, which re-reads it: the legend and the marker change within a second or two of the ping that decided it.
 
 ## Budgets
 

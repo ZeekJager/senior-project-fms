@@ -150,6 +150,20 @@ describe('event mapping (api-contract §11.2)', () => {
     expect(roomsOf({ event: 'x', channel: 'trips', depotId: null, driverIds: ['d1'], payload: {} })).toEqual(['trips:all', 'trips:driver:d1']);
   });
 
+  it('a telemetry flag opening or closing becomes vehicle.flag.changed for tracking, without the driver', async () => {
+    const payload = { flag_id: 'f1', vehicle_id: 'v1', depot_id: DEPOT_A, trip_id: 't1', driver_id: 'd1', flag_type: 'speeding', severity: 'high', observed_at: '2026-10-22T08:00:00.000Z', details: { speed_kmh: 95 } };
+    const [raised] = await deliveriesFor(envelope('TelemetryFlagRaised', payload), noTrips);
+    expect(raised).toEqual({
+      event: 'vehicle.flag.changed',
+      channel: 'tracking',
+      depotId: DEPOT_A,
+      payload: { flag_id: 'f1', vehicle_id: 'v1', trip_id: 't1', flag_type: 'speeding', severity: 'high', observed_at: '2026-10-22T08:00:00.000Z', resolved_at: null, change: 'raised' },
+    });
+    const [resolved] = await deliveriesFor(envelope('TelemetryFlagResolved', { ...payload, resolved_at: '2026-10-22T08:01:00.000Z' }), noTrips);
+    expect(resolved.payload).toMatchObject({ resolved_at: '2026-10-22T08:01:00.000Z', change: 'resolved' });
+    expect(resolved.payload).not.toHaveProperty('driver_id');
+  });
+
   it('every trip event becomes a trip update carrying the trip as it is now, for its depot, its driver and the driver it lost', async () => {
     const lookups = { tripSummary: async (id: string) => ({ trip_id: id, status: 'assigned', depot_id: DEPOT_A, driver_id: 'd2', version: 4 }) };
     const [d] = await deliveriesFor(envelope('TripAssigned', { trip_id: 't1', driver_id: 'd2', previous_driver_id: 'd1' }), lookups);

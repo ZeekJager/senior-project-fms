@@ -166,3 +166,16 @@ export async function liveTripsForVehicles(db: Queryable, vehicleIds: readonly s
   );
   return new Map(res.rows.map((r) => [r.vehicleId, r]));
 }
+
+/** A trip's public id and its driver (internal id), for an event about something that happened on it (FMS-46). */
+export interface TripParties {
+  publicId: string;
+  driverId: string | null;
+}
+
+/** Trips by internal id (a ping's or a flag's `trip_id`), keyed by that id. */
+export async function tripPartiesByIds(db: Queryable, tripIds: readonly string[]): Promise<Map<string, TripParties>> {
+  if (tripIds.length === 0) return new Map();
+  const res = await db.query<TripParties & { id: string }>('SELECT id, public_id AS "publicId", driver_id AS "driverId" FROM trip.trips WHERE id = ANY($1::bigint[])', [tripIds]);
+  return new Map(res.rows.map(({ id, ...rest }) => [id, rest]));
+}

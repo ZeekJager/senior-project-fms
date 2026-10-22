@@ -91,6 +91,10 @@ describe('RealtimeProvider (FMS-43)', () => {
 
     fake.serverEvent('vehicle.status.changed', { vehicle_id: 'v1' })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['vehicles'] })
+    // A speeding or idling flag (FMS-46) refreshes the live map.
+    invalidate.mockClear()
+    fake.serverEvent('vehicle.flag.changed', { flag_id: 'f1', vehicle_id: 'v1', change: 'raised' })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tracking'] })
     // An event it does not know changes nothing.
     invalidate.mockClear()
     fake.serverEvent('something.else', {})

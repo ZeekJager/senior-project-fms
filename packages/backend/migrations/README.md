@@ -38,6 +38,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 032 | `integration`, `tracking` | GPS ingestion (FMS-88): `gps_devices.public_id` and a device token (its SHA-256 only), so a device reports for its own vehicle; `vehicle_current_location.event_recorded_at`, the last position announced as `VehicleLocationUpdated`, which throttles the event per vehicle across instances |
 | 033 | `alert` | Alert engine (FMS-92): `alerts.depot_id` (scope), `trip_id`, `entity_type`/`entity_id` (the subject's public id), `dedup_key` with `occurrence_count` and `last_occurred_at` (a repeat within the rule's window updates the active alert), `escalation_level`/`escalated_at`, `acknowledged_by`/`resolved_by`, `details`; indexes for de-duplication, a depot's alerts and escalation |
 | 034 | `alert` | Incident reports (FMS-38): `incident_reports.depot_id` (scope: the vehicle's depot, or the reporter's), filled in from the vehicle for existing rows; a location is both coordinates or neither; indexes for a depot's incidents and a reporter's own |
+| 035 | `tracking` | Telemetry rules (FMS-46): `rule_thresholds` (speed limit, pings to raise and to clear, idling minutes; one fleet row, overridden per depot; the fleet row starts at 80 km/h, 3, 3, 5 min); one ongoing flag per vehicle and type (`ux_telemetry_flags_ongoing`), older duplicates closed first |
 
 ## Important
 
