@@ -8,6 +8,7 @@ import { fleetModule } from '../../src/modules/fleet';
 import { createEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
+import { addisDate } from '../support/dates';
 import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 import { deliverEvents, publishedEvents } from '../support/events';
 
@@ -181,7 +182,7 @@ describe('raising alerts from events', () => {
     const vehicle = await createVehicle({ depot, registration_number: 'AA 3-77004' });
     const uploader = await createUser({ roles: ['admin'] });
     const admin = await createUser({ roles: ['depot_admin'], depot });
-    const expiresOn = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+    const expiresOn = addisDate(5);
     await pool.query(
       `INSERT INTO document.documents (owner_type, owner_id, document_type, storage_key, content_type, size_bytes, sha256, uploaded_by, expires_on)
        VALUES ('vehicle', $1, 'insurance', $2, 'application/pdf', 100, $3, $4, $5)`,

@@ -83,6 +83,13 @@ await deliverEvents(); // consumers react: the driver-account copy, the cache, t
 
 Unit tests of a service over fakes pass a `RecordingEventBus` (`src/shared/events/recording-event-bus.ts`). It records the events and the client they were published on, so a test can check they went out inside the transaction.
 
+### Dates: the Addis Ababa day (FMS-123)
+
+The API judges dates by the operating day in Addis Ababa (UTC+3, `operatingToday()`): document and licence expiry, attendance, a window's first day. A test that compares with a date must use the same day, or it passes in the morning and fails in the evening:
+
+- **Build dates with `addisDate(days, from?)`** from `test/support/dates.ts`, never with `toISOString().slice(0, 10)`. From 21:00 UTC the UTC date is a day behind Addis Ababa, so a document "31 days" out lands at 30.
+- **A window ahead of now can start tomorrow.** From 21:00 in Addis Ababa (18:00 UTC), a window 3 hours ahead begins the next day. Pass its start as `from` (`addisDate(0, new Date(start))`), or use a fixed window on a fixed date.
+
 ### Assignment rules (FMS-31, FMS-62)
 
 The rules that decide whether a driver and vehicle may be put on a trip are tested in three places, each for what it can prove:
