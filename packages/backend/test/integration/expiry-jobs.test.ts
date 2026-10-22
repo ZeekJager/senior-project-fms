@@ -10,6 +10,7 @@ import { fleetModule } from '../../src/modules/fleet';
 import { PostgresJobLock } from '../../src/shared/jobs/job-lock';
 import type { ScheduledJob } from '../../src/shared/jobs/job';
 import { runJob } from '../../src/shared/jobs/scheduler';
+import { addisDate } from '../support/dates';
 import { deliverEvents, publishedEvents } from '../support/events';
 import { createDepot, createDriver, createUser, createVehicle } from '../support/factories';
 
@@ -17,14 +18,6 @@ const app = createApp();
 const TZ = 'Africa/Addis_Ababa';
 const PASSWORD = 'Expire-Test-1';
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
-
-/** A date `days` from today in Addis Ababa, YYYY-MM-DD. */
-function addisDate(days: number): string {
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
-  const d = new Date(`${today}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 const job = (name: string) => fleetModule.jobs!.find((j) => j.name === name)!;
 const deps = (instanceId = 'test-instance') => ({ lock: new PostgresJobLock(pool), audit: pool, timeZone: TZ, instanceId });
