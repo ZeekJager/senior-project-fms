@@ -34,7 +34,8 @@ Every call to an outside system, and every webhook from one, goes through this m
    - Call the provider only through `ctx.client.call({ method, path, ... })`. Paths are relative to `base_url`; an absolute URL or `..` is refused, so the API key cannot leave for another host.
    - Send `ctx.apiKey` the way the provider wants it, and never log it.
    - `normalize(body)` must be pure. Convert units to the system's (integer km/h, millilitres, cents) and pick the provider's event id as `eventId`, the de-duplication key. Throw `WebhookPayloadError(field, reason)` for a body it cannot read.
-4. **Consume the deliveries.** Subscribe to `IntegrationWebhookReceived` in the module that owns the data (telematics: `integration.telematics-pings` for FMS-88). Read the delivery with `webhookDeliveries.find(tx, payload.sync_log_id)`, which returns `{ provider_code, provider_type, kind, occurred_at, data }`. Insert with the business table's own de-duplication key (api-contract §15) and `ON CONFLICT DO NOTHING`, since delivery is at least once.
+   A telematics provider needs no adapter of its own if it sends the FMS telematics format ([gps-ingestion.md](gps-ingestion.md)): `registerForType('telematics', fmsTelematicsAdapter)` covers every telematics provider without one. Its devices are registered with `--provider <code>` (`npm run device:register`).
+4. **Consume the deliveries.** Subscribe to `IntegrationWebhookReceived` in the module that owns the data (telematics: `integration.telematics-pings`, FMS-88, ingests `positions`). Read the delivery with `webhookDeliveries.find(tx, payload.sync_log_id)`, which returns `{ provider_code, provider_type, kind, occurred_at, data }`. Insert with the business table's own de-duplication key (api-contract §15) and `ON CONFLICT DO NOTHING`, since delivery is at least once.
 
 Another module that calls a provider directly (the mapping adapter, FMS-84) gets the client with `integrationGateway.contextFor(code, correlationId)`.
 

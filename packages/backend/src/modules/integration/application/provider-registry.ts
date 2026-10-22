@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ProviderSecrets } from '../../../config/schema';
-import type { AdapterContext, ProviderAdapter } from '../domain/adapter';
+import type { AdapterContext, ProviderAdapter, ProviderType } from '../domain/adapter';
 import type { CircuitView } from '../domain/provider';
 import type { ProviderRow } from '../infrastructure/integration.repository';
 import { DEFAULT_BREAKER, ProviderBreaker, type BreakerLog, type BreakerSettings } from './circuit-breaker';
@@ -34,6 +34,7 @@ export interface HealthResult {
  */
 export class ProviderRegistry {
   private readonly adapters = new Map<string, ProviderAdapter>();
+  private readonly byType = new Map<ProviderType, (code: string) => ProviderAdapter>();
   private readonly breakers = new Map<string, { settings: string; breaker: ProviderBreaker }>();
   private readonly health = new Map<string, HealthResult>();
   private readonly warned = new Set<string>();
@@ -50,8 +51,14 @@ export class ProviderRegistry {
     this.adapters.set(adapter.code, adapter);
   }
 
-  adapter(code: string): ProviderAdapter | undefined {
-    return this.adapters.get(code);
+  /** The adapter every provider of a type uses unless one is registered for its code (FMS-88: the FMS telematics format). */
+  registerForType(type: ProviderType, make: (code: string) => ProviderAdapter): void {
+    this.byType.set(type, make);
+  }
+
+  /** The provider's own adapter, else its type's, else none. */
+  adapterFor(provider: Pick<ProviderRow, 'code' | 'providerType'>): ProviderAdapter | undefined {
+    return this.adapters.get(provider.code) ?? this.byType.get(provider.providerType)?.(provider.code);
   }
 
   secretsFor(code: string): ProviderSecrets {

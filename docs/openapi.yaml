@@ -9,7 +9,7 @@ info:
     and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
-    status, manual sync and signed webhooks (FMS-85).
+    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88).
 servers:
   - url: /api/v1
 security:
@@ -20,6 +20,7 @@ tags:
   - name: Vehicles
   - name: Dispatch
   - name: Integrations
+  - name: Tracking
 
 paths:
   /trips/{trip_id}/assign:
@@ -484,6 +485,68 @@ paths:
           description: UNSUPPORTED_MEDIA_TYPE (not application/json).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /tracking/gps-pings:
+    post:
+      tags: [Tracking]
+      operationId: ingestGpsPings
+      summary: Ingest GPS pings (FMS-88)
+      description: >
+        A batch of positions. A device (bearer token) reports for its own vehicle; a driver's phone (trip:execute)
+        for the vehicle of the driver's trip under way; a user with tracking:ingest names the vehicle on each ping.
+        Naming any other vehicle refuses the whole batch (403). A ping already stored (same vehicle, same instant) is
+        a duplicate and stored once. Readable pings that cannot be used are listed in rejected; the rest are stored.
+        Each vehicle's newest position is announced as VehicleLocationUpdated at most once per 5 s.
+      security:
+        - deviceToken: []
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pings]
+              additionalProperties: false
+              properties:
+                pings:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/GpsPoint' }
+      responses:
+        '202':
+          description: What was stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [accepted, duplicates, rejected]
+                    properties:
+                      accepted: { type: integer }
+                      duplicates: { type: integer, description: Pings already stored (a retried batch). }
+                      rejected:
+                        type: array
+                        items:
+                          type: object
+                          required: [index, reason]
+                          properties:
+                            index: { type: integer }
+                            reason: { type: string, enum: [future_timestamp, too_old, low_accuracy, unknown_vehicle, unknown_device, vehicle_retired] }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a field out of range or unknown, details name pings.<i>.<field>; a user's ping without vehicle_id).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: >
+            FORBIDDEN_INSUFFICIENT_ROLE: no tracking:ingest or trip:execute; or a device or phone naming a vehicle that is
+            not its own (reason not_your_vehicle); or a phone with no trip under way (no_trip_under_way). Nothing is stored.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
 components:
   securitySchemes:
     session:
@@ -491,6 +554,10 @@ components:
       in: cookie
       name: fms_access
       description: The httpOnly access cookie set by POST /auth/login and rotated by POST /auth/refresh.
+    deviceToken:
+      type: http
+      scheme: bearer
+      description: A GPS device's token (fmsd_...), issued by npm run device:register; only its SHA-256 is stored.
     webhookSignature:
       type: apiKey
       in: header
@@ -945,3 +1012,19 @@ components:
                 checked_at: { type: string, format: date-time }
                 healthy: { type: boolean }
                 error: { type: [string, 'null'] }
+
+    GpsPoint:
+      type: object
+      required: [recorded_at, lat, lng, speed_kmh]
+      additionalProperties: false
+      properties:
+        vehicle_id: { type: string, format: uuid, description: Required from a user with tracking:ingest; a device's and a phone's is implied. }
+        recorded_at: { type: string, format: date-time, description: With an offset. Not over 2 minutes ahead, not over 7 days old. }
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        speed_kmh: { type: number, minimum: 0, maximum: 300, description: Stored as whole km/h, rounded to the nearest. }
+        heading: { type: [number, 'null'], minimum: 0, maximum: 360 }
+        accuracy_m: { type: [number, 'null'], minimum: 0, description: Over 500 is refused (low_accuracy). }
+        altitude_m: { type: [number, 'null'] }
+        ignition_on: { type: [boolean, 'null'] }
+        odometer_km: { type: [number, 'null'], minimum: 0 }
