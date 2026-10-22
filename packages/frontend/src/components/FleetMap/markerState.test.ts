@@ -31,6 +31,13 @@ describe('markerState', () => {
     expect(markerState(vehicle({ lastSeen: 'not a time' }), NOW, null)).toBe('offline')
   })
 
+  it('shows a speeding flag above moving and idling, but not over an out-of-date position', () => {
+    expect(markerState(vehicle({ speeding: true, speedKmh: 95 }), NOW, null)).toBe('speeding')
+    expect(markerState(vehicle({ speeding: true, speedKmh: 0 }), NOW, NOW - IDLE_AFTER_MS * 2)).toBe('speeding')
+    expect(markerState(vehicle({ speeding: true, lastSeen: iso(OFFLINE_AFTER_MS + 1) }), NOW, null)).toBe('offline')
+    expect(markerState(vehicle({ speeding: true, breakdown: true }), NOW, null)).toBe('breakdown')
+  })
+
   it('shows a breakdown above everything, even when the phone has gone quiet', () => {
     expect(markerState(vehicle({ breakdown: true, lastSeen: iso(OFFLINE_AFTER_MS * 10) }), NOW, null)).toBe('breakdown')
   })

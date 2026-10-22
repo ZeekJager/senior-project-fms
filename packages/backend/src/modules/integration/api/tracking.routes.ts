@@ -1,10 +1,12 @@
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
+import { z } from 'zod';
 import { webhookChannel } from '../../../middleware/requestSource';
 import { withPolicy } from '../../../shared/authz/route-policy';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { IngestionService, Reporter } from '../application/ingestion.service';
+import type { LiveMapService } from '../application/live-map.service';
 import { deviceTokenInvalid } from '../domain/gps';
 import { apiPingBatch } from '../domain/ping-schema';
 import type { DeviceRow } from '../infrastructure/device.repository';
@@ -40,9 +42,24 @@ function ingestCaller(service: IngestionService): RequestHandler {
   return withPolicy(handler, { kind: 'permission', codes: ['tracking:ingest', 'trip:execute'] });
 }
 
-/** POST /tracking/gps-pings (api-contract §11.1, FMS-88): a batch of positions, answered with what was stored. */
-export function trackingRouter(service: IngestionService): Router {
+/** GET /tracking/vehicles/current: optionally one depot (public id) of the caller's scope. */
+const currentQuery = z.strictObject({ depot_id: z.uuid().optional() });
+
+/**
+ * POST /tracking/gps-pings (api-contract §11.1, FMS-88): a batch of positions, answered with what was stored.
+ * GET /tracking/vehicles/current (FMS-45): the live map's snapshot.
+ */
+export function trackingRouter(service: IngestionService, liveMap: LiveMapService): Router {
   const router = Router();
+  router.get(
+    '/tracking/vehicles/current',
+    authorize('tracking:read'),
+    asyncHandler(async (req, res) => {
+      const query = parseInput(currentQuery, req.query);
+      const data = await liveMap.current(req.user!, { depotId: query.depot_id });
+      res.json({ data, meta: { request_id: req.correlationId } });
+    }),
+  );
   router.post(
     '/tracking/gps-pings',
     ingestCaller(service),

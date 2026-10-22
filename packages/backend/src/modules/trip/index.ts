@@ -90,3 +90,6 @@ export {
 
 /** For GPS ingestion (FMS-88): the trips under way by vehicle, and a driver's own trip under way (their phone reports for it). */
 export { enRouteTripOfDriver, enRouteTripsForVehicles, type EnRouteTrip } from './infrastructure/trip-activity.queries';
+
+/** For the live map (FMS-45): each vehicle's trip under way, with its route and driver. */
+export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activity.queries';

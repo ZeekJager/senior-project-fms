@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
+import { cache } from '../../shared/cache';
 import { validationFailed } from '../../shared/errors/app-error';
 import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
@@ -9,12 +10,13 @@ import { logger } from '../../shared/logging/logger';
 import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
-import { trackingRefs } from '../fleet';
-import { enRouteTripOfDriver, enRouteTripsForVehicles } from '../trip';
+import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
+import { enRouteTripOfDriver, enRouteTripsForVehicles, liveTripsForVehicles, TRIP_EVENTS } from '../trip';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { trackingRouter } from './api/tracking.routes';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
+import { LiveMapService } from './application/live-map.service';
 import { ProviderRegistry } from './application/provider-registry';
 import type { AdapterContext, ProviderAdapter } from './domain/adapter';
 import type { PingInput } from './domain/gps';
@@ -36,8 +38,9 @@ const service = new IntegrationService({ repo, registry, events: eventBus, log: 
 registry.registerForType('telematics', fmsTelematicsAdapter);
 
 const devices = new DeviceRepository(pool);
+const tracking = new TrackingRepository();
 const ingestion = new IngestionService({
-  tracking: new TrackingRepository(),
+  tracking,
   devices,
   refs: {
     vehicles: trackingRefs.vehicles,
@@ -59,10 +62,27 @@ eventBus.subscribe(INTEGRATION_EVENTS.webhookReceived, 'integration.telematics-p
   await ingestion.ingest({ kind: 'provider', providerId: provider.id, providerCode: provider.code }, positions, event.correlation_id, tx);
 });
 
+// The live map's snapshot (FMS-45), cached for a few seconds. A trip starting, ending or changing, or a
+// vehicle changing, drops it after commit, so a screen re-reading on trip.updated sees the change.
+const liveMap = new LiveMapService({
+  db: pool,
+  tracking,
+  refs: {
+    vehicles: { liveMap: trackingRefs.vehicles.liveMap },
+    drivers: { names: trackingRefs.drivers.names },
+    depots: trackingRefs.depots,
+    trips: { liveForVehicles: liveTripsForVehicles },
+  },
+  cache,
+});
+for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVENTS)]) {
+  eventBus.subscribe(type, 'integration.live-map-cache', () => liveMap.invalidate());
+}
+
 const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
-router.use(trackingRouter(ingestion));
+router.use(trackingRouter(ingestion, liveMap));
 
 export const integrationModule: AppModule = { name: 'integration', router };
 
@@ -134,6 +154,7 @@ export {
 } from './domain/adapter';
 export { INTEGRATION_EVENTS } from './domain/provider';
 export { MAX_PINGS_PER_BATCH, TRACKING_EVENTS, type PingInput } from './domain/gps';
+export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-map';
 export { fmsTelematicsAdapter } from './infrastructure/fms-telematics.adapter';
 export { REPLAY_WINDOW_MS, SIGNATURE_HEADER, TIMESTAMP_HEADER, signWebhook } from './domain/webhook-signature';
 export { mockProviderAdapter } from './infrastructure/mock-provider';

@@ -96,11 +96,13 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 
 | Prop | Notes |
 |---|---|
-| `vehicles` | `{vehicleId, lat, lng, speedKmh, lastSeen, plateNumber?, heading?, stoppedSince?, breakdown?}[]`. From `vehicle.location.updated` (`docs/realtime.md`): `vehicle_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at` as `lastSeen` |
+| `vehicles` | `{vehicleId, lat, lng, speedKmh, lastSeen, plateNumber?, heading?, stoppedSince?, breakdown?, speeding?, details?}[]`. From `vehicle.location.updated` (`docs/realtime.md`): `vehicle_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at` as `lastSeen`. `details` (`{label, value}[]`, such as the driver and route) appear in the popup. Keep an unchanged vehicle's object between renders: a marker redraws only when its vehicle, state or selection changes |
 | `onVehicleClick` | Called with the `vehicleId` when a marker is clicked, or focused and activated with Enter or Space |
 | `className` | Sizes the map; it fills the box and needs a height (at least 256px) |
 | `label` | The map region's accessible name; "Fleet map" by default |
-| `ref` | The Leaflet map once it exists, so the page can pan to a vehicle (`flyTo`) |
+| `selectedVehicleId` | The vehicle whose popup is open (FMS-45): plate, state, speed, last seen and its `details`. The popup follows the vehicle and stays open while it is selected; the parent's choice decides. If the vehicle is off screen, the map flies to it (no animation with reduced motion). Its marker gets a focus ring, sits on top and shows no tooltip |
+| `onSelectionClose` | Called with the `vehicleId` when the user closes that popup: its close button, Escape on the map, or a click on the map |
+| `ref` | The Leaflet map once it exists, for anything else the page needs (`flyTo`, `fitBounds`) |
 
 **Marker colours.** Each marker is worked out from the vehicle's last ping, in this order:
 
@@ -108,6 +110,7 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 |---|---|---|
 | Breakdown | red, with a ring | `breakdown` is set (FMS-50). Shown even when the phone has gone quiet |
 | Offline | grey | No ping for more than 2 minutes. The map re-checks every 10 s, so a vehicle turns grey without new data |
+| Speeding | red, pulsing (a still ring with reduced motion) | `speeding` is set: an open speeding flag (FMS-46). Not over an out-of-date position: an offline vehicle is grey |
 | Idling | amber | 0 km/h for more than 5 minutes |
 | Stopped | green, no arrow | 0 km/h for 5 minutes or less |
 | Moving | green, arrow turned to `heading` | Any other speed. A ping without a speed counts as moving, never as stopped |

@@ -309,15 +309,22 @@ export const fuelRefs = {
 /**
  * For GPS ingestion (FMS-88, integration module): vehicles by public or internal ids in a scope, with
  * their depot's public id and whether they are live, and the driver profile of a signed-in user.
+ * For the live map (FMS-45): the scope's vehicles that are not retired, drivers' names, and a depot
+ * filter checked against the scope.
  */
 export const trackingRefs = {
   vehicles: {
     byPublicIds: (db: Queryable, publicIds: readonly string[], scope: Scope) => vehicleRepository.trackingRefs(db, { publicIds }, scope),
     byIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.trackingRefs(db, { ids }, { kind: 'all' }),
+    liveMap: (db: Queryable, scope: Scope, depotId: string | null) => vehicleRepository.liveMap(db, scope, depotId),
   },
-  drivers: { idOfUser: tripRefs.drivers.idOfUser },
+  drivers: {
+    idOfUser: tripRefs.drivers.idOfUser,
+    names: (db: Queryable, ids: readonly string[]) => driverRepository.namesByIds(db, ids),
+  },
+  depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
 };
-export type { TrackingVehicle } from './infrastructure/vehicle.repository';
+export type { LiveMapVehicle, TrackingVehicle } from './infrastructure/vehicle.repository';
 
 export const fleetModule: AppModule = {
   name: 'fleet',

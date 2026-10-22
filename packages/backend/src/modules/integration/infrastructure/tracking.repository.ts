@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { PingSource } from '../domain/gps';
+import { STOPPED_LOOKBACK_HOURS } from '../domain/live-map';
 
 /** A ping ready to store: internal ids, integer speed. */
 export interface PingRow {
@@ -27,6 +28,28 @@ export interface AnnouncedPosition {
   speed: number;
   heading: number | null;
   recordedAt: Date;
+}
+
+/** A vehicle's current position as the live map reads it (FMS-45). */
+export interface LivePosition {
+  vehicleId: string;
+  lat: number;
+  lng: number;
+  speedKmh: number;
+  heading: number | null;
+  accuracyM: number | null;
+  ignitionOn: boolean | null;
+  recordedAt: Date;
+  /** At 0 km/h: the first ping of the run of stopped pings that ends at the current one (looked back at most STOPPED_LOOKBACK_HOURS). */
+  stoppedSince: Date | null;
+}
+
+/** An open telemetry flag (FMS-46 raises them): the newest of each type per vehicle. */
+export interface OpenFlag {
+  vehicleId: string;
+  flagType: string;
+  severity: string;
+  observedAt: Date;
 }
 
 /**
@@ -89,6 +112,47 @@ export class TrackingRepository {
        RETURNING c.vehicle_id AS "vehicleId", c.latitude::float8 AS lat, c.longitude::float8 AS lng, c.speed_kmh AS speed,
                  c.heading_degrees::float8 AS heading, c.recorded_at AS "recordedAt"`,
       [newest.map((n) => n.vehicleId), newest.map((n) => n.recordedAt), minIntervalSeconds],
+    );
+    return res.rows;
+  }
+
+  /**
+   * The current position of each vehicle (internal ids) that has one. A stopped vehicle also gets when it
+   * stopped: after the last moving ping, within STOPPED_LOOKBACK_HOURS before its current one; so the map shows a vehicle
+   * idling for 10 minutes as idling as soon as it opens, not 5 minutes later.
+   */
+  async livePositions(db: Queryable, vehicleIds: readonly string[]): Promise<LivePosition[]> {
+    if (vehicleIds.length === 0) return [];
+    const res = await db.query<LivePosition>(
+      `SELECT c.vehicle_id AS "vehicleId", c.latitude::float8 AS lat, c.longitude::float8 AS lng, c.speed_kmh AS "speedKmh",
+              c.heading_degrees::float8 AS heading, c.accuracy_m::float8 AS "accuracyM", c.ignition_on AS "ignitionOn",
+              c.recorded_at AS "recordedAt",
+              CASE WHEN c.speed_kmh = 0 THEN (
+                SELECT min(p.recorded_at) FROM tracking.gps_pings p
+                 WHERE p.vehicle_id = c.vehicle_id AND p.recorded_at <= c.recorded_at
+                   AND p.recorded_at > COALESCE(
+                         (SELECT max(m.recorded_at) FROM tracking.gps_pings m
+                           WHERE m.vehicle_id = c.vehicle_id AND m.speed_kmh > 0
+                             AND m.recorded_at <= c.recorded_at AND m.recorded_at > c.recorded_at - make_interval(hours => $2)),
+                         c.recorded_at - make_interval(hours => $2))
+              ) END AS "stoppedSince"
+         FROM tracking.vehicle_current_location c
+        WHERE c.vehicle_id = ANY($1::bigint[])`,
+      [vehicleIds, STOPPED_LOOKBACK_HOURS],
+    );
+    return res.rows;
+  }
+
+  /** Open, unresolved telemetry flags of vehicles (internal ids): the newest of each type per vehicle. */
+  async openFlags(db: Queryable, vehicleIds: readonly string[]): Promise<OpenFlag[]> {
+    if (vehicleIds.length === 0) return [];
+    const res = await db.query<OpenFlag>(
+      `SELECT DISTINCT ON (f.vehicle_id, f.flag_type)
+              f.vehicle_id AS "vehicleId", f.flag_type::text AS "flagType", f.severity, f.observed_at AS "observedAt"
+         FROM tracking.telemetry_flags f
+        WHERE f.vehicle_id = ANY($1::bigint[]) AND f.status = 'open' AND f.resolved_at IS NULL
+        ORDER BY f.vehicle_id, f.flag_type, f.observed_at DESC`,
+      [vehicleIds],
     );
     return res.rows;
   }

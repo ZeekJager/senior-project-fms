@@ -7,7 +7,8 @@ import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { DriverFuel, DriverHome, DriverInspection } from '@/pages/Driver'
-import { CommandCenterPage, DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
+import { CommandCenterPage } from '@/pages/FleetCommandCenter'
+import { DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -103,8 +104,14 @@ export const portals: Portal[] = [
     routes: [
       // S-07, the dispatcher's home. trip:assign: admin, fleet manager, dispatcher.
       { path: '/dispatch', element: <DispatchPage />, permission: 'trip:assign', nav: { label: 'Dispatch', icon: Route } },
-      // S-16. command:read: admin, fleet manager, dispatcher, depot admin, fleet owner.
-      { path: '/command-center', element: <CommandCenterPage />, permission: 'command:read', nav: { label: 'Live map', icon: Radar } },
+      // S-16 (FMS-45). command:read: admin, fleet manager, dispatcher, depot admin, fleet owner; each
+      // also holds tracking:read, which the positions need (GET /tracking/vehicles/current).
+      {
+        path: '/command-center',
+        element: <CommandCenterPage />,
+        permission: { all: ['command:read', 'tracking:read'] },
+        nav: { label: 'Live map', icon: Radar },
+      },
     ],
   },
   {

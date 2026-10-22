@@ -100,4 +100,4 @@ A user with several roles gets the first match in this order: admin, fleet_manag
 1. Add a route to its portal in `routes.tsx`: `path`, `element`, `permission` (the code the API checks) and `nav` (label and icon) if it belongs in the menu.
 2. If it changes a role's menu or home, update the expectations in `router/navigation.test.ts` and the tables above.
 
-Dispatch and Live map are placeholders until S-07 and S-16. The notification bell is a slot: the inbox (S-17) renders into its panel.
+The Live map (S-16, [live-map.md](live-map.md)) needs `tracking:read` as well as `command:read`; every role with the one has the other. The notification bell is a slot: the inbox (S-17) renders into its panel.

@@ -9,7 +9,7 @@ info:
     and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
-    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88).
+    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45).
 servers:
   - url: /api/v1
 security:
@@ -484,6 +484,39 @@ paths:
         '415':
           description: UNSUPPORTED_MEDIA_TYPE (not application/json).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /tracking/vehicles/current:
+    get:
+      tags: [Tracking]
+      operationId: getCurrentVehicleLocations
+      summary: The live map's snapshot (FMS-45)
+      description: >
+        The caller's vehicles (depot scope) that are not retired and have a position or a trip under way, by plate:
+        each with its newest position, its trip under way with route and driver, and its open telemetry flags.
+        depot_id narrows it to one depot; a depot outside the scope gives an empty list. Cached for 5 s per depot
+        shown; trip and vehicle events drop it. Positions move on through vehicle.location.updated (docs/live-map.md).
+      parameters:
+        - name: depot_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The vehicles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VehicleLocation' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (depot_id not a UUID, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /tracking/gps-pings:
     post:
@@ -1028,3 +1061,63 @@ components:
         altitude_m: { type: [number, 'null'] }
         ignition_on: { type: [boolean, 'null'] }
         odometer_km: { type: [number, 'null'], minimum: 0 }
+
+    VehicleLocation:
+      type: object
+      required: [vehicle_id, registration_number, vehicle_type, vehicle_status, maintenance_flag, depot_id, position, trip, flags]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        vehicle_type: { type: string }
+        vehicle_status: { type: string, enum: [active, inactive, maintenance] }
+        maintenance_flag: { type: boolean }
+        depot_id: { type: [string, 'null'], format: uuid }
+        position:
+          description: The newest position; null for a vehicle on a trip that has not reported yet.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [lat, lng, speed_kmh, heading, accuracy_m, ignition_on, recorded_at, stopped_since]
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+                speed_kmh: { type: integer }
+                heading: { type: [number, 'null'] }
+                accuracy_m: { type: [number, 'null'] }
+                ignition_on: { type: [boolean, 'null'] }
+                recorded_at: { type: string, format: date-time }
+                stopped_since:
+                  type: [string, 'null']
+                  format: date-time
+                  description: At 0 km/h, the first stopped ping after it last moved (looked back at most 2 hours).
+        trip:
+          description: The trip under way, or null.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [trip_id, route_name, origin, destination, started_at, scheduled_end, driver]
+              properties:
+                trip_id: { type: string, format: uuid }
+                route_name: { type: [string, 'null'] }
+                origin: { type: [string, 'null'] }
+                destination: { type: [string, 'null'] }
+                started_at: { type: [string, 'null'], format: date-time }
+                scheduled_end: { type: [string, 'null'], format: date-time }
+                driver:
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      required: [driver_id, full_name]
+                      properties:
+                        driver_id: { type: string, format: uuid }
+                        full_name: { type: [string, 'null'] }
+        flags:
+          description: Open, unresolved telemetry flags (FMS-46), the newest of each type.
+          type: array
+          items:
+            type: object
+            required: [flag_type, severity, observed_at]
+            properties:
+              flag_type: { type: string, enum: [speeding, idling, fuel_variance, route_deviation, geofence_violation, harsh_braking, other] }
+              severity: { type: string, enum: [low, medium, high, critical] }
+              observed_at: { type: string, format: date-time }
