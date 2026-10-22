@@ -106,6 +106,8 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `api` | platform (`src/shared`) | idempotency_keys, used by the Idempotency-Key middleware (FMS-87) |
 | `shared` | platform | enum types and trigger functions only; no tables |
 
+Two modules own no schema and read through other modules' `index.ts`: `command-center` and `realtime` (the Socket.IO gateway, FMS-43). Every folder under `src/modules` needs its entry in `packages/eslint-plugin-fms/lib/module-boundaries.js`, `[]` for these; the plugin's tests fail otherwise.
+
 Foreign keys to another module's table are allowed in the database (they are integrity, not access). Reading through them is not.
 
 The linter's copy of this table is `MODULE_SCHEMAS` in `packages/eslint-plugin-fms/lib/module-boundaries.js`. Its tests fail when a migration creates a schema with no owner there, or a folder under `src/modules` has no entry, so a new module or schema updates both.
