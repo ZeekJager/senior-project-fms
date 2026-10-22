@@ -1,8 +1,10 @@
+import { createServer } from 'node:http';
 import { hostname } from 'node:os';
 import { createApp } from './app';
 import { config } from './config';
 import { pool } from './db';
 import { modules } from './modules';
+import { attachRealtime } from './modules/realtime';
 import { redis, redisKey } from './shared/cache';
 import { createOutboxRelay } from './shared/events/event-bus';
 import { outboxCleanupJob } from './shared/events/outbox-cleanup';
@@ -15,7 +17,10 @@ import { logger } from './shared/logging/logger';
 /** The operating time zone: daily jobs run on Addis Ababa days. */
 const JOBS_TIME_ZONE = 'Africa/Addis_Ababa';
 
-createApp().listen(config.port, () => {
+const server = createServer(createApp());
+// Socket.IO on the same server and port, at /api/v1/socket.io (FMS-43).
+const realtime = attachRealtime(server);
+server.listen(config.port, () => {
   logger.info({ port: config.port, nodeEnv: config.nodeEnv }, 'fms-backend listening');
 });
 
@@ -36,5 +41,6 @@ startScheduler(
 );
 
 // Delivers domain events from the outbox to consumers and Redis (FMS-73).
-// Every instance runs one; an advisory lock lets one relay at a time.
-createOutboxRelay().start();
+// Every instance runs one; an advisory lock lets one relay at a time. With no
+// Redis (one instance) it hands events to this instance's sockets directly.
+createOutboxRelay(redis ? {} : { broadcaster: realtime.localBroadcaster }).start();

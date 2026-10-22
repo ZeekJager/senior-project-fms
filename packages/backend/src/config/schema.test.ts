@@ -60,3 +60,11 @@ test('migration config uses the admin credentials', () => {
   assert.deepEqual(db, { host: 'h', port: 6543, database: 'd', user: 'fms_admin', password: 'p' });
   assert.ok(problems(() => loadMigrationConfig({ DB_HOST: 'h', DB_NAME: 'd' })).some((p) => p.startsWith('DB_ADMIN_PASSWORD')));
 });
+
+test('real-time: allowed origins as a comma-separated list, legacy location off by default (FMS-43)', () => {
+  assert.deepEqual(loadAppConfig(validEnv).realtime, { allowedOrigins: [], legacyLocation: false });
+  const cfg = loadAppConfig({ ...validEnv, REALTIME_ALLOWED_ORIGINS: ' https://fleet.example.com/ , http://localhost:5173', REALTIME_LEGACY_LOCATION: 'true' });
+  assert.deepEqual(cfg.realtime, { allowedOrigins: ['https://fleet.example.com', 'http://localhost:5173'], legacyLocation: true });
+  assert.ok(problems(() => loadAppConfig({ ...validEnv, REALTIME_ALLOWED_ORIGINS: 'fleet.example.com' })).some((p) => p.startsWith('REALTIME_ALLOWED_ORIGINS')));
+  assert.ok(problems(() => loadAppConfig({ ...validEnv, REALTIME_LEGACY_LOCATION: 'yes' })).some((p) => p.startsWith('REALTIME_LEGACY_LOCATION')));
+});

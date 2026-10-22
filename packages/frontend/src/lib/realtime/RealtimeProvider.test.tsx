@@ -1,0 +1,161 @@
+import { QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { http } from 'msw'
+import { MemoryRouter } from 'react-router-dom'
+import type { Socket } from 'socket.io-client'
+import { describe, expect, it, vi } from 'vitest'
+import { AuthProvider } from '@/context/AuthContext'
+import { createQueryClient } from '@/lib/query'
+import { currentUser, envelope, errorEnvelope, signedInAs, signedOut, testApi } from '@/test/auth'
+import { server } from '@/test/msw/server'
+import { useRealtimeEvent, useRealtimeStatus } from './context'
+import { RealtimeProvider } from './RealtimeProvider'
+
+/** Just enough of a socket.io-client Socket: the provider's calls are recorded, the server's events played. */
+class FakeSocket {
+  connects = 0
+  disconnects = 0
+  private handlers = new Map<string, ((...args: unknown[]) => void)[]>()
+  private any: ((event: string, payload: unknown) => void)[] = []
+  on(event: string, handler: (...args: unknown[]) => void) {
+    this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler])
+    return this
+  }
+  onAny(handler: (event: string, payload: unknown) => void) {
+    this.any.push(handler)
+    return this
+  }
+  removeAllListeners() {
+    this.handlers.clear()
+    this.any = []
+    return this
+  }
+  connect() {
+    this.connects += 1
+    return this
+  }
+  disconnect() {
+    this.disconnects += 1
+    return this
+  }
+  /** What the server or the transport does. */
+  fire(event: string, ...args: unknown[]) {
+    act(() => this.handlers.get(event)?.forEach((h) => h(...args)))
+  }
+  serverEvent(event: string, payload: unknown) {
+    act(() => this.any.forEach((h) => h(event, payload)))
+  }
+}
+
+const dispatcher = currentUser(['dispatcher'], ['trip:read', 'trip:assign'])
+
+function Probe({ seen }: { seen: unknown[] }) {
+  useRealtimeEvent('trip.updated', (payload) => seen.push(payload))
+  return <p data-testid="status">{useRealtimeStatus()}</p>
+}
+
+function renderProvider(fake: FakeSocket, seen: unknown[] = []) {
+  const queryClient = createQueryClient()
+  const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <AuthProvider api={testApi()}>
+          <RealtimeProvider connect={() => fake as unknown as Socket}>
+            <Probe seen={seen} />
+          </RealtimeProvider>
+        </AuthProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  return { invalidate }
+}
+
+const status = () => screen.getByTestId('status')
+
+describe('RealtimeProvider (FMS-43)', () => {
+  it('opens the socket once signed in, and marks the screens an event is about as stale', async () => {
+    signedInAs(dispatcher)
+    const fake = new FakeSocket()
+    const seen: unknown[] = []
+    const { invalidate } = renderProvider(fake, seen)
+    await waitFor(() => expect(fake.connects).toBe(1))
+    expect(status()).toHaveTextContent('connecting')
+    fake.fire('connect')
+    expect(status()).toHaveTextContent('live')
+
+    fake.serverEvent('trip.updated', { trip_id: 't1', status: 'assigned' })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dispatch'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['driver', 'today'] })
+    expect(seen).toEqual([{ trip_id: 't1', status: 'assigned' }])
+
+    fake.serverEvent('vehicle.status.changed', { vehicle_id: 'v1' })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['vehicles'] })
+    // An event it does not know changes nothing.
+    invalidate.mockClear()
+    fake.serverEvent('something.else', {})
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  it('signed out: no socket at all', async () => {
+    signedOut()
+    const fake = new FakeSocket()
+    renderProvider(fake)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fake.connects).toBe(0)
+    expect(status()).toHaveTextContent('off')
+  })
+
+  it('the server closed it (the token ran out, the account changed): renew the session, then reconnect', async () => {
+    let refreshes = 0
+    server.use(http.post('/api/v1/auth/refresh', () => (++refreshes, envelope(dispatcher))))
+    const fake = new FakeSocket()
+    renderProvider(fake)
+    await waitFor(() => expect(fake.connects).toBe(1))
+    fake.fire('connect')
+    fake.fire('disconnect', 'io server disconnect')
+    expect(status()).toHaveTextContent('down')
+    await waitFor(() => expect(fake.connects).toBe(2))
+    expect(refreshes).toBe(2) // the load's refresh, then the renewal
+
+    // A dropped network is not the server's doing: socket.io reconnects by itself.
+    fake.fire('disconnect', 'transport close')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fake.connects).toBe(2)
+  })
+
+  it('a handshake refused for an expired token renews the session; after 3 tries in a row it stops', async () => {
+    let refreshes = 0
+    server.use(http.post('/api/v1/auth/refresh', () => (++refreshes, envelope(dispatcher))))
+    const fake = new FakeSocket()
+    renderProvider(fake)
+    await waitFor(() => expect(fake.connects).toBe(1))
+    for (let i = 2; i <= 4; i++) {
+      fake.fire('connect_error', new Error('AUTH_TOKEN_EXPIRED'))
+      await waitFor(() => expect(fake.connects).toBe(i))
+    }
+    fake.fire('connect_error', new Error('AUTH_TOKEN_EXPIRED'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fake.connects).toBe(4)
+    // The load's refresh and three renewals.
+    expect(refreshes).toBe(4)
+  })
+
+  it('a renewal the server refuses does not reconnect', async () => {
+    let refreshes = 0
+    server.use(http.post('/api/v1/auth/refresh', () => (++refreshes === 1 ? envelope(dispatcher) : errorEnvelope(401, 'AUTH_TOKEN_REVOKED'))))
+    const fake = new FakeSocket()
+    renderProvider(fake)
+    await waitFor(() => expect(fake.connects).toBe(1))
+    fake.fire('disconnect', 'io server disconnect')
+    await waitFor(() => expect(refreshes).toBe(2))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(fake.connects).toBe(1)
+  })
+
+  it('outside the provider the hooks do nothing', () => {
+    const seen: unknown[] = []
+    render(<Probe seen={seen} />)
+    expect(status()).toHaveTextContent('off')
+  })
+})

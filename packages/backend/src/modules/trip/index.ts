@@ -57,15 +57,18 @@ export const tripModule: AppModule = { name: 'trip', router };
 
 /**
  * For the fuel module: a trip the user may see (null if missing or out of
- * scope), and trips' public ids by internal id.
+ * scope), and trips' public ids by internal id. For the real-time gateway:
+ * a trip's summary.
  */
 export const tripLookups = {
   find: (db: Queryable, user: RequestUser, publicId: string) => tripService.refVisibleTo(db, user, publicId),
   publicIds: (db: Queryable, ids: readonly string[]) => tripRepository.publicIdsByIds(db, ids),
+  /** For the real-time gateway (FMS-43): a trip's summary for `trip.updated`, with no caller. */
+  summary: (db: Queryable, publicId: string) => tripService.summary(db, publicId),
 };
 
 export { ROUTE_EVENTS } from './domain/route';
-export { TRIP_EVENTS } from './domain/trip';
+export { TRIP_EVENTS, type TripSummary } from './domain/trip';
 
 /**
  * For other modules: whether a vehicle or driver is on an assigned or

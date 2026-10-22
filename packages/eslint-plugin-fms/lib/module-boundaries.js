@@ -1,8 +1,8 @@
 /**
  * Which backend module owns which PostgreSQL schema (CONVENTIONS.md, Schema
  * ownership; CFG-5 / SE-107 in Jira). A module's SQL may use only its own
- * schemas plus PLATFORM_SCHEMAS. A module that owns no schema (command-center)
- * reads everything through other modules' index.ts.
+ * schemas plus PLATFORM_SCHEMAS. A module that owns no schema (command-center,
+ * realtime) reads everything through other modules' index.ts.
  *
  * tests/ownership-map.test.js fails when a migration creates a schema that is
  * not listed here, or when a folder under src/modules has no entry.
@@ -19,6 +19,8 @@ const MODULE_SCHEMAS = {
   analytics: ['analytics'],
   audit: ['audit'],
   'command-center': [],
+  // The Socket.IO gateway (FMS-43): forwards domain events, stores nothing.
+  realtime: [],
 };
 
 /** Usable from any module: enum types and trigger functions only, no tables. */

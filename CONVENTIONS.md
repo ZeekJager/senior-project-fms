@@ -106,6 +106,8 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `api` | platform (`src/shared`) | idempotency_keys, used by the Idempotency-Key middleware (FMS-87) |
 | `shared` | platform | enum types and trigger functions only; no tables |
 
+Two modules own no schema and read through other modules' `index.ts`: `command-center` and `realtime` (the Socket.IO gateway, FMS-43). Every folder under `src/modules` needs its entry in `packages/eslint-plugin-fms/lib/module-boundaries.js`, `[]` for these; the plugin's tests fail otherwise.
+
 Foreign keys to another module's table are allowed in the database (they are integrity, not access). Reading through them is not.
 
 The linter's copy of this table is `MODULE_SCHEMAS` in `packages/eslint-plugin-fms/lib/module-boundaries.js`. Its tests fail when a migration creates a schema with no owner there, or a folder under `src/modules` has no entry, so a new module or schema updates both.
@@ -190,7 +192,16 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 
 Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31), `TripStarted` and `TripCompleted` by the lifecycle commands (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
 
-Planned, named here so modules agree on them: `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated` (alert), `BatteryThresholdExceeded` (ev).
+Planned, named here so modules agree on them: `VehicleLocationUpdated`, `VehicleFaultDetected` (integration, from telematics; the DVIR one is above), `FuelAnomalyDetected` (fuel), `MaintenanceRiskDetected` (maintenance), `AlertCreated`, `AlertAcknowledged`, `AlertResolved` (alert), `IncidentReported` (incident), `BatteryThresholdExceeded` (ev).
+
+**Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it, so the planned ones it forwards must carry:
+
+- `VehicleLocationUpdated` (FMS-88): `vehicle_id`, `depot_id`, `trip_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at`.
+- `AlertCreated` (FMS-92): `alert_id`, `depot_id`, `alert_type`, `severity`, `status`, `entity_type`, `entity_id`, `message`.
+- `AlertAcknowledged` and `AlertResolved` (FMS-92): `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by`.
+- `IncidentReported` (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `occurred_at`.
+
+To show a new event live, add it to the gateway's map as well.
 
 ## API
 

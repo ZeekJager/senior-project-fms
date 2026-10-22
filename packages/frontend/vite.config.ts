@@ -25,6 +25,12 @@ export default defineConfig({
       usePolling: true
     },
     proxy: {
+      // Socket.IO (FMS-43), first so it wins over /api. The browser's Host is
+      // kept, so the API sees a same-origin socket and needs no allow-list.
+      '/api/v1/socket.io': {
+        target: apiProxyTarget,
+        ws: true,
+      },
       '/api': {
         target: apiProxyTarget,
         changeOrigin: true,
