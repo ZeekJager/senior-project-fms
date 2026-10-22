@@ -377,6 +377,15 @@ export class VehicleRepository extends Repository {
     return res.rows;
   }
 
+  /** A vehicle (any, retired too) by public id with its plate and depot (internal id): the subject of an alert (FMS-92). */
+  async alertSubject(db: Queryable, publicId: string): Promise<{ id: string; publicId: string; registrationNumber: string; depotId: string | null } | null> {
+    const res = await db.query<{ id: string; publicId: string; registrationNumber: string; depotId: string | null }>(
+      `SELECT id, public_id AS "publicId", registration_number AS "registrationNumber", depot_id AS "depotId" FROM fleet.vehicles WHERE public_id = $1`,
+      [publicId],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Public id and plate of vehicles by internal id, for maintenance responses. */
   async refsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; registrationNumber: string }>> {
     if (ids.length === 0) return new Map();

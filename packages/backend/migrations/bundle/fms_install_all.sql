@@ -2173,3 +2173,42 @@ CREATE INDEX IF NOT EXISTS idx_integration_gps_devices_provider
     ON integration.gps_devices(provider_id, device_identifier);
 
 ALTER TABLE tracking.vehicle_current_location ADD COLUMN IF NOT EXISTS event_recorded_at TIMESTAMPTZ;
+
+-- ===== 033_alert_engine.sql =====
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS depot_id BIGINT REFERENCES fleet.depots(id) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS trip_id BIGINT REFERENCES trip.trips(id) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS entity_type VARCHAR(30);
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS entity_id UUID;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS source_event_id UUID;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS dedup_key VARCHAR(255);
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS occurrence_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS last_occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS escalation_level SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS acknowledged_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS resolved_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE alert.alerts ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+DO $$ BEGIN
+    ALTER TABLE alert.alerts ADD CONSTRAINT chk_alert_occurrences CHECK (occurrence_count >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE alert.alerts ADD CONSTRAINT chk_alert_escalation CHECK (escalation_level >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE alert.alerts ADD CONSTRAINT chk_alert_details CHECK (jsonb_typeof(details) = 'object');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- The active alert of a source, for de-duplication.
+CREATE INDEX IF NOT EXISTS idx_alerts_dedup_active
+    ON alert.alerts(dedup_key, last_occurred_at DESC)
+    WHERE status IN ('open', 'acknowledged');
+
+-- A depot's alerts, newest first (GET /alerts).
+CREATE INDEX IF NOT EXISTS idx_alerts_depot_time
+    ON alert.alerts(depot_id, created_at DESC);
+
+-- Critical alerts nobody has acknowledged yet (the escalation job).
+CREATE INDEX IF NOT EXISTS idx_alerts_escalation_due
+    ON alert.alerts(created_at)
+    WHERE status = 'open' AND severity = 'critical';

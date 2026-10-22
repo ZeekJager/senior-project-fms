@@ -94,6 +94,11 @@ describe('event mapping (api-contract §11.2)', () => {
     expect(created[1].payload).toEqual({ alertType: 'speeding', entityId: 'v1', message: 'Over 80 km/h', severity: 'high' });
     const [acked] = await deliveriesFor(envelope('AlertAcknowledged', { alert_id: 'a1', depot_id: DEPOT_B, status: 'acknowledged', acknowledged_at: 'now' }), noTrips);
     expect(acked).toMatchObject({ event: 'alert.updated', channel: 'alerts', payload: { alert_id: 'a1', status: 'acknowledged', acknowledged_at: 'now' } });
+    // A repeat of the source and an escalation (FMS-92) are patches too.
+    const [repeat] = await deliveriesFor(envelope('AlertUpdated', { alert_id: 'a1', depot_id: DEPOT_B, status: 'open', severity: 'critical', occurrence_count: 3 }), noTrips);
+    expect(repeat).toMatchObject({ event: 'alert.updated', depotId: DEPOT_B, payload: { alert_id: 'a1', severity: 'critical', occurrence_count: 3 } });
+    const [escalated] = await deliveriesFor(envelope('AlertEscalated', { alert_id: 'a1', depot_id: DEPOT_B, status: 'open', escalation_level: 1, escalated_at: 'now' }), noTrips);
+    expect(escalated).toMatchObject({ event: 'alert.updated', payload: { alert_id: 'a1', escalation_level: 1, escalated_at: 'now' } });
   });
 
   it('IncidentReported becomes incident.created', async () => {

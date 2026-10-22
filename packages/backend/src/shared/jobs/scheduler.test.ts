@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import type { Queryable } from '../infrastructure/queryable';
-import { parseAt, type ScheduledJob } from './job';
+import { parseAt, scheduleOf, type ScheduledJob } from './job';
 import type { JobClaim, JobLock } from './job-lock';
-import { isDue, localDateAndTime, runJob } from './scheduler';
+import { isDue, localDateAndTime, runJob, runKeyOf } from './scheduler';
 
 const TZ = 'Africa/Addis_Ababa'; // UTC+3, no daylight saving
 
@@ -96,5 +96,52 @@ describe('runJob', () => {
     expect((await runJob(broken, deps)).status).toBe('failed');
     expect((await runJob(broken, deps)).status).toBe('failed');
     expect((await runJob(broken, deps)).status).toBe('skipped');
+  });
+});
+
+describe('interval jobs (every N minutes, FMS-92)', () => {
+  const every = (minutes: number, run: ScheduledJob['run']): ScheduledJob => ({ name: 'every-job', every: minutes, run });
+
+  test('exactly one of at and every; every divides 60', () => {
+    expect(scheduleOf({ name: 'a', every: 1 })).toEqual({ kind: 'every', minutes: 1 });
+    expect(scheduleOf({ name: 'a', at: '07:00' })).toEqual({ kind: 'daily', hour: 7, minute: 0 });
+    expect(() => scheduleOf({ name: 'a' })).toThrow(/exactly one/);
+    expect(() => scheduleOf({ name: 'a', at: '07:00', every: 5 })).toThrow(/exactly one/);
+    for (const bad of [0, 7, 45, 90, 1.5]) expect(() => scheduleOf({ name: 'a', every: bad })).toThrow(/divide 60/);
+  });
+
+  test('the run key is the slot, in local time; interval jobs are never caught up by the sweep', () => {
+    const at = new Date('2026-10-21T06:17:40Z'); // 09:17 in Addis Ababa
+    expect(runKeyOf(every(1, async () => {}), at, TZ)).toBe('2026-10-21T09:17');
+    expect(runKeyOf(every(5, async () => {}), at, TZ)).toBe('2026-10-21T09:15');
+    expect(runKeyOf(every(60, async () => {}), at, TZ)).toBe('2026-10-21T09:00');
+    expect(runKeyOf(job(async () => {}), at, TZ)).toBe('2026-10-21');
+    expect(isDue(every(1, async () => {}), at, TZ)).toBe(false);
+  });
+
+  test('runs once per slot; a run that did nothing leaves no audit entries, one that did leaves its result', async () => {
+    const lock = memoryLock();
+    const { db, entries } = auditSink();
+    let n = 0;
+    let clock = new Date('2026-10-21T06:17:00Z');
+    const deps = { lock, audit: db, timeZone: TZ, instanceId: 'a', now: () => clock };
+    const escalate = every(1, async () => ({ escalated: n }));
+    expect((await runJob(escalate, deps)).status).toBe('succeeded');
+    expect((await runJob(escalate, deps)).status).toBe('skipped');
+    expect(entries).toHaveLength(0);
+    clock = new Date('2026-10-21T06:18:05Z');
+    n = 2;
+    expect((await runJob(escalate, deps)).status).toBe('succeeded');
+    expect(entries.map((p) => p[1])).toEqual(['job.succeeded']);
+  });
+
+  test('a failed interval run is audited', async () => {
+    const { db, entries } = auditSink();
+    const deps = { lock: memoryLock(), audit: db, timeZone: TZ, instanceId: 'a', now: () => at0730 };
+    const broken = every(1, async () => {
+      throw new Error('boom');
+    });
+    expect((await runJob(broken, deps)).status).toBe('failed');
+    expect(entries.map((p) => p[1])).toEqual(['job.failed']);
   });
 });

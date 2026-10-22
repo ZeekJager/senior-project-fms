@@ -175,6 +175,13 @@ export class TripRepository extends Repository {
     return new Map(res.rows.map((r) => [r.id, r.publicId]));
   }
 
+  /** Internal ids by public id, for another module's foreign key (an alert's trip). Unknown ones are left out. */
+  async idsByPublicIds(db: Queryable, publicIds: readonly string[]): Promise<Map<string, string>> {
+    if (publicIds.length === 0) return new Map();
+    const res = await db.query<{ id: string; publicId: string }>('SELECT id, public_id AS "publicId" FROM trip.trips WHERE public_id = ANY($1::uuid[])', [publicIds]);
+    return new Map(res.rows.map((r) => [r.publicId, r.id]));
+  }
+
   /** Stops of these trips, in travel order. */
   async stops(db: Queryable, tripIds: readonly string[]): Promise<StopRow[]> {
     if (tripIds.length === 0) return [];

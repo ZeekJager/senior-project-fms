@@ -75,6 +75,27 @@ export const userDirectory = {
     return created;
   },
 
+  /**
+   * Internal ids of active accounts holding any of `roles` who see the depot (internal id): its own staff,
+   * and anyone whose roles see every depot. With no depot, only the latter. For an alert's recipients (FMS-92).
+   */
+  async activeWithRoles(db: Queryable, roles: readonly string[], depotId: string | null, unscopedRoles: readonly string[]): Promise<string[]> {
+    if (roles.length === 0) return [];
+    const res = await db.query<{ id: string }>(
+      `SELECT DISTINCT u.id
+         FROM auth.users u
+         JOIN auth.user_roles ur ON ur.user_id = u.id
+         JOIN auth.roles r ON r.id = ur.role_id AND r.is_active
+        WHERE u.status = 'active' AND r.name = ANY($1::text[])
+          AND ((u.depot_id IS NOT NULL AND u.depot_id = $2::bigint)
+               OR EXISTS (SELECT 1 FROM auth.user_roles ur2 JOIN auth.roles r2 ON r2.id = ur2.role_id AND r2.is_active
+                           WHERE ur2.user_id = u.id AND r2.name = ANY($3::text[])))
+        ORDER BY u.id`,
+      [roles, depotId, unscopedRoles],
+    );
+    return res.rows.map((r) => r.id);
+  },
+
   /** Active accounts whose home depot this is (internal id); a depot with any cannot be deleted. */
   async countActiveInDepot(db: Queryable, depotId: string): Promise<number> {
     const res = await db.query<{ n: number }>(
