@@ -597,10 +597,22 @@ The ML service never directly updates fleet master data. The Node.js core valida
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
 | `GET /tracking/vehicles/current` | Current fleet locations | `tracking:read` | `VehicleLocation[]` |
-| `POST /tracking/gps-pings` | Telemetry ingestion | `tracking:ingest` | `GPSPoint`; high-volume endpoint; accepted/queued |
+| `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
 | `GET /vehicles/{vehicle_id}/tracking` | Historical GPS | `tracking:read` | `from,to,limit,cursor` -> `GPSPoint[]` |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings | `tracking:read` | `TelemetryFlag[]` |
 | `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
+
+**GPS ingestion (FMS-88).** How it works, the webhook format and the simulator: [docs/gps-ingestion.md](gps-ingestion.md).
+
+- **`GPSPoint`** (in): `recorded_at` (ISO with offset), `lat`, `lng`, `speed_kmh` (0-300, rounded to whole km/h), and optionally `heading`, `accuracy_m`, `altitude_m`, `ignition_on`, `odometer_km`. A user with `tracking:ingest` adds `vehicle_id`; for a device or a phone it is implied.
+- **Who may report what.**
+  - A device (`Authorization: Bearer fmsd_...`) reports for its own vehicle only.
+  - A driver's phone (`trip:execute`) reports for the vehicle of the driver's trip under way only.
+  - Naming another vehicle, or having no trip under way, refuses the whole batch: `403 FORBIDDEN_INSUFFICIENT_ROLE`, reason `not_your_vehicle` or `no_trip_under_way`.
+  - An unknown device token is `401 AUTH_TOKEN_INVALID`.
+- **Validation.** Out of range or unknown fields: `400`, the whole batch, naming `pings.<i>.<field>`. A readable ping that cannot be used is refused alone in `rejected[]`: `future_timestamp` (over 2 min ahead), `too_old` (over 7 days), `low_accuracy` (over 500 m), `vehicle_retired`, `unknown_vehicle`.
+- **Duplicates.** A ping of a vehicle at an instant already stored is skipped (`(vehicle_id, recorded_at)`, §15), so a retried batch counts as `duplicates` and stores nothing.
+- **Event.** `VehicleLocationUpdated` announces each vehicle's newest position at most once per `TRACKING_EVENT_INTERVAL_SECONDS` (5) of its pings; it reaches clients as `vehicle.location.updated` (§11.2).
 
 The previous contract defined a client-to-server Socket.IO `location_update` event. In the canonical contract, high-volume telemetry ingestion is REST/webhook based and Socket.IO is used for server-to-client fan-out. This is a deliberate replacement, not a loss of the capability.
 
@@ -614,7 +626,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `alert.updated` | Server -> client | Alert patch | Acknowledge/resolve update |
 | `incident.created` | Server -> client | `Incident` | New active incident |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
-| `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion; canonical ingestion is REST/webhook |
+| `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion (`REALTIME_LEGACY_LOCATION`); canonical ingestion is REST/webhook. Goes through GPS ingestion as a phone: `tripId` must be the sender's trip under way |
 | `vehicle_position` | Server -> client (legacy event name) | `vehicleId,tripId,lat,lng,speedKmh,bearing,lastSeen` | Compatibility alias for `vehicle.location.updated` |
 | `alert_created` | Server -> client (legacy event name) | `alertType,entityId,message,severity` | Compatibility alias for `alert.created` |
 
@@ -692,6 +704,41 @@ Analytics reads should prefer PostgreSQL read replicas or precomputed analytics 
 | `POST /integrations/providers/{id}/sync` | Trigger provider sync | `integration:execute` | 202 + `SyncLog` |
 
 Webhook handlers verify signatures, validate schema and version, create a correlation id, normalize provider payloads, and persist/enqueue work. They return quickly so provider retries do not create duplicate business work. Idempotency is required for retried external events.
+
+### 15.2 Integration gateway (FMS-85)
+
+How it works and how to add a provider: [docs/integrations.md](integrations.md).
+
+- **Signature.** A webhook carries `X-FMS-Timestamp` (Unix seconds) and `X-FMS-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<raw body>` with the provider's shared secret (`INTEGRATION_<CODE>_WEBHOOK_SECRET`, never in the database). `{provider}` in the path is the provider's `code`.
+- **Refusals.**
+  - `404 NOT_FOUND`: no active provider of the path's type with that code, or one without a secret or an adapter. The same answer in each case.
+  - `401 AUTH_TOKEN_INVALID`: the signature is missing, malformed or wrong (`details[].reason` `missing_signature`, `malformed_signature`, `signature_mismatch`).
+  - `401 AUTH_TOKEN_EXPIRED`: a genuine signature whose timestamp is more than 5 minutes from the server clock. This is a replay, `reason` `stale_timestamp`.
+  - `400 VALIDATION_FAILED`: a body the provider's adapter cannot read (recorded as a failed sync log).
+  - `415 UNSUPPORTED_MEDIA_TYPE`: not JSON.
+
+  Nothing is stored for a refused signature.
+- **Acceptance.** `202 { data: { id, status: "accepted", duplicate }, meta }`, where `id` is the inbound sync log.
+  - A redelivery of an event id already stored is `202` with `duplicate: true` and the first delivery's `id`; nothing is stored or announced again. The key is `(provider_id, external_reference)` on inbound `integration.sync_logs`.
+  - The delivery is announced as `IntegrationWebhookReceived` for the module that processes it.
+- **`Provider`** (`GET /integrations/providers`, `?check=true` runs health checks first):
+  - `id`, `code`, `name`, `provider_type`, `is_active`;
+  - `status` (`operational`, `degraded`, `down` while the circuit is open, `unknown`, `inactive`);
+  - `capabilities` (`sync`, `webhooks`, `health_check`), `webhook_secret_configured`;
+  - `last_success_at`, `last_failure_at`, `last_error`, `last_sync`;
+  - `circuit` (this API instance's breaker: `state`, `opened_at`, `retry_at`, the 60 s window's counts, `latency_mean_ms`; null until the instance has called it);
+  - `health`.
+
+  `configuration` and secrets are never returned.
+- **`SyncLog`:** `id`, `provider_id`, `direction` (`inbound`, `outbound`), `status` (`started`, `succeeded`, `failed`, `partial`), `trigger` (`manual`, `webhook`), `kind`, `records`, `external_reference`, `request_id`, `started_at`, `completed_at`, `error_message`. The error message is ours (a status, a timeout), never the provider's response.
+- **Manual sync.** `POST /integrations/providers/{id}/sync` answers `202` with a `started` sync log and runs the sync after the response.
+  - A sync already running is returned instead (`meta.already_running: true`).
+  - `400 VALIDATION_FAILED` with `provider_inactive` or `sync_not_supported`.
+  - `503 UPSTREAM_UNAVAILABLE` with `Retry-After` while the provider's circuit is open.
+- **Calls to providers.** Every attempt has a timeout (5 s by default).
+  - **Retries:** idempotent calls only, after a timeout, a network error, 408, 429 or 5xx; at most 2, with full-jitter exponential backoff.
+  - **Breaker:** it opens once its 60 s window holds at least 5 calls and more than half failed (5 failures in a row always do), and calls then fail fast without reaching the provider. A trial call after 30 s closes or reopens it.
+  - Settings per provider: `timeout_ms`, `max_retries` and `reset_timeout_ms` in `configuration`.
 
 Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING`:
 

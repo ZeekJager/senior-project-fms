@@ -11,8 +11,9 @@ import { RedisEventBroadcaster } from '../../src/shared/events/broadcaster';
 import { createEvent } from '../../src/shared/events/domain-event';
 import { eventChannel } from '../../src/shared/events/event-bus';
 import { hashPassword } from '../../src/modules/auth';
+import { legacyLocationIngest } from '../../src/modules/integration';
 import { attachRealtime, SOCKET_PATH, type LegacyLocation, type RealtimeOptions } from '../../src/modules/realtime';
-import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
+import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 import { deliverEvents } from '../support/events';
 
 type Row = Awaited<ReturnType<typeof createDepot>>;
@@ -251,6 +252,24 @@ describe('real-time gateway (FMS-43)', () => {
     const answers = await Promise.all(Array.from({ length: 25 }, () => ask(t, location).catch(() => ({ ok: false, error: { code: 'NO_ANSWER' } }))));
     expect(answers.filter((a) => a.error?.code === 'RATE_LIMITED').length).toBeGreaterThan(10);
     expect(await dropped).toBe('io server disconnect');
+  });
+
+  test("the legacy location_update goes into GPS ingestion (FMS-88): stored for the driver's trip under way, refused for another", async () => {
+    const { url } = await start({ legacyLocation: { enabled: true, ingest: legacyLocationIngest } });
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const made = await driverWithLogin(depot);
+    const since = new Date(Date.now() - 60_000);
+    const trip = await createTrip({ vehicle, driver: made.driver, status: 'en_route', actual_start: since, scheduled_start: since });
+    const s = socket(url, { cookie: await login(made.user.email) });
+    await connected(s);
+    const ask = (body: unknown) => s.timeout(2000).emitWithAck('location_update', body) as Promise<{ ok: boolean; error?: { code: string } }>;
+
+    expect(await ask({ tripId: pid(trip), lat: 9.03, lng: 38.74, speedKmh: 40.6, bearing: 180 })).toEqual({ ok: true });
+    const stored = await pool.query('SELECT trip_id, source, speed_kmh FROM tracking.gps_pings WHERE vehicle_id = $1', [vehicle.id]);
+    expect(stored.rows).toEqual([{ trip_id: trip.id, source: 'phone', speed_kmh: 41 }]);
+
+    expect(await ask({ tripId: crypto.randomUUID(), lat: 9.03, lng: 38.74 })).toMatchObject({ ok: false, error: { code: 'FORBIDDEN_INSUFFICIENT_ROLE' } });
   });
 
   // Needs Redis (CI sets REDIS_HOST; locally, set it): two instances, as in production.

@@ -29,8 +29,8 @@ export const legacyLocation = z.strictObject({
 });
 export type LegacyLocation = z.infer<typeof legacyLocation>;
 
-/** Where a legacy location update goes: GPS ingestion (FMS-88), which checks the trip is the sender's. */
-export type LocationIngest = (identity: SocketIdentity, location: LegacyLocation) => Promise<void>;
+/** Where a legacy location update goes: GPS ingestion (FMS-88), which checks the trip is the sender's, as for the API. */
+export type LocationIngest = (user: RequestUser, location: LegacyLocation) => Promise<void>;
 
 export interface GatewayDeps {
   /** The caller behind an access token, as the API's `authenticate` decides it; throws a 401/403 AppError. */
@@ -105,6 +105,7 @@ export class RealtimeGateway {
     const user = await this.deps.authenticate(token);
     const identity = await this.deps.identify(user);
     socket.data.identity = identity;
+    socket.data.user = user;
     // Verified above; only its expiry is read here.
     const exp = decodeJwt(token!).exp;
     socket.data.expiresAt = typeof exp === 'number' ? exp * 1000 : this.now();
@@ -131,10 +132,11 @@ export class RealtimeGateway {
       }
     });
 
-    socket.on(LEGACY_LOCATION_EVENT, (raw: unknown, ack?: Ack) => void this.legacyLocation(identity, raw, typeof ack === 'function' ? ack : () => {}));
+    const user = socket.data.user as RequestUser;
+    socket.on(LEGACY_LOCATION_EVENT, (raw: unknown, ack?: Ack) => void this.legacyLocation(identity, user, raw, typeof ack === 'function' ? ack : () => {}));
   }
 
-  private async legacyLocation(identity: SocketIdentity, raw: unknown, ack: Ack): Promise<void> {
+  private async legacyLocation(identity: SocketIdentity, user: RequestUser, raw: unknown, ack: Ack): Promise<void> {
     const { enabled, ingest } = this.deps.legacyLocation;
     if (!enabled) return ack({ ok: false, error: { code: 'NOT_SUPPORTED', message: 'Send positions to POST /api/v1/tracking/gps-pings.' } });
     if (!identity.permissions.includes('trip:execute') && !identity.permissions.includes('tracking:ingest')) {
@@ -144,7 +146,7 @@ export class RealtimeGateway {
     if (!parsed.success) return ack({ ok: false, error: { code: 'VALIDATION_FAILED', message: 'tripId, lat and lng are required; speedKmh, bearing and accuracyM are optional numbers.' } });
     if (!ingest) return ack({ ok: false, error: { code: 'NOT_AVAILABLE', message: 'Position ingestion is not running yet.' } });
     try {
-      await ingest(identity, parsed.data);
+      await ingest(user, parsed.data);
       ack({ ok: true });
     } catch (err) {
       ack({ ok: false, error: err instanceof AppError ? { code: err.code, message: err.message } : { code: 'INTERNAL_SERVER_ERROR', message: 'The position was not recorded.' } });

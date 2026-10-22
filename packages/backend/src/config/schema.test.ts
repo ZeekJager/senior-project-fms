@@ -68,3 +68,29 @@ test('real-time: allowed origins as a comma-separated list, legacy location off 
   assert.ok(problems(() => loadAppConfig({ ...validEnv, REALTIME_ALLOWED_ORIGINS: 'fleet.example.com' })).some((p) => p.startsWith('REALTIME_ALLOWED_ORIGINS')));
   assert.ok(problems(() => loadAppConfig({ ...validEnv, REALTIME_LEGACY_LOCATION: 'yes' })).some((p) => p.startsWith('REALTIME_LEGACY_LOCATION')));
 });
+
+test('integration secrets are read by provider code from INTEGRATION_<CODE>_* (FMS-85)', () => {
+  assert.deepEqual(loadAppConfig(validEnv).integrations, { secrets: {} });
+  const cfg = loadAppConfig({
+    ...validEnv,
+    INTEGRATION_MOCK_TELEMATICS_WEBHOOK_SECRET: 's'.repeat(32),
+    INTEGRATION_MOCK_TELEMATICS_API_KEY: 'key-1',
+    INTEGRATION_FUELCARD_API_KEY: 'key-2',
+    INTEGRATION_EMPTY_API_KEY: '',
+  });
+  assert.deepEqual(cfg.integrations.secrets, {
+    'mock-telematics': { webhookSecret: 's'.repeat(32), apiKey: 'key-1' },
+    fuelcard: { apiKey: 'key-2' },
+  });
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, INTEGRATION_SHORT_WEBHOOK_SECRET: 'too-short' })), [
+    'INTEGRATION_SHORT_WEBHOOK_SECRET: must be at least 32 characters',
+  ]);
+  const production = { ...validEnv, NODE_ENV: 'production', REDIS_HOST: 'r', REDIS_PASSWORD: 'p', JWT_SECRET: 'j'.repeat(40) };
+  assert.ok(problems(() => loadAppConfig({ ...production, INTEGRATION_X_API_KEY: PLACEHOLDER })).some((p) => p.includes('placeholder')));
+});
+
+test('GPS events: at most one per vehicle per 5 s by default (FMS-88)', () => {
+  assert.deepEqual(loadAppConfig(validEnv).tracking, { eventIntervalSeconds: 5 });
+  assert.equal(loadAppConfig({ ...validEnv, TRACKING_EVENT_INTERVAL_SECONDS: '0' }).tracking.eventIntervalSeconds, 0);
+  assert.ok(problems(() => loadAppConfig({ ...validEnv, TRACKING_EVENT_INTERVAL_SECONDS: '-1' })).some((p) => p.startsWith('TRACKING_EVENT_INTERVAL_SECONDS')));
+});

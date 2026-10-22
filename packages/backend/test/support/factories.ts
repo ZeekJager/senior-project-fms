@@ -123,3 +123,13 @@ export function createTrip(
     ...overrides,
   });
 }
+
+/** An integration.external_providers row (FMS-85); `code` picks its secrets (INTEGRATION_<CODE>_*). */
+export function createProvider(overrides: Record<string, unknown> = {}): Promise<Row> {
+  return insert('integration.external_providers', {
+    name: `Provider ${unique()}`,
+    code: `provider-${unique()}`,
+    provider_type: 'telematics',
+    ...overrides,
+  });
+}

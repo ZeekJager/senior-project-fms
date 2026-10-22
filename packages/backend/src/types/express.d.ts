@@ -25,6 +25,8 @@ declare global {
       dbMutate: DbMutate;
       /** Set by middleware/requestSource.ts: channel, IP and user agent, for audit rows. */
       requestSource?: RequestSource;
+      /** The exact bytes of a webhook body, which its signature covers (app.ts keeps them for /api/v1/webhooks/ only). */
+      rawBody?: Buffer;
     }
   }
 }

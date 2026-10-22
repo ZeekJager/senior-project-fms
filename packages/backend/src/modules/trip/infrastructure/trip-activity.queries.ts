@@ -104,3 +104,36 @@ async function activeTripsBy(db: Queryable, column: 'vehicle_id' | 'driver_id', 
   );
   return new Map(res.rows.map(({ owner_id, ...trip }) => [owner_id, trip]));
 }
+
+/** A trip under way, both ids, for GPS ingestion (FMS-88): pings carry the trip's internal id. */
+export interface EnRouteTrip {
+  id: string;
+  publicId: string;
+  vehicleId: string | null;
+}
+
+/** The en-route trip of each vehicle (internal ids) that has one, keyed by vehicle id. */
+export async function enRouteTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, EnRouteTrip>> {
+  if (vehicleIds.length === 0) return new Map();
+  const res = await db.query<EnRouteTrip>(
+    `SELECT DISTINCT ON (t.vehicle_id) t.id, t.public_id AS "publicId", t.vehicle_id AS "vehicleId"
+       FROM trip.trips t
+      WHERE t.vehicle_id = ANY($1::bigint[]) AND t.status = 'en_route'
+      ORDER BY t.vehicle_id, t.actual_start DESC NULLS LAST, t.id DESC`,
+    [vehicleIds],
+  );
+  return new Map(res.rows.map((r) => [r.vehicleId as string, r]));
+}
+
+/** The trip a driver (internal id) has under way, with its vehicle; null when none is. A driver's phone reports only for it. */
+export async function enRouteTripOfDriver(db: Queryable, driverId: string): Promise<EnRouteTrip | null> {
+  const res = await db.query<EnRouteTrip>(
+    `SELECT t.id, t.public_id AS "publicId", t.vehicle_id AS "vehicleId"
+       FROM trip.trips t
+      WHERE t.driver_id = $1 AND t.status = 'en_route'
+      ORDER BY t.actual_start DESC NULLS LAST, t.id DESC
+      LIMIT 1`,
+    [driverId],
+  );
+  return res.rows[0] ?? null;
+}

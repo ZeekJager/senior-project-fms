@@ -45,6 +45,13 @@ keywords = ["pass", "secret", "token"]
   regexTarget = "line"
   regexes = ['''new AppError\(\d{3}, '[A-Z_]+',''']
 
+  [[rules.allowlists]]
+  # Words that are never a credential but often share a line with a `token`
+  # name: a hash or encoding (`createHash('sha256')`, `toString('base64url')`)
+  # and a row status (`token_hash = $1 AND status = 'active'`). Only the whole
+  # literal is matched, so a real secret that merely contains one still fails.
+  regexes = ['''^(?:sha256|sha384|sha512|base64|base64url|active)$''']
+
 [[rules]]
 id = "fms-sql-role-password"
 description = "SQL role created with a literal password. Pass it in as a psql variable instead."

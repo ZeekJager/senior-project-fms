@@ -2129,3 +2129,47 @@ ALTER TABLE trip.trips
         vehicle_id WITH =,
         tstzrange(scheduled_start, scheduled_end, '[]') WITH &&
     ) WHERE (status IN ('assigned', 'en_route'));
+
+-- ===== 031_integration_gateway.sql =====
+ALTER TABLE integration.external_providers ADD COLUMN IF NOT EXISTS code VARCHAR(50);
+
+-- Rows from before this migration get a slug from their name and id.
+UPDATE integration.external_providers
+   SET code = left(trim(BOTH '-' FROM regexp_replace(lower(name), '[^a-z0-9]+', '-', 'g')), 40) || '-' || id
+ WHERE code IS NULL;
+
+ALTER TABLE integration.external_providers ALTER COLUMN code SET NOT NULL;
+
+DO $$ BEGIN
+    ALTER TABLE integration.external_providers
+        ADD CONSTRAINT chk_provider_code CHECK (code ~ '^[a-z0-9]+(-[a-z0-9]+)*$');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_integration_providers_code
+    ON integration.external_providers(code);
+
+-- Webhook de-duplication (api-contract §15): one inbound row per provider event.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_integration_sync_logs_inbound_reference
+    ON integration.sync_logs(provider_id, external_reference)
+    WHERE direction = 'inbound' AND external_reference IS NOT NULL;
+
+-- The running sync of a provider, if any (a second manual sync joins it).
+CREATE INDEX IF NOT EXISTS idx_integration_sync_logs_running
+    ON integration.sync_logs(provider_id, started_at DESC)
+    WHERE status = 'started';
+
+-- ===== 032_gps_ingestion.sql =====
+ALTER TABLE integration.gps_devices ADD COLUMN IF NOT EXISTS public_id UUID NOT NULL DEFAULT gen_random_uuid();
+CREATE UNIQUE INDEX IF NOT EXISTS ux_integration_gps_devices_public_id ON integration.gps_devices(public_id);
+
+ALTER TABLE integration.gps_devices ADD COLUMN IF NOT EXISTS token_hash CHAR(64);
+ALTER TABLE integration.gps_devices ADD COLUMN IF NOT EXISTS token_issued_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_integration_gps_devices_token
+    ON integration.gps_devices(token_hash)
+    WHERE token_hash IS NOT NULL;
+
+-- A provider's devices by the identifier its webhooks use.
+CREATE INDEX IF NOT EXISTS idx_integration_gps_devices_provider
+    ON integration.gps_devices(provider_id, device_identifier);
+
+ALTER TABLE tracking.vehicle_current_location ADD COLUMN IF NOT EXISTS event_recorded_at TIMESTAMPTZ;

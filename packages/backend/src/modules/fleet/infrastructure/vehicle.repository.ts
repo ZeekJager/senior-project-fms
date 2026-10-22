@@ -134,6 +134,14 @@ function containsPattern(term: string): string {
  * so a vehicle outside it is simply not found (404, never 403). Writes go
  * through `mutate`, one audit row each.
  */
+/** A vehicle as GPS ingestion needs it (FMS-88). */
+export interface TrackingVehicle {
+  id: string;
+  publicId: string;
+  depotPublicId: string | null;
+  isActive: boolean;
+}
+
 export class VehicleRepository extends Repository {
   constructor(
     db: Pool,
@@ -323,6 +331,24 @@ export class VehicleRepository extends Repository {
       [publicId, ...clause.params],
     );
     return res.rows[0] ?? null;
+  }
+
+  /**
+   * Vehicles for GPS ingestion (FMS-88), by public or internal ids, in the caller's scope: both ids, the
+   * depot's public id (who receives VehicleLocationUpdated) and whether the vehicle is live.
+   */
+  async trackingRefs(db: Queryable, by: { publicIds: readonly string[] } | { ids: readonly string[] }, scope: Scope): Promise<TrackingVehicle[]> {
+    const list = 'publicIds' in by ? by.publicIds : by.ids;
+    if (list.length === 0) return [];
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const res = await db.query<TrackingVehicle>(
+      `SELECT v.id, v.public_id AS "publicId", d.public_id AS "depotPublicId", v.is_active AS "isActive"
+         FROM fleet.vehicles v
+         LEFT JOIN fleet.depots d ON d.id = v.depot_id
+        WHERE ${'publicIds' in by ? 'v.public_id = ANY($1::uuid[])' : 'v.id = ANY($1::bigint[])'} AND ${clause.sql}`,
+      [list, ...clause.params],
+    );
+    return res.rows;
   }
 
   /** Public id and plate of vehicles by internal id, for maintenance responses. */

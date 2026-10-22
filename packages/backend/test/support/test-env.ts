@@ -56,6 +56,10 @@ export function applyTestEnv(): void {
     setDefault('REDIS_PASSWORD', dotEnv.REDIS_PASSWORD);
     setDefault('REDIS_KEY_PREFIX', 'fms-test');
   }
+  // The integration gateway's mock provider (FMS-85): a webhook secret and an API key for the code
+  // test/integration/integrations.test.ts gives its providers.
+  setDefault('INTEGRATION_MOCK_TELEMATICS_WEBHOOK_SECRET', 'test-webhook-secret-for-the-mock-provider-0001');
+  setDefault('INTEGRATION_MOCK_TELEMATICS_API_KEY', 'test-api-key-mock-provider');
   // Always local disk, in a temp folder: tests never write into the repo or a real bucket.
   process.env.STORAGE_DRIVER = 'local';
   process.env.STORAGE_LOCAL_DIR = TEST_STORAGE_DIR;

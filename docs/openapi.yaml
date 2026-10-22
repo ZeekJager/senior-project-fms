@@ -8,7 +8,8 @@ info:
     test/integration/openapi.test.ts checks that every operation listed is mounted
     and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
-    trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33).
+    trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
+    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88).
 servers:
   - url: /api/v1
 security:
@@ -18,6 +19,8 @@ tags:
   - name: Trips
   - name: Vehicles
   - name: Dispatch
+  - name: Integrations
+  - name: Tracking
 
 paths:
   /trips/{trip_id}/assign:
@@ -307,6 +310,243 @@ paths:
           description: CONFLICT_INVALID_STATE_TRANSITION (nothing leaves retired), CONFLICT_VEHICLE_IN_USE (on a trip under way; record_id is the trip) or CONFLICT_CONCURRENT_MODIFICATION.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /integrations/providers:
+    get:
+      tags: [Integrations]
+      operationId: listIntegrationProviders
+      summary: Provider status (FMS-85)
+      description: >
+        Every provider with its state: last success and failure (from integration.sync_logs), its circuit breaker
+        on this API instance, and what its adapter can do. Settings (configuration) and secrets are never returned.
+        Needs integration:read. With check=true, each active provider's health check runs first (up to 5 s).
+      parameters:
+        - name: check
+          in: query
+          schema: { type: string, enum: ['true', 'false'], default: 'false' }
+      responses:
+        '200':
+          description: The providers, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Provider' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /integrations/providers/{provider_id}/sync:
+    post:
+      tags: [Integrations]
+      operationId: syncIntegrationProvider
+      summary: Start a provider sync (FMS-85)
+      description: >
+        Records a started sync log and answers at once; the sync runs after the response and completes the log
+        (succeeded, partial or failed). A sync of the provider already running is returned instead, with
+        meta.already_running true. Needs integration:execute.
+      parameters:
+        - name: provider_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: The sync log, status started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SyncLog' }
+                  meta:
+                    type: object
+                    required: [request_id, already_running]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      already_running: { type: boolean }
+        '400':
+          description: VALIDATION_FAILED, reason provider_inactive or sync_not_supported.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: UPSTREAM_UNAVAILABLE. The provider's circuit is open; Retry-After says when a call is let through.
+          headers:
+            Retry-After:
+              description: Seconds.
+              schema: { type: integer }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /webhooks/telematics/{provider}:
+    post:
+      tags: [Integrations]
+      operationId: receiveTelematicsWebhook
+      summary: Telematics webhook (FMS-85)
+      description: >
+        A provider's signed delivery for a telematics provider, named by its code. The signature is HMAC-SHA256 of
+        "<X-FMS-Timestamp>.<raw body>" with the provider's secret (INTEGRATION_<CODE>_WEBHOOK_SECRET), sent as
+        "sha256=<hex>". A timestamp more than 5 minutes from the server clock is refused (a replay). A redelivery
+        of the same event id is answered 202 with duplicate true, and nothing is stored twice. The delivery is
+        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer.
+      security:
+        - webhookSignature: []
+      parameters:
+        - $ref: '#/components/parameters/ProviderCode'
+        - $ref: '#/components/parameters/WebhookTimestamp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "The provider's own format, read by its adapter." }
+      responses:
+        '202': { $ref: '#/components/responses/WebhookAccepted' }
+        '400':
+          description: VALIDATION_FAILED (the adapter cannot read the body; details name the field). Recorded as a failed sync log.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/WebhookRefused' }
+        '404':
+          description: NOT_FOUND (no active telematics provider with this code, or one without a webhook secret or adapter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE (not application/json).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /webhooks/fuel-card/{provider}:
+    post:
+      tags: [Integrations]
+      operationId: receiveFuelCardWebhook
+      summary: Fuel-card webhook (FMS-85)
+      description: >
+        A provider's signed delivery for a fuel_card provider, named by its code. The signature is HMAC-SHA256 of
+        "<X-FMS-Timestamp>.<raw body>" with the provider's secret (INTEGRATION_<CODE>_WEBHOOK_SECRET), sent as
+        "sha256=<hex>". A timestamp more than 5 minutes from the server clock is refused (a replay). A redelivery
+        of the same event id is answered 202 with duplicate true, and nothing is stored twice. The delivery is
+        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer.
+      security:
+        - webhookSignature: []
+      parameters:
+        - $ref: '#/components/parameters/ProviderCode'
+        - $ref: '#/components/parameters/WebhookTimestamp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "The provider's own format, read by its adapter." }
+      responses:
+        '202': { $ref: '#/components/responses/WebhookAccepted' }
+        '400':
+          description: VALIDATION_FAILED (the adapter cannot read the body; details name the field). Recorded as a failed sync log.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/WebhookRefused' }
+        '404':
+          description: NOT_FOUND (no active fuel_card provider with this code, or one without a webhook secret or adapter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE (not application/json).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /webhooks/ev/{provider}:
+    post:
+      tags: [Integrations]
+      operationId: receiveEvWebhook
+      summary: EV charging webhook (FMS-85)
+      description: >
+        A provider's signed delivery for a ev_charging provider, named by its code. The signature is HMAC-SHA256 of
+        "<X-FMS-Timestamp>.<raw body>" with the provider's secret (INTEGRATION_<CODE>_WEBHOOK_SECRET), sent as
+        "sha256=<hex>". A timestamp more than 5 minutes from the server clock is refused (a replay). A redelivery
+        of the same event id is answered 202 with duplicate true, and nothing is stored twice. The delivery is
+        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer.
+      security:
+        - webhookSignature: []
+      parameters:
+        - $ref: '#/components/parameters/ProviderCode'
+        - $ref: '#/components/parameters/WebhookTimestamp'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "The provider's own format, read by its adapter." }
+      responses:
+        '202': { $ref: '#/components/responses/WebhookAccepted' }
+        '400':
+          description: VALIDATION_FAILED (the adapter cannot read the body; details name the field). Recorded as a failed sync log.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/WebhookRefused' }
+        '404':
+          description: NOT_FOUND (no active ev_charging provider with this code, or one without a webhook secret or adapter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE (not application/json).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /tracking/gps-pings:
+    post:
+      tags: [Tracking]
+      operationId: ingestGpsPings
+      summary: Ingest GPS pings (FMS-88)
+      description: >
+        A batch of positions. A device (bearer token) reports for its own vehicle; a driver's phone (trip:execute)
+        for the vehicle of the driver's trip under way; a user with tracking:ingest names the vehicle on each ping.
+        Naming any other vehicle refuses the whole batch (403). A ping already stored (same vehicle, same instant) is
+        a duplicate and stored once. Readable pings that cannot be used are listed in rejected; the rest are stored.
+        Each vehicle's newest position is announced as VehicleLocationUpdated at most once per 5 s.
+      security:
+        - deviceToken: []
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pings]
+              additionalProperties: false
+              properties:
+                pings:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/GpsPoint' }
+      responses:
+        '202':
+          description: What was stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [accepted, duplicates, rejected]
+                    properties:
+                      accepted: { type: integer }
+                      duplicates: { type: integer, description: Pings already stored (a retried batch). }
+                      rejected:
+                        type: array
+                        items:
+                          type: object
+                          required: [index, reason]
+                          properties:
+                            index: { type: integer }
+                            reason: { type: string, enum: [future_timestamp, too_old, low_accuracy, unknown_vehicle, unknown_device, vehicle_retired] }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a field out of range or unknown, details name pings.<i>.<field>; a user's ping without vehicle_id).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: >
+            FORBIDDEN_INSUFFICIENT_ROLE: no tracking:ingest or trip:execute; or a device or phone naming a vehicle that is
+            not its own (reason not_your_vehicle); or a phone with no trip under way (no_trip_under_way). Nothing is stored.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
 components:
   securitySchemes:
     session:
@@ -314,6 +554,17 @@ components:
       in: cookie
       name: fms_access
       description: The httpOnly access cookie set by POST /auth/login and rotated by POST /auth/refresh.
+    deviceToken:
+      type: http
+      scheme: bearer
+      description: A GPS device's token (fmsd_...), issued by npm run device:register; only its SHA-256 is stored.
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-FMS-Signature
+      description: >
+        Webhooks only: "sha256=" and the hex HMAC-SHA256 of "<X-FMS-Timestamp>.<raw body>" with the provider's
+        shared secret. Compared in constant time; the timestamp must be within 5 minutes of the server clock.
 
   parameters:
     TripId:
@@ -332,6 +583,18 @@ components:
       required: false
       description: The version last read, as an ETag ("3"). A newer version is 409 CONFLICT_CONCURRENT_MODIFICATION.
       schema: { type: string }
+    ProviderCode:
+      name: provider
+      in: path
+      required: true
+      description: The provider's code (integration.external_providers.code), e.g. mock-telematics.
+      schema: { type: string, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$' }
+    WebhookTimestamp:
+      name: X-FMS-Timestamp
+      in: header
+      required: true
+      description: When the provider signed the delivery, in Unix seconds. Part of the signed text.
+      schema: { type: string, pattern: '^[0-9]{1,12}$' }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -368,6 +631,28 @@ components:
         CONFLICT_INVALID_STATE_TRANSITION (details[].allowed_transitions lists where the trip can go; empty for
         completed and cancelled), CONFLICT_CONCURRENT_MODIFICATION, or on start the assignment's
         CONFLICT_DEPOT_MISMATCH, CONFLICT_VEHICLE_FLAGGED and CONFLICT_DRIVER_NOT_ELIGIBLE.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    WebhookAccepted:
+      description: Stored and announced, or a duplicate of a delivery already stored (the same id).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data:
+                type: object
+                required: [id, status, duplicate]
+                properties:
+                  id: { type: string, format: uuid, description: The inbound sync log. }
+                  status: { type: string, enum: [accepted] }
+                  duplicate: { type: boolean }
+              meta: { $ref: '#/components/schemas/Meta' }
+    WebhookRefused:
+      description: >
+        AUTH_TOKEN_INVALID (signature missing, malformed or not matching; details reason missing_signature,
+        malformed_signature or signature_mismatch) or AUTH_TOKEN_EXPIRED (a genuine signature with a timestamp more
+        than 5 minutes from the server clock: a replay). Nothing is stored.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Unauthenticated:
       description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
@@ -650,3 +935,96 @@ components:
         warning: { const: ASSIGNED_TRIP_AFFECTED }
         trip_id: { type: string, format: uuid }
         start: { type: string, format: date-time }
+
+    SyncLog:
+      type: object
+      required: [id, provider_id, direction, status, trigger, kind, records, external_reference, request_id, started_at, completed_at, error_message]
+      properties:
+        id: { type: string, format: uuid }
+        provider_id: { type: [string, 'null'], format: uuid }
+        direction: { type: string, enum: [inbound, outbound] }
+        status: { type: string, enum: [started, succeeded, failed, partial] }
+        trigger: { type: [string, 'null'], enum: [manual, webhook, null] }
+        kind: { type: [string, 'null'], description: "A webhook's kind (position, transaction)." }
+        records: { type: [integer, 'null'], description: What a sync brought in. }
+        external_reference: { type: [string, 'null'], description: "A webhook's event id, a sync's batch." }
+        request_id: { type: [string, 'null'] }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        error_message: { type: [string, 'null'], description: "Our words for the failure (a status, a timeout), never the provider's response." }
+
+    Provider:
+      type: object
+      required: [id, code, name, provider_type, is_active, status, capabilities, webhook_secret_configured, last_success_at, last_failure_at, last_error, last_sync, circuit, health]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        provider_type: { type: string, enum: [telematics, notification, mapping, traffic, weather, ev_charging, fuel_card, other] }
+        is_active: { type: boolean }
+        status:
+          type: string
+          enum: [operational, degraded, down, unknown, inactive]
+          description: >
+            down while the circuit is open; degraded while half-open, after a failed health check, or when the last
+            failure is newer than the last success.
+        capabilities:
+          type: object
+          required: [sync, webhooks, health_check]
+          properties:
+            sync: { type: boolean }
+            webhooks: { type: boolean }
+            health_check: { type: boolean }
+        webhook_secret_configured: { type: boolean }
+        last_success_at: { type: [string, 'null'], format: date-time }
+        last_failure_at: { type: [string, 'null'], format: date-time }
+        last_error: { type: [string, 'null'] }
+        last_sync:
+          oneOf:
+            - $ref: '#/components/schemas/SyncLog'
+            - type: 'null'
+        circuit:
+          description: This API instance's breaker; null until the instance has called the provider.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [state, opened_at, retry_at, window, latency_mean_ms]
+              properties:
+                state: { type: string, enum: [closed, open, half_open] }
+                opened_at: { type: [string, 'null'], format: date-time }
+                retry_at: { type: [string, 'null'], format: date-time }
+                window:
+                  type: object
+                  description: Counts over the last 60 s.
+                  properties:
+                    calls: { type: integer }
+                    successes: { type: integer }
+                    failures: { type: integer }
+                    timeouts: { type: integer }
+                    rejected: { type: integer }
+                latency_mean_ms: { type: integer }
+        health:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [checked_at, healthy, error]
+              properties:
+                checked_at: { type: string, format: date-time }
+                healthy: { type: boolean }
+                error: { type: [string, 'null'] }
+
+    GpsPoint:
+      type: object
+      required: [recorded_at, lat, lng, speed_kmh]
+      additionalProperties: false
+      properties:
+        vehicle_id: { type: string, format: uuid, description: Required from a user with tracking:ingest; a device's and a phone's is implied. }
+        recorded_at: { type: string, format: date-time, description: With an offset. Not over 2 minutes ahead, not over 7 days old. }
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lng: { type: number, minimum: -180, maximum: 180 }
+        speed_kmh: { type: number, minimum: 0, maximum: 300, description: Stored as whole km/h, rounded to the nearest. }
+        heading: { type: [number, 'null'], minimum: 0, maximum: 360 }
+        accuracy_m: { type: [number, 'null'], minimum: 0, description: Over 500 is refused (low_accuracy). }
+        altitude_m: { type: [number, 'null'] }
+        ignition_on: { type: [boolean, 'null'] }
+        odometer_km: { type: [number, 'null'], minimum: 0 }
