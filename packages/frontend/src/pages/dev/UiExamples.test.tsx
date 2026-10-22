@@ -13,6 +13,7 @@ describe('/dev/ui examples page', () => {
     expect(screen.getByText('23.50 L')).toBeInTheDocument()
     expect(screen.getByText('En route')).toBeInTheDocument()
     expect(screen.getByLabelText('Price')).toHaveValue('149.99')
+    expect(screen.getByRole('region', { name: 'Example fleet map' })).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('/dev/ui')
   })
 

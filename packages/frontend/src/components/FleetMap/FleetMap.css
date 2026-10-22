@@ -1,0 +1,174 @@
+/*
+ * The fleet map's markers, and Leaflet's controls and tooltips in the design tokens (FMS-44).
+ * Two classes deep, so these win over leaflet.css whatever order the stylesheets load in.
+ */
+
+.fleet-map .leaflet-container {
+  background: rgb(var(--c-surface-sunken));
+  font: inherit;
+}
+
+/* OpenStreetMap only draws light tiles; in the dark theme they are inverted to a dim map. */
+:root[data-theme='dark'] .fleet-map .fleet-map-tiles {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .fleet-map .fleet-map-tiles {
+    filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55);
+  }
+}
+
+/* Zoom buttons and attribution: surface cards with hairline borders. */
+.fleet-map .leaflet-bar {
+  border: 1px solid rgb(var(--c-line));
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(var(--shadow) / 0.06);
+  overflow: hidden;
+}
+.fleet-map .leaflet-bar a {
+  width: 32px;
+  height: 32px;
+  line-height: 30px;
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-ink-muted));
+  border-bottom-color: rgb(var(--c-line));
+}
+.fleet-map .leaflet-bar a:hover {
+  background: rgb(var(--c-surface-muted));
+  color: rgb(var(--c-ink));
+}
+.fleet-map .leaflet-bar a.leaflet-disabled {
+  background: rgb(var(--c-surface-muted));
+  color: rgb(var(--c-ink-subtle) / 0.6);
+}
+.fleet-map .leaflet-control-attribution {
+  background: rgb(var(--c-surface) / 0.9);
+  color: rgb(var(--c-ink-subtle));
+  font-size: 12px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-top-left-radius: 6px;
+}
+.fleet-map .leaflet-control-attribution a {
+  color: rgb(var(--c-brand-ink));
+}
+
+.fleet-map .fleet-map-tooltip {
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-ink));
+  border: 1px solid rgb(var(--c-line));
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 16px 40px -12px rgb(var(--shadow) / 0.28), 0 4px 12px -4px rgb(var(--shadow) / 0.12);
+  font-size: 14px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.fleet-map .fleet-map-tooltip.leaflet-tooltip-top::before {
+  border-top-color: rgb(var(--c-surface));
+}
+.fleet-map .fleet-map-tooltip.leaflet-tooltip-bottom::before {
+  border-bottom-color: rgb(var(--c-surface));
+}
+
+/* Markers: a 30px disc with a white ring, the vehicle's state as its colour. */
+.fleet-map .fleet-marker-icon {
+  background: none;
+  border: 0;
+  outline: none;
+}
+.fleet-marker {
+  position: relative;
+  display: flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  --marker: rgb(var(--c-success-solid));
+  --marker-ink: #fff;
+}
+.fleet-marker__dot {
+  display: flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--marker);
+  color: var(--marker-ink);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 2px rgb(19 23 41 / 0.2), 0 4px 10px -2px rgb(19 23 41 / 0.3);
+  transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.fleet-marker__dot svg {
+  width: 15px;
+  height: 15px;
+}
+.fleet-marker-icon:hover .fleet-marker__dot {
+  transform: scale(1.08);
+}
+.fleet-marker-icon:focus-visible .fleet-marker__dot {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 5px rgb(var(--c-focus));
+}
+
+/* The direction of travel: a notch on the ring, turned to the heading. */
+.fleet-marker__arrow {
+  position: absolute;
+  inset: 0;
+}
+.fleet-marker__arrow::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 7px solid var(--marker);
+}
+
+.fleet-marker--idling {
+  --marker: #f59e0b;
+  --marker-ink: #451a03;
+}
+.fleet-marker--breakdown {
+  --marker: rgb(var(--c-danger-solid));
+}
+.fleet-marker--breakdown .fleet-marker__dot {
+  box-shadow: 0 0 0 4px rgb(var(--c-danger-solid) / 0.28), 0 4px 10px -2px rgb(19 23 41 / 0.3);
+}
+.fleet-marker--offline {
+  --marker: #64748b;
+}
+.fleet-marker--offline .fleet-marker__dot {
+  opacity: 0.85;
+}
+
+.fleet-legend-dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px rgb(var(--c-surface)), 0 0 0 3px rgb(var(--c-line));
+}
+.fleet-legend-dot--active {
+  background: rgb(var(--c-success-solid));
+}
+.fleet-legend-dot--idling {
+  background: #f59e0b;
+}
+.fleet-legend-dot--breakdown {
+  background: rgb(var(--c-danger-solid));
+}
+.fleet-legend-dot--offline {
+  background: #64748b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fleet-marker__dot {
+    transition: none;
+  }
+  .fleet-marker-icon:hover .fleet-marker__dot {
+    transform: none;
+  }
+}

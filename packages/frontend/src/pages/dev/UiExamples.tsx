@@ -12,6 +12,7 @@ import {
   STATUSES,
   StatusBadge,
 } from '@/components/shared'
+import { FleetMap, type FleetMapVehicle } from '@/components/FleetMap'
 import { Badge, Button, Card, FilterSelect, SelectField, TextField } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
 
@@ -26,6 +27,8 @@ export default function UiExamples() {
   const [deleting, setDeleting] = useState(false)
   const [page, setPage] = useState(1)
   const [crash, setCrash] = useState(false)
+  const [mapVehicles] = useState(exampleVehicles)
+  const [clickedVehicle, setClickedVehicle] = useState<string | null>(null)
   const pageRows = Array.from({ length: 5 }, (_, i) => {
     const n = (page - 1) * 5 + i + 1
     return { id: String(n), plate: `AA 3-${String(10000 + n)}`, status: n % 4 === 0 ? 'Maintenance' : 'Active' }
@@ -78,6 +81,17 @@ export default function UiExamples() {
             <MoneyDisplay amountMinorUnits={null} />
           </dd>
         </dl>
+      </section>
+
+      <section aria-labelledby="ui-map" className="flex flex-col gap-2">
+        <h2 id="ui-map" className="text-lg font-semibold">
+          FleetMap
+        </h2>
+        <p className="text-ink-muted">One vehicle in each state. Hover a marker for its details; click it, or focus it and press Enter.</p>
+        <FleetMap vehicles={mapVehicles} onVehicleClick={setClickedVehicle} className="h-[420px]" label="Example fleet map" />
+        <p>
+          Clicked: <code>{clickedVehicle ?? 'none'}</code>
+        </p>
       </section>
 
       <section aria-labelledby="ui-inputs" className="flex max-w-sm flex-col gap-2">
@@ -233,6 +247,18 @@ export default function UiExamples() {
       </section>
     </main>
   )
+}
+
+/** One vehicle per marker state around Addis Ababa, timed from when the page opened. */
+function exampleVehicles(): FleetMapVehicle[] {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+  return [
+    { vehicleId: 'veh-bole', plateNumber: 'AA 3-12345', lat: 8.9958, lng: 38.7869, speedKmh: 46, heading: 300, lastSeen: ago(0.1) },
+    { vehicleId: 'veh-mexico', plateNumber: 'AA 3-20212', lat: 9.0103, lng: 38.7445, speedKmh: 0, lastSeen: ago(0.2), stoppedSince: ago(2) },
+    { vehicleId: 'veh-merkato', plateNumber: 'AA 2-40417', lat: 9.0335, lng: 38.7405, speedKmh: 0, lastSeen: ago(0.3), stoppedSince: ago(12) },
+    { vehicleId: 'veh-kality', plateNumber: 'OR 3-55501', lat: 8.9312, lng: 38.7671, speedKmh: 0, lastSeen: ago(1), breakdown: true },
+    { vehicleId: 'veh-cmc', plateNumber: 'AA 3-77810', lat: 9.0236, lng: 38.8446, speedKmh: 31, heading: 90, lastSeen: ago(9) },
+  ]
 }
 
 /** Throws while rendering, for the ErrorBoundary example: an API error, so the request id shows. */

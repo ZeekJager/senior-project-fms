@@ -60,6 +60,7 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 - The events marked with a card are not published yet. Their payloads are the contract those cards must meet, `depot_id` included: it decides who receives the event.
 - Payloads are picked field by field. A new field on a domain event is not forwarded until it is added here.
 - To forward a new event, add it to `FORWARDERS` in `realtime/domain/contract.ts`, then to this table and to api-contract §11.2.
+- `vehicle.location.updated` feeds the fleet map (FMS-44, `docs/shared-ui.md`): the page holding the socket passes each vehicle's latest position to `FleetMap` as a prop.
 
 ## Client to server
 
