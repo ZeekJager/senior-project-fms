@@ -9,7 +9,7 @@ info:
     and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
-    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92).
+    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38).
 servers:
   - url: /api/v1
 security:
@@ -22,6 +22,7 @@ tags:
   - name: Integrations
   - name: Tracking
   - name: Alerts
+  - name: Incidents
 
 paths:
   /trips/{trip_id}/assign:
@@ -729,6 +730,126 @@ paths:
           description: CONFLICT_INVALID_STATE_TRANSITION, reason alert_<status>.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /incidents:
+    post:
+      tags: [Incidents]
+      operationId: reportIncident
+      summary: Report an incident (FMS-38)
+      description: >
+        The reporter is the caller. Defaults: incident_type other, occurred_at now. A critical incident sets
+        the vehicle's maintenance flag in the same transaction and becomes an alert (FMS-92); every one
+        publishes IncidentReported. A driver reports as themselves; staff may name a driver (the trip's by
+        default). A replay after the Idempotency-Key expired (same reporter, occurred_at and description)
+        answers 200 with the original and meta.created false. docs/incidents.md.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [description, severity]
+              properties:
+                description: { type: string, minLength: 1, maxLength: 2000, description: Trimmed. }
+                severity: { type: string, enum: [low, medium, high, critical] }
+                incident_type: { type: string, enum: [accident, breakdown, tyre, theft, vandalism, injury, road_hazard, other], default: other }
+                vehicle_id: { type: string, format: uuid, description: A live vehicle in the caller's depots. Optional. }
+                trip_id: { type: string, format: uuid, description: A trip the caller may see; if it has a vehicle, this one. }
+                driver_id: { type: string, format: uuid, description: Staff only; a driver is always themselves. }
+                latitude: { type: number, minimum: -90, maximum: 90, description: With longitude, or neither. }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                occurred_at: { type: string, format: date-time, description: 'Default now; not in the future (5 minutes of clock drift allowed), not over 30 days ago.' }
+      responses:
+        '201':
+          description: Reported. Location names the incident.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentEnvelope' }
+        '200':
+          description: The same report was already on file (a late offline replay); meta.created is false.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentEnvelope' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a missing description or severity, a field that is not writable, a half location,
+            occurred_at in_future or too_old, a vehicle or trip references_missing_record, vehicle_retired,
+            trip_vehicle_mismatch, a driver_id from a driver) or VALIDATION_INVALID_ENUM.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    get:
+      tags: [Incidents]
+      operationId: listIncidents
+      summary: Search incidents (FMS-38)
+      description: >
+        Newest first (occurred_at). A driver sees only the incidents they reported; staff, their depots'
+        (an incident no depot owns is seen by those who see every depot).
+      parameters:
+        - { name: status, in: query, description: 'Comma-separated: open, investigating, resolved, closed.', schema: { type: string } }
+        - { name: severity, in: query, description: 'Comma-separated: low, medium, high, critical.', schema: { type: string } }
+        - { name: incident_type, in: query, description: 'Comma-separated incident types.', schema: { type: string } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of incidents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Incident' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED or VALIDATION_INVALID_ENUM (an unknown status, severity or type; an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /incidents/{incident_id}:
+    get:
+      tags: [Incidents]
+      operationId: getIncident
+      summary: Incident detail (FMS-38)
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        '200':
+          description: The incident.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Incident' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such incident, or not yours to see).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
 components:
   securitySchemes:
     session:
@@ -749,6 +870,11 @@ components:
         shared secret. Compared in constant time; the timestamp must be within 5 minutes of the server clock.
 
   parameters:
+    IncidentId:
+      name: incident_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     AlertId:
       name: alert_id
       in: path
@@ -1309,3 +1435,34 @@ components:
         acknowledged_by: { type: [string, 'null'], format: uuid }
         resolved_at: { type: [string, 'null'], format: date-time }
         resolved_by: { type: [string, 'null'], format: uuid }
+
+    Incident:
+      type: object
+      required: [id, incident_type, severity, status, description, vehicle_id, driver_id, trip_id, depot_id, reported_by, latitude, longitude, occurred_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        incident_type: { type: string, description: 'accident, breakdown, tyre, theft, vandalism, injury, road_hazard, other.' }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [open, investigating, resolved, closed] }
+        description: { type: string }
+        vehicle_id: { type: [string, 'null'], format: uuid }
+        driver_id: { type: [string, 'null'], format: uuid }
+        trip_id: { type: [string, 'null'], format: uuid }
+        depot_id: { type: [string, 'null'], format: uuid, description: "The vehicle's depot, or the reporter's." }
+        reported_by: { type: string, format: uuid, description: The user who reported it. }
+        latitude: { type: [number, 'null'] }
+        longitude: { type: [number, 'null'] }
+        occurred_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    IncidentEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: '#/components/schemas/Incident' }
+        meta:
+          type: object
+          required: [created, request_id]
+          properties:
+            created: { type: boolean }
+            request_id: { type: string, format: uuid }

@@ -666,12 +666,14 @@ An alert is a business event requiring attention. A notification is a delivery a
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /incidents` | Create incident | `incident:write` | `vehicle_id,trip_id,description,severity`, optional `incident_type` (default `other`), `occurred_at` (default now) -> `Incident` |
-| `GET /incidents` | List incidents | `incident:read` | Paged `Incident[]` |
+| `POST /incidents` | Create incident | `incident:write` | `description`, `severity`; optional `vehicle_id`, `trip_id`, `driver_id` (staff), `latitude` with `longitude`, `incident_type` (default `other`), `occurred_at` (default now) -> `201 Incident`; Idempotency-Key; a late replay of the same report -> `200` with `meta.created: false` |
+| `GET /incidents` | List incidents | `incident:read` | `status`, `severity`, `incident_type` (comma-separated), `vehicle_id`, `from`, `to`, `page`, `page_size` -> Paged `Incident[]`, newest first; a driver sees only what they reported, staff their depots' |
 | `GET /incidents/{incident_id}` | Incident detail | `incident:read` | `Incident` |
 | `PATCH /incidents/{incident_id}` | Update incident | `incident:write` | `IncidentUpdate` -> `Incident` |
 
 Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The reporter is the authenticated user.
+
+**Incident reports (FMS-38).** An incident belongs to its vehicle's depot, or the reporter's. A critical one sets the vehicle's maintenance flag in its transaction and becomes an alert; every one publishes `IncidentReported` (`incident.created` on the socket). `PATCH` is not built yet. Fields, refusals and the offline replay: [docs/incidents.md](incidents.md).
 
 ## 13. EV Fleet Management API
 

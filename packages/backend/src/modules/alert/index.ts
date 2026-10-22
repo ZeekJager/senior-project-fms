@@ -5,16 +5,22 @@ import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { userDirectory } from '../auth';
-import { alertRefs } from '../fleet';
+import { alertRefs, incidentRefs } from '../fleet';
 import { tripLookups } from '../trip';
 import { alertRouter } from './api/alert.routes';
+import { incidentRouter } from './api/incident.routes';
 import { AlertService } from './application/alert.service';
+import { IncidentService } from './application/incident.service';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
+import { IncidentRepository } from './infrastructure/incident.repository';
 
 // The alert engine (FMS-92, architecture §9.4 and §34): events become alerts by rule, de-duplicated per
 // source, notified in-app, acknowledged and resolved through the API, and escalated when a critical
-// alert is left unacknowledged. See docs/alerts.md.
+// alert is left unacknowledged. See docs/alerts.md. Incident reports (FMS-38) live here too: they are
+// alert.incident_reports, and a critical one becomes an alert through IncidentReported.
+
+const userPublicIds = async (db: Queryable, ids: readonly string[]) => new Map((await userDirectory.findByIds(db, ids)).map((u) => [u.id, u.publicId]));
 
 const repo = new AlertRepository(pool);
 const service = new AlertService({
@@ -26,11 +32,21 @@ const service = new AlertService({
     trips: { idsByPublicIds: tripLookups.idsByPublicIds, publicIds: tripLookups.publicIds },
     users: {
       activeWithRoles: (db, roles, depotId, unscoped) => userDirectory.activeWithRoles(db, roles, depotId, unscoped),
-      publicIds: async (db: Queryable, ids: readonly string[]) => new Map((await userDirectory.findByIds(db, ids)).map((u) => [u.id, u.publicId])),
+      publicIds: userPublicIds,
     },
   },
   events: eventBus,
   escalationMinutes: config.alerts.escalationMinutes,
+});
+
+const incidentService = new IncidentService({
+  incidents: new IncidentRepository(pool),
+  refs: {
+    ...incidentRefs,
+    trips: { find: tripLookups.find, publicIds: tripLookups.publicIds },
+    users: { publicIds: userPublicIds },
+  },
+  events: eventBus,
 });
 
 // Every event with a rule, on the consumer's transaction: the alert and its notifications commit with
@@ -43,6 +59,7 @@ for (const type of Object.keys(ALERT_RULES)) {
 
 const router = Router();
 router.use(alertRouter(service));
+router.use(incidentRouter(incidentService));
 
 export const alertModule: AppModule = {
   name: 'alert',
@@ -64,4 +81,5 @@ export const alertEngine = {
 };
 
 export { ALERT_EVENTS, SEVERITIES as ALERT_SEVERITIES, type AlertView } from './domain/alert';
+export { INCIDENT_EVENTS, INCIDENT_TYPES, type IncidentView } from './domain/incident';
 export { ALERT_RULES, ESCALATION_TIERS } from './domain/rules';

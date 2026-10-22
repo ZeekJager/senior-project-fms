@@ -1,10 +1,10 @@
 import { SEVERITIES, type AlertSeverity } from './alert';
 
 // The alert rules (FMS-92, §34): which events become alerts, how severe, about what, de-duplicated on
-// which key and window, and who is told first. One rule per event type; an event without a rule is not
-// an alert. Events of cards not built yet (fuel anomalies, the telemetry rules, maintenance risk, EV
-// battery, incidents) have their rules here already: their payloads are the contract those cards publish
-// (CONVENTIONS.md, Events).
+// which key and window, and who is told first. One rule per event type; an event without a rule (or that
+// its rule's `when` turns down) is not an alert. Events of cards not built yet (fuel anomalies, the
+// telemetry rules, maintenance risk, EV battery) have their rules here already: their payloads are the
+// contract those cards publish (CONVENTIONS.md, Events).
 
 /** An event's payload, as the outbox delivers it. */
 export type Payload = Record<string, unknown>;
@@ -33,6 +33,8 @@ export interface AlertRule {
   /** The module that publishes the event (`source_module`). */
   module: string;
   facts: (payload: Payload) => AlertFacts;
+  /** Whether this event is an alert at all; without it, every event of the type is. */
+  when?: (payload: Payload) => boolean;
   /** A repeat within this many minutes of the last occurrence updates the active alert; after it, a new one opens. */
   windowMinutes: number;
   title: (payload: Payload, names: Names) => string;
@@ -202,12 +204,14 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     audience: ['dispatcher', 'depot_admin'],
   },
 
-  // Incident reports (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`.
+  // Incident reports (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`,
+  // `incident_type`. Only a critical incident is an alert; every one reaches the command center's incident list.
   IncidentReported: {
     type: () => 'incident',
-    module: 'incident',
+    module: 'alert',
+    when: (p) => p.severity === 'critical',
     facts: (p) => ({
-      severity: severityOr(p, 'severity', 'high'),
+      severity: 'critical',
       vehicleId: str(p, 'vehicle_id'),
       driverId: str(p, 'driver_id'),
       tripId: str(p, 'trip_id'),
@@ -217,7 +221,7 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     }),
     windowMinutes: DAY,
     title: (p, n) => `${capitalize(humanize(str(p, 'incident_type') ?? 'incident'))} reported${n.plate ? ` on ${n.plate}` : ''}`,
-    message: () => 'A driver reported an incident. Review it and follow up.',
+    message: (p) => `A critical incident was reported${p.maintenance_flag_set === true ? ' and the vehicle is flagged for maintenance' : ''}. Review it and follow up.`,
     audience: ['dispatcher', 'depot_admin'],
   },
 };

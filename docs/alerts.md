@@ -17,13 +17,14 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `TelemetryFlagRaised` (FMS-46) | `unsafe_driving`, or `geofence_violation` | `severity`, else high for speeding, medium otherwise | vehicle, or `depot_id` | vehicle and flag type (30 min) | dispatcher, depot admin |
 | `MaintenanceRiskDetected` (FMS-55) | `maintenance_risk` | `risk_level`, else medium | vehicle | vehicle (24 h) | technician, depot admin |
 | `BatteryThresholdExceeded` (FMS-96) | `battery` | `severity`, else high | vehicle | vehicle and metric (60 min) | dispatcher, depot admin |
-| `IncidentReported` (FMS-38) | `incident` | `severity`, else high | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
+| `IncidentReported` (FMS-38, docs/incidents.md) | `incident` | critical: only a critical incident is an alert | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
 
-The events from FMS-82, FMS-46, FMS-55, FMS-96 and FMS-38 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
+The events from FMS-82, FMS-46, FMS-55 and FMS-96 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
 
 - **Depot.** An alert belongs to the depot of its vehicle or driver, or the one the event names. Its depot decides who sees it (GET /alerts) and who receives it on the socket. An alert with no depot is seen only by roles that see every depot.
 - **Title and message** name the vehicle by its plate and never a person: `AlertCreated` goes out to sockets with them.
 - **Priority** follows severity: P1 is critical and P4 is low.
+- **Not every event.** A rule's `when` can turn an event down: an incident below critical is no alert (it is on the command center's incident list instead).
 
 ## De-duplication
 

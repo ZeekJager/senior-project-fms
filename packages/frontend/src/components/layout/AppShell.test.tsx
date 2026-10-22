@@ -38,7 +38,7 @@ describe('portals', () => {
     expect(screen.queryByRole('heading', { name: 'Fleet management' })).not.toBeInTheDocument()
 
     const tabs = screen.getByRole('navigation', { name: 'Main' })
-    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['My day', 'Inspection', 'Fuel'])
+    expect(within(tabs).getAllByRole('link').map((a) => a.textContent)).toEqual(['My day', 'Inspection', 'Fuel', 'Incident'])
 
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Account' }))

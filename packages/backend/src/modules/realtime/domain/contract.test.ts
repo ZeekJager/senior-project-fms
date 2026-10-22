@@ -33,11 +33,11 @@ describe('rooms (FMS-43)', () => {
     ]);
   });
 
-  it("a driver gets their own trips and their depot's vehicles, never depot-wide trips or incidents", () => {
+  it("a driver gets their own trips and incidents and their depot's vehicles, never depot-wide trips or incidents", () => {
     const rooms = roomsFor(
       identity({ permissions: ['vehicle:read', 'trip:read', 'incident:read'], depots: { kind: 'depot', depotId: DEPOT_A }, driver: { driverId: 'd1' } }),
     );
-    expect(rooms).toEqual(['user:u1', `vehicles:depot:${DEPOT_A}`, 'trips:driver:d1']);
+    expect(rooms).toEqual(['user:u1', `vehicles:depot:${DEPOT_A}`, 'trips:driver:d1', 'incidents:driver:d1']);
   });
 
   it('nobody to place (no depot, no driver profile) gets only the user room', () => {
@@ -105,6 +105,14 @@ describe('event mapping (api-contract §11.2)', () => {
     const [d] = await deliveriesFor(envelope('IncidentReported', { incident_id: 'i1', depot_id: DEPOT_A, vehicle_id: 'v1', severity: 'critical', description: 'free text' }), noTrips);
     expect(d).toMatchObject({ event: 'incident.created', channel: 'incidents', depotId: DEPOT_A, payload: { incident_id: 'i1', vehicle_id: 'v1', severity: 'critical' } });
     expect(d.payload).not.toHaveProperty('description');
+    expect(d.driverIds).toBeUndefined();
+  });
+
+  it("IncidentReported reaches the reporting driver's own room, never another driver named on it", async () => {
+    const [mine] = await deliveriesFor(envelope('IncidentReported', { incident_id: 'i1', depot_id: DEPOT_A, driver_id: 'd1', reported_by_driver_id: 'd1', latitude: 9.01, longitude: 38.75 }), noTrips);
+    expect(mine).toMatchObject({ driverIds: ['d1'], payload: { latitude: 9.01, longitude: 38.75 } });
+    const [staff] = await deliveriesFor(envelope('IncidentReported', { incident_id: 'i2', depot_id: DEPOT_A, driver_id: 'd1', reported_by_driver_id: null }), noTrips);
+    expect(staff.driverIds).toBeUndefined();
   });
 
   it('every trip event becomes a trip update carrying the trip as it is now, for its depot, its driver and the driver it lost', async () => {
