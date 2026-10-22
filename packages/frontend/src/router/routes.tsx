@@ -1,4 +1,4 @@
-import { Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
@@ -6,7 +6,7 @@ import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { DriverFuel, DriverHome, DriverInspection } from '@/pages/Driver'
+import { DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
@@ -138,6 +138,8 @@ export const portals: Portal[] = [
       { path: '/driver/dvir', element: <DriverInspection />, permission: 'dvir:write', nav: { label: 'Inspection', icon: ClipboardCheck } },
       // S-14 (FMS-40): a fill-up at the pump, submitted through the offline queue.
       { path: '/driver/fuel', element: <DriverFuel />, permission: 'fuel:write', nav: { label: 'Fuel', icon: Fuel } },
+      // S-13 (FMS-38): an incident, reported from wherever the driver is, through the offline queue.
+      { path: '/driver/incident', element: <DriverIncident />, permission: 'incident:write', nav: { label: 'Incident', icon: Siren } },
     ],
   },
 ]

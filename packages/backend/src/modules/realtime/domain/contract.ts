@@ -58,9 +58,9 @@ export function roomsFor(identity: SocketIdentity): string[] {
   for (const [channel, rule] of Object.entries(CHANNELS) as [Channel, (typeof CHANNELS)[Channel]][]) {
     if (!identity.permissions.includes(rule.permission)) continue;
     if (identity.driver) {
-      // A driver's trips are their own; depot-wide trips and incidents are not theirs to watch.
+      // A driver's trips and the incidents they reported are their own; depot-wide ones are not theirs to watch.
       if (rule.driverOwn) {
-        if (channel === 'trips' && identity.driver.driverId) rooms.push(driverRoom(channel, identity.driver.driverId));
+        if (identity.driver.driverId) rooms.push(driverRoom(channel, identity.driver.driverId));
         continue;
       }
     }
@@ -173,15 +173,19 @@ const FORWARDERS: Record<string, Forwarder> = {
   AlertAcknowledged: (e) => [alertPatch(e)],
   AlertResolved: (e) => [alertPatch(e)],
   AlertEscalated: (e) => [alertPatch(e)],
-  // Published by incident reporting (FMS-38): incident_id, depot_id, vehicle_id, trip_id, severity, incident_type, status, occurred_at.
-  IncidentReported: (e) => [
-    {
-      event: SOCKET_EVENTS.incidentCreated,
-      channel: 'incidents',
-      depotId: str(e.payload.depot_id),
-      payload: pick(e.payload, ['incident_id', 'vehicle_id', 'trip_id', 'severity', 'incident_type', 'status', 'occurred_at']),
-    },
-  ],
+  // Published by incident reporting (FMS-38): to the incident's depot, and to the driver who reported it.
+  IncidentReported: (e) => {
+    const reporter = str(e.payload.reported_by_driver_id);
+    return [
+      {
+        event: SOCKET_EVENTS.incidentCreated,
+        channel: 'incidents',
+        depotId: str(e.payload.depot_id),
+        ...(reporter ? { driverIds: [reporter] } : {}),
+        payload: pick(e.payload, ['incident_id', 'vehicle_id', 'trip_id', 'severity', 'incident_type', 'status', 'latitude', 'longitude', 'occurred_at']),
+      },
+    ];
+  },
   ...Object.fromEntries(TRIP_TYPES.map((type) => [type, tripUpdated])),
 };
 

@@ -2212,3 +2212,25 @@ CREATE INDEX IF NOT EXISTS idx_alerts_depot_time
 CREATE INDEX IF NOT EXISTS idx_alerts_escalation_due
     ON alert.alerts(created_at)
     WHERE status = 'open' AND severity = 'critical';
+
+-- ===== 034_incident_reports.sql =====
+ALTER TABLE alert.incident_reports ADD COLUMN IF NOT EXISTS depot_id BIGINT REFERENCES fleet.depots(id) ON DELETE SET NULL ON UPDATE CASCADE;
+
+UPDATE alert.incident_reports i
+   SET depot_id = v.depot_id
+  FROM fleet.vehicles v
+ WHERE i.depot_id IS NULL AND v.id = i.vehicle_id;
+
+DO $$ BEGIN
+    ALTER TABLE alert.incident_reports ADD CONSTRAINT chk_incident_location
+        CHECK ((latitude IS NULL) = (longitude IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- A depot's incidents, newest first (GET /incidents for staff).
+CREATE INDEX IF NOT EXISTS idx_incidents_depot_time
+    ON alert.incident_reports(depot_id, occurred_at DESC);
+
+-- A reporter's own incidents, newest first (GET /incidents for a driver),
+-- and the replay check of a late offline submission.
+CREATE INDEX IF NOT EXISTS idx_incidents_reporter_time
+    ON alert.incident_reports(reported_by, occurred_at DESC);

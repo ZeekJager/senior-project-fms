@@ -195,6 +195,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `AlertUpdated` | alert (FMS-92): a repeat of the alert's source | alert | `alert_id`, `depot_id`, `status`, `severity`, `priority`, `occurrence_count`, `last_occurred_at` | real-time gateway (`alert.updated`) |
 | `AlertAcknowledged`, `AlertResolved` | alert (FMS-92) | alert | `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by` (user public ids) | real-time gateway (`alert.updated`) |
 | `AlertEscalated` | alert (FMS-92): a critical alert left unacknowledged | alert | `alert_id`, `depot_id`, `status`, `severity`, `escalation_level`, `escalated_at` | real-time gateway (`alert.updated`) |
+| `IncidentReported` | alert (FMS-38, incident reports) | incident | `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`, `incident_type`, `status`, `latitude`, `longitude`, `occurred_at`, `maintenance_flag_set`, `reported_by_driver_id` (the reporter's driver profile when a driver reported it); never the description | real-time gateway (`incident.created`), `alert.engine` (critical only), `fleet.vehicle-cache` |
 | `IntegrationWebhookReceived` | integration (FMS-85) | provider | `sync_log_id`, `provider_id`, `provider_code`, `provider_type`, `event_id`, `kind`, `occurred_at`. The data is not in the event: read it with `webhookDeliveries.find(tx, sync_log_id)`. One event per provider event id (a fixed id) | `integration.telematics-pings` (telematics `positions`, FMS-88); fuel card and EV later |
 
 Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31), `TripStarted` and `TripCompleted` by the lifecycle commands (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
@@ -206,13 +207,8 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 - `TelemetryFlagRaised` (integration, the telemetry rules FMS-46): `flag_id`, `vehicle_id`, `driver_id`, `trip_id`, `depot_id`, `flag_type` (speeding, idling, harsh_braking, geofence_violation ...), `severity`, `observed_at`.
 - `MaintenanceRiskDetected` (maintenance, FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
 - `BatteryThresholdExceeded` (ev, FMS-96): `vehicle_id`, `trip_id`, `metric`, `value`, `threshold`, `severity`.
-- `IncidentReported` (incident, FMS-38): below.
 
-**Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it, so the planned ones it forwards must carry:
-
-- `IncidentReported` (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `occurred_at`.
-
-To show a new event live, add it to the gateway's map as well.
+**Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it. To show a new event live, add it to the gateway's map as well.
 
 ## API
 

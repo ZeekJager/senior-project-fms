@@ -70,6 +70,7 @@ export class AlertService {
     if (!rule) return null;
     const { repo, refs } = this.deps;
     const payload = event.payload as Record<string, unknown>;
+    if (rule.when && !rule.when(payload)) return null;
     const facts = rule.facts(payload);
     const ctx: MutationContext = { userId: null, correlationId: event.correlation_id };
     const occurredAt = new Date(event.occurred_at);

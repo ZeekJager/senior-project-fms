@@ -107,13 +107,15 @@ async function rebuildTripAssignments(): Promise<Record<string, unknown>> {
 // its current trip. Maintenance sets and clears the flag, and the trip module
 // assigns, starts, ends and cancels trips, inside their own transactions; their events are
 // delivered after commit, so the vehicle is dropped only once the change is
-// visible. An assignment also drops the vehicle it replaced. Maintenance
-// events by name: fleet cannot import the maintenance module, which imports fleet.
+// visible. An assignment also drops the vehicle it replaced. A critical
+// incident (FMS-38) sets the flag too. Maintenance and incident events by
+// name: fleet cannot import those modules, which import fleet.
 for (const type of [
   'MaintenanceRecordOpened',
   'MaintenanceRecordUpdated',
   'MaintenanceRecordCompleted',
   'VehicleFaultDetected',
+  'IncidentReported',
   TRIP_EVENTS.assigned,
   TRIP_EVENTS.cancelled,
   TRIP_EVENTS.started,
@@ -344,6 +346,22 @@ export const alertRefs = {
     resolveInScope: resolveDepotInScope,
     publicIds: depotPublicIds,
   },
+};
+
+/**
+ * For incident reports (FMS-38, alert module): lock a vehicle in the caller's scope (its depot and
+ * maintenance flag with it) and set the flag of a critical incident inside that transaction, a vehicle's
+ * internal id for a list filter, and public ids for responses. Drivers as for fuel logs.
+ */
+export const incidentRefs = {
+  vehicles: {
+    lockInScope: (client: PoolClient, publicId: string, scope: Scope) => vehicleRepository.lockForWrite(client, publicId, scope),
+    idOf: tripRefs.vehicles.idOf,
+    setMaintenanceFlag: vehicleMaintenance.setMaintenanceFlag,
+    publicIds: tripRefs.vehicles.publicIds,
+  },
+  drivers: fuelRefs.drivers,
+  depots: depotRefs,
 };
 
 export const fleetModule: AppModule = {
