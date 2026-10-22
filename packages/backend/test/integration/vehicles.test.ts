@@ -3,6 +3,7 @@ import request, { type Response } from 'supertest';
 import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
+import { addisDate } from '../support/dates';
 import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 import { publishedEvents } from '../support/events';
 
@@ -230,7 +231,8 @@ describe('GET /vehicles', () => {
 /** Adds a live document of a vehicle that expires `daysFromToday` days from today (negative: already past). */
 async function addDocument(vehicle: { id: string }, daysFromToday: number, deleted = false): Promise<void> {
   const uploader = await createUser({ roles: ['admin'] });
-  const expiresOn = new Date(Date.now() + daysFromToday * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Days from the Addis Ababa date, which the documents filter compares with (FMS-123).
+  const expiresOn = addisDate(daysFromToday);
   await pool.query(
     `INSERT INTO document.documents (owner_type, owner_id, document_type, storage_key, content_type, size_bytes, sha256, uploaded_by, expires_on, deleted_at, deleted_by)
      VALUES ('vehicle', $1, 'insurance', $2, 'application/pdf', 100, $3, $4, $5, $6, $7)`,

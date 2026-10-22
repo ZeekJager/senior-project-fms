@@ -2,6 +2,7 @@ import request from 'supertest';
 import { describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
+import { addisDate } from '../support/dates';
 import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
 
 const app = createApp();
@@ -38,11 +39,15 @@ describe('GET /dispatch/availability', () => {
     const depot = await createDepot();
     const dispatcher = await signIn(['dispatcher'], depot);
     const clerk = await createUser({ roles: ['depot_admin'], depot });
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Addis_Ababa' }).format(new Date());
+    const from = new Date(Date.now() + 3 * HOUR).toISOString();
+    const to = new Date(Date.now() + 5 * HOUR).toISOString();
+    // The board shows attendance on the window's first day (api-contract, DispatchBoard). From 21:00 in Addis
+    // Ababa a window 3 hours ahead starts tomorrow, so the absence is recorded on that day, not on today.
+    const windowDay = addisDate(0, new Date(from));
 
     const idle = await createDriver({ depot, license_categories: ['C'] });
     const absent = await createDriver({ depot, license_categories: ['B'] });
-    await pool.query("INSERT INTO fleet.driver_attendance (driver_id, attendance_date, status, logged_by) VALUES ($1, $2, 'absent', $3)", [absent.driver.id, today, clerk.id]);
+    await pool.query("INSERT INTO fleet.driver_attendance (driver_id, attendance_date, status, logged_by) VALUES ($1, $2, 'absent', $3)", [absent.driver.id, windowDay, clerk.id]);
     const busy = await createDriver({ depot });
     const truck = await createVehicle({ depot, vehicle_type: 'truck' });
     const flagged = await createVehicle({ depot, maintenance_flag: true });
@@ -57,8 +62,6 @@ describe('GET /dispatch/availability', () => {
     });
     await createDriver({ depot: await createDepot() });
 
-    const from = new Date(Date.now() + 3 * HOUR).toISOString();
-    const to = new Date(Date.now() + 5 * HOUR).toISOString();
     const res = await board(dispatcher, { from, to });
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({ depot_id: depot.public_id, window: { start: from, end: to } });

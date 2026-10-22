@@ -7,6 +7,7 @@ import { checkDriverEligibility, fleetModule, isDriverEligible } from '../../src
 import { createEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
+import { addisDate } from '../support/dates';
 import { deliverEvents, publishedEvents } from '../support/events';
 import { copyDriverAccount, createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 
@@ -348,14 +349,6 @@ describe('driver events', () => {
     expect(received[0].aggregate).toBe(`driver:${created.body.data.id}`);
   });
 });
-
-/** A date `days` from today in Addis Ababa, `YYYY-MM-DD` (the date the API judges licences by). */
-function addisDate(days: number): string {
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Addis_Ababa' }).format(new Date());
-  const d = new Date(`${today}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 describe('license_status (enhancement 2)', () => {
   test('every driver shows valid, expiring_soon (within 30 days) or expired, and the list filters on it', async () => {
