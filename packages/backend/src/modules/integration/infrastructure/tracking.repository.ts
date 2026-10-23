@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { PingSource } from '../domain/gps';
 import { STOPPED_LOOKBACK_HOURS } from '../domain/live-map';
+import type { RulePing } from '../domain/telemetry-rules';
 
 /** A ping ready to store: internal ids, integer speed. */
 export interface PingRow {
@@ -155,6 +156,24 @@ export class TrackingRepository {
       [vehicleIds],
     );
     return res.rows;
+  }
+
+  /**
+   * A vehicle's stored pings recorded after `after` (exclusive; null: from `upTo` minus `lookbackMs`) up to `upTo`,
+   * oldest first, at most `limit`: what the telemetry rules (FMS-46) have not seen yet.
+   */
+  async pingsBetween(db: Queryable, vehicleId: string, after: Date | null, upTo: Date, lookbackMs: number, limit: number): Promise<RulePing[]> {
+    const res = await db.query<{ at: Date; speedKmh: number; ignitionOn: boolean | null; lat: number; lng: number; tripId: string | null }>(
+      `SELECT recorded_at AS at, speed_kmh AS "speedKmh", ignition_on AS "ignitionOn", latitude::float8 AS lat, longitude::float8 AS lng,
+              trip_id AS "tripId"
+         FROM tracking.gps_pings
+        WHERE vehicle_id = $1 AND recorded_at > COALESCE($2::timestamptz, $3::timestamptz - make_interval(secs => $4::float8 / 1000))
+          AND recorded_at <= $3
+        ORDER BY recorded_at
+        LIMIT $5`,
+      [vehicleId, after, upTo, lookbackMs, limit],
+    );
+    return res.rows.map((r) => ({ ...r, at: r.at.getTime() }));
   }
 
   /** Current positions of vehicles (internal ids), for the simulator's check and tests. */

@@ -95,3 +95,6 @@ export { enRouteTripOfDriver, enRouteTripsForVehicles, type EnRouteTrip } from '
 
 /** For the live map (FMS-45): each vehicle's trip under way, with its route and driver. */
 export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activity.queries';
+
+/** For the telemetry rules (FMS-46): a flag's trip, by the internal id its pings carry, with its driver. */
+export { tripPartiesByIds, type TripParties } from './infrastructure/trip-activity.queries';

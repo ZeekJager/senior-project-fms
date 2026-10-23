@@ -14,12 +14,12 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `DocumentExpiring` (FMS-26) | `document_expiring` | red: high, amber: medium | the vehicle or driver owning it | the document and expiry date (31 days) | depot admin |
 | `LicenceExpiring` (FMS-26) | `licence_expiring` | red: high, amber: medium | driver (`depot_id`) | the driver and expiry date (31 days) | depot admin |
 | `FuelAnomalyDetected` (FMS-82) | `fuel_anomaly` | `severity`, else high | vehicle | vehicle and anomaly type (24 h) | depot admin, fleet manager |
-| `TelemetryFlagRaised` (FMS-46) | `unsafe_driving`, or `geofence_violation` | `severity`, else high for speeding, medium otherwise | vehicle, or `depot_id` | vehicle and flag type (30 min) | dispatcher, depot admin |
+| `TelemetryFlagRaised` (FMS-46, docs/telemetry-rules.md) | `unsafe_driving`, or `geofence_violation` | `severity`: high for speeding, medium for idling | vehicle, or `depot_id` | vehicle and flag type (30 min) | dispatcher, depot admin |
 | `MaintenanceRiskDetected` (FMS-55) | `maintenance_risk` | `risk_level`, else medium | vehicle | vehicle (24 h) | technician, depot admin |
 | `BatteryThresholdExceeded` (FMS-96) | `battery` | `severity`, else high | vehicle | vehicle and metric (60 min) | dispatcher, depot admin |
 | `IncidentReported` (FMS-38, docs/incidents.md) | `incident` | critical: only a critical incident is an alert | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
 
-The events from FMS-82, FMS-46, FMS-55 and FMS-96 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
+The events from FMS-82, FMS-55 and FMS-96 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
 
 - **Depot.** An alert belongs to the depot of its vehicle or driver, or the one the event names. Its depot decides who sees it (GET /alerts) and who receives it on the socket. An alert with no depot is seen only by roles that see every depot.
 - **Title and message** name the vehicle by its plate and never a person: `AlertCreated` goes out to sockets with them.

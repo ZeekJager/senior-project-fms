@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
-import { cache } from '../../shared/cache';
+import { cache, redis } from '../../shared/cache';
 import { validationFailed } from '../../shared/errors/app-error';
 import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
@@ -11,19 +11,22 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
-import { enRouteTripOfDriver, enRouteTripsForVehicles, liveTripsForVehicles, TRIP_EVENTS } from '../trip';
+import { enRouteTripOfDriver, enRouteTripsForVehicles, liveTripsForVehicles, tripPartiesByIds, TRIP_EVENTS } from '../trip';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { trackingRouter } from './api/tracking.routes';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
+import { TelemetryRulesService } from './application/telemetry-rules.service';
 import { ProviderRegistry } from './application/provider-registry';
 import type { AdapterContext, ProviderAdapter } from './domain/adapter';
-import type { PingInput } from './domain/gps';
+import { TRACKING_EVENTS, type PingInput } from './domain/gps';
 import { INTEGRATION_EVENTS } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
 import { IntegrationRepository } from './infrastructure/integration.repository';
+import { MemoryRuleStateStore, RedisRuleStateStore } from './infrastructure/rule-state.store';
+import { TelemetryFlagRepository } from './infrastructure/telemetry-flag.repository';
 import { TrackingRepository } from './infrastructure/tracking.repository';
 
 // The integration gateway (FMS-85, architecture §15): every external provider behind an adapter, with
@@ -75,14 +78,35 @@ const liveMap = new LiveMapService({
   },
   cache,
 });
-for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVENTS)]) {
+// The telemetry rules (FMS-46): each announced position runs the vehicle's new pings through the speeding and
+// idling rules, which open and close tracking.telemetry_flags on the event's transaction. The counters between
+// pings live in Redis (in process without it), so a restart does not reset them. docs/telemetry-rules.md.
+const memoryRuleState = new MemoryRuleStateStore();
+const telemetryRules = new TelemetryRulesService({
+  db: pool,
+  tracking,
+  flags: new TelemetryFlagRepository(),
+  state: redis
+    ? new RedisRuleStateStore(redis, memoryRuleState, (err, op) => logger.warn({ err, op }, 'telemetry rule state: Redis failed; counting in process'))
+    : memoryRuleState,
+  refs: {
+    vehicles: { byPublicIds: trackingRefs.vehicles.byPublicIds },
+    trips: { partiesByIds: tripPartiesByIds },
+    drivers: { publicIds: trackingRefs.drivers.publicIds },
+  },
+  events: eventBus,
+});
+eventBus.subscribe(TRACKING_EVENTS.locationUpdated, 'integration.telemetry-rules', (event, tx) => telemetryRules.onLocationUpdated(tx, event));
+
+// A flag opening or closing also drops the live map's snapshot, so its legend counts it at once.
+for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVENTS), TRACKING_EVENTS.flagRaised, TRACKING_EVENTS.flagResolved]) {
   eventBus.subscribe(type, 'integration.live-map-cache', () => liveMap.invalidate());
 }
 
 const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
-router.use(trackingRouter(ingestion, liveMap));
+router.use(trackingRouter(ingestion, liveMap, telemetryRules));
 
 export const integrationModule: AppModule = { name: 'integration', router };
 

@@ -18,6 +18,8 @@ const STALE: Record<string, readonly (readonly string[])[]> = {
   'alert.created': [['alerts'], ['notifications']],
   'alert.updated': [['alerts'], ['notifications']],
   'incident.created': [['incidents']],
+  // A speeding or idling flag opened or closed (FMS-46): the live map's legend and markers.
+  'vehicle.flag.changed': [['tracking']],
 }
 
 /** A refused handshake that a renewed session can fix (the access token ran out). */

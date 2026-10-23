@@ -52,6 +52,10 @@ export const TRACKING_EVENTS = {
    * The real-time gateway forwards it as `vehicle.location.updated` (docs/realtime.md).
    */
   locationUpdated: 'VehicleLocationUpdated',
+  /** The telemetry rules (FMS-46) opened a speeding or idling flag; the alert engine makes it an alert. */
+  flagRaised: 'TelemetryFlagRaised',
+  /** Its condition ended: back under the limit, moving again, engine off, or no signal. */
+  flagResolved: 'TelemetryFlagResolved',
 } as const;
 
 /** Where a batch came from: stored as gps_pings.source. */

@@ -583,6 +583,56 @@ paths:
             not its own (reason not_your_vehicle); or a phone with no trip under way (no_trip_under_way). Nothing is stored.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /vehicles/{vehicle_id}/telemetry-flags:
+    get:
+      tags: [Tracking]
+      operationId: listVehicleTelemetryFlags
+      summary: A vehicle's speeding and idling flags (FMS-46)
+      description: >
+        The telemetry rules' flags of one vehicle, newest first (docs/telemetry-rules.md). Behavioural data: needs
+        tracking:read (never drivers), in the caller's depot scope; a vehicle outside it, or an id that is not a
+        UUID, is a 404. Names the trip, not the driver.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - name: flag_type
+          in: query
+          description: One or more, comma-separated.
+          schema: { type: string, example: 'speeding,idling' }
+        - name: from
+          in: query
+          description: observed_at at or after this instant.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: observed_at before this instant.
+          schema: { type: string, format: date-time }
+        - name: ongoing
+          in: query
+          description: true for flags whose condition lasts (resolved_at null), false for ended ones.
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: The flags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TelemetryFlag' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown flag type, a time without offset, limit out of range, to before from, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /alerts:
     get:
       tags: [Alerts]
@@ -1457,6 +1507,27 @@ components:
         altitude_m: { type: [number, 'null'] }
         ignition_on: { type: [boolean, 'null'] }
         odometer_km: { type: [number, 'null'], minimum: 0 }
+
+    TelemetryFlag:
+      type: object
+      description: A speeding or idling flag of the telemetry rules (FMS-46).
+      required: [flag_id, vehicle_id, trip_id, flag_type, severity, status, observed_at, resolved_at, details]
+      properties:
+        flag_id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        trip_id: { type: [string, 'null'], format: uuid, description: The trip the pings were stored with. }
+        flag_type: { type: string, enum: [speeding, idling, fuel_variance, route_deviation, geofence_violation, harsh_braking, other] }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [open, reviewed, dismissed, resolved], description: The review status; the rules never change it. }
+        observed_at: { type: string, format: date-time, description: When the condition began. }
+        resolved_at: { type: [string, 'null'], format: date-time, description: When it ended; null while it lasts. }
+        details:
+          type: object
+          description: >
+            speed_limit_kmh, speed_kmh and consecutive_pings (speeding) or idle_minutes (idling); lat, lng and
+            flagged_at (the ping that crossed the threshold). On closing: end_reason (cleared, moving, engine_off,
+            signal_lost), duration_seconds and, for speeding, max_speed_kmh.
+          additionalProperties: true
 
     VehicleLocation:
       type: object
