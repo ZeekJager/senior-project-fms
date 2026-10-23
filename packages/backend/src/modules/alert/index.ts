@@ -9,11 +9,14 @@ import { alertRefs, incidentRefs } from '../fleet';
 import { tripLookups } from '../trip';
 import { alertRouter } from './api/alert.routes';
 import { incidentRouter } from './api/incident.routes';
+import { notificationRouter } from './api/notification.routes';
 import { AlertService } from './application/alert.service';
 import { IncidentService } from './application/incident.service';
+import { InboxService } from './application/inbox.service';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
 import { IncidentRepository } from './infrastructure/incident.repository';
+import { NotificationRepository } from './infrastructure/notification.repository';
 
 // The alert engine (FMS-92, architecture §9.4 and §34): events become alerts by rule, de-duplicated per
 // source, notified in-app, acknowledged and resolved through the API, and escalated when a critical
@@ -21,6 +24,9 @@ import { IncidentRepository } from './infrastructure/incident.repository';
 // alert.incident_reports, and a critical one becomes an alert through IncidentReported.
 
 const userPublicIds = async (db: Queryable, ids: readonly string[]) => new Map((await userDirectory.findByIds(db, ids)).map((u) => [u.id, u.publicId]));
+
+// The in-app inbox (FMS-48): the alert engine writes the notifications and announces each recipient's new unread count.
+const inbox = new InboxService({ notifications: new NotificationRepository(pool), users: { publicIds: userPublicIds }, events: eventBus });
 
 const repo = new AlertRepository(pool);
 const service = new AlertService({
@@ -36,6 +42,7 @@ const service = new AlertService({
     },
   },
   events: eventBus,
+  inbox,
   escalationMinutes: config.alerts.escalationMinutes,
 });
 
@@ -60,6 +67,7 @@ for (const type of Object.keys(ALERT_RULES)) {
 const router = Router();
 router.use(alertRouter(service));
 router.use(incidentRouter(incidentService));
+router.use(notificationRouter(inbox));
 
 export const alertModule: AppModule = {
   name: 'alert',

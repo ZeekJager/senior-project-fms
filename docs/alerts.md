@@ -1,6 +1,6 @@
 # Alert engine
 
-Card: FMS-92 (SE-136). Code: `packages/backend/src/modules/alert/` (rules in `domain/rules.ts`). Architecture §9.4 and §34, api-contract §12.1. The inbox that shows the notifications is FMS-48/49, and the command center's alert panel is FMS-89.
+Card: FMS-92 (SE-136). Code: `packages/backend/src/modules/alert/` (rules in `domain/rules.ts`). Architecture §9.4 and §34, api-contract §12.1. The inbox API that serves the notifications is FMS-48 (below), its screen FMS-49, and the command center's alert panel is FMS-89.
 
 An **alert** is a business event that needs someone's attention. It is written to `alert.alerts` before anyone is told. People are then told with in-app **notifications** (`alert.notifications`, channel `in_app`, one row per recipient), in the same transaction. Someone **acknowledges** it ("I'm on it") and **resolves** it ("dealt with"). A critical alert nobody acknowledges **escalates**.
 
@@ -95,3 +95,19 @@ The response is api-contract §16.3's `Alert`, plus the fields this card adds:
 | `AlertEscalated` | escalated | `alert.updated` |
 
 Payloads: CONVENTIONS.md (Events) and docs/realtime.md.
+
+## The inbox (FMS-48)
+
+Code: `modules/alert/` (`api/notification.routes.ts`, `application/inbox.service.ts`, `infrastructure/notification.repository.ts`). Architecture §9.4 (the in-app channel); api-contract §12.1.
+
+The in-app notifications above are a user's **inbox**: `GET /notifications` lists the caller's own, newest first, with read state and the unread count; `PATCH /notifications/{id}/read` and `POST /notifications/read-all` mark them read. All three need `notification:read`, which every role holds, and work on the caller's own rows only (the repository names the recipient in every query): another user's notification, an admin's view included, is `404`, like a missing one. Only `in_app` rows are the inbox; email, SMS and push are delivery history, not shown.
+
+**The unread count stays current.** Every change to it publishes `NotificationUnreadChanged` (`user_id`, `unread_count`, `reason`, `changed_at`) in the same transaction, so it commits with the change it reports and is never announced for a rolled-back one:
+
+| Change | `reason` | By |
+|---|---|---|
+| The alert engine notifies the user (an alert, an escalation) | `delivered` | `AlertService.notifyTier`, after the batch insert; one event per recipient, carrying that recipient's total |
+| The user marks one read | `read` | `PATCH .../read`; marking one already read publishes nothing |
+| The user marks all read | `read_all` | `POST /notifications/read-all`; with nothing unread, nothing |
+
+The outbox relay polls every 200 ms and the gateway forwards the event as `notifications.unread` ([realtime.md](realtime.md)) to that user's own room, so a screen shows the new count within a second of the commit. The event carries the count, so a screen needs no request; it reads the inbox (`meta.unread_count`) when it opens and after a reconnect, as for every event (events are hints).

@@ -115,6 +115,41 @@ describe('event mapping (api-contract §11.2)', () => {
     expect(staff.driverIds).toBeUndefined();
   });
 
+  it("NotificationUnreadChanged becomes notifications.unread for that user's own sockets and nobody else's", async () => {
+    const [d, ...rest] = await deliveriesFor(
+      envelope('NotificationUnreadChanged', { user_id: 'u-9', unread_count: 3, reason: 'delivered', changed_at: '2026-10-23T08:00:00.000Z', title: 'private', message: 'private' }),
+      noTrips,
+    );
+    expect(rest).toEqual([]);
+    expect(d).toMatchObject({ event: 'notifications.unread', userIds: ['u-9'], payload: { unread_count: 3, reason: 'delivered', changed_at: '2026-10-23T08:00:00.000Z' } });
+    // Picked field by field; no channel and no depot, so no all-depot or depot room can carry it.
+    expect(d.channel).toBeUndefined();
+    expect(d.depotId).toBeUndefined();
+    expect(d.payload).not.toHaveProperty('title');
+    expect(roomsOf(d)).toEqual(['user:u-9']);
+  });
+
+  it('an unread count of zero is still sent (read everything); a malformed event sends nothing', async () => {
+    const [zero] = await deliveriesFor(envelope('NotificationUnreadChanged', { user_id: 'u-9', unread_count: 0, reason: 'read_all' }), noTrips);
+    expect(zero.payload).toMatchObject({ unread_count: 0, reason: 'read_all' });
+    expect(await deliveriesFor(envelope('NotificationUnreadChanged', { unread_count: 2 }), noTrips)).toEqual([]);
+    expect(await deliveriesFor(envelope('NotificationUnreadChanged', { user_id: 'u-9' }), noTrips)).toEqual([]);
+    expect(await deliveriesFor(envelope('NotificationUnreadChanged', { user_id: '', unread_count: 1 }), noTrips)).toEqual([]);
+    expect(await deliveriesFor(envelope('NotificationUnreadChanged', { user_id: 'u-9', unread_count: 'many' }), noTrips)).toEqual([]);
+  });
+
+  it('a socket is in its own user room only: the count of one user is not in any room another user joins', () => {
+    const [a, b] = [roomsFor(identity({ userId: 'u-1', permissions: ['alert:read'], depots: { kind: 'all' } })), roomsFor(identity({ userId: 'u-2', permissions: ['alert:read'], depots: { kind: 'all' } }))];
+    const target = roomsOf({ event: 'notifications.unread', userIds: ['u-1'], payload: {} });
+    expect(a.filter((r) => target.includes(r))).toEqual(['user:u-1']);
+    expect(b.filter((r) => target.includes(r))).toEqual([]);
+  });
+
+  it('a delivery with a channel still goes only to the channel rooms it names, as before', () => {
+    expect(roomsOf({ event: 'x', channel: 'alerts', depotId: DEPOT_A, payload: {} })).toEqual(['alerts:all', `alerts:depot:${DEPOT_A}`]);
+    expect(roomsOf({ event: 'x', channel: 'trips', depotId: null, driverIds: ['d1'], payload: {} })).toEqual(['trips:all', 'trips:driver:d1']);
+  });
+
   it('every trip event becomes a trip update carrying the trip as it is now, for its depot, its driver and the driver it lost', async () => {
     const lookups = { tripSummary: async (id: string) => ({ trip_id: id, status: 'assigned', depot_id: DEPOT_A, driver_id: 'd2', version: 4 }) };
     const [d] = await deliveriesFor(envelope('TripAssigned', { trip_id: 't1', driver_id: 'd2', previous_driver_id: 'd1' }), lookups);

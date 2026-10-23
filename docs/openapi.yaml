@@ -23,6 +23,7 @@ tags:
   - name: Tracking
   - name: Alerts
   - name: Incidents
+  - name: Notifications
 
 paths:
   /trips/{trip_id}/assign:
@@ -850,6 +851,116 @@ paths:
           description: NOT_FOUND (no such incident, or not yours to see).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: The caller's in-app inbox (FMS-48)
+      description: >
+        The caller's own in-app notifications, newest first; nobody else's, whatever the role. Needs notification:read,
+        which every role holds. meta.unread_count is the whole inbox's, whatever the filter. docs/alerts.md.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, unread, read], default: all } }
+        - { name: type, in: query, description: 'Comma-separated notification types, e.g. alert,alert_escalated.', schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of the caller's notifications.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages, unread_count]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+                      unread_count: { type: integer, minimum: 0 }
+        '400':
+          description: VALIDATION_FAILED (an unknown status, a bad type, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      operationId: readAllNotifications
+      summary: Mark all of the caller's notifications read (FMS-48)
+      description: >
+        Marks the caller's unread in-app notifications read; nobody else's. With none unread it changes nothing.
+        Safe to repeat. Takes no body.
+      responses:
+        '200':
+          description: How many it marked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [updated]
+                    properties:
+                      updated: { type: integer, minimum: 0 }
+                  meta:
+                    type: object
+                    required: [request_id, unread_count]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      unread_count: { type: integer, enum: [0] }
+        '400':
+          description: VALIDATION_FAILED (a body was sent).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /notifications/{notification_id}/read:
+    patch:
+      tags: [Notifications]
+      operationId: readNotification
+      summary: Mark one notification read (FMS-48)
+      description: >
+        Marks one of the caller's notifications read. One already read answers 200 unchanged and writes nothing, so
+        it is safe to repeat. Takes no body.
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+      responses:
+        '200':
+          description: The notification, and the caller's unread count after it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Notification' }
+                  meta:
+                    type: object
+                    required: [request_id, unread_count]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      unread_count: { type: integer, minimum: 0 }
+        '400':
+          description: VALIDATION_FAILED (a body was sent).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such notification, or it is someone else's; the answer is the same for both).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
 components:
   securitySchemes:
     session:
@@ -870,6 +981,11 @@ components:
         shared secret. Compared in constant time; the timestamp must be within 5 minutes of the server clock.
 
   parameters:
+    NotificationId:
+      name: notification_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     IncidentId:
       name: incident_id
       in: path
@@ -1401,6 +1517,19 @@ components:
               flag_type: { type: string, enum: [speeding, idling, fuel_variance, route_deviation, geofence_violation, harsh_braking, other] }
               severity: { type: string, enum: [low, medium, high, critical] }
               observed_at: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      required: [id, type, title, message, alert_id, read, read_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, description: 'What kind: alert, alert_escalated.' }
+        title: { type: string }
+        message: { type: string }
+        alert_id: { type: [string, 'null'], format: uuid, description: The alert it is about, if any. }
+        read: { type: boolean }
+        read_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time, description: When it reached the inbox. }
 
     Alert:
       type: object

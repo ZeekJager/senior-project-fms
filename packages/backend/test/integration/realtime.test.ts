@@ -10,7 +10,8 @@ import { redis } from '../../src/shared/cache';
 import { logger } from '../../src/shared/logging/logger';
 import { RedisEventBroadcaster } from '../../src/shared/events/broadcaster';
 import { createEvent } from '../../src/shared/events/domain-event';
-import { eventChannel } from '../../src/shared/events/event-bus';
+import { eventBus, eventChannel } from '../../src/shared/events/event-bus';
+import { withTransaction } from '../../src/shared/infrastructure/transaction';
 import { hashPassword } from '../../src/modules/auth';
 import { legacyLocationIngest } from '../../src/modules/integration';
 import { attachRealtime, SOCKET_PATH, type LegacyLocation, type RealtimeOptions } from '../../src/modules/realtime';
@@ -312,5 +313,94 @@ describe('real-time gateway (FMS-43)', () => {
     await quiet(300);
     expect(onB.of('vehicle.status.changed')).toHaveLength(1);
     expect(onA.of('vehicle.status.changed')).toHaveLength(1);
+  });
+});
+
+describe('the unread notification count (FMS-48)', () => {
+  /** A notification for a user, straight into the table. */
+  async function notifyUser(user: Row, extra: Record<string, unknown> = {}) {
+    const res = await pool.query<{ public_id: string }>(
+      "INSERT INTO alert.notifications (recipient_user_id, notification_type, title, message, channel, status) VALUES ($1, 'alert', 'T', 'M', 'in_app', 'delivered') RETURNING public_id",
+      [user.id],
+    );
+    return { ...res.rows[0], ...extra };
+  }
+
+  test("marking read reaches every socket of that user within a second, and no one else's: not a colleague, not an admin", async () => {
+    const { url, realtime } = await start();
+    const depot = await createDepot();
+    const me = await signIn(['technician'], depot);
+    const colleague = await signIn(['technician'], depot);
+    const admin = await signIn(['admin'], null);
+    const tabOne = await watch(url, me.cookie);
+    const tabTwo = await watch(url, me.cookie);
+    const colleagueSocket = await watch(url, colleague.cookie);
+    const adminSocket = await watch(url, admin.cookie);
+    await quiet();
+    const first = await notifyUser(me.user);
+    await notifyUser(me.user);
+    await notifyUser(colleague.user);
+
+    const sent = Date.now();
+    const res = await request(app).patch(`/api/v1/notifications/${first.public_id}/read`).set('Cookie', me.cookie).send({});
+    expect(res.status).toBe(200);
+    await deliverEvents({ broadcaster: realtime.localBroadcaster });
+
+    for (const tab of [tabOne, tabTwo]) {
+      const hit = await tab.next('notifications.unread', 1000);
+      expect(hit.payload).toEqual({ unread_count: 1, reason: 'read', changed_at: expect.any(String) });
+      expect(hit.at - sent).toBeLessThan(1000);
+    }
+    await quiet(300);
+    expect(tabOne.of('notifications.unread')).toHaveLength(1);
+    expect(colleagueSocket.of('notifications.unread')).toEqual([]);
+    expect(adminSocket.of('notifications.unread')).toEqual([]);
+  });
+
+  test("read-all announces zero; a repeat announces nothing", async () => {
+    const { url, realtime } = await start();
+    const me = await signIn(['dispatcher'], await createDepot());
+    const tab = await watch(url, me.cookie);
+    await quiet();
+    await notifyUser(me.user);
+    await notifyUser(me.user);
+
+    expect((await request(app).post('/api/v1/notifications/read-all').set('Cookie', me.cookie).send({})).body.data).toEqual({ updated: 2 });
+    await deliverEvents({ broadcaster: realtime.localBroadcaster });
+    expect((await tab.next('notifications.unread')).payload).toMatchObject({ unread_count: 0, reason: 'read_all' });
+
+    await request(app).post('/api/v1/notifications/read-all').set('Cookie', me.cookie).send({});
+    await deliverEvents({ broadcaster: realtime.localBroadcaster });
+    await quiet(300);
+    expect(tab.of('notifications.unread')).toHaveLength(1);
+  });
+
+  test('a new alert reaches the open screens of its recipients with their new count, and only theirs', async () => {
+    const { url, realtime } = await start();
+    const [depot, elsewhere] = [await createDepot(), await createDepot()];
+    const vehicle = await createVehicle({ depot });
+    const technician = await watch(url, (await signIn(['technician'], depot)).cookie);
+    const stranger = await watch(url, (await signIn(['technician'], elsewhere)).cookie);
+    const manager = await watch(url, (await signIn(['fleet_manager'], null)).cookie);
+    await quiet();
+
+    // What the vehicle-fault source (DVIR) publishes; the alert engine turns it into an alert and notifies.
+    await withTransaction(pool, (tx) =>
+      eventBus.publish(tx, [
+        createEvent(
+          'VehicleFaultDetected',
+          { source: 'dvir', dvir_report_id: crypto.randomUUID(), vehicle_id: pid(vehicle), driver_id: null, trip_id: null, inspection_type: 'pre_trip', defect_count: 1, defects: ['Brakes'], maintenance_flag_set: true },
+          { actor: null, correlationId: crypto.randomUUID() },
+        ),
+      ]),
+    );
+    await deliverEvents({ broadcaster: realtime.localBroadcaster });
+
+    expect((await technician.next('notifications.unread')).payload).toMatchObject({ unread_count: 1, reason: 'delivered' });
+    await quiet(300);
+    // A fleet manager sees the alert itself, but is not told about a notification they did not get (tier 0 is the depot's staff).
+    expect(stranger.of('notifications.unread')).toEqual([]);
+    expect(manager.of('notifications.unread')).toEqual([]);
+    expect(manager.of('alert.created')).toHaveLength(1);
   });
 });
