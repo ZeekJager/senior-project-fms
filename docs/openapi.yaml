@@ -858,7 +858,8 @@ paths:
       summary: The caller's in-app inbox (FMS-48)
       description: >
         The caller's own in-app notifications, newest first; nobody else's, whatever the role. Needs notification:read,
-        which every role holds. meta.unread_count is the whole inbox's, whatever the filter. docs/alerts.md.
+        which every role holds. The inbox is the last 30 days: older notifications are not listed or counted.
+        meta.unread_count is the whole inbox's, whatever the filter. docs/alerts.md.
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [all, unread, read], default: all } }
         - { name: type, in: query, description: 'Comma-separated notification types, e.g. alert,alert_escalated.', schema: { type: string } }
@@ -1520,13 +1521,22 @@ components:
 
     Notification:
       type: object
-      required: [id, type, title, message, alert_id, read, read_at, created_at]
+      required: [id, type, title, message, alert_id, entity, vehicle_id, driver_id, read, read_at, created_at]
       properties:
         id: { type: string, format: uuid }
         type: { type: string, description: 'What kind: alert, alert_escalated.' }
         title: { type: string }
         message: { type: string }
         alert_id: { type: [string, 'null'], format: uuid, description: The alert it is about, if any. }
+        entity:
+          type: [object, 'null']
+          description: What the alert is about, so a screen can link to it.
+          required: [type, id]
+          properties:
+            type: { type: string, description: 'e.g. dvir_report, document, driver, fuel_anomaly, telemetry_flag, incident, vehicle.' }
+            id: { type: string, format: uuid }
+        vehicle_id: { type: [string, 'null'], format: uuid, description: The vehicle the alert concerns, if any. }
+        driver_id: { type: [string, 'null'], format: uuid, description: The driver the alert concerns, if any. }
         read: { type: boolean }
         read_at: { type: [string, 'null'], format: date-time }
         created_at: { type: string, format: date-time, description: When it reached the inbox. }

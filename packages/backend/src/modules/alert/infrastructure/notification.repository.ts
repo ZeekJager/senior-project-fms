@@ -4,7 +4,7 @@ import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { InboxStatus } from '../domain/notification';
+import { INBOX_WINDOW_DAYS, type InboxStatus } from '../domain/notification';
 
 /** An in-app alert.notifications row (internal ids), with the public id of its alert. */
 export interface NotificationRow {
@@ -14,6 +14,11 @@ export interface NotificationRow {
   title: string;
   message: string;
   alertPublicId: string | null;
+  /** The alert's subject: what it is about, and its vehicle and driver (internal ids, other modules' tables). */
+  entityType: string | null;
+  entityId: string | null;
+  vehicleId: string | null;
+  driverId: string | null;
   readAt: Date | null;
   createdAt: Date;
 }
@@ -27,14 +32,18 @@ export interface InboxFilter {
   page_size: number;
 }
 
+/** The inbox window (INBOX_WINDOW_DAYS is a constant, never input, so it is written into the SQL). */
+const inWindow = (column: string) => `${column} >= CURRENT_TIMESTAMP - interval '${INBOX_WINDOW_DAYS} days'`;
+
 const ROW_SQL = `
   SELECT n.id, n.public_id AS "publicId", n.notification_type AS type, n.title, n.message,
-         a.public_id AS "alertPublicId", n.read_at AS "readAt", n.queued_at AS "createdAt"
+         a.public_id AS "alertPublicId", a.entity_type AS "entityType", a.entity_id AS "entityId",
+         a.vehicle_id AS "vehicleId", a.driver_id AS "driverId", n.read_at AS "readAt", n.queued_at AS "createdAt"
     FROM alert.notifications n
     LEFT JOIN alert.alerts a ON a.id = n.alert_id`;
 
 /**
- * The inbox half of alert.notifications (FMS-48). Every read and write names the recipient, so one user's rows
+ * The inbox half of alert.notifications (FMS-48), limited to the last 30 days (FMS-49). Every read and write names the recipient, so one user's rows
  * can never be reached with another's id: an id that is not theirs is simply not found.
  */
 export class NotificationRepository extends Repository {
@@ -53,7 +62,7 @@ export class NotificationRepository extends Repository {
       params.push(value);
       return `$${params.length}`;
     };
-    const where = ["n.recipient_user_id = $1", "n.channel = 'in_app'"];
+    const where = ['n.recipient_user_id = $1', "n.channel = 'in_app'", inWindow('n.queued_at')];
     if (f.status === 'unread') where.push('n.read_at IS NULL');
     if (f.status === 'read') where.push('n.read_at IS NOT NULL');
     if (f.types?.length) where.push(`n.notification_type = ANY(${add(f.types)}::text[])`);
@@ -89,7 +98,7 @@ export class NotificationRepository extends Repository {
     const res = await db.query<{ userId: string; n: number }>(
       `SELECT recipient_user_id AS "userId", count(*)::int AS n
          FROM alert.notifications
-        WHERE recipient_user_id = ANY($1::bigint[]) AND channel = 'in_app' AND read_at IS NULL
+        WHERE recipient_user_id = ANY($1::bigint[]) AND channel = 'in_app' AND read_at IS NULL AND ${inWindow('queued_at')}
         GROUP BY recipient_user_id`,
       [userIds],
     );
@@ -109,7 +118,7 @@ export class NotificationRepository extends Repository {
   async markAllRead(client: PoolClient, ctx: MutationContext, userId: string): Promise<number> {
     const res = await client.query(
       `UPDATE alert.notifications SET read_at = CURRENT_TIMESTAMP
-        WHERE recipient_user_id = $1 AND channel = 'in_app' AND read_at IS NULL`,
+        WHERE recipient_user_id = $1 AND channel = 'in_app' AND read_at IS NULL AND ${inWindow('queued_at')}`,
       [userId],
     );
     const updated = res.rowCount ?? 0;

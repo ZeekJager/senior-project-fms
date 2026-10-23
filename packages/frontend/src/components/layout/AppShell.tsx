@@ -2,6 +2,7 @@ import { HelpCircle, Menu } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/shared'
+import { NotificationInbox } from '@/components/NotificationInbox'
 import { DriverAppBanners } from '@/pwa/DriverAppBanners'
 import { OfflineQueueProvider } from '@/pwa/OfflineQueue'
 import { PendingSubmissions } from '@/pwa/PendingSubmissions'
@@ -11,7 +12,6 @@ import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferen
 import { isDriverPortalUser, navSections, portalOf, type NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
 import { HelpDialog } from './HelpDialog'
-import { NotificationBell } from './NotificationBell'
 import { Brand, initials, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
 import { ThemeToggle } from './ThemeToggle'
 import { useHelpShortcut, useSearchShortcut } from './useSearchShortcut'
@@ -82,7 +82,7 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
           <div className="flex items-center gap-1">
             <IconButton label="Help and shortcuts" icon={<HelpCircle />} onClick={() => setHelpOpen(true)} />
             <ThemeToggle />
-            <NotificationBell />
+            <NotificationInbox />
           </div>
         </header>
         <Content className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8" />
@@ -119,7 +119,7 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
         <div className="flex items-center gap-1">
           <PendingSubmissions />
           <ThemeToggle />
-          <NotificationBell />
+          <NotificationInbox />
           <button
             type="button"
             onClick={() => setAccountOpen(true)}

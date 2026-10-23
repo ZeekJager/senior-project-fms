@@ -6,7 +6,7 @@ import { pool } from '../../src/db';
 import { createEvent } from '../../src/shared/events/domain-event';
 import { eventBus } from '../../src/shared/events/event-bus';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
-import { createDepot, createUser, createVehicle, type RoleName } from '../support/factories';
+import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
 import { deliverEvents, publishedEvents } from '../support/events';
 
 // FMS-48: the in-app inbox. A user sees and marks read only their own in-app notifications, and their unread
@@ -86,14 +86,17 @@ describe('GET /notifications', () => {
     expect(res.body.meta.unread_count).toBe(1);
   });
 
-  test('a notification is returned with its alert as a public id, and read state', async () => {
+  test('a notification is returned with its alert, what it is about and its vehicle and driver as public ids, and read state', async () => {
     const depot = await createDepot();
     const { cookie, user } = await signIn(['depot_admin'], depot);
     const vehicle = await createVehicle({ depot });
+    const { driver } = await createDriver({ depot });
+    const dvirReport = randomUUID();
     const alert = (
       await pool.query<Row & { public_id: string }>(
-        "INSERT INTO alert.alerts (alert_type, severity, status, source_module, title, depot_id, vehicle_id) VALUES ('vehicle_fault', 'high', 'open', 'fleet', 'Defects', $1, $2) RETURNING *",
-        [depot.id, vehicle.id],
+        `INSERT INTO alert.alerts (alert_type, severity, status, source_module, title, depot_id, vehicle_id, driver_id, entity_type, entity_id)
+         VALUES ('vehicle_fault', 'high', 'open', 'fleet', 'Defects', $1, $2, $3, 'dvir_report', $4) RETURNING *`,
+        [depot.id, vehicle.id, driver.id, dvirReport],
       )
     ).rows[0];
     const withAlert = await notify(user, { alert_id: alert.id, title: 'Defects reported', message: '2 defects' }, 1);
@@ -101,8 +104,32 @@ describe('GET /notifications', () => {
 
     const res = await get(cookie, '/notifications');
     expect(res.body.data).toEqual([
-      { id: pub(withAlert), type: 'alert', title: 'Defects reported', message: '2 defects', alert_id: pub(alert), read: false, read_at: null, created_at: expect.any(String) },
-      { id: pub(without), type: 'trip_assigned', title: expect.any(String), message: expect.any(String), alert_id: null, read: true, read_at: expect.any(String), created_at: expect.any(String) },
+      {
+        id: pub(withAlert),
+        type: 'alert',
+        title: 'Defects reported',
+        message: '2 defects',
+        alert_id: pub(alert),
+        entity: { type: 'dvir_report', id: dvirReport },
+        vehicle_id: pub(vehicle),
+        driver_id: pub(driver),
+        read: false,
+        read_at: null,
+        created_at: expect.any(String),
+      },
+      {
+        id: pub(without),
+        type: 'trip_assigned',
+        title: expect.any(String),
+        message: expect.any(String),
+        alert_id: null,
+        entity: null,
+        vehicle_id: null,
+        driver_id: null,
+        read: true,
+        read_at: expect.any(String),
+        created_at: expect.any(String),
+      },
     ]);
     expect(res.body.meta.request_id).toBe(res.headers['x-request-id']);
   });
@@ -284,6 +311,49 @@ describe('POST /notifications/read-all', () => {
     const withBody = await readAll(cookie, { user_id: 1 });
     expect(withBody.status).toBe(400);
     expect(withBody.body.error.details).toEqual([{ field: 'user_id', reason: 'not_writable' }]);
+  });
+});
+
+const DAY = 24 * 60 * 60_000;
+const daysAgo = (days: number, extraMs = 0) => new Date(Date.now() - days * DAY - extraMs).toISOString();
+
+describe('the inbox is the last 30 days (FMS-49)', () => {
+  test('older notifications are not listed, not counted and not in the page total; the day inside the window is', async () => {
+    const { cookie, user } = await signIn(['technician'], await createDepot());
+    const [recent, almost] = [await notify(user, { queued_at: daysAgo(1) }), await notify(user, { queued_at: daysAgo(29, 23 * 60 * 60_000) })];
+    const [old, ancient] = [await notify(user, { queued_at: daysAgo(30, 60_000) }), await notify(user, { queued_at: daysAgo(400) })];
+
+    const res = await get(cookie, '/notifications?page_size=100');
+    expect(ids(res)).toEqual([pub(recent), pub(almost)]);
+    expect(ids(res)).not.toContain(pub(old));
+    expect(ids(res)).not.toContain(pub(ancient));
+    expect(res.body.meta).toMatchObject({ total_items: 2, unread_count: 2 });
+    // Every filter sees the same window.
+    expect((await get(cookie, '/notifications?status=unread')).body.meta.total_items).toBe(2);
+    expect((await get(cookie, '/notifications?status=read')).body.meta.total_items).toBe(0);
+  });
+
+  test('mark-all-read leaves the old ones alone and counts only the ones in the window', async () => {
+    const { cookie, user } = await signIn(['technician'], await createDepot());
+    await notify(user, { queued_at: daysAgo(2) });
+    await notify(user, { queued_at: daysAgo(3) });
+    const old = await notify(user, { queued_at: daysAgo(45) });
+
+    const res = await readAll(cookie);
+    expect(res.body.data).toEqual({ updated: 2 });
+    expect(await readAtInDb(old)).toBeNull();
+    expect((await unreadEvents())[0].payload).toMatchObject({ unread_count: 0, reason: 'read_all' });
+  });
+
+  test('the count announced to the screen excludes the old ones too', async () => {
+    const { cookie, user } = await signIn(['technician'], await createDepot());
+    const [a, b] = [await notify(user, { queued_at: daysAgo(1) }), await notify(user, { queued_at: daysAgo(2) })];
+    await notify(user, { queued_at: daysAgo(60) });
+
+    const res = await patchRead(cookie, pub(a));
+    expect(res.body.meta.unread_count).toBe(1);
+    expect((await unreadEvents())[0].payload).toMatchObject({ unread_count: 1, reason: 'read' });
+    expect(await readAtInDb(b)).toBeNull();
   });
 });
 
