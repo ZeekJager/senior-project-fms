@@ -26,7 +26,13 @@ import { NotificationRepository } from './infrastructure/notification.repository
 const userPublicIds = async (db: Queryable, ids: readonly string[]) => new Map((await userDirectory.findByIds(db, ids)).map((u) => [u.id, u.publicId]));
 
 // The in-app inbox (FMS-48): the alert engine writes the notifications and announces each recipient's new unread count.
-const inbox = new InboxService({ notifications: new NotificationRepository(pool), users: { publicIds: userPublicIds }, events: eventBus });
+const inbox = new InboxService({
+  notifications: new NotificationRepository(pool),
+  users: { publicIds: userPublicIds },
+  vehicles: alertRefs.vehicles,
+  drivers: alertRefs.drivers,
+  events: eventBus,
+});
 
 const repo = new AlertRepository(pool);
 const service = new AlertService({

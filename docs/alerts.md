@@ -111,3 +111,28 @@ The in-app notifications above are a user's **inbox**: `GET /notifications` list
 | The user marks all read | `read_all` | `POST /notifications/read-all`; with nothing unread, nothing |
 
 The outbox relay polls every 200 ms and the gateway forwards the event as `notifications.unread` ([realtime.md](realtime.md)) to that user's own room, so a screen shows the new count within a second of the commit. The event carries the count, so a screen needs no request; it reads the inbox (`meta.unread_count`) when it opens and after a reconnect, as for every event (events are hints).
+
+**The last 30 days.** The inbox is the notifications of the last 30 days (`INBOX_WINDOW_DAYS`, FMS-49). The window applies to the list, the unread count and `read-all` alike, so the badge never counts what the panel does not show. Older rows stay in `alert.notifications` and are not anyone's inbox; a count that drops because a notification aged out is not announced, and corrects itself at the next read.
+
+A notification carries what its alert is about (`entity`, `vehicle_id`, `driver_id`), so a screen can link to it.
+
+## The bell (FMS-49)
+
+Code: `packages/frontend/src/components/NotificationInbox/` (in the top bar of both shells, S-17).
+
+- **Badge.** The bell shows the unread count (`99+` from 100) and names it for a screen reader ("Notifications, 3 unread"). It follows `notifications.unread` the moment it arrives: the event carries the count, so the badge is set from the event with no request and the list is re-read for the new rows. With no live socket the inbox is re-read every 60 seconds.
+- **Panel.** The latest 20 of the last 30 days, newest first: title, message (two lines), how long ago, unread marked. The footer says "Last 30 days" and, when there are more, "the latest 20 of N". On a phone it is the width of the screen under the top bar (16 px margins), scrolls inside, and its rows are touch-sized.
+- **Mark all as read** clears the badge to 0 at once and tells the server; if the server refuses, the badge comes back. Choosing one notification does the same for that one.
+- **Choosing a notification** marks it read and opens the screen its alert is about, if the viewer may open that screen; otherwise it is only marked read (no link beats a link to "not allowed"):
+
+| It is about | It opens |
+|---|---|
+| a vehicle fault (`dvir_report`) | Maintenance, narrowed to the vehicle (`/maintenance?vehicle=<id>`) |
+| a maintenance prediction | Maintenance |
+| a vehicle (`vehicle`) | Vehicles |
+| a document | Vehicles, or Drivers when it is a driver's |
+| a driver's licence (`driver`) | Drivers |
+| a fuel anomaly | Fuel reconciliation |
+| a telemetry flag, an incident | The live map, "needs attention" |
+
+The screens take list filters, not record ids, so the link lands on the right list, narrowed to the vehicle where the screen supports it.

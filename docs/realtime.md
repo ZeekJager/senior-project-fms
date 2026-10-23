@@ -83,7 +83,8 @@ When it is enabled:
 - Each event marks the matching queries stale, and the screens re-read them over the API:
   - `trip.updated`: `['dispatch']`, `['driver', 'today']`, `['trips']`;
   - `vehicle.status.changed`: `['dispatch']`, `['vehicles']`;
-  - alerts and incidents: their lists.
+  - alerts and incidents: their lists;
+  - `notifications.unread`: sets the bell's badge from the event's `unread_count` at once, then re-reads the inbox (docs/alerts.md, "The bell").
 - Screens use `useRealtimeEvent(event, handler)` and `useRealtimeStatus()` (`lib/realtime/context.ts`; outside the provider they do nothing).
 - Polling stays as the fallback. The dispatch console shows "Live" while the socket is up.
 

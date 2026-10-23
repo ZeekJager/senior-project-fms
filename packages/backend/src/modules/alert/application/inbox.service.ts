@@ -17,6 +17,9 @@ export interface InboxQuery {
 export interface InboxServiceDeps {
   notifications: Pick<NotificationRepository, 'inTransaction' | 'list' | 'findOwn' | 'findById' | 'unreadCounts' | 'markRead' | 'markAllRead'>;
   users: { publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> };
+  /** Public ids of the vehicles and drivers an alert concerns, for the link a screen builds. */
+  vehicles: { refsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string }>> };
+  drivers: { publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> };
   events: EventBus;
 }
 
@@ -40,7 +43,7 @@ export class InboxService {
     return notifications.inTransaction(async (client) => {
       const { rows, total } = await notifications.list(client, { userId, status: query.status, types: query.type, page: query.page, page_size: query.page_size });
       const unread = (await notifications.unreadCounts(client, [userId])).get(userId) ?? 0;
-      return { items: rows.map(view), total, unread };
+      return { items: await this.views(client, rows), total, unread };
     });
   }
 
@@ -55,11 +58,11 @@ export class InboxService {
     return notifications.inTransaction(async (client) => {
       const row = await notifications.findOwn(client, publicId, userId, true);
       if (!row) throw notificationNotFound();
-      if (row.readAt) return { notification: view(row), unread: (await notifications.unreadCounts(client, [userId])).get(userId) ?? 0 };
+      if (row.readAt) return { notification: (await this.views(client, [row]))[0], unread: (await notifications.unreadCounts(client, [userId])).get(userId) ?? 0 };
 
       const ctx: MutationContext = { userId, correlationId };
       await notifications.markRead(ctx, row.id, client);
-      const updated = view(await notifications.findById(client, row.id));
+      const updated = (await this.views(client, [await notifications.findById(client, row.id)]))[0];
       const unread = await this.announce(client, [userId], 'read', ctx, user.publicId).then((counts) => counts.get(userId) ?? 0);
       return { notification: updated, unread };
     });
@@ -105,17 +108,26 @@ export class InboxService {
     );
     return counts;
   }
-}
 
-function view(row: NotificationRow): NotificationView {
-  return {
-    id: row.publicId,
-    type: row.type,
-    title: row.title,
-    message: row.message,
-    alert_id: row.alertPublicId,
-    read: row.readAt !== null,
-    read_at: row.readAt,
-    created_at: row.createdAt,
-  };
+  /** Rows as the API shows them: the alert's vehicle and driver as public ids, one query for each kind. */
+  private async views(db: Queryable, rows: readonly NotificationRow[]): Promise<NotificationView[]> {
+    const { vehicles, drivers } = this.deps;
+    const ids = (pick: (r: NotificationRow) => string | null) => [...new Set(rows.flatMap((r) => (pick(r) ? [pick(r) as string] : [])))];
+    // One after another: `db` is often a transaction's client.
+    const vehicleRefs = await vehicles.refsByIds(db, ids((r) => r.vehicleId));
+    const driverIds = await drivers.publicIds(db, ids((r) => r.driverId));
+    return rows.map((r) => ({
+      id: r.publicId,
+      type: r.type,
+      title: r.title,
+      message: r.message,
+      alert_id: r.alertPublicId,
+      entity: r.entityType && r.entityId ? { type: r.entityType, id: r.entityId } : null,
+      vehicle_id: r.vehicleId ? (vehicleRefs.get(r.vehicleId)?.publicId ?? null) : null,
+      driver_id: r.driverId ? (driverIds.get(r.driverId) ?? null) : null,
+      read: r.readAt !== null,
+      read_at: r.readAt,
+      created_at: r.createdAt,
+    }));
+  }
 }
