@@ -15,6 +15,7 @@ export const SOCKET_EVENTS = {
   notificationsUnread: 'notifications.unread',
   incidentCreated: 'incident.created',
   tripUpdated: 'trip.updated',
+  flagChanged: 'vehicle.flag.changed',
   /** Legacy alias of vehicle.location.updated. */
   legacyPosition: 'vehicle_position',
   /** Legacy alias of alert.created. */
@@ -163,6 +164,10 @@ const FORWARDERS: Record<string, Forwarder> = {
       },
     ];
   },
+  // Published by the telemetry rules (FMS-46): a speeding or idling flag opened or closed. The live map
+  // re-reads its snapshot on it. No driver: the flag names the vehicle and trip.
+  TelemetryFlagRaised: (e) => [flagChanged(e, 'raised')],
+  TelemetryFlagResolved: (e) => [flagChanged(e, 'resolved')],
   // Published by the alert engine (FMS-92): alert_id, depot_id, alert_type, severity, priority, status, entity_type, entity_id, title, message.
   AlertCreated: (e) => {
     const depotId = str(e.payload.depot_id);
@@ -214,6 +219,15 @@ const FORWARDERS: Record<string, Forwarder> = {
   },
   ...Object.fromEntries(TRIP_TYPES.map((type) => [type, tripUpdated])),
 };
+
+function flagChanged(e: EventEnvelope, change: 'raised' | 'resolved'): Delivery {
+  return {
+    event: SOCKET_EVENTS.flagChanged,
+    channel: 'tracking',
+    depotId: str(e.payload.depot_id),
+    payload: { ...pick(e.payload, ['flag_id', 'vehicle_id', 'trip_id', 'flag_type', 'severity', 'observed_at']), resolved_at: str(e.payload.resolved_at), change },
+  };
+}
 
 function alertPatch(e: EventEnvelope): Delivery {
   return {

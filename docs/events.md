@@ -91,6 +91,7 @@ Today's consumers:
 | `fleet.vehicle-cache` | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted`, `VehicleFaultDetected`, `TripAssigned`, `TripCancelled`, `TripStarted`, `TripCompleted` | Drops the cached vehicle (FMS-72), and on `TripAssigned` the one it replaced (`previous_vehicle_id`), so its flag and current trip show at once |
 | `fleet.driver-accounts` | `UserAccountChanged` | Refreshes fleet's copy of the driver's account, on `tx` |
 | `fleet.document-expiry` | `DocumentUploaded` | Raises `DocumentExpiring` at once for a document already inside the 30-day window, on `tx` |
+| `integration.telemetry-rules` | `VehicleLocationUpdated` | Runs the vehicle's new pings through the speeding and idling rules; opens and closes `tracking.telemetry_flags` with `TelemetryFlagRaised` and `TelemetryFlagResolved`, on `tx`. Its counters are in Redis and keep the state before each event, so a redelivered event decides the same ([telemetry-rules.md](telemetry-rules.md)) |
 
 Today's projections (`eventBus.project`): they run inside `publish`, on the transaction that makes the change, and commit or roll back with it. No outbox delivery, no retries; a rebuild from the source repairs anything written without its events.
 

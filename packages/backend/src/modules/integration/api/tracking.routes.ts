@@ -2,11 +2,13 @@ import { Router, type NextFunction, type Request, type RequestHandler, type Resp
 import { z } from 'zod';
 import { webhookChannel } from '../../../middleware/requestSource';
 import { withPolicy } from '../../../shared/authz/route-policy';
+import { notFound } from '../../../shared/errors/app-error';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { IngestionService, Reporter } from '../application/ingestion.service';
 import type { LiveMapService } from '../application/live-map.service';
+import type { TelemetryRulesService } from '../application/telemetry-rules.service';
 import { deviceTokenInvalid } from '../domain/gps';
 import { apiPingBatch } from '../domain/ping-schema';
 import type { DeviceRow } from '../infrastructure/device.repository';
@@ -45,11 +47,37 @@ function ingestCaller(service: IngestionService): RequestHandler {
 /** GET /tracking/vehicles/current: optionally one depot (public id) of the caller's scope. */
 const currentQuery = z.strictObject({ depot_id: z.uuid().optional() });
 
+/** The flag types of tracking.telemetry_flag_type (migration 007). */
+const FLAG_TYPE_VALUES = ['speeding', 'idling', 'fuel_variance', 'route_deviation', 'geofence_violation', 'harsh_braking', 'other'] as const;
+
+/** GET /vehicles/{vehicle_id}/telemetry-flags: types (comma-separated), a period of observed_at, ongoing or ended, how many. */
+const flagsQuery = z
+  .strictObject({
+    flag_type: z
+      .string()
+      .transform((s) => s.split(',').map((p) => p.trim()).filter(Boolean))
+      .pipe(z.array(z.enum(FLAG_TYPE_VALUES)).min(1))
+      .optional(),
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional(),
+    ongoing: z.enum(['true', 'false']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .transform((q) => ({
+    types: q.flag_type ?? null,
+    from: q.from ? new Date(q.from) : null,
+    to: q.to ? new Date(q.to) : null,
+    ongoing: q.ongoing === undefined ? null : q.ongoing === 'true',
+    limit: q.limit,
+  }));
+
 /**
  * POST /tracking/gps-pings (api-contract §11.1, FMS-88): a batch of positions, answered with what was stored.
  * GET /tracking/vehicles/current (FMS-45): the live map's snapshot.
+ * GET /vehicles/{vehicle_id}/telemetry-flags (FMS-46): the vehicle's speeding and idling flags. Behavioural
+ * data (§24.3): tracking:read only, never drivers, in the caller's depot scope.
  */
-export function trackingRouter(service: IngestionService, liveMap: LiveMapService): Router {
+export function trackingRouter(service: IngestionService, liveMap: LiveMapService, rules: TelemetryRulesService): Router {
   const router = Router();
   router.get(
     '/tracking/vehicles/current',
@@ -69,6 +97,17 @@ export function trackingRouter(service: IngestionService, liveMap: LiveMapServic
       const reporter: Reporter = device ? { kind: 'device', device } : { kind: 'user', user: req.user! };
       const result = await service.ingest(reporter, pings, req.correlationId);
       res.status(202).json({ data: result, meta: { request_id: req.correlationId } });
+    }),
+  );
+  router.get(
+    '/vehicles/:vehicleId/telemetry-flags',
+    authorize('tracking:read'),
+    asyncHandler(async (req, res) => {
+      const vehicleId = z.uuid().safeParse(req.params.vehicleId);
+      if (!vehicleId.success) throw notFound('Vehicle not found.');
+      const query = parseInput(flagsQuery, req.query);
+      const data = await rules.listForVehicle(req.user!, vehicleId.data, query);
+      res.json({ data, meta: { request_id: req.correlationId } });
     }),
   );
   return router;

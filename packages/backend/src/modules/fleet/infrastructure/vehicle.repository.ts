@@ -138,6 +138,8 @@ function containsPattern(term: string): string {
 export interface TrackingVehicle {
   id: string;
   publicId: string;
+  /** Internal id, for the telemetry rules' per-depot thresholds (FMS-46). */
+  depotId: string | null;
   depotPublicId: string | null;
   isActive: boolean;
 }
@@ -353,7 +355,7 @@ export class VehicleRepository extends Repository {
     if (list.length === 0) return [];
     const clause = scopeClause(scope, 'v.depot_id', 2);
     const res = await db.query<TrackingVehicle>(
-      `SELECT v.id, v.public_id AS "publicId", d.public_id AS "depotPublicId", v.is_active AS "isActive"
+      `SELECT v.id, v.public_id AS "publicId", v.depot_id AS "depotId", d.public_id AS "depotPublicId", v.is_active AS "isActive"
          FROM fleet.vehicles v
          LEFT JOIN fleet.depots d ON d.id = v.depot_id
         WHERE ${'publicIds' in by ? 'v.public_id = ANY($1::uuid[])' : 'v.id = ANY($1::bigint[])'} AND ${clause.sql}`,

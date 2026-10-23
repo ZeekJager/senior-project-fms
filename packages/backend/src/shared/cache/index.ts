@@ -31,8 +31,8 @@ export async function closeRedis(): Promise<void> {
   await redis.quit().catch(() => redis.disconnect());
 }
 
-/** `<prefix>:<namespace>:<parts>` for non-cache keys: `throttle`, `lock` (CONVENTIONS.md, Redis). */
-export function redisKey(namespace: 'throttle' | 'lock', ...parts: string[]): string {
+/** `<prefix>:<namespace>:<parts>` for non-cache keys: `throttle`, `lock`, `state` (CONVENTIONS.md, Redis). */
+export function redisKey(namespace: 'throttle' | 'lock' | 'state', ...parts: string[]): string {
   return [config.redis?.keyPrefix ?? 'fms', namespace, ...parts].join(':');
 }
 

@@ -599,7 +599,7 @@ The ML service never directly updates fleet master data. The Node.js core valida
 | `GET /tracking/vehicles/current` | Current fleet locations (the live map, FMS-45) | `tracking:read` | `depot_id?` -> `VehicleLocation[]`; cached 5 s |
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
 | `GET /vehicles/{vehicle_id}/tracking` | Historical GPS | `tracking:read` | `from,to,limit,cursor` -> `GPSPoint[]` |
-| `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings | `tracking:read` | `TelemetryFlag[]` |
+| `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
 | `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
 
 **Live map snapshot (FMS-45).** `GET /tracking/vehicles/current` lists the caller's vehicles (depot scope; `depot_id` narrows it, and a depot outside the scope gives `[]`) that are not retired and have a position or a trip under way, by plate. How the command center uses it: [docs/live-map.md](live-map.md).
@@ -623,6 +623,12 @@ The ML service never directly updates fleet master data. The Node.js core valida
 - **Duplicates.** A ping of a vehicle at an instant already stored is skipped (`(vehicle_id, recorded_at)`, §15), so a retried batch counts as `duplicates` and stores nothing.
 - **Event.** `VehicleLocationUpdated` announces each vehicle's newest position at most once per `TRACKING_EVENT_INTERVAL_SECONDS` (5) of its pings; it reaches clients as `vehicle.location.updated` (§11.2).
 
+**Telemetry rules (FMS-46).** Speeding (over 80 km/h for 3 pings in a row; 3 at or under it clear it) and idling (5 minutes at 0 km/h, engine not reported off) open and close `tracking.telemetry_flags`, one ongoing flag per vehicle and type. Thresholds are per depot in `tracking.rule_thresholds`. How it works: [docs/telemetry-rules.md](telemetry-rules.md).
+
+- **`TelemetryFlag`** (out): `flag_id`, `vehicle_id`, `trip_id`, `flag_type`, `severity` (`high` speeding, `medium` idling), `status` (the review status), `observed_at` (the condition began), `resolved_at` (it ended; null while it lasts), `details` (`speed_limit_kmh`, `speed_kmh`, `consecutive_pings`, `idle_minutes`, `lat`, `lng`, `flagged_at`; on closing `end_reason`, `duration_seconds`, `max_speed_kmh`).
+- **`GET /vehicles/{vehicle_id}/telemetry-flags`:** `flag_type` (comma-separated), `from`/`to` (ISO with offset, on `observed_at`), `ongoing` (`true`/`false`), `limit` (1-200, default 50). Behavioural data (§24.3): `tracking:read` only, never drivers; a vehicle outside the caller's depot scope is `404`. Names the trip, not the driver.
+- **Events.** `TelemetryFlagRaised` (an `unsafe_driving` alert, docs/alerts.md) and `TelemetryFlagResolved`; both reach clients as `vehicle.flag.changed` (§11.2).
+
 The previous contract defined a client-to-server Socket.IO `location_update` event. In the canonical contract, high-volume telemetry ingestion is REST/webhook based and Socket.IO is used for server-to-client fan-out. This is a deliberate replacement, not a loss of the capability.
 
 ### 11.2 Real-time Socket.IO event contract
@@ -636,6 +642,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `incident.created` | Server -> client | `Incident` | New active incident |
 | `notifications.unread` | Server -> client | `unread_count,reason,changed_at` | The user's unread in-app count changed (`reason`: `delivered`, `read`, `read_all`). Sent to that user's own sockets only |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
+| `vehicle.flag.changed` | Server -> client | `flag_id,vehicle_id,trip_id,flag_type,severity,observed_at,resolved_at,change` | A speeding or idling flag opened (`raised`) or closed (`resolved`); the live map re-reads (FMS-46) |
 | `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion (`REALTIME_LEGACY_LOCATION`); canonical ingestion is REST/webhook. Goes through GPS ingestion as a phone: `tripId` must be the sender's trip under way |
 | `vehicle_position` | Server -> client (legacy event name) | `vehicleId,tripId,lat,lng,speedKmh,bearing,lastSeen` | Compatibility alias for `vehicle.location.updated` |
 | `alert_created` | Server -> client (legacy event name) | `alertType,entityId,message,severity` | Compatibility alias for `alert.created` |
@@ -643,7 +650,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 Real-time rules (FMS-43; details in docs/realtime.md):
 
 - **Connection:** Socket.IO at `/api/v1/socket.io` on the API's server. The handshake carries the session cookie and is checked like any API call (`connect_error` message `AUTH_TOKEN_INVALID`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_REVOKED` or `AUTH_ACCOUNT_DISABLED`). A browser `Origin` must be the API's own or listed in `REALTIME_ALLOWED_ORIGINS`. The server closes the socket when the access token expires and when the account is deactivated or its roles or account change; the client renews the session and reconnects.
-- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` needs `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
+- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` and `vehicle.flag.changed` need `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
 - **Notifications:** `notifications.unread` is not a channel anyone subscribes to: it goes to the room of the one user it is about, which only that user's own sockets join, so no permission or role (an admin's included) receives another user's count.
 - **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, version, updated_at` and `change` (the domain event). `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
 - **Client -> server:** only the legacy `location_update`, off unless `REALTIME_LEGACY_LOCATION=true`, acknowledged `{ok}` or `{ok: false, error: {code, message}}`. Every client event is rate limited (5 at once, then 1 per second; `RATE_LIMITED`); a socket that keeps exceeding it is closed.
