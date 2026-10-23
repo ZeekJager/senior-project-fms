@@ -1,0 +1,97 @@
+{
+  "spec_version": 1,
+  "description": "The predictive maintenance model's inputs and label (FMS-52). One row is one vehicle at one scoring time t. Every feature is computed by the core from its own tables over a window that ends at t, so the nightly scoring (FMS-55) computes exactly what the model was trained on. docs/ml-dataset.md explains each formula.",
+  "id_columns": [
+    { "name": "vehicle_id", "type": "string", "description": "The vehicle. Synthetic rows use SYN-0001 to SYN-0500; never an input to the model." },
+    { "name": "as_of", "type": "date", "description": "The scoring time t (a date, Addis Ababa). Never an input to the model." }
+  ],
+  "features": [
+    {
+      "name": "mileage_km",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 15000,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": ["trip.trips"],
+      "formula": "Sum of actual_distance_km of the vehicle's completed trips whose actual_end is in [t - 30 days, t).",
+      "when_missing": "0 (no completed trips in the window)."
+    },
+    {
+      "name": "engine_hours",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 720,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": ["trip.trips"],
+      "formula": "Sum of actual_duration_seconds / 3600 of the same trips as mileage_km. Driving hours until engine-hour meter readings exist (FMS-126); then the meter's increase over the window.",
+      "when_missing": "0 (no completed trips in the window)."
+    },
+    {
+      "name": "days_since_last_service",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 730,
+      "decimals": 0,
+      "window_days": null,
+      "sources": ["maintenance.maintenance_records", "fleet.vehicles"],
+      "formula": "Whole days from the completed_at of the vehicle's last completed preventive or inspection record before t, to t. Capped at 730.",
+      "when_missing": "Days since fleet.vehicles.created_at (never serviced in the system), capped at 730."
+    },
+    {
+      "name": "num_fault_reports",
+      "type": "int",
+      "unit": "count",
+      "min": 0,
+      "max": 50,
+      "decimals": 0,
+      "window_days": 90,
+      "sources": ["fleet.dvir_reports", "alert.incident_reports"],
+      "formula": "Number of the vehicle's DVIRs with issues_found = true submitted in [t - 90 days, t), plus its incident reports of type breakdown or tyre that occurred in that window. Capped at 50.",
+      "when_missing": "0."
+    },
+    {
+      "name": "fuel_variance_pct",
+      "type": "float",
+      "unit": "%",
+      "min": -50,
+      "max": 100,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": ["fuel.fuel_logs", "trip.trips", "fleet.vehicles"],
+      "formula": "(actual / expected - 1) * 100, where actual = sum of quantity_ml of fuel logs recorded in [t - 30 days, t) divided by mileage_km, and expected = fleet.vehicles.fuel_efficiency_ml_per_km. Clipped to [-50, 100].",
+      "when_missing": "0 when the vehicle has no fuel_efficiency_ml_per_km (electric), when mileage_km is under 100 (too little driving to judge) or when no fuel was logged in the window."
+    },
+    {
+      "name": "age_years",
+      "type": "float",
+      "unit": "years",
+      "min": 0,
+      "max": 40,
+      "decimals": 1,
+      "window_days": null,
+      "sources": ["fleet.vehicles"],
+      "formula": "(t - 1 January of model_year) in days / 365.25. Clipped to [0, 40].",
+      "when_missing": "From fleet.vehicles.created_at instead when model_year is null."
+    }
+  ],
+  "target": {
+    "name": "failure_within_30_days",
+    "type": "int",
+    "values": [0, 1],
+    "window_days": 30,
+    "sources": ["maintenance.failure_events"],
+    "definition": "1 when the vehicle has a failure event (FMS-125) with unplanned = true and occurred_at in [t, t + 30 days); else 0. A failure found at planned work is not a positive: the model predicts breakdowns, not service findings. Training and evaluation only; never an input."
+  },
+  "component": {
+    "name": "failure_component",
+    "type": "string",
+    "sources": ["maintenance.failure_events"],
+    "definition": "The component of the first such failure, from the FMS-125 catalogue; none when failure_within_30_days is 0.",
+    "values": ["none", "engine", "cooling", "brakes", "tyres", "transmission", "electrical", "suspension", "steering", "fuel_system", "exhaust", "body", "other"]
+  }
+}
