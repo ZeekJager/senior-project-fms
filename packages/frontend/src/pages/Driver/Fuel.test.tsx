@@ -72,6 +72,7 @@ describe('Driver fuel entry (FMS-40, S-14)', () => {
     const user = userEvent.setup()
     await fill(user, { litres: '23.5', total: '2890.50', odometer: '123456.7', station: '  Total Adama ' })
     expect(screen.getByText(/ETB 123\.00 per litre/)).toBeInTheDocument()
+    const pressed = Date.now()
     await user.click(submitButton())
 
     expect(await screen.findByRole('heading', { name: 'Fuel logged' })).toBeInTheDocument()
@@ -87,7 +88,10 @@ describe('Driver fuel entry (FMS-40, S-14)', () => {
       total_cost_cents: 289050,
       odometer_km: 123456.7,
       station_name: 'Total Adama',
+      fueled_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
     })
+    // When the driver pressed the button (FMS-115).
+    expect(Date.parse(JSON.parse(posts[0].raw).fueled_at)).toBeGreaterThanOrEqual(pressed - 1000)
     expect(posts[0].key).toMatch(/^[0-9a-f-]{36}$/)
     expect(await submissionsOf(driver.user.id)).toEqual([])
   })
@@ -120,11 +124,15 @@ describe('Driver fuel entry (FMS-40, S-14)', () => {
     expect(await screen.findByRole('button', { name: '1 waiting to send' })).toBeInTheDocument()
     const [queued] = await submissionsOf(driver.user.id)
     expect(queued).toMatchObject({ kind: 'fuel', label: 'Fuel, 40.00 L, AA 3-10001', path: '/fuel-logs' })
+    // The queued body carries the time it was filled up, not the time it will be sent (FMS-115).
+    const fueledAt = (queued.body as { fueled_at: string }).fueled_at
+    expect(Date.parse(fueledAt)).toBeLessThanOrEqual(Date.now())
+    await new Promise((resolve) => setTimeout(resolve, 20))
 
     state.up = true
     act(() => void window.dispatchEvent(new Event('online')))
     await waitFor(() => expect(posts).toHaveLength(1))
-    expect(JSON.parse(posts[0].raw)).toMatchObject({ quantity_ml: 40000, total_cost_cents: 492000, odometer_km: 123500 })
+    expect(JSON.parse(posts[0].raw)).toMatchObject({ quantity_ml: 40000, total_cost_cents: 492000, odometer_km: 123500, fueled_at: fueledAt })
     expect(posts[0].key).toBe(queued.key)
     await waitFor(() => expect(screen.queryByRole('button', { name: /waiting to send/ })).not.toBeInTheDocument())
   })
@@ -175,10 +183,18 @@ describe('fuel log body', () => {
   const fillUp = { quantityMl: 23500, totalCents: 289050, odometerTenths: 1234567, station: '' }
 
   it('whole millilitres and cents as given; the odometer keeps its one decimal; no empty station', () => {
-    const body = fuelLogBody(fillUp, VEHICLE, TRIP)
-    expect(body).toEqual({ vehicle_id: VEHICLE, trip_id: TRIP, quantity_ml: 23500, total_cost_cents: 289050, odometer_km: 123456.7 })
+    const now = new Date('2026-10-22T07:15:00.123Z')
+    const body = fuelLogBody(fillUp, VEHICLE, TRIP, now)
+    expect(body).toEqual({
+      vehicle_id: VEHICLE,
+      trip_id: TRIP,
+      quantity_ml: 23500,
+      total_cost_cents: 289050,
+      odometer_km: 123456.7,
+      fueled_at: '2026-10-22T07:15:00.123Z',
+    })
     expect(Number.isInteger(body.quantity_ml) && Number.isInteger(body.total_cost_cents)).toBe(true)
-    expect(String(fuelLogBody({ ...fillUp, odometerTenths: 1234560 }, VEHICLE, TRIP).odometer_km)).toBe('123456')
+    expect(String(fuelLogBody({ ...fillUp, odometerTenths: 1234560 }, VEHICLE, TRIP, now).odometer_km)).toBe('123456')
   })
 
   it("checks the contract's bounds", () => {

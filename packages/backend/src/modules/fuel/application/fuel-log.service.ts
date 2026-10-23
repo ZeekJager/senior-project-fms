@@ -5,7 +5,9 @@ import type { MutationContext } from '../../../shared/infrastructure/audited-mut
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
 import {
+  CLOCK_SKEW_MS,
   FUEL_EVENTS,
+  MAX_FUELED_AGE_DAYS,
   driverNotWritable,
   electricVehicle,
   fuelDriverNotFound,
@@ -13,7 +15,10 @@ import {
   fuelTripNotFound,
   fuelVehicleNotFound,
   fuelVehicleRetired,
+  fueledInFuture,
+  fueledTooOld,
   noDriverProfile,
+  odometerAheadOfLater,
   odometerRegression,
   tripVehicleMismatch,
   type FuelLogView,
@@ -41,6 +46,8 @@ export interface FuelLogCreate {
   unit_price_cents?: number;
   odometer_km: number;
   station_name?: string;
+  /** When the fill-up happened (FMS-115): the form's submit time, however late the offline queue delivers it. Defaults to now. */
+  fueled_at?: Date;
 }
 
 export interface FuelLogListQuery {
@@ -84,7 +91,7 @@ export interface FuelRefs {
 }
 
 export interface FuelLogServiceDeps {
-  logs: Pick<FuelLogRepository, 'inTransaction' | 'list' | 'findVisible' | 'findById' | 'lastOdometer' | 'insert'>;
+  logs: Pick<FuelLogRepository, 'inTransaction' | 'list' | 'findVisible' | 'findById' | 'lastOdometer' | 'nextOdometer' | 'insert'>;
   refs: FuelRefs;
   events: EventBus;
 }
@@ -141,6 +148,11 @@ export class FuelLogService {
     const { logs, refs } = this.deps;
     const scope = depotScope(caller.user);
     const own = ownDriverScope(caller.user);
+    const now = Date.now();
+    const fueledAt = input.fueled_at ?? new Date(now);
+    if (fueledAt.getTime() > now + CLOCK_SKEW_MS) throw fueledInFuture();
+    if (fueledAt.getTime() < now - MAX_FUELED_AGE_DAYS * 86_400_000) throw fueledTooOld();
+
     return logs.inTransaction(async (client) => {
       const vehicle = await refs.vehicles.lockInScope(client, input.vehicle_id, scope);
       if (!vehicle) throw fuelVehicleNotFound();
@@ -158,11 +170,14 @@ export class FuelLogService {
         tripId = trip.id;
       }
 
-      // The odometer only goes up: not below the vehicle's reading, nor the highest one any fuel log gave.
-      // The vehicle row is locked, so two logs for it cannot both pass this against the same reading.
-      const previous = await logs.lastOdometer(client, vehicle.id);
+      // The odometer only goes up with time: not below the vehicle's reading, nor below a fuel log from before
+      // this fill-up; and a fill-up queued offline (FMS-115) not above one logged after it. The vehicle row is
+      // locked, so two logs for it cannot both pass this against the same readings.
+      const previous = await logs.lastOdometer(client, vehicle.id, fueledAt);
       const floor = Math.max(vehicle.odometerKm, previous ?? 0);
       if (input.odometer_km < floor) throw odometerRegression(floor);
+      const next = await logs.nextOdometer(client, vehicle.id, fueledAt);
+      if (next !== null && input.odometer_km > next) throw odometerAheadOfLater(next);
 
       const ctx = mutationContext(caller);
       const row = await logs.insert(
@@ -178,6 +193,7 @@ export class FuelLogService {
           odometer_km: input.odometer_km,
           station_name: input.station_name ?? null,
           source: 'manual',
+          recorded_at: fueledAt,
         },
         client,
       );
@@ -194,9 +210,11 @@ export class FuelLogService {
             quantity_ml: view.quantity_ml,
             total_cost_cents: view.total_cost_cents,
             odometer_km: view.odometer_km,
-            // The reading of the log before this one (null for a vehicle's first): consumption is the distance between the two.
+            // The reading of the log before this one in time (null for a vehicle's first): consumption is the distance between the two.
             previous_odometer_km: previous,
+            // When the fill-up happened (FMS-115); created_at is when it reached the server.
             recorded_at: view.recorded_at.toISOString(),
+            created_at: view.created_at.toISOString(),
           },
           { actor: caller.user.publicId, correlationId: caller.correlationId },
           { aggregate: aggregateKey('vehicle', view.vehicle_id) },

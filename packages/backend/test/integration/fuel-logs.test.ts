@@ -304,6 +304,96 @@ describe('POST /fuel-logs', () => {
     });
   });
 
+  describe('fueled_at: the time of a fill-up queued offline (FMS-115)', () => {
+    const HOUR = 3_600_000;
+    const DAY = 24 * HOUR;
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+    test('a fill-up queued for 2 hours is recorded at its pump time, not its sync time, and FuelLogged says so', async () => {
+      const depot = await createDepot();
+      const vehicle = await createVehicle({ depot });
+      const { cookie } = await driverWithLogin(depot);
+      const fueledAt = ago(2 * HOUR);
+
+      const res = await api.post('/fuel-logs', fill(vehicle, { fueled_at: fueledAt }), cookie);
+      expect(res.status).toBe(201);
+      expect(res.body.data.recorded_at).toBe(fueledAt);
+      expect(Date.parse(res.body.data.created_at) - Date.parse(fueledAt)).toBeGreaterThan(2 * HOUR - 60_000);
+      const [event] = await publishedEvents('FuelLogged');
+      expect(event.payload).toMatchObject({ recorded_at: fueledAt, created_at: res.body.data.created_at });
+    });
+
+    test('without fueled_at the log is recorded at receipt, as before', async () => {
+      const depot = await createDepot();
+      const vehicle = await createVehicle({ depot });
+      const before = Date.now();
+      const res = await api.post('/fuel-logs', fill(vehicle), await signIn(['depot_admin'], depot));
+      expect(res.status).toBe(201);
+      expect(Date.parse(res.body.data.recorded_at)).toBeGreaterThanOrEqual(before - 1000);
+      expect(Date.parse(res.body.data.recorded_at)).toBeLessThanOrEqual(Date.now());
+    });
+
+    test('more than 5 minutes ahead is 400 in_future; a phone clock 4 minutes fast is accepted', async () => {
+      const depot = await createDepot();
+      const vehicle = await createVehicle({ depot });
+      const cookie = await signIn(['depot_admin'], depot);
+      const ahead = await api.post('/fuel-logs', fill(vehicle, { fueled_at: ago(-6 * 60_000) }), cookie);
+      expect(ahead.status).toBe(400);
+      expect(ahead.body.error).toMatchObject({ code: 'VALIDATION_FAILED', details: [{ field: 'fueled_at', reason: 'in_future' }] });
+      expect(await logCount(vehicle)).toBe(0);
+      expect((await api.post('/fuel-logs', fill(vehicle, { fueled_at: ago(-4 * 60_000) }), cookie)).status).toBe(201);
+    });
+
+    test('more than 30 days old is 400 too_old; 29 days is accepted', async () => {
+      const depot = await createDepot();
+      const vehicle = await createVehicle({ depot });
+      const cookie = await signIn(['depot_admin'], depot);
+      const old = await api.post('/fuel-logs', fill(vehicle, { fueled_at: ago(31 * DAY) }), cookie);
+      expect(old.status).toBe(400);
+      expect(old.body.error.details).toEqual([{ field: 'fueled_at', reason: 'too_old' }]);
+      expect((await api.post('/fuel-logs', fill(vehicle, { fueled_at: ago(29 * DAY) }), cookie)).status).toBe(201);
+    });
+
+    test('a time without its offset, or not a time, is refused', async () => {
+      const depot = await createDepot();
+      const vehicle = await createVehicle({ depot });
+      const cookie = await signIn(['depot_admin'], depot);
+      for (const fueled_at of ['2026-10-22T08:00:00', 'yesterday', 1_729_584_000_000]) {
+        const res = await api.post('/fuel-logs', fill(vehicle, { fueled_at }), cookie);
+        expect(res.status).toBe(400);
+        expect(res.body.error.details[0].field).toBe('fueled_at');
+      }
+    });
+
+    test('a late fill-up is checked against the readings around its time, not the newest one', async () => {
+      const depot = await createDepot();
+      const vehicle = await createVehicle({ depot, odometer_km: 0 });
+      const cookie = await signIn(['depot_admin'], depot);
+      const log = (odometer_km: number, fueled_at: string) => api.post('/fuel-logs', fill(vehicle, { odometer_km, fueled_at }), cookie);
+      expect((await log(1_000, ago(3 * HOUR))).status).toBe(201);
+      expect((await log(1_500, ago(1 * HOUR))).status).toBe(201);
+
+      // Filled up 2 hours ago in a dead zone, synced now: lower than the newest reading, and rightly so.
+      const late = await log(1_200, ago(2 * HOUR));
+      expect(late.status).toBe(201);
+      const events = await publishedEvents('FuelLogged');
+      expect(events.at(-1)!.payload.previous_odometer_km).toBe(1_000);
+
+      // Its reading must still fit between its neighbours in time.
+      const above = await log(1_600, ago(2 * HOUR + 60_000));
+      expect(above.status).toBe(409);
+      expect(above.body.error).toMatchObject({ code: 'CONFLICT_ODOMETER_REGRESSION', details: [{ field: 'odometer_km', reason: 'above_later_reading' }] });
+      expect(above.body.error.message).toContain('1200 km');
+      const below = await log(900, ago(2 * HOUR - 60_000));
+      expect(below.status).toBe(409);
+      expect(below.body.error.details).toEqual([{ field: 'odometer_km', reason: 'below_last_reading' }]);
+
+      // Listed by when they happened.
+      const list = await api.get(`/fuel-logs?vehicle_id=${pub(vehicle)}&sort_order=asc`, cookie);
+      expect(list.body.data.map((l: { odometer_km: number }) => l.odometer_km)).toEqual([1_000, 1_200, 1_500]);
+    });
+  });
+
   describe('Idempotency-Key', () => {
     test('a retry with the same key returns the original log and writes one row and one event', async () => {
       const depot = await createDepot();
