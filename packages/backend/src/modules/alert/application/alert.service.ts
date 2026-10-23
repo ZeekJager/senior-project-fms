@@ -39,6 +39,8 @@ export interface AlertServiceDeps {
   repo: AlertRepository;
   refs: AlertRefs;
   events: EventBus;
+  /** Tells the people just notified their unread count changed (FMS-48), in the same transaction. */
+  inbox: { announce(tx: PoolClient, userIds: readonly string[], reason: 'delivered', ctx: MutationContext): Promise<unknown> };
   /** A critical alert unacknowledged this long escalates to the next tier, and again after as long. */
   escalationMinutes: number;
 }
@@ -261,7 +263,10 @@ export class AlertService {
     const title = type === 'alert_escalated' ? `Escalated: ${alert.title}` : alert.title;
     const message =
       type === 'alert_escalated' ? `Nobody has acknowledged this ${alert.severity} alert yet. ${alert.description ?? ''}`.trim() : (alert.description ?? alert.title);
-    return repo.notify(client, ctx, alert.id, recipients, { type, title, message });
+    const notified = await repo.notify(client, ctx, alert.id, recipients, { type, title, message });
+    // Their inbox grew: the count reaches their open screens with this commit (FMS-48).
+    if (notified > 0) await this.deps.inbox.announce(client, recipients, 'delivered', ctx);
+    return notified;
   }
 
   private async publish(client: PoolClient, ctx: MutationContext, type: string, view: AlertView, fields: Record<string, unknown>, actor: string | null = null): Promise<void> {

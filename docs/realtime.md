@@ -44,7 +44,7 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 | `trips` | `trip:read` | all depots, or their depot | their own trips only |
 | `incidents` | `incident:read` | all depots, or their depot | the incidents they reported (`reported_by_driver_id`) |
 
-"All depots" means the depot-unscoped roles: admin, fleet manager, fleet owner and compliance officer. A depot-scoped user with no depot joins no depot rooms. Every socket also joins `user:<public id>`, which is used to close it.
+"All depots" means the depot-unscoped roles: admin, fleet manager, fleet owner and compliance officer. A depot-scoped user with no depot joins no depot rooms. Every socket also joins `user:<public id>`, which is used to close it and to send that user something meant for them alone: `notifications.unread` (below) goes only to that room, so no channel permission, depot or role reaches it.
 
 ## Event mapping
 
@@ -55,6 +55,7 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 | `VehicleLocationUpdated` (published since FMS-88, at most one per vehicle per 5 s) | `vehicle.location.updated`, legacy `vehicle_position` | tracking | `vehicle_id`, `lat`, `lng`, `speed`, `heading`, `recorded_at`; legacy: `vehicleId`, `tripId`, `lat`, `lng`, `speedKmh`, `bearing`, `lastSeen` |
 | `AlertCreated` (published since FMS-92, docs/alerts.md) | `alert.created`, legacy `alert_created` | alerts | `alert_id`, `alert_type`, `severity`, `priority`, `status`, `entity_type`, `entity_id`, `vehicle_id`, `title`, `message`, `created_at`; legacy: `alertType`, `entityId`, `message`, `severity` |
 | `AlertUpdated`, `AlertAcknowledged`, `AlertResolved`, `AlertEscalated` (FMS-92) | `alert.updated` | alerts | `alert_id`, `status`, and what changed: `severity`, `priority`, `occurrence_count`, `last_occurred_at` (a repeat); `acknowledged_at`/`_by`, `resolved_at`/`_by`; `escalation_level`, `escalated_at` |
+| `NotificationUnreadChanged` (FMS-48, [alerts.md](alerts.md#the-inbox-fms-48)) | `notifications.unread` | the user's own room, not a channel | `unread_count`, `reason` (`delivered`, `read`, `read_all`), `changed_at`. Published when the alert engine notifies the user and when they mark notifications read, so their other tabs follow. |
 | `IncidentReported` (published since FMS-38, docs/incidents.md) | `incident.created` | incidents | `incident_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `latitude`, `longitude`, `occurred_at`. It goes to the incident's depot and to the driver who reported it. |
 
 - The events marked with a card are not published yet. Their payloads are the contract those cards must meet, `depot_id` included: it decides who receives the event.

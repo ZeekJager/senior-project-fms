@@ -11,6 +11,8 @@ export const SOCKET_EVENTS = {
   statusChanged: 'vehicle.status.changed',
   alertCreated: 'alert.created',
   alertUpdated: 'alert.updated',
+  /** The user's unread in-app notification count changed (FMS-48): to that user's own sockets only. */
+  notificationsUnread: 'notifications.unread',
   incidentCreated: 'incident.created',
   tripUpdated: 'trip.updated',
   /** Legacy alias of vehicle.location.updated. */
@@ -70,20 +72,31 @@ export function roomsFor(identity: SocketIdentity): string[] {
   return rooms;
 }
 
-/** One socket event to send, and to whom: the channel's all-depot room, the event's depot, the drivers named. */
+/**
+ * One socket event to send, and to whom. Either a channel's audience (its all-depot room, the event's depot, the
+ * drivers named) or particular users (`userIds`: their own rooms, which only their own sockets join). A delivery
+ * with only `userIds` reaches nobody else, whatever their permissions.
+ */
 export interface Delivery {
   event: string;
-  channel: Channel;
+  /** The channel whose readers receive it; omitted for a delivery to named users only. */
+  channel?: Channel;
   payload: Record<string, unknown>;
-  depotId: string | null;
+  depotId?: string | null;
   driverIds?: readonly string[];
+  /** Public ids of the users whose sockets receive it. */
+  userIds?: readonly string[];
 }
 
 /** The rooms a delivery goes to. A socket in several of them receives it once. */
 export function roomsOf(delivery: Delivery): string[] {
-  const rooms = [allRoom(delivery.channel)];
-  if (delivery.depotId) rooms.push(depotRoom(delivery.channel, delivery.depotId));
-  for (const driverId of delivery.driverIds ?? []) rooms.push(driverRoom(delivery.channel, driverId));
+  const rooms: string[] = [];
+  if (delivery.channel) {
+    rooms.push(allRoom(delivery.channel));
+    if (delivery.depotId) rooms.push(depotRoom(delivery.channel, delivery.depotId));
+    for (const driverId of delivery.driverIds ?? []) rooms.push(driverRoom(delivery.channel, driverId));
+  }
+  for (const userId of delivery.userIds ?? []) rooms.push(userRoom(userId));
   return rooms;
 }
 
@@ -165,6 +178,19 @@ const FORWARDERS: Record<string, Forwarder> = {
         channel: 'alerts',
         depotId,
         payload: { alertType: e.payload.alert_type ?? null, entityId: e.payload.entity_id ?? null, message: e.payload.message ?? null, severity: e.payload.severity ?? null },
+      },
+    ];
+  },
+  // Published by the inbox (FMS-48): user_id (public), unread_count, reason, changed_at. To that user's sockets and no one else's.
+  NotificationUnreadChanged: (e) => {
+    const userId = str(e.payload.user_id);
+    const count = num(e.payload.unread_count);
+    if (!userId || count === null) return [];
+    return [
+      {
+        event: SOCKET_EVENTS.notificationsUnread,
+        userIds: [userId],
+        payload: { unread_count: count, reason: str(e.payload.reason), changed_at: str(e.payload.changed_at) ?? e.occurred_at },
       },
     ];
   },

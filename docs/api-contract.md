@@ -634,6 +634,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `alert.created` | Server -> client | `Alert` | New alert |
 | `alert.updated` | Server -> client | Alert patch | Acknowledge/resolve update |
 | `incident.created` | Server -> client | `Incident` | New active incident |
+| `notifications.unread` | Server -> client | `unread_count,reason,changed_at` | The user's unread in-app count changed (`reason`: `delivered`, `read`, `read_all`). Sent to that user's own sockets only |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
 | `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion (`REALTIME_LEGACY_LOCATION`); canonical ingestion is REST/webhook. Goes through GPS ingestion as a phone: `tripId` must be the sender's trip under way |
 | `vehicle_position` | Server -> client (legacy event name) | `vehicleId,tripId,lat,lng,speedKmh,bearing,lastSeen` | Compatibility alias for `vehicle.location.updated` |
@@ -643,6 +644,7 @@ Real-time rules (FMS-43; details in docs/realtime.md):
 
 - **Connection:** Socket.IO at `/api/v1/socket.io` on the API's server. The handshake carries the session cookie and is checked like any API call (`connect_error` message `AUTH_TOKEN_INVALID`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_REVOKED` or `AUTH_ACCOUNT_DISABLED`). A browser `Origin` must be the API's own or listed in `REALTIME_ALLOWED_ORIGINS`. The server closes the socket when the access token expires and when the account is deactivated or its roles or account change; the client renews the session and reconnects.
 - **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` needs `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
+- **Notifications:** `notifications.unread` is not a channel anyone subscribes to: it goes to the room of the one user it is about, which only that user's own sockets join, so no permission or role (an admin's included) receives another user's count.
 - **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, version, updated_at` and `change` (the domain event). `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
 - **Client -> server:** only the legacy `location_update`, off unless `REALTIME_LEGACY_LOCATION=true`, acknowledged `{ok}` or `{ok: false, error: {code, message}}`. Every client event is rate limited (5 at once, then 1 per second; `RATE_LIMITED`); a socket that keeps exceeding it is closed.
 
@@ -658,9 +660,19 @@ An alert is a business event requiring attention. A notification is a delivery a
 | `GET /alerts/{alert_id}` | Alert detail | `alert:read` | `Alert` |
 | `POST /alerts/{alert_id}/acknowledge` | Acknowledge alert | `alert:ack` | `{comment?}` -> `Alert`; only an `open` alert (`409 CONFLICT_INVALID_STATE_TRANSITION` otherwise) |
 | `POST /alerts/{alert_id}/resolve` | Resolve alert | `alert:resolve` | `{comment?}` -> `Alert`; an `open` or `acknowledged` alert |
-| `GET /notifications` | Notification delivery history | `notification:read` | Paged `Notification[]` |
+| `GET /notifications` | The caller's in-app inbox | `notification:read` | `status` (`all` default, `unread`, `read`), `type` (comma-separated), `page`, `page_size` -> Paged `Notification[]`, newest first; `meta.unread_count` is the whole inbox's |
+| `PATCH /notifications/{notification_id}/read` | Mark one read | `notification:read` | No body -> `Notification`; `meta.unread_count`; safe to repeat |
+| `POST /notifications/read-all` | Mark all read | `notification:read` | No body -> `{updated}`; `meta.unread_count` is 0 |
 
 **Alert engine (FMS-92).** Alerts are raised from domain events by rule, de-duplicated per source within a window, notified in-app to the roles of the alert's depot, and escalated when critical and unacknowledged (fleet managers after `ALERT_ESCALATION_MINUTES`, 15, then admins). Rules, recipients and escalation: [docs/alerts.md](alerts.md).
+
+**Inbox rules (FMS-48).**
+
+- **Own notifications only.** Every role holds `notification:read`; what a user gets is limited to the rows addressed to them, not by permission. Another user's notification by id (even for an admin) is `404 NOT_FOUND`, the same body as a missing id, and it is not changed. Only the in-app channel is the inbox: email, SMS and push deliveries of the same user never appear.
+- **`Notification`:** `id`, `type` (`alert`, `alert_escalated`), `title`, `message`, `alert_id` (the alert it is about, or null), `read`, `read_at`, `created_at`. A notification is never edited or deleted here.
+- **Marking read:** `PATCH .../read` on one already read answers `200` with it unchanged and writes nothing. `POST /notifications/read-all` marks the caller's unread ones and says how many (`updated`); with none it changes nothing. A body, or any parameter these endpoints do not take, is `400` (`reason: "not_writable"`). A malformed id is `404`.
+- **Unread count.** Every list carries `meta.unread_count`, and every change to it is announced: `NotificationUnreadChanged` is published in the transaction that delivers notifications (the alert engine) or marks them read, and reaches the user's open screens as `notifications.unread` (§11.2) well within a second.
+- **Audit.** Marking one read is one audit row; read-all is one audit entry for the batch (`notification.read_all`, with the count).
 
 ### 12.2 Incidents
 
