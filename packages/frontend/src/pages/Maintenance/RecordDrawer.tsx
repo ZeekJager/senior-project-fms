@@ -1,10 +1,12 @@
 import { CheckCircle2, Lock, PencilLine } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ConfirmDialog, MoneyDisplay, StatusBadge } from '@/components/shared'
-import { Button, Drawer, useToast } from '@/components/ui'
+import { Badge, Button, Drawer, useToast } from '@/components/ui'
 import { formatDate } from '@/features/documents/expiry'
 import { ApiError } from '@/lib/api/errors'
-import { TYPE_LABELS, useCompleteRecord, useOpenWorkFor, type MaintenanceRecord } from './api'
+import { TYPE_LABELS, useCompleteRecord, useOpenWorkFor, useRecordFailures, type MaintenanceRecord } from './api'
+import { FailureFields } from './FailureFields'
+import { COMPONENT_LABELS, DETECTION_LABELS, MODE_LABELS, checkFailures, emptyFailure, type FailureDraft, type FailureInput } from './failures'
 
 const OPEN = ['scheduled', 'open', 'in_progress']
 
@@ -15,9 +17,10 @@ function when(iso: string | null): string {
 }
 
 /**
- * One repair: what was done, parts and costs. Open work can be marked
- * complete (after a confirmation that the vehicle's flag clears); completed
- * work is read-only, and a correction is a new record.
+ * One repair: what was done, what failed, parts and costs. Open work can be
+ * marked complete (after a confirmation that the vehicle's flag clears); a
+ * repair that does not yet say what failed asks for it first (FMS-125).
+ * Completed work is read-only, and a correction is a new record.
  */
 export function RecordDrawer({
   record,
@@ -31,17 +34,39 @@ export function RecordDrawer({
   onCorrect: (record: MaintenanceRecord) => void
 }) {
   const complete = useCompleteRecord()
+  const recordFailures = useRecordFailures()
   const { toast } = useToast()
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [drafts, setDrafts] = useState<FailureDraft[]>([])
+  const [failureErrors, setFailureErrors] = useState<Record<string, string>>({})
+  const [pending, setPending] = useState<FailureInput[]>([])
   const openWork = useOpenWorkFor(record && OPEN.includes(record.status) ? record.vehicle_id : null)
   const others = (openWork.data ?? []).filter((r) => r.id !== record?.id).length
   const isOpen = record ? OPEN.includes(record.status) : false
+  // A repair is completed only once it says what failed (FMS-125).
+  const needsFailure = Boolean(record && isOpen && record.maintenance_type === 'corrective' && (record.failures ?? []).length === 0)
+
+  useEffect(() => {
+    setDrafts([emptyFailure()])
+    setFailureErrors({})
+  }, [record?.id])
+
+  function askToComplete() {
+    if (needsFailure) {
+      const { failures, errors } = checkFailures(drafts, true)
+      setFailureErrors(errors)
+      if (Object.keys(errors).length > 0) return
+      setPending(failures)
+    } else setPending([])
+    setConfirming(true)
+  }
 
   async function markComplete() {
     if (!record) return
     setError(null)
     try {
+      if (pending.length) await recordFailures.mutateAsync({ id: record.id, failures: pending })
       await complete.mutateAsync({ id: record.id, version: record.version })
       toast({
         title: 'Repair completed',
@@ -72,7 +97,7 @@ export function RecordDrawer({
           canWrite && (
             <div className="flex w-full justify-end gap-2">
               {isOpen ? (
-                <Button leadingIcon={<CheckCircle2 className="h-4 w-4" />} onClick={() => setConfirming(true)}>
+                <Button leadingIcon={<CheckCircle2 className="h-4 w-4" />} onClick={askToComplete}>
                   Mark as complete
                 </Button>
               ) : (
@@ -100,6 +125,32 @@ export function RecordDrawer({
             <Block title="Work done">
               <p className="whitespace-pre-line text-sm text-ink">{record.description || '—'}</p>
             </Block>
+
+            {(record.failures ?? []).length > 0 ? (
+              <Block title="What failed">
+                <ul className="space-y-2">
+                  {record.failures.map((f) => (
+                    <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface-muted/60 px-3.5 py-2.5 text-sm">
+                      <span>
+                        <span className="block font-medium text-ink">
+                          {COMPONENT_LABELS[f.component]} · {MODE_LABELS[f.failure_mode]}
+                        </span>
+                        <span className="block text-xs text-ink-subtle">{DETECTION_LABELS[f.detected_by]}</span>
+                      </span>
+                      <Badge tone={f.unplanned ? 'warning' : 'neutral'}>{f.unplanned ? 'Unplanned' : 'Planned work'}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              </Block>
+            ) : (
+              needsFailure &&
+              canWrite && (
+                <Block title="What failed">
+                  <p className="mb-3 text-sm text-ink-muted">Needed to complete this repair.</p>
+                  <FailureFields drafts={drafts} onChange={setDrafts} errors={failureErrors} />
+                </Block>
+              )
+            )}
 
             <dl className="grid grid-cols-2 gap-3">
               <Fact label="Labour">{record.labour_hours === null ? '—' : `${record.labour_hours} h`}</Fact>
@@ -160,7 +211,7 @@ export function RecordDrawer({
         title="Mark this repair as complete?"
         tone="default"
         action="Mark as complete"
-        busy={complete.isPending}
+        busy={complete.isPending || recordFailures.isPending}
         error={error}
         message={
           others > 0 ? (

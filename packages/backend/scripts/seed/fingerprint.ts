@@ -25,6 +25,10 @@ const QUERIES: Record<string, string> = {
                               WHERE mp.maintenance_record_id = r.id ORDER BY p.part_number) AS parts
                   FROM maintenance.maintenance_records r JOIN fleet.vehicles v ON v.id = r.vehicle_id
                  ORDER BY v.registration_number, r.description, r.completed_at NULLS LAST, r.scheduled_at NULLS LAST, r.total_cost_cents`,
+  failures: `SELECT v.registration_number, r.description, f.component, f.failure_mode, f.unplanned, f.detected_by, f.occurred_at, f.odometer_km
+               FROM maintenance.failure_events f JOIN fleet.vehicles v ON v.id = f.vehicle_id
+               JOIN maintenance.maintenance_records r ON r.id = f.maintenance_record_id
+              ORDER BY f.occurred_at, v.registration_number, f.component`,
   attendance: `SELECT dr.license_number, a.attendance_date::text, a.status FROM fleet.driver_attendance a
                  JOIN fleet.drivers dr ON dr.id = a.driver_id ORDER BY dr.license_number, a.attendance_date`,
   documents: `SELECT v.registration_number, doc.document_type, doc.original_filename, doc.content_type, doc.size_bytes, doc.sha256, doc.expires_on::text

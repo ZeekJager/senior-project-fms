@@ -108,6 +108,21 @@ export class IncidentRepository extends Repository {
     return res.rows[0] ?? null;
   }
 
+  /** An incident by public id, whoever may see it, with its vehicle: for a failure it reported (FMS-125). */
+  async refByPublicId(db: Queryable, publicId: string): Promise<{ id: string; vehicleId: string | null } | null> {
+    const res = await db.query<{ id: string; vehicleId: string | null }>(
+      'SELECT id, vehicle_id AS "vehicleId" FROM alert.incident_reports WHERE public_id = $1',
+      [publicId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; public_id: string }>('SELECT id, public_id FROM alert.incident_reports WHERE id = ANY($1::bigint[])', [ids]);
+    return new Map(res.rows.map((r) => [r.id, r.public_id]));
+  }
+
   /** Newest first (when it happened). */
   async list(db: Queryable, f: IncidentFilter): Promise<{ rows: IncidentRow[]; total: number }> {
     const params: unknown[] = [];

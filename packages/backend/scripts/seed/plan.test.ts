@@ -31,6 +31,17 @@ describe('buildPlan', () => {
     expect(budget.maintenance.some((m) => m.status === 'completed')).toBe(true);
   });
 
+  test('corrective repairs under way or done say what failed, before they were finished (FMS-125)', () => {
+    const corrective = budget.maintenance.filter((m) => m.maintenance_type === 'corrective' && m.status !== 'scheduled');
+    expect(corrective.length).toBeGreaterThan(0);
+    expect(corrective.every((m) => m.failures.length === 1)).toBe(true);
+    expect(budget.maintenance.filter((m) => m.maintenance_type !== 'corrective').every((m) => m.failures.length === 0)).toBe(true);
+    for (const m of corrective.filter((c) => c.completed_at)) expect(Date.parse(m.failures[0].occurred_at)).toBeLessThan(Date.parse(m.completed_at!));
+    const failures = corrective.flatMap((m) => m.failures);
+    expect(new Set(failures.map((f) => f.component)).size).toBeGreaterThan(4);
+    expect(failures.some((f) => f.unplanned) && failures.some((f) => !f.unplanned)).toBe(true);
+  });
+
   test('unique keys are unique', () => {
     const unique = (values: string[]) => new Set(values).size === values.length;
     expect(unique([...budget.staff, ...budget.drivers].map((p) => p.email))).toBe(true);

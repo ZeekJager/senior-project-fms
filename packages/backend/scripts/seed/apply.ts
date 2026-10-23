@@ -188,6 +188,7 @@ async function writeThroughApi(api: SeedApi, plan: SeedPlan, password: string, l
       scheduled_at: m.scheduled_at,
       odometer_km: m.odometer_km,
       workshop: m.workshop,
+      failures: m.failures,
     });
     if (m.completed_at) await api.patch(`/maintenance/${data.id}`, { completed_at: m.completed_at });
   }
@@ -302,6 +303,7 @@ async function countRows(anchor: string): Promise<Record<string, number>> {
            (SELECT count(DISTINCT status) FROM trip.trips)::int AS trip_statuses,
            (SELECT count(*) FROM fuel.fuel_logs)::int AS fuel_logs,
            (SELECT count(*) FROM maintenance.maintenance_records)::int AS maintenance_records,
+           (SELECT count(*) FROM maintenance.failure_events)::int AS failure_events,
            (SELECT count(*) FROM maintenance.inventory_parts)::int AS spare_parts,
            (SELECT count(*) FROM fleet.driver_attendance)::int AS attendance,
            (SELECT count(*) FROM document.documents WHERE owner_type = 'vehicle' AND deleted_at IS NULL)::int AS vehicle_documents,

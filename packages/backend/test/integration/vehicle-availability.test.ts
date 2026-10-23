@@ -281,7 +281,15 @@ describe('status follows workshop work', () => {
     request(app)
       .post('/api/v1/maintenance')
       .set('Cookie', await signIn(['fleet_manager']))
-      .send({ vehicle_id: vehicle.public_id, description: 'Clutch replacement', labour_hours: 4, total_cost_cents: 300000, ...body });
+      .send({
+        vehicle_id: vehicle.public_id,
+        description: 'Clutch replacement',
+        labour_hours: 4,
+        total_cost_cents: 300000,
+        // A corrective repair is completed only with what failed (FMS-125).
+        failures: [{ component: 'transmission', failure_mode: 'wear', unplanned: true }],
+        ...body,
+      });
   const updateWork = async (recordId: string, body: object) =>
     request(app).patch(`/api/v1/maintenance/${recordId}`).set('Cookie', await signIn(['fleet_manager'])).send(body);
 

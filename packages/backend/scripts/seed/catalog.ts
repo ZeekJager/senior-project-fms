@@ -112,17 +112,51 @@ export const PARTS: readonly { number: string; name: string; costCents: number }
   { number: 'CLN-50-5L', name: 'Coolant, 5 L', costCents: 160_000 },
 ];
 
-export const REPAIRS: readonly { description: string; type: 'preventive' | 'corrective' | 'inspection'; parts: string[]; hours: number }[] = [
+/**
+ * What failed on a corrective repair (FMS-125), from the catalogues in docs/maintenance.md, and the
+ * share of such failures that are unplanned (a breakdown or found in service, not at planned work).
+ */
+export interface RepairFailure {
+  component: 'engine' | 'brakes' | 'tyres' | 'transmission' | 'electrical' | 'suspension' | 'fuel_system';
+  failure_mode: 'wear' | 'breakage' | 'electrical_fault' | 'other';
+  unplanned: number;
+}
+
+export const REPAIRS: readonly {
+  description: string;
+  type: 'preventive' | 'corrective' | 'inspection';
+  parts: string[];
+  hours: number;
+  failure?: RepairFailure;
+}[] = [
   { description: 'Scheduled service: engine oil and filters', type: 'preventive', parts: ['OIL-15W40-5', 'FLT-OIL-200', 'FLT-AIR-310'], hours: 2 },
-  { description: 'Front brake pads worn below limit', type: 'corrective', parts: ['BRK-PAD-F40'], hours: 1.5 },
-  { description: 'Rear brakes: pads and discs replaced', type: 'corrective', parts: ['BRK-PAD-R40', 'BRK-DSC-280'], hours: 3 },
-  { description: 'Tyre replaced after sidewall damage', type: 'corrective', parts: ['TYR-295-80'], hours: 1 },
-  { description: 'Battery failed load test', type: 'corrective', parts: ['BAT-12V-100'], hours: 0.5 },
-  { description: 'Squealing belt replaced', type: 'corrective', parts: ['BLT-ALT-06'], hours: 1 },
+  { description: 'Front brake pads worn below limit', type: 'corrective', parts: ['BRK-PAD-F40'], hours: 1.5, failure: { component: 'brakes', failure_mode: 'wear', unplanned: 0.2 } },
+  {
+    description: 'Rear brakes: pads and discs replaced',
+    type: 'corrective',
+    parts: ['BRK-PAD-R40', 'BRK-DSC-280'],
+    hours: 3,
+    failure: { component: 'brakes', failure_mode: 'wear', unplanned: 0.3 },
+  },
+  { description: 'Tyre replaced after sidewall damage', type: 'corrective', parts: ['TYR-295-80'], hours: 1, failure: { component: 'tyres', failure_mode: 'breakage', unplanned: 0.9 } },
+  {
+    description: 'Battery failed load test',
+    type: 'corrective',
+    parts: ['BAT-12V-100'],
+    hours: 0.5,
+    failure: { component: 'electrical', failure_mode: 'electrical_fault', unplanned: 0.4 },
+  },
+  { description: 'Squealing belt replaced', type: 'corrective', parts: ['BLT-ALT-06'], hours: 1, failure: { component: 'engine', failure_mode: 'wear', unplanned: 0.3 } },
   { description: 'Annual roadworthiness inspection', type: 'inspection', parts: [], hours: 1.5 },
-  { description: 'Clutch slipping under load', type: 'corrective', parts: ['CLT-KIT-430'], hours: 6 },
-  { description: 'Front suspension knock', type: 'corrective', parts: ['SHK-ABS-F2'], hours: 2.5 },
-  { description: 'Fuel filter clogged, engine losing power', type: 'corrective', parts: ['FLT-FUEL-115'], hours: 1 },
+  { description: 'Clutch slipping under load', type: 'corrective', parts: ['CLT-KIT-430'], hours: 6, failure: { component: 'transmission', failure_mode: 'wear', unplanned: 0.8 } },
+  { description: 'Front suspension knock', type: 'corrective', parts: ['SHK-ABS-F2'], hours: 2.5, failure: { component: 'suspension', failure_mode: 'wear', unplanned: 0.6 } },
+  {
+    description: 'Fuel filter clogged, engine losing power',
+    type: 'corrective',
+    parts: ['FLT-FUEL-115'],
+    hours: 1,
+    failure: { component: 'fuel_system', failure_mode: 'other', unplanned: 0.9 },
+  },
   { description: 'Coolant top-up and leak check', type: 'preventive', parts: ['CLN-50-5L'], hours: 0.5 },
 ];
 

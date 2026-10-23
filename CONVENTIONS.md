@@ -96,7 +96,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017) |
 | `trip` | trip | routes, trips, trip_stops |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
-| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions, inventory_parts, inventory_movements |
+| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions, inventory_parts, inventory_movements, failure_events |
 | `alert` | alert | alerts, alert_acknowledgements, incident_reports, notifications |
 | `ev` | ev | charging_stations, charging_sessions, ev_battery_logs |
 | `integration` | integration | external_providers, gps_devices, fuel_card_transactions, sync_logs |
@@ -183,6 +183,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `VehicleStatusChanged` | fleet (FMS-76) | vehicle | `vehicle_id`, `depot_id`, `previous_status`, `new_status`, `changed_at`, `changed_by`, `reason`, `source` (`manual`, or `maintenance` as work starts and ends), `maintenance_record_id` (also on `DELETE /vehicles`, with `VehicleRetired`) | |
 | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | maintenance (FMS-22) | maintenance | `maintenance_record_id`, `vehicle_id`; `changed_fields`, `maintenance_flag_cleared` | `fleet.vehicle-cache` |
 | `InventoryPartCreated`, `InventoryPartUpdated`, `InventoryStockAdjusted`, `InventoryReorderNeeded` | maintenance (FMS-23) | part | `part_id`; stock and threshold on adjust and reorder | |
+| `FailureRecorded` | maintenance (FMS-125, [maintenance.md](docs/maintenance.md)) | vehicle | `failure_event_id`, `vehicle_id`, `maintenance_record_id`, `incident_id`, `component`, `failure_mode`, `unplanned`, `detected_by`, `occurred_at`, `odometer_km` | |
 | `RouteCreated`, `RouteUpdated` | trip (FMS-83) | route | `route_id`, `depot_id`; `name`, `distance_km` on create; `changed_fields`, `is_active` on update (retiring is an update) | |
 | `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | `fleet.vehicle-cache` (`TripCancelled`) |
 | `FuelLogged` | fuel (FMS-39) | vehicle | `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km` (the reading before this one in time), `recorded_at` (when the fill-up happened: `fueled_at`, FMS-115), `created_at` (when it was received) | |
