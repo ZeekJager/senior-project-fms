@@ -52,8 +52,9 @@ const service = new AlertService({
   escalationMinutes: config.alerts.escalationMinutes,
 });
 
+const incidentRepository = new IncidentRepository(pool);
 const incidentService = new IncidentService({
-  incidents: new IncidentRepository(pool),
+  incidents: incidentRepository,
   refs: {
     ...incidentRefs,
     trips: { find: tripLookups.find, publicIds: tripLookups.publicIds },
@@ -92,6 +93,15 @@ export const alertModule: AppModule = {
 /** For tests and the escalation job's callers: run escalation as of `now`. */
 export const alertEngine = {
   escalate: (now: Date, correlationId: string) => service.escalate({ now, correlationId }),
+};
+
+/**
+ * For maintenance (FMS-125): the incident a failure came from, by public id, with its vehicle (internal
+ * ids), and incidents' public ids for responses. The caller checks the vehicle is the failure's own.
+ */
+export const incidentLookup = {
+  find: (db: Queryable, publicId: string) => incidentRepository.refByPublicId(db, publicId),
+  publicIds: (db: Queryable, ids: readonly string[]) => incidentRepository.publicIds(db, ids),
 };
 
 export { ALERT_EVENTS, SEVERITIES as ALERT_SEVERITIES, type AlertView } from './domain/alert';

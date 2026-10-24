@@ -18,6 +18,8 @@ import {
   type MaintenanceType,
   type RecordInput,
 } from './api'
+import { FailureFields } from './FailureFields'
+import { checkFailures, emptyFailure, type FailureDraft } from './failures'
 
 interface PartRowState {
   key: number
@@ -47,9 +49,10 @@ let nextKey = 1
 /**
  * S-08 Log a repair (FMS-24): the workshop job card. A vehicle (flagged ones
  * first), what was done, hours, parts used with running total, and the total
- * cost in ETB through MoneyInput (whole cents, never a float). Saved as open
- * work, or saved and completed after a confirmation that the vehicle's
- * maintenance flag will clear.
+ * cost in ETB through MoneyInput (whole cents, never a float). A repair says
+ * what failed (FMS-125): needed to complete it, optional while it stays open.
+ * Saved as open work, or saved and completed after a confirmation that the
+ * vehicle's maintenance flag will clear.
  */
 export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: LogRepairDrawerProps) {
   const formId = useId()
@@ -66,6 +69,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
   const [notes, setNotes] = useState('')
   const [totalCost, setTotalCost] = useState<number | null>(null)
   const [parts, setParts] = useState<PartRowState[]>([])
+  const [failures, setFailures] = useState<FailureDraft[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -82,6 +86,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
     setNotes(correctionOf ? `Correction of record ${correctionOf.id}: ` : '')
     setTotalCost(null)
     setParts([])
+    setFailures([emptyFailure()])
     setErrors({})
     setFormError(null)
   }, [open, correctionOf])
@@ -119,7 +124,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
   }
 
   /** Everything the API will check, checked first: nothing is sent while anything is wrong. */
-  function validate(): RecordInput | null {
+  function validate(completing: boolean): RecordInput | null {
     const found: Record<string, string> = {}
     if (!vehicle) found.vehicle = 'Choose the vehicle that was worked on.'
     if (!description.trim()) found.description = 'Describe the work done.'
@@ -131,6 +136,8 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
       if (!WHOLE.test(p.quantity) || Number.parseInt(p.quantity, 10) < 1) found[`qty.${i}`] = 'A whole number, 1 or more.'
       if (p.unitCost === null) found[`cost.${i}`] = 'Unit cost in ETB.'
     })
+    const failed = type === 'corrective' ? checkFailures(failures, completing) : { failures: [], errors: {} }
+    Object.assign(found, failed.errors)
     setErrors(found)
     if (Object.keys(found).length > 0 || !vehicle || totalCost === null) return null
     return {
@@ -142,11 +149,12 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
       ...(odometer.trim() ? { odometer_km: Number(odometer.trim()) } : {}),
       notes: notes.trim() || null,
       parts: parts.map((p) => ({ part_id: p.part!.value.id, quantity: Number.parseInt(p.quantity, 10), unit_cost_cents: p.unitCost! })),
+      ...(failed.failures.length ? { failures: failed.failures } : {}),
     }
   }
 
   async function save(andComplete: boolean) {
-    const input = validate()
+    const input = validate(andComplete)
     if (!input) return
     setFormError(null)
     try {
@@ -169,6 +177,11 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
             const [, i] = d.field.split('.')
             found[`part.${i}`] = d.reason === 'part_in_other_depot' ? "This part is in another depot's stock." : 'This part is no longer stocked.'
           } else if (d.field === 'total_cost_cents') found.totalCost = 'Enter the total cost in whole cents.'
+          else if (d.reason === 'failure_required') found.failures = 'Say what failed: a repair can be completed only with at least one failure.'
+          else if (d.field?.startsWith('failures.')) {
+            const [, i, name] = d.field.split('.')
+            found[`failure.${i}.${name}`] = 'Check this value.'
+          }
         }
         if (Object.keys(found).length) return setErrors(found)
       }
@@ -200,7 +213,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
             </Button>
             <Button
               onClick={() => {
-                if (validate()) setConfirming(true)
+                if (validate(true)) setConfirming(true)
               }}
             >
               Save and complete…
@@ -251,6 +264,13 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
               trailing={<span className="text-xs">km</span>}
             />
           </Section>
+
+          {type === 'corrective' && (
+            <Section title="What failed">
+              <p className="-mt-1 mb-3 text-sm text-ink-muted">Needed to complete the repair. It builds the failure history the maintenance predictions learn from.</p>
+              <FailureFields drafts={failures} onChange={setFailures} errors={errors} />
+            </Section>
+          )}
 
           <Section
             title="Parts used"

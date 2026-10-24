@@ -1,4 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
+import type { FailureEventView } from './failure';
 
 /** As in maintenance.maintenance_type / maintenance_status and chk_maintenance_priority. */
 export const MAINTENANCE_TYPES = ['preventive', 'corrective', 'predictive', 'inspection', 'other'] as const;
@@ -44,6 +45,8 @@ export interface MaintenanceRecordView {
   notes: string | null;
   completed_by: string | null;
   parts: MaintenancePartLine[];
+  /** What failed (FMS-125), oldest first. */
+  failures: FailureEventView[];
   version: number;
   created_at: Date;
   updated_at: Date;

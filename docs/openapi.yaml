@@ -9,7 +9,8 @@ info:
     and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
-    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38).
+    status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38);
+    failure records on corrective repairs (FMS-125).
 servers:
   - url: /api/v1
 security:
@@ -24,6 +25,7 @@ tags:
   - name: Fuel
   - name: Alerts
   - name: Incidents
+  - name: Maintenance
   - name: Notifications
 
 paths:
@@ -961,6 +963,95 @@ paths:
           description: NOT_FOUND (no such incident, or not yours to see).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /maintenance-records/{record_id}/failures:
+    post:
+      tags: [Maintenance]
+      operationId: recordFailure
+      summary: Record what failed on a repair (FMS-125)
+      description: >
+        One failure the repair found: a component and failure mode from the catalogues (docs/maintenance.md),
+        whether it was unplanned, and how it was detected. On open or completed work (a failure can be added to
+        a finished repair later), never cancelled work. Defaults: detected_by technician, occurred_at the
+        repair's opening, odometer_km the repair's. Failures can also be sent as `failures` on
+        POST /maintenance-records and POST /maintenance-records/{record_id}/complete; a corrective repair is
+        completed only with at least one (400 failure_required). Publishes FailureRecorded on the vehicle's
+        aggregate. Needs maintenance:write, in the caller's depots. Audited; a failure is never edited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FailureInput' }
+      responses:
+        '201':
+          description: Recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FailureEvent' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a component, failure_mode or detected_by outside the catalogue, no unplanned, an
+            unknown field, occurred_at in_future, an incident_id that references_missing_record or is about
+            another vehicle: incident_other_vehicle).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such repair, or outside your depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (the repair was cancelled).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /failure-events:
+    get:
+      tags: [Maintenance]
+      operationId: listFailureEvents
+      summary: Search recorded failures (FMS-125)
+      description: >
+        Newest first (occurred_at), in the caller's depots: the fleet's failure history, and the predictive
+        model's labels (FMS-52). Needs maintenance:read.
+      parameters:
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: component, in: query, schema: { $ref: '#/components/schemas/FailureComponent' } }
+        - { name: unplanned, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of failures.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FailureEvent' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown component, a bad date, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /notifications:
     get:
       tags: [Notifications]
@@ -1099,6 +1190,11 @@ components:
       schema: { type: string, format: uuid }
     IncidentId:
       name: incident_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MaintenanceRecordId:
+      name: record_id
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1755,3 +1851,42 @@ components:
           properties:
             created: { type: boolean }
             request_id: { type: string, format: uuid }
+
+    FailureComponent:
+      type: string
+      enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other]
+
+    FailureInput:
+      type: object
+      description: What failed on a repair (FMS-125). The catalogues are in docs/maintenance.md.
+      additionalProperties: false
+      required: [component, failure_mode, unplanned]
+      properties:
+        component: { $ref: '#/components/schemas/FailureComponent' }
+        failure_mode: { type: string, enum: [wear, leak, overheating, electrical_fault, breakage, puncture, other] }
+        unplanned: { type: boolean, description: 'A breakdown or a fault found in service; false: found at planned work.' }
+        detected_by: { type: string, enum: [driver_report, dvir, technician, telematics, breakdown], default: technician }
+        occurred_at: { type: string, format: date-time, description: "Default the repair's opening; not in the future (5 minutes of clock drift allowed)." }
+        odometer_km: { type: [number, 'null'], minimum: 0, description: "Default the repair's odometer." }
+        incident_id: { type: [string, 'null'], format: uuid, description: 'The incident that reported it: about the same vehicle.' }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    FailureEvent:
+      type: object
+      description: A recorded failure (FMS-125). Never edited.
+      required: [id, vehicle_id, registration_number, maintenance_record_id, incident_id, component, failure_mode, unplanned, detected_by, occurred_at, odometer_km, notes, recorded_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        maintenance_record_id: { type: [string, 'null'], format: uuid, description: The repair that found it. }
+        incident_id: { type: [string, 'null'], format: uuid, description: The incident that reported it. }
+        component: { $ref: '#/components/schemas/FailureComponent' }
+        failure_mode: { type: string, enum: [wear, leak, overheating, electrical_fault, breakage, puncture, other] }
+        unplanned: { type: boolean }
+        detected_by: { type: string, enum: [driver_report, dvir, technician, telematics, breakdown] }
+        occurred_at: { type: string, format: date-time, description: When it failed. }
+        odometer_km: { type: [number, 'null'] }
+        notes: { type: [string, 'null'] }
+        recorded_by: { type: [string, 'null'], format: uuid, description: The user who recorded it. }
+        created_at: { type: string, format: date-time }

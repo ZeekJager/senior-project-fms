@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 import type { Vehicle } from '@/pages/Vehicles/types'
+import type { FailureEvent, FailureInput } from './failures'
 
 // Repair records (api-contract §10.1, FMS-22) and the parts they draw on (FMS-23).
 
@@ -45,6 +46,8 @@ export interface MaintenanceRecord {
   notes: string | null
   completed_by: string | null
   parts: PartLine[]
+  /** What failed (FMS-125), oldest first. */
+  failures: FailureEvent[]
   version: number
   created_at: string
   updated_at: string
@@ -162,6 +165,8 @@ export interface RecordInput {
   odometer_km?: number
   notes?: string | null
   parts: { part_id: string; quantity: number; unit_cost_cents: number }[]
+  /** What failed (FMS-125): recorded with the repair. */
+  failures?: FailureInput[]
 }
 
 function useInvalidate() {
@@ -178,6 +183,18 @@ export function useCreateRecord() {
     mutationFn: async (input: RecordInput) => {
       const { data, meta } = await api.requestEnvelope<MaintenanceRecord>('/maintenance', { method: 'POST', json: input })
       return { record: data, warnings: (meta.warnings as MaintenanceWarning[] | undefined) ?? [] }
+    },
+    onSuccess: invalidate,
+  })
+}
+
+/** POST /maintenance-records/{id}/failures, one per failure (FMS-125): before completing a repair that has none. */
+export function useRecordFailures() {
+  const { api } = useAuth()
+  const invalidate = useInvalidate()
+  return useMutation({
+    mutationFn: async ({ id, failures }: { id: string; failures: FailureInput[] }) => {
+      for (const failure of failures) await api.request<FailureEvent>(`/maintenance-records/${id}/failures`, { method: 'POST', json: failure })
     },
     onSuccess: invalidate,
   })

@@ -6,6 +6,7 @@ import { currentUser, envelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
 import type { Vehicle } from '@/pages/Vehicles/types'
 import type { InventoryPart, MaintenanceRecord } from './api'
+import type { FailureEvent } from './failures'
 
 const technician = currentUser(['technician'], ['maintenance:read', 'maintenance:write', 'maintenance:execute', 'inventory:read', 'vehicle:read', 'depot:read'])
 const auditor = currentUser(['compliance_officer'], ['maintenance:read', 'vehicle:read', 'depot:read'])
@@ -18,13 +19,19 @@ const outOfStock: InventoryPart = {
 }
 const filter: InventoryPart = { ...outOfStock, id: 'p-2', part_number: 'OIL-FLT-01', name: 'Oil filter', unit_cost_cents: 1200, stock_quantity: 3, stock_status: 'ok', below_reorder: false }
 
+const wornPads: FailureEvent = {
+  id: 'f-1', vehicle_id: 'v-1', registration_number: 'AA 3-41207', maintenance_record_id: 'r-1', incident_id: null, component: 'brakes',
+  failure_mode: 'wear', unplanned: false, detected_by: 'technician', occurred_at: '2026-10-10T07:00:00Z', odometer_km: null, notes: null,
+  recorded_by: 'u-1', created_at: '2026-10-10T07:00:00Z',
+}
+
 function record(overrides: Partial<MaintenanceRecord> = {}): MaintenanceRecord {
   return {
     id: 'r-1', vehicle_id: 'v-1', registration_number: 'AA 3-41207', maintenance_type: 'corrective', description: 'Replace front brake pads',
     status: 'open', priority: 'normal', scheduled_at: null, started_at: null, completed_at: null, odometer_km: null, labour_hours: 2.5,
     total_cost_cents: 250_000, parts_cost_cents: 18_000, workshop: null, notes: null, completed_by: null,
     parts: [{ part_id: 'p-1', part_number: 'BRK-PAD-01', name: 'Brake pad set', quantity: 4, unit_cost_cents: 4500, line_cost_cents: 18_000 }],
-    version: 0, created_at: '2026-10-10T07:00:00Z', updated_at: '2026-10-10T07:00:00Z', ...overrides,
+    failures: [wornPads], version: 0, created_at: '2026-10-10T07:00:00Z', updated_at: '2026-10-10T07:00:00Z', ...overrides,
   }
 }
 
@@ -55,6 +62,10 @@ function serveWorkshop(records: MaintenanceRecord[] = [record()]) {
     http.put('/api/v1/maintenance/:id', async ({ params, request }) => {
       writes.push({ method: 'PUT', path: `/maintenance/${String(params.id)}`, body: await request.json() })
       return envelope(record({ id: String(params.id), status: 'completed', completed_at: new Date().toISOString() }))
+    }),
+    http.post('/api/v1/maintenance-records/:id/failures', async ({ params, request }) => {
+      writes.push({ method: 'POST', path: `/maintenance-records/${String(params.id)}/failures`, body: await request.json() })
+      return HttpResponse.json({ data: wornPads, meta: {} }, { status: 201 })
     }),
   )
   return writes
@@ -153,6 +164,94 @@ describe('Technician repair log (S-08)', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Mark as complete' }))
     await waitFor(() => expect(writes).toHaveLength(1))
     expect(writes[0]).toMatchObject({ method: 'PUT', path: '/maintenance/r-1', body: { completed_at: expect.any(String) } })
+  })
+
+  it('"Save and complete" on a repair needs what failed; the failure is sent with the record (FMS-125)', async () => {
+    const writes = serveWorkshop()
+    signedInAs(technician)
+    renderApp('/maintenance')
+    const user = userEvent.setup()
+    const drawer = await openLog(user)
+    await fillBasics(user, drawer)
+    await user.type(within(drawer).getByLabelText('Total cost'), '150')
+
+    await user.click(within(drawer).getByRole('button', { name: 'Save and complete…' }))
+    expect(await within(drawer).findByText(/a repair can be completed only with at least one failure/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Complete this repair?' })).not.toBeInTheDocument()
+
+    // Started but not finished: each missing answer is named.
+    await user.selectOptions(within(drawer).getByLabelText('Component'), 'brakes')
+    await user.click(within(drawer).getByRole('button', { name: 'Save and complete…' }))
+    expect(within(drawer).getByLabelText('Failure mode')).toHaveAccessibleDescription('Choose how it failed.')
+    expect(within(drawer).getByText('Say whether it was a breakdown or found at planned work.')).toBeInTheDocument()
+
+    await user.selectOptions(within(drawer).getByLabelText('Failure mode'), 'wear')
+    await user.click(within(drawer).getByRole('radio', { name: 'Found at planned work' }))
+    await user.selectOptions(within(drawer).getByLabelText('How it was found'), 'dvir')
+    await user.click(within(drawer).getByRole('button', { name: 'Save and complete…' }))
+    const confirm = await screen.findByRole('dialog', { name: 'Complete this repair?' })
+    await user.click(within(confirm).getByRole('button', { name: 'Save and complete' }))
+
+    await waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes[0].body).toMatchObject({ failures: [{ component: 'brakes', failure_mode: 'wear', unplanned: false, detected_by: 'dvir' }] })
+    expect(writes[1]).toMatchObject({ method: 'PUT', path: '/maintenance/r-new' })
+  })
+
+  it('other work has no failure step, and an untouched failure is not sent with open work', async () => {
+    const writes = serveWorkshop()
+    signedInAs(technician)
+    renderApp('/maintenance')
+    const user = userEvent.setup()
+    const drawer = await openLog(user)
+    expect(within(drawer).getByRole('group', { name: 'Failure 1' })).toBeInTheDocument()
+    await user.selectOptions(within(drawer).getByLabelText('Type of work'), 'preventive')
+    expect(within(drawer).queryByRole('group', { name: 'Failure 1' })).not.toBeInTheDocument()
+
+    await user.selectOptions(within(drawer).getByLabelText('Type of work'), 'corrective')
+    await fillBasics(user, drawer)
+    await user.type(within(drawer).getByLabelText('Total cost'), '150')
+    await user.click(within(drawer).getByRole('button', { name: 'Save as open work' }))
+    await waitFor(() => expect(writes).toHaveLength(1))
+    expect(writes[0].body).not.toHaveProperty('failures')
+  })
+
+  it('completing an open repair that does not say what failed asks for it, records it, then completes', async () => {
+    const writes = serveWorkshop([record({ failures: [] })])
+    signedInAs(technician)
+    renderApp('/maintenance')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /View AA 3-41207/ }))
+    const details = await screen.findByRole('dialog', { name: /AA 3-41207/ })
+
+    await user.click(within(details).getByRole('button', { name: 'Mark as complete' }))
+    expect(await within(details).findByText(/a repair can be completed only with at least one failure/)).toBeInTheDocument()
+    expect(writes).toEqual([])
+
+    await user.selectOptions(within(details).getByLabelText('Component'), 'cooling')
+    await user.selectOptions(within(details).getByLabelText('Failure mode'), 'leak')
+    await user.click(within(details).getByRole('radio', { name: 'Breakdown or found in service' }))
+    await user.click(within(details).getByRole('button', { name: 'Mark as complete' }))
+    const confirm = await screen.findByRole('dialog', { name: 'Mark this repair as complete?' })
+    await user.click(within(confirm).getByRole('button', { name: 'Mark as complete' }))
+
+    await waitFor(() => expect(writes).toHaveLength(2))
+    expect(writes[0]).toEqual({
+      method: 'POST',
+      path: '/maintenance-records/r-1/failures',
+      body: { component: 'cooling', failure_mode: 'leak', unplanned: true, detected_by: 'technician' },
+    })
+    expect(writes[1]).toMatchObject({ method: 'PUT', path: '/maintenance/r-1' })
+  })
+
+  it('a record lists what failed', async () => {
+    serveWorkshop([record({ status: 'completed', completed_at: '2026-10-09T12:00:00Z' })])
+    signedInAs(auditor)
+    renderApp('/maintenance?view=completed')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /View AA 3-41207/ }))
+    const details = await screen.findByRole('dialog', { name: /AA 3-41207/ })
+    expect(within(details).getByText('Brakes · Worn out')).toBeInTheDocument()
+    expect(within(details).getByText('Planned work')).toBeInTheDocument()
   })
 
   it('completed records are read-only; a correction is a new record', async () => {

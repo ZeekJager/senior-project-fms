@@ -3,12 +3,14 @@ import { pool } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
+import { incidentLookup } from '../alert';
 import { userDirectory } from '../auth';
 import { depotRefs, vehicleMaintenance } from '../fleet';
 import { inventoryRouter } from './api/inventory.routes';
 import { maintenanceRouter } from './api/maintenance.routes';
 import { InventoryService } from './application/inventory.service';
 import { MaintenanceService } from './application/maintenance.service';
+import { FailureRepository } from './infrastructure/failure.repository';
 import { InventoryRepository } from './infrastructure/inventory.repository';
 import { MaintenanceRepository } from './infrastructure/maintenance.repository';
 
@@ -17,6 +19,8 @@ const maintenanceRepository = new MaintenanceRepository(pool);
 const maintenanceService = new MaintenanceService({
   records: maintenanceRepository,
   vehicles: vehicleMaintenance,
+  failures: new FailureRepository(pool),
+  incidents: incidentLookup,
   users: userDirectory,
   depots: depotRefs,
   events: eventBus,
@@ -42,5 +46,6 @@ export const maintenanceRefs = {
   openRecordSummaries: (db: Queryable, vehicleIds: readonly string[]) => maintenanceRepository.openRecordSummaries(db, vehicleIds),
 };
 
+export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/failure';
 export { INVENTORY_EVENTS } from './domain/inventory';
 export { MAINTENANCE_EVENTS } from './domain/maintenance';

@@ -16,6 +16,7 @@ describe('seed generator', () => {
     expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 16, maintenance_records: 20, vehicle_documents: 48 });
     expect(summary.counts.electric_vehicles).toBeGreaterThan(0);
     expect(summary.counts.fuel_logs).toBeGreaterThan(0);
+    expect(summary.counts.failure_events).toBeGreaterThan(0);
     expect(summary.counts.documents_expiring_amber).toBeGreaterThan(0);
     expect(summary.counts.documents_expiring_red).toBeGreaterThan(0);
     expect(summary.logins.map((l) => l.role)).toEqual(expect.arrayContaining(['admin', 'fleet_manager', 'dispatcher', 'driver']));

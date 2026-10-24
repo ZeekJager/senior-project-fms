@@ -47,6 +47,9 @@ async function auditRows(res: Response) {
   return rows.rows.map((r) => `${r.action} ${r.entity_type}`);
 }
 
+/** What failed on a brake job (FMS-125): a corrective repair is completed only with one. */
+const WORN_PADS = { component: 'brakes', failure_mode: 'wear', unplanned: false };
+
 const body = (vehicle: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
   vehicle_id: vehicle.public_id,
   description: 'Replace front brake pads',
@@ -192,7 +195,7 @@ describe('completing work', () => {
     const depot = await createDepot();
     const cookie = await signIn(['technician'], depot);
     const vehicle = await createVehicle({ depot });
-    const created = await api.post('/maintenance', body(vehicle), cookie);
+    const created = await api.post('/maintenance', body(vehicle, { failures: [WORN_PADS] }), cookie);
     expect(await flagOf(vehicle)).toBe(true);
 
     const completedAt = new Date(Date.now() - 60_000).toISOString();
@@ -212,7 +215,7 @@ describe('completing work', () => {
     const depot = await createDepot();
     const tech = await signIn(['technician'], depot);
     const vehicle = await createVehicle({ depot });
-    const a = await api.post('/maintenance', body(vehicle), tech);
+    const a = await api.post('/maintenance', body(vehicle, { failures: [WORN_PADS] }), tech);
     const b = await api.post('/maintenance', body(vehicle, { description: 'Oil change' }), tech);
 
     expect((await api.post(`/maintenance-records/${a.body.data.id}/complete`, {}, tech)).status).toBe(200);
@@ -242,7 +245,7 @@ describe('GET /maintenance', () => {
     const depot = await createDepot();
     const cookie = await signIn(['depot_admin'], depot);
     const vehicle = await createVehicle({ depot });
-    const first = await api.post('/maintenance', body(vehicle, { description: 'First' }), cookie);
+    const first = await api.post('/maintenance', body(vehicle, { description: 'First', failures: [WORN_PADS] }), cookie);
     const second = await api.post('/maintenance', body(vehicle, { description: 'Second' }), cookie);
     await api.put(`/maintenance/${first.body.data.id}`, { completed_at: new Date().toISOString() }, cookie);
     const foreign = await createVehicle({ depot: await createDepot() });
@@ -261,7 +264,7 @@ describe('maintenance events', () => {
     const depot = await createDepot();
     const cookie = await signIn(['technician'], depot);
     const vehicle = await createVehicle({ depot });
-    const created = await api.post('/maintenance', body(vehicle), cookie);
+    const created = await api.post('/maintenance', body(vehicle, { maintenance_type: 'preventive' }), cookie);
     await api.put(`/maintenance/${created.body.data.id}`, { completed_at: new Date().toISOString() }, cookie);
 
     const seen = await publishedEvents('MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted');

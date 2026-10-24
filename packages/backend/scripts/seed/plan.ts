@@ -114,6 +114,16 @@ export interface PlannedMaintenance {
   completed_at: string | null;
   odometer_km: number;
   workshop: string;
+  /** What failed (FMS-125): on corrective repairs that are under way or done. */
+  failures: PlannedFailure[];
+}
+
+export interface PlannedFailure {
+  component: string;
+  failure_mode: string;
+  unplanned: boolean;
+  detected_by: 'driver_report' | 'dvir' | 'technician' | 'telematics' | 'breakdown';
+  occurred_at: string;
 }
 
 /** A vehicle paper uploaded through POST /documents; its expiry drives the expiry warnings (FMS-26). */
@@ -476,6 +486,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       completed_at: status === 'completed' ? iso(at(day, rng.int(9, 17))) : null,
       odometer_km: round1(Math.max(0, vehicles[vehicle].odometer_km - rng.int(0, 400))),
       workshop: rng.pick(WORKSHOPS),
+      failures: [],
     });
   }
 
@@ -509,6 +520,19 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     const inLevel = (d: PlannedDocument) => (level === 'red' ? daysLeft(d) <= 7 : daysLeft(d) > 7 && daysLeft(d) <= 30);
     const valid = documents.find((d) => daysLeft(d) > 30);
     if (!documents.some(inLevel) && valid) valid.expires_on = dateOf(at(expiringDay[level](), 12));
+  }
+
+  // What failed on each corrective repair under way or done (FMS-125), drawn last so nothing above
+  // changes: the repair's component and mode; unplanned ones mostly reported by the driver or a
+  // breakdown, the rest found by the technician at planned work. A completed repair's failure came
+  // hours to days before it was finished.
+  for (const m of maintenance) {
+    const failure = REPAIRS.find((r) => r.description === m.description)?.failure;
+    if (!failure || m.status === 'scheduled') continue;
+    const unplanned = rng.chance(failure.unplanned);
+    const detected_by = unplanned ? rng.weighted({ driver_report: 4, breakdown: 3, dvir: 2, telematics: 1 }) : 'technician';
+    const occurred = m.completed_at ? Date.parse(m.completed_at) - rng.int(2, 72) * HOUR : at(-rng.int(1, 6), rng.int(6, 18));
+    m.failures.push({ component: failure.component, failure_mode: failure.failure_mode, unplanned, detected_by, occurred_at: iso(occurred) });
   }
 
   return { profile: profileName, seed, anchor, depots, staff, vehicles, drivers, parts, maintenance, attendance, documents, routes, trips, fuelLogs };
