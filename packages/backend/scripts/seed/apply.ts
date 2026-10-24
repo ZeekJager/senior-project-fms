@@ -167,6 +167,7 @@ async function writeThroughApi(api: SeedApi, plan: SeedPlan, password: string, l
       unit_cost_cents: p.unit_cost_cents,
       stock_quantity: p.stock_quantity,
       reorder_threshold: p.reorder_threshold,
+      service_item: p.service_item,
     });
     parts.push(data.id);
   }

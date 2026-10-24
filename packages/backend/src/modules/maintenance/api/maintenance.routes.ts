@@ -7,7 +7,7 @@ import { FLOAT_IN_MONEY_PATH, parseInput, rejectFractionalMoney } from '../../..
 import { authorize } from '../../auth';
 import type { Caller, MaintenanceService } from '../application/maintenance.service';
 import { FAILURE_COMPONENTS, FAILURE_DETECTIONS, FAILURE_MODES, MAX_FAILURES_PER_REQUEST } from '../domain/failure';
-import { MAINTENANCE_PRIORITIES, MAINTENANCE_STATUSES, MAINTENANCE_TYPES, maintenanceNotFound } from '../domain/maintenance';
+import { MAINTENANCE_PRIORITIES, MAINTENANCE_STATUSES, MAINTENANCE_TYPES, maintenanceNotFound, maintenanceVehicleMissing } from '../domain/maintenance';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_CENTS = 2_147_483_647;
@@ -237,6 +237,18 @@ export function maintenanceRouter(service: MaintenanceService): Router {
       }),
     );
   }
+
+  // When each wearing part and fluid was last changed (FMS-52): what the predictive model's part history reads.
+  router.get(
+    '/vehicles/:vehicleId/service-items',
+    authorize('maintenance:read'),
+    asyncHandler(async (req, res) => {
+      const id = req.params.vehicleId;
+      if (!UUID.test(id)) throw maintenanceVehicleMissing();
+      const items = await service.serviceItems(caller(req), id);
+      res.json({ data: items, meta: { request_id: req.correlationId } });
+    }),
+  );
 
   // Every recorded failure (FMS-125): the fleet's failure history, and the predictive model's labels.
   router.get(

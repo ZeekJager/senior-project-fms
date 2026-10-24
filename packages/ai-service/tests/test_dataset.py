@@ -45,10 +45,19 @@ def test_the_signal_the_model_must_learn_is_there(df):
 
 
 def test_the_label_is_not_a_rule_on_the_features(df):
-    # Rows identical in every input but with different labels: something the model cannot see matters too.
-    rounded = df[feature_names()].round(-1).astype(str).agg("|".join, axis=1)
-    mixed = df.groupby(rounded)["failure_within_30_days"].nunique()
-    assert (mixed > 1).sum() > 0
+    # Vehicles alike in the strongest clues still differ in outcome: chance and what the model cannot see matter too.
+    alike = pd.DataFrame(
+        {
+            "service": df["days_since_last_service"] // 30,
+            "faults": df["num_fault_reports"].clip(upper=4),
+            "oil": df["km_since_oil_change"] // 6000,
+            "age": df["age_years"] // 5,
+        }
+    ).astype(str).agg("|".join, axis=1)
+    rates = df.groupby(alike)["failure_within_30_days"].agg(["mean", "size"])
+    big = rates[rates["size"] >= 50]
+    assert len(big) > 10
+    assert ((big["mean"] > 0.05) & (big["mean"] < 0.95)).mean() > 0.5
 
 
 def test_a_vehicle_barely_driven_has_no_fuel_variance(df):
@@ -72,19 +81,49 @@ def test_a_random_forest_learns_it_on_vehicles_it_has_not_seen(df):
 
     X, y = df[feature_names()], df["failure_within_30_days"]
     train, test = next(GroupShuffleSplit(1, test_size=0.2, random_state=0).split(X, y, df["vehicle_id"]))
-    model = RandomForestClassifier(n_estimators=150, min_samples_leaf=5, random_state=0, n_jobs=-1).fit(X.iloc[train], y.iloc[train])
+    model = RandomForestClassifier(n_estimators=300, min_samples_leaf=5, class_weight="balanced", random_state=0, n_jobs=-1)
+    model.fit(X.iloc[train], y.iloc[train])
     auc = roc_auc_score(y.iloc[test], model.predict_proba(X.iloc[test])[:, 1])
     # Well above chance, well below perfect: the frailty the model cannot see keeps it honest.
-    assert 0.70 <= auc <= 0.85
-    median = X.median()
-    risky = median.copy()
-    risky["days_since_last_service"], risky["num_fault_reports"] = 100, 5
-    healthy = median.copy()
-    healthy["days_since_last_service"], healthy["num_fault_reports"] = 10, 0
+    assert 0.72 <= auc <= 0.88
+    risky, healthy = example(X, 100, 5), example(X, 10, 0)
     p_risky, p_healthy = model.predict_proba(pd.DataFrame([risky, healthy]))[:, 1]
     # The board's examples (FMS-53): health = round((1 - p) * 100).
     assert round((1 - p_risky) * 100) < 30
     assert round((1 - p_healthy) * 100) > 85
+
+
+def example(X, days_since_service, faults):
+    """A typical vehicle with this service age and these faults. The oil is changed at every service, so its age follows."""
+    row = X.median()
+    row["days_since_last_service"], row["num_fault_reports"] = days_since_service, faults
+    row["days_since_oil_change"] = days_since_service
+    row["km_since_oil_change"] = round(days_since_service * row["mileage_km"] / 30, 1)
+    return row
+
+
+def test_parts_age_and_are_renewed(df):
+    # Each counter grows month to month and drops back when the part is changed; some parts run past due.
+    one = df[df["vehicle_id"] == "SYN-0001"]
+    for name in ["km_since_brake_pad_change", "days_since_coolant_change", "km_since_oil_change"]:
+        steps = one[name].diff().dropna()
+        assert (steps > 0).any() and (steps < 0).any(), name
+    assert (df["km_since_brake_pad_change"] > 45_000).mean() > 0.05
+    assert (df["days_since_coolant_change"] > 730).mean() > 0.05
+
+
+def test_an_overdue_part_fails_its_component_more_often(df):
+    failed = df[df["failure_within_30_days"] == 1]
+    for feature, due, component in [
+        ("km_since_brake_pad_change", 45_000, "brakes"),
+        ("days_since_coolant_change", 730, "cooling"),
+        ("days_since_battery_change", 1_460, "electrical"),
+    ]:
+        late = failed[feature] > due
+        assert late.sum() > 20, feature
+        share_late = (failed.loc[late, "failure_component"] == component).mean()
+        share_on_time = (failed.loc[~late, "failure_component"] == component).mean()
+        assert share_late > 2 * share_on_time, (feature, share_late, share_on_time)
 
 
 def test_the_script_writes_the_csv_and_refuses_data_that_fails_its_checks(tmp_path, monkeypatch, capsys):

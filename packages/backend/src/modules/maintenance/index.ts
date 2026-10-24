@@ -44,8 +44,10 @@ export const maintenanceRefs = {
   openRecordFor: (db: Queryable, vehicleId: string) => maintenanceRepository.openRecordFor(db, vehicleId),
   /** The open work behind each vehicle's flag, summarized for the dispatcher's board (FMS-33). */
   openRecordSummaries: (db: Queryable, vehicleIds: readonly string[]) => maintenanceRepository.openRecordSummaries(db, vehicleIds),
+  /** For the nightly scoring's features (FMS-55): each item's last change on a vehicle before a time (FMS-52). */
+  lastServiceItems: (db: Queryable, vehicleId: string, before: Date | null = null) => maintenanceRepository.lastServiceItems(db, vehicleId, before),
 };
 
 export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/failure';
-export { INVENTORY_EVENTS } from './domain/inventory';
+export { INVENTORY_EVENTS, SERVICE_ITEMS, type ServiceItem } from './domain/inventory';
 export { MAINTENANCE_EVENTS } from './domain/maintenance';

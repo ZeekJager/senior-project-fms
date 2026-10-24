@@ -13,6 +13,7 @@ import {
   completedInFuture,
   maintenanceClosed,
   maintenanceNotFound,
+  maintenanceVehicleMissing,
   maintenanceVehicleNotFound,
   maintenanceVehicleRetired,
   partInOtherDepot,
@@ -22,7 +23,9 @@ import {
   type MaintenanceStatus,
   type MaintenanceType,
   type MaintenanceWarning,
+  type ServiceItemView,
 } from '../domain/maintenance';
+import { SERVICE_ITEMS } from '../domain/inventory';
 import {
   FAILURE_EVENTS,
   failureIncidentNotFound,
@@ -129,6 +132,7 @@ export interface MaintenanceServiceDeps {
     | 'insertRecord'
     | 'updateRecord'
     | 'consumePart'
+    | 'lastServiceItems'
   >;
   vehicles: {
     findInScope(db: Queryable, by: { publicId: string } | { id: string }, scope: Scope, lock?: boolean): Promise<MaintenanceVehicle | null>;
@@ -368,6 +372,30 @@ export class MaintenanceService {
       await this.deps.events.publish(client, [event]);
       const failure = (await this.deps.failures.forRecords(client, [row.id])).find((f) => f.publicId === event.payload.failure_event_id)!;
       return (await this.failureViews(client, [failure]))[0];
+    });
+  }
+
+  /**
+   * GET /vehicles/{id}/service-items (FMS-52): when each wearing part and
+   * fluid was last changed, from the completed repairs that used a part
+   * renewing it. Every item is listed; one never changed has nulls.
+   */
+  async serviceItems(caller: Caller, vehiclePublicId: string): Promise<ServiceItemView[]> {
+    const { records, vehicles } = this.deps;
+    return records.inTransaction(async (client) => {
+      const vehicle = await vehicles.findInScope(client, { publicId: vehiclePublicId }, depotScope(caller.user));
+      if (!vehicle) throw maintenanceVehicleMissing();
+      const last = new Map((await records.lastServiceItems(client, vehicle.id)).map((r) => [r.item, r]));
+      return SERVICE_ITEMS.map((item) => {
+        const row = last.get(item);
+        return {
+          service_item: item,
+          last_changed_at: row?.changedAt ?? null,
+          maintenance_record_id: row?.recordPublicId ?? null,
+          odometer_km: row?.odometerKm ?? null,
+          part_number: row?.partNumber ?? null,
+        };
+      });
     });
   }
 

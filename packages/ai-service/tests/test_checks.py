@@ -9,15 +9,15 @@ from ml.dataset import generate
 
 @pytest.fixture(scope="module")
 def good():
-    return generate(vehicles=60, months=6)
+    return generate(vehicles=60, months=24)
 
 
 def test_a_good_dataset_has_no_problems(good):
-    assert problems(good, rows=360, months=6) == []
+    assert problems(good, rows=1440, months=24) == []
 
 
 def test_the_wrong_row_count_or_columns(good):
-    assert problems(good, rows=12000) == ["360 rows, expected 12000"]
+    assert problems(good, rows=12000) == ["1440 rows, expected 12000"]
     assert "columns are" in problems(good.drop(columns=["age_years"]))[0]
     assert "columns are" in problems(good[list(reversed(good.columns))])[0]
 
@@ -53,8 +53,8 @@ def test_a_component_outside_the_catalogue_or_on_the_wrong_rows(good):
 
 def test_a_missing_or_repeated_month(good):
     skipped = good[~((good["vehicle_id"] == "SYN-0001") & (good["as_of"] == "2024-12-01"))].reset_index(drop=True)
-    found = problems(skipped, months=6)
-    assert "a vehicle does not have exactly 6 rows" in found
+    found = problems(skipped, months=24)
+    assert "a vehicle does not have exactly 24 rows" in found
     assert "as_of: a vehicle's months are not consecutive" in found
     repeated = good.copy()
     repeated.loc[1, "as_of"] = repeated.loc[0, "as_of"]

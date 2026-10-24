@@ -4,17 +4,47 @@ import copy
 import re
 
 from ml import spec
-from ml.dataset import COMPONENTS
+from ml.dataset import COMPONENTS, ITEMS
 
-# The inputs POST /predict takes (FMS-54), in order.
-SERVICE_INPUTS = ["mileage_km", "engine_hours", "days_since_last_service", "num_fault_reports", "fuel_variance_pct", "age_years"]
+# The board's six inputs (FMS-52/54), first and in order; then how long since each wearing part and fluid was changed.
+BOARD_INPUTS = ["mileage_km", "engine_hours", "days_since_last_service", "num_fault_reports", "fuel_variance_pct", "age_years"]
+PART_INPUTS = [
+    "days_since_oil_change",
+    "km_since_oil_change",
+    "km_since_air_filter_change",
+    "km_since_fuel_filter_change",
+    "days_since_coolant_change",
+    "km_since_brake_pad_change",
+    "days_since_brake_fluid_change",
+    "days_since_clutch_fluid_change",
+    "km_since_tyre_change",
+    "days_since_tyre_change",
+    "days_since_battery_change",
+    "km_since_gearbox_oil_change",
+    "km_since_belt_change",
+]
+
+# maintenance.service_item (migration 037).
+SERVICE_ITEMS = ["engine_oil", "air_filter", "fuel_filter", "coolant", "brake_pads", "brake_fluid", "clutch_fluid", "tyres", "battery", "gearbox_oil", "belts"]
 
 # maintenance.failure_component (FMS-125, migration 036).
 FAILURE_CATALOGUE = ["engine", "cooling", "brakes", "tyres", "transmission", "electrical", "suspension", "steering", "fuel_system", "exhaust", "body", "other"]
 
 
-def test_the_six_inputs_the_service_takes_in_its_order():
-    assert spec.feature_names() == SERVICE_INPUTS
+def test_the_board_inputs_then_the_part_history_in_order():
+    assert spec.feature_names() == BOARD_INPUTS + PART_INPUTS
+
+
+def test_every_part_input_reads_a_service_item_the_generator_simulates():
+    loaded = spec.load_spec()
+    assert loaded["service_items"]["values"] == SERVICE_ITEMS == [item.name for item in ITEMS]
+    by_name = {f["name"]: f for f in loaded["features"]}
+    for item in ITEMS:
+        for name, unit in item.features:
+            assert by_name[name]["service_item"] == item.name
+            assert by_name[name]["unit"] == ("km" if unit == "km" else "d")
+            assert "service_item is " + item.name in by_name[name]["formula"]
+    assert {n for item in ITEMS for n, _ in item.features} == set(PART_INPUTS)
 
 
 def test_every_feature_says_where_it_comes_from_and_how_it_is_computed():

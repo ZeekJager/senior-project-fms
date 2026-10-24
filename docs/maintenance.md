@@ -67,6 +67,12 @@ The catalogues are fixed and stored as PostgreSQL enums (`maintenance.failure_co
   - `component`, `failure_mode`, `unplanned`, `detected_by`;
   - `occurred_at`, `odometer_km`.
 
+## Part history (FMS-52)
+
+The predictive model also needs to know when each wearing part and fluid was last changed, such as the oil, brake pads or coolant. Nothing new is filled in for this. Each stocked part says which item it renews (`inventory_parts.service_item`, migration 037), so a completed repair that used it is a change of that item.
+
+`GET /vehicles/{vehicle_id}/service-items` lists all 11 items with their last change. [ml-dataset.md](ml-dataset.md#part-history) lists the items and how the model reads them.
+
 ## Repair log (S-08)
 
 When the work is a repair (`corrective`), the repair log shows a **What failed** section with the component, failure mode, whether it was unplanned, and how it was found.

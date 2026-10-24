@@ -7,7 +7,7 @@ import { FLOAT_IN_MONEY_PATH, parseInput, rejectFractionalMoney } from '../../..
 import { authorize } from '../../auth';
 import type { InventoryService } from '../application/inventory.service';
 import type { Caller } from '../application/maintenance.service';
-import { partNotFoundById } from '../domain/inventory';
+import { SERVICE_ITEMS, partNotFoundById } from '../domain/inventory';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_STOCK = 1_000_000;
@@ -32,6 +32,8 @@ const fields = {
   depot_id: z.uuid().nullable().optional(),
   unit_cost_cents: cents.nullable().optional(),
   reorder_threshold: z.number().int().min(0).max(MAX_STOCK).optional(),
+  // What the part renews (FMS-52): the predictive model reads each item's last change from repairs that used it.
+  service_item: z.enum(SERVICE_ITEMS).nullable().optional(),
 };
 
 /** POST /inventory: a new part, with optional opening stock. */

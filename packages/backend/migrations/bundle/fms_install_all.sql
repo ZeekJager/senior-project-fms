@@ -2335,3 +2335,16 @@ CREATE INDEX IF NOT EXISTS idx_failure_events_component_time
 CREATE INDEX IF NOT EXISTS idx_failure_events_record
     ON maintenance.failure_events(maintenance_record_id)
     WHERE maintenance_record_id IS NOT NULL;
+
+-- ===== 037_part_service_items.sql =====
+DO $$ BEGIN
+    CREATE TYPE maintenance.service_item AS ENUM
+        ('engine_oil', 'air_filter', 'fuel_filter', 'coolant', 'brake_pads', 'brake_fluid',
+         'clutch_fluid', 'tyres', 'battery', 'gearbox_oil', 'belts');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE maintenance.inventory_parts ADD COLUMN IF NOT EXISTS service_item maintenance.service_item;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_parts_service_item
+    ON maintenance.inventory_parts(service_item)
+    WHERE service_item IS NOT NULL;

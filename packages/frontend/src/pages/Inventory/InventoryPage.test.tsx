@@ -25,6 +25,7 @@ function part(overrides: Partial<Part> = {}): Part {
     reorder_threshold: threshold,
     below_reorder: stock <= threshold,
     stock_status: stock <= 0 ? 'out' : stock <= threshold ? 'low' : 'ok',
+    service_item: null,
     is_active: true,
     version: 0,
     updated_at: '2026-10-10T08:00:00Z',
@@ -160,6 +161,13 @@ describe('Spare parts console (S-09)', () => {
     renderApp('/inventory')
     await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
+  })
+
+  it('says what a part renews, so the workshop can see which parts feed the maintenance predictions', async () => {
+    serveParts([part({ name: 'Engine oil 15W-40', part_number: 'OIL-15W40-5', service_item: 'engine_oil' }), part({ name: 'Wiper blade', part_number: 'WPR-24' })])
+    await openInventory('Engine oil 15W-40')
+    expect(within(rowOf('Engine oil 15W-40')).getByText('OIL-15W40-5 · Renews engine oil')).toBeInTheDocument()
+    expect(within(rowOf('Wiper blade')).getByText('WPR-24')).toBeInTheDocument()
   })
 
   it('says so when nothing is low', async () => {

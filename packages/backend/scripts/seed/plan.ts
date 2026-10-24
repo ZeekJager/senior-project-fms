@@ -13,6 +13,7 @@ import {
   WORKSHOPS,
   type Place,
   type SeedVehicleType,
+  type ServiceItem,
 } from './catalog';
 import { Rng } from './random';
 
@@ -99,6 +100,7 @@ export interface PlannedPart {
   unit_cost_cents: number;
   stock_quantity: number;
   reorder_threshold: number;
+  service_item: ServiceItem | null;
 }
 
 export interface PlannedMaintenance {
@@ -331,6 +333,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     unit_cost_cents: p.costCents,
     stock_quantity: p.number === 'WPR-BLD-24' ? 3 : p.number === 'LMP-HDL-H4' ? 0 : rng.int(40, 120) * profile.stockFactor,
     reorder_threshold: rng.int(5, 15),
+    service_item: p.renews ?? null,
   }));
   const partIndex = new Map(parts.map((p, i) => [p.part_number, i]));
 

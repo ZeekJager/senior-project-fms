@@ -1,9 +1,17 @@
 {
-  "spec_version": 1,
-  "description": "The predictive maintenance model's inputs and label (FMS-52). One row is one vehicle at one scoring time t. Every feature is computed by the core from its own tables over a window that ends at t, so the nightly scoring (FMS-55) computes exactly what the model was trained on. docs/ml-dataset.md explains each formula.",
+  "spec_version": 2,
+  "description": "The predictive maintenance model's inputs and label (FMS-52). One row is one vehicle at one scoring time t: its use, faults, fuel and age, and how long since each wearing part and fluid was last changed. Every feature is computed by the core from its own tables over a window that ends at t, so the nightly scoring (FMS-55) computes exactly what the model was trained on. docs/ml-dataset.md explains each formula.",
   "id_columns": [
-    { "name": "vehicle_id", "type": "string", "description": "The vehicle. Synthetic rows use SYN-0001 to SYN-0500; never an input to the model." },
-    { "name": "as_of", "type": "date", "description": "The scoring time t (a date, Addis Ababa). Never an input to the model." }
+    {
+      "name": "vehicle_id",
+      "type": "string",
+      "description": "The vehicle. Synthetic rows use SYN-0001 to SYN-0500; never an input to the model."
+    },
+    {
+      "name": "as_of",
+      "type": "date",
+      "description": "The scoring time t (a date, Addis Ababa). Never an input to the model."
+    }
   ],
   "features": [
     {
@@ -14,7 +22,9 @@
       "max": 15000,
       "decimals": 1,
       "window_days": 30,
-      "sources": ["trip.trips"],
+      "sources": [
+        "trip.trips"
+      ],
       "formula": "Sum of actual_distance_km of the vehicle's completed trips whose actual_end is in [t - 30 days, t).",
       "when_missing": "0 (no completed trips in the window)."
     },
@@ -26,7 +36,9 @@
       "max": 720,
       "decimals": 1,
       "window_days": 30,
-      "sources": ["trip.trips"],
+      "sources": [
+        "trip.trips"
+      ],
       "formula": "Sum of actual_duration_seconds / 3600 of the same trips as mileage_km. Driving hours until engine-hour meter readings exist (FMS-126); then the meter's increase over the window.",
       "when_missing": "0 (no completed trips in the window)."
     },
@@ -38,7 +50,10 @@
       "max": 730,
       "decimals": 0,
       "window_days": null,
-      "sources": ["maintenance.maintenance_records", "fleet.vehicles"],
+      "sources": [
+        "maintenance.maintenance_records",
+        "fleet.vehicles"
+      ],
       "formula": "Whole days from the completed_at of the vehicle's last completed preventive or inspection record before t, to t. Capped at 730.",
       "when_missing": "Days since fleet.vehicles.created_at (never serviced in the system), capped at 730."
     },
@@ -50,7 +65,10 @@
       "max": 50,
       "decimals": 0,
       "window_days": 90,
-      "sources": ["fleet.dvir_reports", "alert.incident_reports"],
+      "sources": [
+        "fleet.dvir_reports",
+        "alert.incident_reports"
+      ],
       "formula": "Number of the vehicle's DVIRs with issues_found = true submitted in [t - 90 days, t), plus its incident reports of type breakdown or tyre that occurred in that window. Capped at 50.",
       "when_missing": "0."
     },
@@ -62,7 +80,11 @@
       "max": 100,
       "decimals": 1,
       "window_days": 30,
-      "sources": ["fuel.fuel_logs", "trip.trips", "fleet.vehicles"],
+      "sources": [
+        "fuel.fuel_logs",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
       "formula": "(actual / expected - 1) * 100, where actual = sum of quantity_ml of fuel logs recorded in [t - 30 days, t) divided by mileage_km, and expected = fleet.vehicles.fuel_efficiency_ml_per_km. Clipped to [-50, 100].",
       "when_missing": "0 when the vehicle has no fuel_efficiency_ml_per_km (electric), when mileage_km is under 100 (too little driving to judge) or when no fuel was logged in the window."
     },
@@ -74,24 +96,304 @@
       "max": 40,
       "decimals": 1,
       "window_days": null,
-      "sources": ["fleet.vehicles"],
+      "sources": [
+        "fleet.vehicles"
+      ],
       "formula": "(t - 1 January of model_year) in days / 365.25. Clipped to [0, 40].",
       "when_missing": "From fleet.vehicles.created_at instead when model_year is null."
+    },
+    {
+      "name": "days_since_oil_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "engine_oil",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the engine oil: the latest completed_at of its completed maintenance records that used a part whose service_item is engine_oil (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_oil_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "engine_oil",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the engine oil: the latest completed_at of its completed maintenance records that used a part whose service_item is engine_oil (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_air_filter_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "air_filter",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the air filter: the latest completed_at of its completed maintenance records that used a part whose service_item is air_filter (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_fuel_filter_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "fuel_filter",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the fuel filter: the latest completed_at of its completed maintenance records that used a part whose service_item is fuel_filter (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_coolant_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "coolant",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the coolant (radiator fluid): the latest completed_at of its completed maintenance records that used a part whose service_item is coolant (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_brake_pad_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "brake_pads",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the brake pads: the latest completed_at of its completed maintenance records that used a part whose service_item is brake_pads (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_brake_fluid_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "brake_fluid",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the brake fluid: the latest completed_at of its completed maintenance records that used a part whose service_item is brake_fluid (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_clutch_fluid_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "clutch_fluid",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the clutch fluid: the latest completed_at of its completed maintenance records that used a part whose service_item is clutch_fluid (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_tyre_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "tyres",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the tyres: the latest completed_at of its completed maintenance records that used a part whose service_item is tyres (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_tyre_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "tyres",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the tyres: the latest completed_at of its completed maintenance records that used a part whose service_item is tyres (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_battery_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "battery",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the battery: the latest completed_at of its completed maintenance records that used a part whose service_item is battery (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_gearbox_oil_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "gearbox_oil",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the gearbox oil: the latest completed_at of its completed maintenance records that used a part whose service_item is gearbox_oil (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_belt_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "belts",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the drive belts: the latest completed_at of its completed maintenance records that used a part whose service_item is belts (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
     }
   ],
+  "service_items": {
+    "description": "maintenance.service_item (migration 037): what a stocked part renews when a completed repair uses it. The part-history features read it.",
+    "values": [
+      "engine_oil",
+      "air_filter",
+      "fuel_filter",
+      "coolant",
+      "brake_pads",
+      "brake_fluid",
+      "clutch_fluid",
+      "tyres",
+      "battery",
+      "gearbox_oil",
+      "belts"
+    ]
+  },
   "target": {
     "name": "failure_within_30_days",
     "type": "int",
-    "values": [0, 1],
+    "values": [
+      0,
+      1
+    ],
     "window_days": 30,
-    "sources": ["maintenance.failure_events"],
+    "sources": [
+      "maintenance.failure_events"
+    ],
     "definition": "1 when the vehicle has a failure event (FMS-125) with unplanned = true and occurred_at in [t, t + 30 days); else 0. A failure found at planned work is not a positive: the model predicts breakdowns, not service findings. Training and evaluation only; never an input."
   },
   "component": {
     "name": "failure_component",
     "type": "string",
-    "sources": ["maintenance.failure_events"],
+    "sources": [
+      "maintenance.failure_events"
+    ],
     "definition": "The component of the first such failure, from the FMS-125 catalogue; none when failure_within_30_days is 0.",
-    "values": ["none", "engine", "cooling", "brakes", "tyres", "transmission", "electrical", "suspension", "steering", "fuel_system", "exhaust", "body", "other"]
+    "values": [
+      "none",
+      "engine",
+      "cooling",
+      "brakes",
+      "tyres",
+      "transmission",
+      "electrical",
+      "suspension",
+      "steering",
+      "fuel_system",
+      "exhaust",
+      "body",
+      "other"
+    ]
   }
 }
