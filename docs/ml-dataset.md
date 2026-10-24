@@ -148,14 +148,16 @@ The FMS-53 examples are typical vehicles: every other input at its median, with 
 
 **Why F1 ≥ 0.70 is out of reach.** Even a perfect model, one that knows each vehicle's hidden frailty, reaches only F1 0.61 here, because breakdowns are partly chance. Reaching 0.70 would need failures almost fully determined by the inputs. That is a model relearning the generator's formula, and it would look worse once real failure records arrive.
 
-FMS-53 is therefore judged as follows:
-- ROC-AUC on vehicles it has not seen; the split groups rows by `vehicle_id`, because a row-level split puts the same vehicle in training and test and flatters the result;
+FMS-53 is therefore judged as follows ([ml-model.md](ml-model.md)):
+- ROC-AUC of at least 0.75 on vehicles it has not seen; the split groups rows by `vehicle_id`, because a row-level split puts the same vehicle in training and test and flatters the result. The mark sits below the 0.79 to 0.83 measured so that an unlucky split does not fail a sound model;
 - the two example vehicles;
 - F1, precision and recall reported, but not gated.
 
+The forest measured above weights the classes equally, which ranks well but inflates its probabilities. The model FMS-53 ships calibrates them instead ([ml-model.md](ml-model.md#why-calibrated)).
+
 ### Quality checks
 
-`ml.checks.problems(df)` lists everything wrong with a dataset; an empty list means it is fit to train on. The generator runs it before writing, and FMS-53 should run it before training. It checks:
+`ml.checks.problems(df)` lists everything wrong with a dataset; an empty list means it is fit to train on. The generator runs it before writing, and `scripts/train.py` (FMS-53) runs it before training. It checks:
 
 - the columns and their order;
 - the row count;

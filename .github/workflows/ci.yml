@@ -118,8 +118,8 @@ jobs:
       - name: Build
         run: npm run build -w fms-frontend
 
-  # The Python ML service (FMS-52): the feature spec, the training dataset
-  # generator and its data quality checks, under pytest.
+  # The Python ML service: the feature spec, the training dataset generator and
+  # its data quality checks (FMS-52), and the predictive model (FMS-53), under pytest.
   ai-service:
     name: ai-service-ci
     runs-on: ubuntu-24.04
@@ -147,6 +147,12 @@ jobs:
           python scripts/generate_training_data.py --out "$RUNNER_TEMP/a.csv"
           python scripts/generate_training_data.py --out "$RUNNER_TEMP/b.csv"
           cmp "$RUNNER_TEMP/a.csv" "$RUNNER_TEMP/b.csv"
+      # The model, trained on it and graded on the vehicles it has not seen.
+      - name: Train and grade the model
+        run: |
+          set -euo pipefail
+          python scripts/train.py --data "$RUNNER_TEMP/a.csv" --out "$RUNNER_TEMP/models" --version pm-0000.00
+          python scripts/evaluate.py "$RUNNER_TEMP/models/pm-0000.00" --data "$RUNNER_TEMP/a.csv"
 
   migrations:
     name: migrations-ci
