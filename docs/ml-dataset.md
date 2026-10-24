@@ -117,7 +117,7 @@ The rows come from a small simulation, not from rules on the inputs. A label tha
 - **Each month:**
   - The vehicle drives. About 3% of months it barely moves, as when it sits in the workshop.
   - Every item ages by distance and time.
-  - A service, when due (or when the oil is), changes the oil, and the air and fuel filters once they are past 60% of their interval. Other items are changed when their owner gets round to them.
+  - A service, when due (or when the oil is), changes the oil, and the air and fuel filters once they are past 60% of their interval. Everything changed in a workshop visit shares its day, so the oil is never older than the last service. Other items are changed when their owner gets round to them.
   - Faults are reported more often when something is overdue, old or frail.
   - Fuel use drifts up with overdue service, clogged filters and frailty.
 - **Whether it breaks down** is drawn with a probability that rises most with overdue parts. Overdue service and reported faults come next, most of all together. Hard use of an old vehicle and rising fuel use add their own risk, and the hidden frailty adds to all of it.
@@ -131,22 +131,22 @@ These are measured with a Random Forest on vehicles it has not seen: an 80/20 sp
 
 | | Before (6 inputs) | Now (19 inputs) |
 |---|---|---|
-| Positive rate | 19.1% | 18.8% (the card asks for 15 to 25%) |
-| Ranking, ROC-AUC | 0.76 | **0.82 to 0.84** |
-| Riskiest 10% that fail | 60% | **62 to 65%** |
-| Safest half that fail | 8% | **4 to 5%** |
-| Names the failed component (guessing the most common gives 21%) | 17% | **32 to 37%** |
-| F1 at a 0.5 threshold | 0.47 | 0.46 to 0.52 |
-| Best F1 of a perfect model (it knows the true probabilities, frailty included) | 0.54 | 0.60 |
-| FMS-53 examples, below 30 and above 85 | 14 and 92 | **18 to 26 and 98 to 99** |
+| Positive rate | 19.1% | 18.2% (the card asks for 15 to 25%) |
+| Ranking, ROC-AUC | 0.76 | **0.79 to 0.83** |
+| Riskiest 10% that fail | 60% | **61 to 71%** |
+| Safest half that fail | 8% | **5 to 7%** |
+| Names the failed component (guessing the most common gives 22%) | 17% | **30 to 34%** |
+| F1 at a 0.5 threshold | 0.47 | 0.48 to 0.55 |
+| Best F1 of a perfect model (it knows the true probabilities, frailty included) | 0.54 | 0.61 |
+| FMS-53 examples, below 30 and above 85 | 14 and 92 | **14 to 28 and 93 to 97** |
 
-The strongest inputs are now the oil's distance since change, days since service, and the belt, gearbox oil and brake pad distances.
+The strongest inputs are now the oil's distance since change, the belts' distance, days since service, and the brake pad and gearbox oil distances.
 
 The FMS-53 examples are typical vehicles: every other input at its median, with the oil's age following the service date, because the oil is changed at every service.
 - The risky example is 100 days since service with 5 faults; its oil is 100 days old.
 - The healthy example is 10 days since service with no faults.
 
-**Why F1 ≥ 0.70 is out of reach.** Even a perfect model, one that knows each vehicle's hidden frailty, reaches only F1 0.60 here, because breakdowns are partly chance. Reaching 0.70 would need failures almost fully determined by the inputs. That is a model relearning the generator's formula, and it would look worse once real failure records arrive.
+**Why F1 ≥ 0.70 is out of reach.** Even a perfect model, one that knows each vehicle's hidden frailty, reaches only F1 0.61 here, because breakdowns are partly chance. Reaching 0.70 would need failures almost fully determined by the inputs. That is a model relearning the generator's formula, and it would look worse once real failure records arrive.
 
 FMS-53 is therefore judged as follows:
 - ROC-AUC on vehicles it has not seen; the split groups rows by `vehicle_id`, because a row-level split puts the same vehicle in training and test and flatters the result;

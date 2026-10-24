@@ -135,7 +135,7 @@ def failure_logit(days_since_service, faults, age, mileage, fuel_variance, frail
         + 0.10 * age
         + 0.12 * mileage / 1000.0
         + 0.04 * np.clip(fuel_variance, -10.0, 40.0)
-        + 2.00 * ((days_since_service > 90) & (faults >= 3))
+        + 3.00 * ((days_since_service > 90) & (faults >= 3))
         + 0.80 * ((mileage > 6000) & (age > 10))
         + frailty
     )
@@ -266,12 +266,14 @@ def generate(seed: int = SEED, vehicles: int = VEHICLES, months: int = MONTHS, f
         for c, names in RENEWED_ON_FAILURE.items():
             for name in names:
                 renewed[name] |= component == c
-        done_at = rng.uniform(0.0, 1.0, vehicles)  # how far into the month the change happened
+        # How far into the month the workshop visit was: the service and every change in it share the day, so
+        # the oil is never older than the last service.
+        done_at = rng.uniform(0.0, 1.0, vehicles)
         for item in ITEMS:
             km_since[item.name] = np.where(renewed[item.name], mileage * (1.0 - done_at), km_since[item.name] + mileage)
             days_since[item.name] = np.where(renewed[item.name], np.floor(30.0 * (1.0 - done_at)), days_since[item.name] + 30.0)
 
-        days_since_service = np.where(serviced, rng.integers(0, 30, vehicles), days_since_service + 30.0)
+        days_since_service = np.where(serviced, np.floor(30.0 * (1.0 - done_at)), days_since_service + 30.0)
         fault_history = [fault_history[1], np.where(failed, 0, this_month)]
         fault_history[0] = np.where(failed, 0, fault_history[0])
 

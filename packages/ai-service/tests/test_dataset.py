@@ -112,6 +112,12 @@ def test_parts_age_and_are_renewed(df):
     assert (df["days_since_coolant_change"] > 730).mean() > 0.05
 
 
+def test_the_oil_is_never_older_than_the_last_service(df):
+    # Every service changes the oil on the same day; an engine repair may change it in between.
+    assert (df["days_since_oil_change"] <= df["days_since_last_service"]).all()
+    assert (df["days_since_oil_change"] == df["days_since_last_service"]).mean() > 0.8
+
+
 def test_an_overdue_part_fails_its_component_more_often(df):
     failed = df[df["failure_within_30_days"] == 1]
     for feature, due, component in [
