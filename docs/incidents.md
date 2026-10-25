@@ -31,7 +31,7 @@ An **incident** is something that happened on the road: an accident, a breakdown
 The driver form submits through the offline queue (FMS-81), so a report made in a dead zone waits on the phone and is sent once, in order, when there is signal.
 
 - **Time.** The form sends `occurred_at` as the moment the driver pressed send, so a report delivered hours later keeps when it happened.
-- **Once.** Each queued report carries an Idempotency-Key: a retry within 24 hours replays the original answer. A report that reached the server, lost its answer and comes back after the key expired is recognised by the reporter, `occurred_at` and the description, and answers `200` with the original and `meta.created: false`. A lock per reporter makes the check safe against a racing original.
+- **Once.** Each queued report carries an Idempotency-Key: a retry within 7 days (the longest the queue may hold it) replays the original answer. A report that reached the server, lost its answer and comes back after the key expired is recognised by the reporter, `occurred_at` and the description, and answers `200` with the original and `meta.created: false`. A lock per reporter makes the check safe against a racing original.
 
 ## Reading: `GET /incidents`, `GET /incidents/{id}`
 
