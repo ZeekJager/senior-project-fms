@@ -98,7 +98,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017), meter_readings (odometer and engine-hour history, migration 038) |
 | `trip` | trip | routes, trips, trip_stops |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
-| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions, inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039) |
+| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions (scored nightly, FMS-55), inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039) |
 | `alert` | alert | alerts, alert_acknowledgements, incident_reports, notifications |
 | `ev` | ev | charging_stations, charging_sessions, ev_battery_logs |
 | `integration` | integration | external_providers, gps_devices, fuel_card_transactions, sync_logs |
@@ -202,6 +202,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `AlertAcknowledged`, `AlertResolved` | alert (FMS-92) | alert | `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by` (user public ids) | real-time gateway (`alert.updated`) |
 | `AlertEscalated` | alert (FMS-92): a critical alert left unacknowledged | alert | `alert_id`, `depot_id`, `status`, `severity`, `escalation_level`, `escalated_at` | real-time gateway (`alert.updated`) |
 | `MlScoringBlocked` | maintenance (FMS-127, the scoring job's check of the served model) | ml_model | `model_id`, `model_name`, `model_version`, `model_status`, `reason` (`feature_spec_mismatch`, `artefact_mismatch`, `not_active`), `feature_spec_hash` (the served model's), `expected_feature_spec_hash` (the core's). One per run, model and reason (a fixed id) | `alert.engine` |
+| `MaintenanceRiskDetected` | maintenance (FMS-55, the nightly scoring): a health score falling below 75, or its risk level rising | vehicle | `prediction_id`, `vehicle_id`, `risk_level` (`medium`, `high`), `failure_probability`, `health_score`, `previous_health_score`, `factors`, `component` (null), `model_name`, `model_version`, `as_of`. One per scoring time, vehicle and model (a fixed id) | `alert.engine` |
 | `IncidentReported` | alert (FMS-38, incident reports) | incident | `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`, `incident_type`, `status`, `latitude`, `longitude`, `occurred_at`, `maintenance_flag_set`, `reported_by_driver_id` (the reporter's driver profile when a driver reported it); never the description | real-time gateway (`incident.created`), `alert.engine` (critical only), `fleet.vehicle-cache` |
 | `IntegrationWebhookReceived` | integration (FMS-85) | provider | `sync_log_id`, `provider_id`, `provider_code`, `provider_type`, `event_id`, `kind`, `occurred_at`. The data is not in the event: read it with `webhookDeliveries.find(tx, sync_log_id)`. One event per provider event id (a fixed id) | `integration.telematics-pings` (telematics `positions`, FMS-88); fuel card and EV later |
 
@@ -211,7 +212,6 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 
 - `VehicleFaultDetected` (integration, from telematics; the DVIR one is above).
 - `FuelAnomalyDetected` (fuel, FMS-82): `anomaly_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_log_id`, `anomaly_type`, `severity`.
-- `MaintenanceRiskDetected` (maintenance, FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
 - `BatteryThresholdExceeded` (ev, FMS-96): `vehicle_id`, `trip_id`, `metric`, `value`, `threshold`, `severity`.
 
 **Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it. To show a new event live, add it to the gateway's map as well.

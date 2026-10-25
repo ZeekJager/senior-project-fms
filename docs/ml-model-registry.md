@@ -53,7 +53,7 @@ A row is never edited, except its status. Registration writes one audit row; so 
 
 ## Before scoring
 
-The nightly scoring (FMS-55) calls `mlRegistry.checkServing(context)` before it scores anything:
+The nightly scoring (FMS-55, [ml-scoring.md](ml-scoring.md)) calls `mlRegistry.checkServing(context)` before it scores anything:
 
 1. `GET /model` on the ML service, with `X-Internal-Token` (`ML_SERVICE_URL`, `ML_SERVICE_TOKEN`).
 2. The version is registered if it is new.
@@ -69,11 +69,11 @@ When scoring is blocked:
 - `MlScoringBlocked` is published (one per run, model and reason);
 - the alert engine raises an `ml_scoring_blocked` alert for administrators: high for a mismatch, medium for a model awaiting activation. A repeat within 24 hours updates the same alert ([alerts.md](alerts.md)).
 
-An ML service that cannot be reached, refuses the token, or answers without the fields above throws `MlServiceError`, and nothing is registered.
+An ML service that cannot be reached, refuses the token, or answers without the fields above throws `MlServiceError`, and nothing is registered. The service is called through the integration gateway: a timeout on each attempt, retries, and its circuit breaker ([integrations.md](integrations.md#services-of-the-stack)).
 
 ## Predictions
 
-`maintenance.maintenance_predictions (model_name, model_version)` is a foreign key to the registry. A prediction naming a version the registry does not hold cannot be stored, so every score is traceable to its model.
+`maintenance.maintenance_predictions (model_name, model_version)` is a foreign key to the registry. A prediction naming a version the registry does not hold cannot be stored, so every score is traceable to its model. The nightly scoring stores each one with the model `checkServing` allowed.
 
 ## Activating a model
 

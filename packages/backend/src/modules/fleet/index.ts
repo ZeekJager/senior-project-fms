@@ -55,6 +55,7 @@ import { DriverRepository } from './infrastructure/driver.repository';
 import { DvirRepository } from './infrastructure/dvir.repository';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
 import { MeterRepository } from './infrastructure/meter.repository';
+import { engineHoursOver, faultyDvirCounts, setHealthScore, vehiclesToScore } from './infrastructure/scoring.queries';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
 const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles, vehicleOnActiveTripSql);
@@ -400,6 +401,18 @@ export const incidentRefs = {
   drivers: fuelRefs.drivers,
   depots: depotRefs,
 };
+
+/**
+ * For the nightly scoring (FMS-55, maintenance module): the vehicles in service, what their features read
+ * of fleet's tables over a window, and their health score snapshot, set on the scoring's transaction.
+ */
+export const scoringRefs = {
+  vehicles: vehiclesToScore,
+  faultyDvirs: faultyDvirCounts,
+  engineHours: engineHoursOver,
+  setHealthScore,
+};
+export type { ScoringVehicle } from './infrastructure/scoring.queries';
 
 export const fleetModule: AppModule = {
   name: 'fleet',

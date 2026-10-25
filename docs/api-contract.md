@@ -587,6 +587,14 @@ Inventory rules (FMS-23):
 - **Activation** is explicit: a new version scores only once an administrator activates it, here or with `npm run ml:model -- activate <version> --by <email>`. It retires the model that was active (one active model per name). Activating a retired model again is a rollback. A model with `features_match: false` is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `feature_spec_mismatch`.
 - **Predictions** name a registered model: `maintenance_predictions (model_name, model_version)` references the registry.
 
+**The nightly scoring (FMS-55).** The job `maintenance-scoring` (02:00) scores every vehicle in service. Only the batch writes scores: no endpoint calls the model. How it works: [docs/ml-scoring.md](ml-scoring.md).
+
+- **Inputs:** the 19 of `feature_spec.json`, computed by the core from its own tables as of the start of the day (Addis Ababa), capped and rounded to the spec.
+- **Calls:** batches of 100 to `POST /internal/ml/predict-maintenance/batch` (§10.3), through the integration gateway: 10 s per attempt, 2 retries, the ML service's circuit breaker.
+- **Stored:** a `maintenance_predictions` row per vehicle and night (`health_score`, `risk_level`, `factors`, `risk_score`, `feature_snapshot`, `as_of`; the previous one is `superseded`), and the vehicle's `health_score` and `health_score_updated_at`.
+- **Risk:** a score falling below 75, or its risk level rising, publishes `MaintenanceRiskDetected`: a `maintenance_risk` alert for the vehicle's technicians and depot admins.
+- **Failures:** an ML service that is down, a failing batch, an open breaker, or a model that may not score skips those vehicles, which keep their last score. The run still finishes.
+
 ### 10.3 Internal ML service contract
 
 The predictive maintenance service (FMS-54, [ml-service.md](ml-service.md)) is reachable only inside the Docker network (`http://ai-service:5000`). Every call but `GET /health` sends `X-Internal-Token: <ML_SERVICE_TOKEN>`; without it, or with a wrong one, `401 AUTH_TOKEN_INVALID`.

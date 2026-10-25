@@ -79,7 +79,7 @@ No new form is needed. Technicians already list the parts a repair used (FMS-22)
 
 This reads only workshop repairs that used stocked parts. A change done elsewhere, or with a part not in stock, is invisible to it. A later card, preventive service programs (FMS-129), can add explicit "done on" records.
 
-Stock parts for brake fluid, clutch fluid and gearbox oil are not in the seed yet. Until a depot creates one, those items count as never changed.
+The seed stocks a part for every item and gives each vehicle a service history, so its part history is not empty ([seed-data.md](seed-data.md#service-history)).
 
 `vehicle_id` and `as_of` (which is `t`) identify a row. They are never inputs to the model.
 
