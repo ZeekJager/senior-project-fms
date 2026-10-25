@@ -1,7 +1,7 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../../shared/http/async-handler';
-import { idempotent } from '../../../shared/http/idempotency';
+import { idempotent, OFFLINE_QUEUE_TTL_HOURS } from '../../../shared/http/idempotency';
 import { pageMeta, pageQuery } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
@@ -103,7 +103,7 @@ export function dvirRouter(service: DvirService): Router {
   });
 
   // The canonical path, and the legacy-compatible alias with the same behaviour.
-  for (const path of ['/dvir-reports', '/dvir']) router.post(path, authorize('dvir:write'), idempotent(), submit);
+  for (const path of ['/dvir-reports', '/dvir']) router.post(path, authorize('dvir:write'), idempotent({ ttlHours: OFFLINE_QUEUE_TTL_HOURS }), submit);
 
   router.get(
     '/vehicles/:vehicleId/dvir-reports',

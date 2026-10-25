@@ -5,6 +5,11 @@ import { AppError, validationFailed } from '../errors/app-error';
 import type { Queryable } from '../infrastructure/queryable';
 
 const DEFAULT_TTL_HOURS = 24;
+/**
+ * For the endpoints the driver's offline queue sends to (FMS-116): the queue may hold a submission for up to 7 days
+ * (the offline session limit, docs/auth.md), so a replay is answered from the record for as long as that.
+ */
+export const OFFLINE_QUEUE_TTL_HOURS = 7 * 24;
 const KEY_PATTERN = /^[\x21-\x7e]{1,255}$/; // printable ASCII, no spaces
 
 /** JSON with object keys sorted, so the same body always hashes the same. */

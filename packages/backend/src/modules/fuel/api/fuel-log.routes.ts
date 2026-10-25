@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../../shared/http/async-handler';
-import { idempotent } from '../../../shared/http/idempotency';
+import { idempotent, OFFLINE_QUEUE_TTL_HOURS } from '../../../shared/http/idempotency';
 import { pageMeta, pageQuery } from '../../../shared/http/pagination';
 import { FLOAT_IN_MONEY_PATH, parseInput, rejectFractionalMoney } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
@@ -111,7 +111,7 @@ export function fuelLogRouter(service: FuelLogService): Router {
   router.post(
     '/fuel-logs',
     authorize('fuel:write'),
-    idempotent(),
+    idempotent({ ttlHours: OFFLINE_QUEUE_TTL_HOURS }),
     asyncHandler(async (req, res) => {
       const log = await service.create(caller(req), parseInput(createBody, req.body));
       res
