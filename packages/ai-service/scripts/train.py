@@ -99,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         "features": feature_names(),
         "target": target_name(),
         "health_score": "round((1 - p) * 100), p the probability of an unplanned failure in the next 30 days",
+        # The training rows' typical inputs: the service (FMS-54) explains a prediction by which inputs, put back to these, lower its risk most.
+        "feature_medians": {name: float(train[name].median()) for name in feature_names()},
         "feature_spec_version": load_spec()["spec_version"],
         "feature_spec_hash": spec_hash(),
         "training_data": training_data(args.data, df, train, test),

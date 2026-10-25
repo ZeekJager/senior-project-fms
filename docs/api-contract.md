@@ -574,17 +574,26 @@ Inventory rules (FMS-23):
 
 ### 10.3 Internal ML service contract
 
+The predictive maintenance service (FMS-54, [ml-service.md](ml-service.md)) is reachable only inside the Docker network (`http://ai-service:5000`). Every call but `GET /health` sends `X-Internal-Token: <ML_SERVICE_TOKEN>`; without it, or with a wrong one, `401 AUTH_TOKEN_INVALID`.
+
+| Method + path | Purpose | Request / response |
+|---|---|---|
+| `GET /health` | Liveness, no token | `{ status: "ok", model_version, load_seconds }` |
+| `GET /model` | The model serving now (for the registry, FMS-127) | `name`, `model_version`, `trained_at`, `algorithm`, `features`, `feature_spec_version`, `feature_spec_hash`, `artefact_sha256`, `training_data`, `metrics`, `health_score`, `risk_levels`, `prediction_horizon_days` |
+| `POST /internal/ml/predict-maintenance` | One vehicle | `PredictRequest` -> `Prediction` |
+| `POST /internal/ml/predict-maintenance/batch` | 1 to 500 vehicles (the nightly scoring) | `{ items: PredictRequest[] }` -> `Prediction[]`, in the same order |
+
 ```http
 POST /internal/ml/predict-maintenance
+X-Internal-Token: <ML_SERVICE_TOKEN>
 
 {
-  "vehicle_id": "uuid",
-  "as_of": "2026-10-05T07:00:00Z",
+  "vehicle_id": "6f0f2b4e-6a1c-4c3e-9a55-3c2d4f9b8e11",
+  "as_of": "2026-10-25T01:00:00+03:00",
   "features": {
-    "mileage_km": 128450,
-    "engine_temperature_avg": 91.2,
-    "fault_code_count_30d": 2,
-    "service_overdue_days": 5
+    "mileage_km": 5214.0, "engine_hours": 131.2, "days_since_last_service": 100, "num_fault_reports": 5,
+    "fuel_variance_pct": 2.1, "age_years": 7.9, "days_since_oil_change": 100, "km_since_oil_change": 17380.0,
+    "...": "every input of feature_spec.json"
   }
 }
 ```
@@ -592,16 +601,24 @@ POST /internal/ml/predict-maintenance
 ```json
 200
 {
-  "prediction": {
-    "risk_score": 0.82,
+  "data": {
+    "vehicle_id": "6f0f2b4e-6a1c-4c3e-9a55-3c2d4f9b8e11",
+    "as_of": "2026-10-25T01:00:00+03:00",
+    "failure_probability": 0.8125,
+    "health_score": 19,
     "risk_level": "high",
     "prediction_horizon_days": 30,
-    "failure_category": "cooling_system",
     "model_version": "pm-2026.10",
-    "factors": ["engine_temperature_avg", "service_overdue_days"]
-  }
+    "factors": ["num_fault_reports", "days_since_last_service", "days_since_oil_change"]
+  },
+  "meta": { "request_id": "uuid", "model_version": "pm-2026.10" }
 }
 ```
+
+- **`PredictRequest`:** `vehicle_id` (UUID), `as_of` (an instant with offset) and `features`: every input of `packages/ai-service/feature_spec.json` (the 19 of spec version 2), each within its range, integers where the spec says `int`, and nothing else.
+- **`Prediction`:** `failure_probability` (an unplanned failure in the next 30 days), `health_score` (`round((1 - p) * 100)`), `risk_level` (`low` at 75 and above, `medium` 41 to 74, `high` at 40 and below: the core raises a risk event below 75), `prediction_horizon_days` (30), `model_version`, and `factors`: up to 3 inputs that raise this vehicle's risk most (each, put back to the training rows' typical value, lowers the probability by at least 0.01), largest first. The model predicts no failure category (FMS-53).
+- **Errors:** the core's envelope (§3.4). A missing, out-of-range, mistyped or unknown input, a missing `vehicle_id` or `as_of`, or a batch of 0 or more than 500 is `422 VALIDATION_FAILED`, each problem named: `{ field: "features.mileage_km", reason: "required" }`; in a batch, `items.3.features.age_years`. Reasons: `required`, `out_of_range`, `not_allowed`, `too_few`, `too_many`, `invalid_json`, `invalid`.
+- **Correlation:** `X-Request-Id` is echoed (one is made when none is sent) and returned as `meta.request_id`.
 
 The ML service never directly updates fleet master data. The Node.js core validates the result and persists `maintenance.maintenance_predictions`. This preserves the selected modular-monolith boundary with one specialized service.
 
@@ -989,8 +1006,8 @@ GPS provider
 
 ```
 Node.js Core API
-  -> POST /internal/ml/predict-maintenance
-  -> FastAPI validation + model inference
+  -> POST /internal/ml/predict-maintenance/batch (X-Internal-Token)
+  -> FastAPI validation (feature_spec.json) + model inference
   -> prediction result
   -> persist maintenance_predictions
   -> optional alert

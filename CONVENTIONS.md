@@ -284,5 +284,5 @@ The `middleware/` files that predate this (`auditLog.ts`, `requestContext.ts`, `
 
 - Branches, commits and the Jira board: [README](README.md#-contribution--jira-workflow) and CFG-1 in Jira.
 - Tests: [docs/testing.md](docs/testing.md). CI: [docs/ci.md](docs/ci.md).
-- The predictive model's inputs, label and training data: [docs/ml-dataset.md](docs/ml-dataset.md). The model, its grading and its folder: [docs/ml-model.md](docs/ml-model.md).
+- The predictive model's inputs, label and training data: [docs/ml-dataset.md](docs/ml-dataset.md). The model, its grading and its folder: [docs/ml-model.md](docs/ml-model.md). The service that serves it: [docs/ml-service.md](docs/ml-service.md).
 - Sign-in, tokens and sessions: [docs/auth.md](docs/auth.md).

@@ -25,7 +25,7 @@ You only need **Docker** and **Docker Compose** installed on your machine to run
 Once the boot finishes, the following services will be available:
 - **Frontend (React/Vite):** [http://localhost:5173](http://localhost:5173)
 - **Backend (Node.js):** [http://localhost:3000](http://localhost:3000)
-- **AI Service (Python):** [http://localhost:5000](http://localhost:5000)
+- **AI Service (Python, FastAPI):** internal only, at `http://ai-service:5000` inside the Docker network ([docs/ml-service.md](docs/ml-service.md))
 - **Database (PostgreSQL):** `localhost:5432`
 
 ## 🛠 Useful Commands (Makefile)

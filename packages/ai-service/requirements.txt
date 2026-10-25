@@ -1,5 +1,7 @@
-flask==3.0.0
-flask-cors==4.0.0
+fastapi==0.143.0
+starlette==1.7.0
+pydantic==2.14.0
+uvicorn==0.54.0
 scikit-learn==1.7.2
 joblib==1.6.0
 pandas==2.3.3
