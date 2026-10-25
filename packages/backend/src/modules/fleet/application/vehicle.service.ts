@@ -94,6 +94,8 @@ export interface VehicleServiceDeps {
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   /** The maintenance module's open record behind a flag, connected by src/modules/index.ts (maintenance imports fleet). */
   maintenance: () => { openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> } | null;
+  /** A person setting the odometer is a manual meter reading (FMS-126). Optional for tests that do not look at readings. */
+  meters?: { manual(client: PoolClient, ctx: MutationContext, vehicleId: string, odometerKm: number, at: Date): Promise<void> };
   now?: () => Date;
 }
 
@@ -183,6 +185,7 @@ export class VehicleService {
       const depotId = await this.depotInScope(client, input.depot_id, caller);
       const row = await vehicles.insert(mutationContext(caller), { ...toColumns(input), depot_id: depotId }, client);
       const created = await vehicles.findViewById(client, row.id as string);
+      await this.deps.meters?.manual(client, mutationContext(caller), row.id as string, created.odometer_km, created.created_at);
       await this.publish(client, caller, VEHICLE_EVENTS.registered, { vehicle_id: created.id, depot_id: created.depot_id });
       return created;
     });
@@ -212,6 +215,9 @@ export class VehicleService {
 
       await vehicles.update(mutationContext(caller), current.id, data, client);
       const updated = await vehicles.findViewById(client, current.id);
+      if (patch.odometer_km !== undefined && patch.odometer_km !== current.odometerKm) {
+        await this.deps.meters?.manual(client, mutationContext(caller), current.id, patch.odometer_km, updated.updated_at);
+      }
       await this.publish(client, caller, VEHICLE_EVENTS.updated, {
         vehicle_id: updated.id,
         depot_id: updated.depot_id,

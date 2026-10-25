@@ -10,7 +10,7 @@ info:
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
     status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38);
-    failure records on corrective repairs (FMS-125); each vehicle's part history (FMS-52).
+    failure records on corrective repairs (FMS-125); each vehicle's part history (FMS-52); meter readings (FMS-126).
 servers:
   - url: /api/v1
 security:
@@ -315,6 +315,51 @@ paths:
         '409':
           description: CONFLICT_INVALID_STATE_TRANSITION (nothing leaves retired), CONFLICT_VEHICLE_IN_USE (on a trip under way; record_id is the trip) or CONFLICT_CONCURRENT_MODIFICATION.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /vehicles/{vehicle_id}/meter-readings:
+    get:
+      tags: [Vehicles]
+      operationId: listVehicleMeterReadings
+      summary: A vehicle's odometer and engine-hour history (FMS-126)
+      description: >
+        Every reading with its source (fuel log, completed repair, device or telematics provider, the nightly
+        engine-hours job, manual), newest first by when it was true. A reading lower than a trusted earlier one is
+        kept with suspect true; the vehicle's odometer does not follow it (docs/meter-readings.md). Needs
+        vehicle:read, in the caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: meter, in: query, schema: { type: string, enum: [odometer, engine_hours] } }
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of readings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MeterReading' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown meter, a bad date, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /integrations/providers:
     get:
@@ -1936,3 +1981,17 @@ components:
         maintenance_record_id: { type: [string, 'null'], format: uuid }
         odometer_km: { type: [number, 'null'], description: "The repair's odometer, if it was entered." }
         part_number: { type: [string, 'null'], description: The part that renewed it. }
+
+    MeterReading:
+      type: object
+      description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).
+      required: [id, meter, value, source, source_ref, recorded_at, suspect, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        meter: { type: string, enum: [odometer, engine_hours] }
+        value: { type: number, description: 'km for the odometer, hours for engine hours; one decimal.' }
+        source: { type: string, enum: [fuel_log, maintenance, telematics, gps_derived, manual] }
+        source_ref: { type: [string, 'null'], description: "The fuel log's or repair's id, the device's id, or the day (YYYY-MM-DD) of an engine-hours reading; null for manual." }
+        recorded_at: { type: string, format: date-time, description: When the reading was true. }
+        suspect: { type: boolean, description: "Lower than a trusted reading recorded before it: kept, but the vehicle's odometer did not follow it." }
+        created_at: { type: string, format: date-time }

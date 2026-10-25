@@ -49,6 +49,7 @@ const ingestion = new IngestionService({
     vehicles: trackingRefs.vehicles,
     drivers: trackingRefs.drivers,
     trips: { enRouteForVehicles: enRouteTripsForVehicles, enRouteOfDriver: enRouteTripOfDriver },
+    meters: trackingRefs.meters,
   },
   events: eventBus,
   eventIntervalSeconds: config.tracking.eventIntervalSeconds,
@@ -141,6 +142,11 @@ export async function legacyLocationIngest(
 }
 
 /** GPS devices (FMS-88): install one in a vehicle and get its token, shown once (scripts/gps-device.ts, the simulator). */
+/** For the engine-hours job (FMS-126, fleet): each vehicle's ignition-on seconds in a window, from its devices' pings. */
+export const ignitionTime = {
+  seconds: (db: Queryable, start: Date, end: Date, maxGapSeconds: number) => tracking.ignitionSeconds(db, start, end, maxGapSeconds),
+};
+
 export const gpsDevices = {
   register: (input: { vehicleId: string; identifier: string; providerId?: string | null; model?: string | null }, ctx: MutationContext) =>
     ingestion.registerDevice(input, ctx),

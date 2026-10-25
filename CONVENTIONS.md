@@ -95,7 +95,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | Schema | Owning module | Tables |
 |---|---|---|
 | `auth` | auth | users, roles, permissions, role_permissions, user_roles, refresh_sessions |
-| `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017) |
+| `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017), meter_readings (odometer and engine-hour history, migration 038) |
 | `trip` | trip | routes, trips, trip_stops |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
 | `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions, inventory_parts, inventory_movements, failure_events |

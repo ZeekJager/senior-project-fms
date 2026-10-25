@@ -1,14 +1,14 @@
 import type { AppModule } from '../shared/module';
 import { authModule, provideDepotDirectory } from './auth';
-import { depotDirectory, fleetModule, provideMaintenanceLookup, tripRefs } from './fleet';
+import { depotDirectory, fleetModule, provideMaintenanceLookup, provideMeterSources, tripRefs } from './fleet';
 import { provideFleetRefs, provideMaintenanceRefs, tripModule } from './trip';
-import { fuelModule } from './fuel';
+import { fuelMeterReadings, fuelModule } from './fuel';
 import { maintenanceModule, maintenanceRefs } from './maintenance';
 import { alertModule } from './alert';
 import { analyticsModule } from './analytics';
 import { commandCenterModule } from './command-center';
 import { evModule } from './ev';
-import { integrationModule } from './integration';
+import { ignitionTime, integrationModule } from './integration';
 import { auditModule } from './audit';
 
 // Wiring between modules that cannot import each other: fleet imports auth's
@@ -19,6 +19,8 @@ provideDepotDirectory(depotDirectory);
 provideFleetRefs(tripRefs);
 provideMaintenanceLookup(maintenanceRefs);
 provideMaintenanceRefs(maintenanceRefs);
+// Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
+provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
 
 /** Every module, in mount order. Add new modules here. */
 export const modules: AppModule[] = [

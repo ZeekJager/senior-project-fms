@@ -303,6 +303,7 @@ async function countRows(anchor: string): Promise<Record<string, number>> {
            (SELECT count(*) FROM trip.trips)::int AS trips,
            (SELECT count(DISTINCT status) FROM trip.trips)::int AS trip_statuses,
            (SELECT count(*) FROM fuel.fuel_logs)::int AS fuel_logs,
+           (SELECT count(*) FROM fleet.meter_readings)::int AS meter_readings,
            (SELECT count(*) FROM maintenance.maintenance_records)::int AS maintenance_records,
            (SELECT count(*) FROM maintenance.failure_events)::int AS failure_events,
            (SELECT count(*) FROM maintenance.inventory_parts)::int AS spare_parts,

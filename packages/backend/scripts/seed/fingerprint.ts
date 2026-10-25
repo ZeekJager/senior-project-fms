@@ -41,6 +41,10 @@ const QUERIES: Record<string, string> = {
             FROM trip.trips t JOIN trip.routes r ON r.id = t.route_id
             LEFT JOIN fleet.vehicles v ON v.id = t.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = t.driver_id
            ORDER BY t.scheduled_start NULLS LAST, r.name, t.status, v.registration_number NULLS LAST, dr.license_number NULLS LAST`,
+  // Meter readings (FMS-126): a manual one is recorded when the seed registers the vehicle, so its time is left out.
+  meters: `SELECT v.registration_number, m.meter, m.value, m.source, m.suspect, CASE WHEN m.source = 'manual' THEN NULL ELSE m.recorded_at END AS recorded_at
+             FROM fleet.meter_readings m JOIN fleet.vehicles v ON v.id = m.vehicle_id
+            ORDER BY v.registration_number, m.meter, m.source, m.value, 6 NULLS FIRST`,
   fuel: `SELECT v.registration_number, dr.license_number, f.fuel_type, f.quantity_ml, f.unit_price_cents, f.total_cost_cents,
                 f.odometer_km, f.station_name, f.source, f.recorded_at
            FROM fuel.fuel_logs f JOIN fleet.vehicles v ON v.id = f.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = f.driver_id

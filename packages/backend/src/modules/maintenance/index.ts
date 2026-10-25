@@ -46,6 +46,8 @@ export const maintenanceRefs = {
   openRecordSummaries: (db: Queryable, vehicleIds: readonly string[]) => maintenanceRepository.openRecordSummaries(db, vehicleIds),
   /** For the nightly scoring's features (FMS-55): each item's last change on a vehicle before a time (FMS-52). */
   lastServiceItems: (db: Queryable, vehicleId: string, before: Date | null = null) => maintenanceRepository.lastServiceItems(db, vehicleId, before),
+  /** For meter readings (FMS-126, fleet): completed repairs with an odometer, completed at or after `since`. */
+  completedOdometers: (db: Queryable, since: Date | null) => maintenanceRepository.completedOdometers(db, since),
 };
 
 export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/failure';

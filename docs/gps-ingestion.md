@@ -48,6 +48,7 @@ npm run device:register -- --vehicle <public id> --identifier GT-1001 --provider
 - **Speed** is stored as whole km/h, rounded to the nearest (42.6 becomes 43; api-contract §17).
 - **Duplicates.** A ping already stored (the same vehicle at the same instant, `uq_gps_ping_vehicle_time`) is skipped by the insert (`ON CONFLICT DO NOTHING`), so **a retried batch stores nothing twice**.
 - **Trip.** Each ping gets the vehicle's trip under way; a phone's is always its driver's.
+- **Odometer.** A device's or telematics provider's `odometer_km` is a meter reading (FMS-126): the batch's newest per vehicle, at most one an hour per vehicle, recorded in the batch's transaction ([meter-readings.md](meter-readings.md)). An odometer from a phone or a signed-in user is stored on the ping only.
 - **Answer.** `202 { data: { accepted, duplicates, rejected: [{ index, reason }] } }`. One statement inserts the batch and one audit entry records it (`tracking.pings_ingested`, with the counts). An audit row per ping would double the telemetry.
 
 ## VehicleLocationUpdated

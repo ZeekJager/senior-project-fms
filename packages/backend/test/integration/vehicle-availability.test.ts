@@ -270,7 +270,7 @@ describe("read model kept in the trip change's transaction (projection)", () => 
     const depot = await createDepot();
     const trip = await createTrip({ vehicle: await createVehicle({ depot }), driver: (await createDriver({ depot })).driver, scheduled_start: '2099-05-03T06:00:00Z', scheduled_end: '2099-05-03T07:00:00Z' });
     const results = await rebuildReadModels();
-    expect(Object.keys(results)).toEqual(['fleet.driver_accounts', 'fleet.trip_assignments']);
+    expect(Object.keys(results)).toEqual(['fleet.driver_accounts', 'fleet.trip_assignments', 'fleet.meter_readings']);
     expect(results['fleet.trip_assignments']).toMatchObject({ repaired: expect.any(Number) });
     expect(await readModel(trip.public_id as string)).toHaveLength(1);
   });

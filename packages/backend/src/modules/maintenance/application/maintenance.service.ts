@@ -343,7 +343,14 @@ export class MaintenanceService {
       }
       const event =
         data.status === 'completed'
-          ? this.event(caller, MAINTENANCE_EVENTS.completed, { maintenance_record_id: view.id, vehicle_id: view.vehicle_id, maintenance_flag_cleared: cleared })
+          ? this.event(caller, MAINTENANCE_EVENTS.completed, {
+              maintenance_record_id: view.id,
+              vehicle_id: view.vehicle_id,
+              maintenance_flag_cleared: cleared,
+              // The odometer at the repair (a meter reading, FMS-126) and when it was completed.
+              odometer_km: view.odometer_km,
+              completed_at: view.completed_at!.toISOString(),
+            })
           : this.event(caller, MAINTENANCE_EVENTS.updated, {
               maintenance_record_id: view.id,
               vehicle_id: view.vehicle_id,

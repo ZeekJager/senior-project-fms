@@ -48,6 +48,10 @@ export interface IngestionRefs {
     enRouteForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, EnRouteTrip>>;
     enRouteOfDriver(db: Queryable, driverId: string): Promise<EnRouteTrip | null>;
   };
+  /** A device's odometer becomes a meter reading (FMS-126); fleet samples it. */
+  meters: {
+    telematicsOdometer(client: PoolClient, ctx: MutationContext, vehicleId: string, odometerKm: number, at: Date, deviceRef: string | null): Promise<unknown>;
+  };
 }
 
 /**
@@ -84,8 +88,8 @@ export interface IngestionServiceDeps {
 const TOKEN_PREFIX = 'fmsd_';
 export const hashDeviceToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
-/** Where each ping goes: the vehicle (internal id) and the device that sent it, or why it was refused. */
-type Placement = { vehicle: IngestVehicle; deviceId: string | null } | { reason: PingRejection };
+/** Where each ping goes: the vehicle (internal id) and the device that sent it (both ids), or why it was refused. */
+type Placement = { vehicle: IngestVehicle; deviceId: string | null; devicePublicId?: string } | { reason: PingRejection };
 
 /**
  * GPS ingestion (FMS-88): one path for devices, phones, users and telematics webhooks into
@@ -149,6 +153,8 @@ export class IngestionService {
     const rejected: IngestResult['rejected'] = [];
     const rows: PingRow[] = [];
     const vehicles = new Map<string, IngestVehicle>();
+    // Each vehicle's newest odometer from its own device or telematics provider (phones and users are not meters).
+    const odometers = new Map<string, { km: number; at: Date; deviceRef: string | null }>();
     pings.forEach((ping, index) => {
       const placed = placements[index];
       if ('reason' in placed) {
@@ -161,6 +167,11 @@ export class IngestionService {
         return;
       }
       vehicles.set(placed.vehicle.id, placed.vehicle);
+      if (ping.odometer_km != null && (source === 'device' || source === 'telematics')) {
+        const at = new Date(ping.recorded_at);
+        const seen = odometers.get(placed.vehicle.id);
+        if (!seen || at > seen.at) odometers.set(placed.vehicle.id, { km: ping.odometer_km, at, deviceRef: placed.devicePublicId ?? null });
+      }
       rows.push({
         vehicleId: placed.vehicle.id,
         tripId: null,
@@ -184,6 +195,9 @@ export class IngestionService {
 
     const inserted = await this.deps.tracking.insertPings(client, rows);
     await this.announce(client, inserted, vehicles, trips, reporter, correlationId);
+    for (const [vehicleId, { km, at, deviceRef }] of odometers) {
+      await this.deps.refs.meters.telematicsOdometer(client, { userId: null, correlationId }, vehicleId, km, at, deviceRef);
+    }
 
     const deviceIds = [...new Set(rows.flatMap((r) => (r.deviceId ? [r.deviceId] : [])))];
     await this.deps.devices.touch(client, deviceIds, new Date(now));
@@ -217,7 +231,7 @@ export class IngestionService {
     if (reporter.kind === 'device') {
       const [vehicle] = await refs.vehicles.byIds(client, [reporter.device.vehicleId]);
       if (pings.some((p) => p.vehicle_id !== undefined && p.vehicle_id !== vehicle.publicId)) throw notYourVehicle();
-      return { placements: pings.map(() => ({ vehicle, deviceId: reporter.device.id })), source: 'device', trip: null };
+      return { placements: pings.map(() => ({ vehicle, deviceId: reporter.device.id, devicePublicId: reporter.device.publicId })), source: 'device', trip: null };
     }
 
     if (reporter.kind === 'provider') {
@@ -226,7 +240,7 @@ export class IngestionService {
       const placements = pings.map((p): Placement => {
         const device = found.get(p.device_id ?? '');
         const vehicle = device && vehicles.get(device.vehicleId);
-        return device && vehicle ? { vehicle, deviceId: device.id } : { reason: 'unknown_device' };
+        return device && vehicle ? { vehicle, deviceId: device.id, devicePublicId: device.publicId } : { reason: 'unknown_device' };
       });
       return { placements, source: 'telematics', trip: null };
     }

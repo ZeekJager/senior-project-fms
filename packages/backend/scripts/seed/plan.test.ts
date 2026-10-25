@@ -80,6 +80,20 @@ describe('buildPlan', () => {
     }
   });
 
+  test('a completed repair reads the odometer the vehicle had that day (a meter reading, FMS-126)', () => {
+    const done = budget.maintenance.filter((m) => m.completed_at !== null);
+    expect(done.length).toBeGreaterThan(0);
+    for (const m of done) {
+      const at = Date.parse(m.completed_at!);
+      const logs = budget.fuelLogs.filter((f) => f.vehicle === m.vehicle);
+      // Fuel logs are written up to 50 minutes before their trip ends, with the odometer after it.
+      const before = logs.filter((f) => Date.parse(f.recorded_at) < at - 3_600_000).map((f) => f.odometer_km);
+      const after = logs.filter((f) => Date.parse(f.recorded_at) > at).map((f) => f.odometer_km);
+      expect(m.odometer_km).toBeGreaterThanOrEqual(Math.max(0, ...before));
+      expect(m.odometer_km).toBeLessThanOrEqual(Math.min(budget.vehicles[m.vehicle].odometer_km, ...after));
+    }
+  });
+
   test('nothing the API would refuse: hire dates and attendance not after the anchor', () => {
     expect(budget.drivers.every((d) => d.hire_date <= ANCHOR)).toBe(true);
     expect(budget.attendance.every((a) => a.date <= ANCHOR)).toBe(true);

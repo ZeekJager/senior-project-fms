@@ -176,6 +176,32 @@ export class TrackingRepository {
     return res.rows.map((r) => ({ ...r, at: r.at.getTime() }));
   }
 
+  /**
+   * Seconds with the ignition on in [start, end), per vehicle (internal id), from device and telematics
+   * pings that say whether the ignition is on (phones cannot). The time from one such ping to the next
+   * counts when the first had the ignition on and the next came within `maxGapSeconds`; a longer gap (the
+   * device was off, or had no signal) counts nothing. An interval across the window's edge counts only its
+   * part inside, so consecutive days never count the same time twice. Vehicles with such a ping inside the
+   * window are listed, with 0 when the ignition was off all along.
+   */
+  async ignitionSeconds(db: Queryable, start: Date, end: Date, maxGapSeconds: number): Promise<Map<string, number>> {
+    const res = await db.query<{ vehicleId: string; seconds: number }>(
+      `SELECT vehicle_id AS "vehicleId",
+              COALESCE(sum(EXTRACT(EPOCH FROM LEAST(next_at, $2) - GREATEST(recorded_at, $1)))
+                         FILTER (WHERE ignition_on AND next_at - recorded_at <= make_interval(secs => $3) AND next_at > $1 AND recorded_at < $2), 0)::float8 AS seconds
+         FROM (SELECT vehicle_id, recorded_at, ignition_on,
+                      lead(recorded_at) OVER (PARTITION BY vehicle_id ORDER BY recorded_at) AS next_at
+                 FROM tracking.gps_pings
+                WHERE source IN ('device', 'telematics') AND ignition_on IS NOT NULL
+                  AND recorded_at >= $1::timestamptz - make_interval(secs => $3)
+                  AND recorded_at < $2::timestamptz + make_interval(secs => $3)) p
+        GROUP BY vehicle_id
+       HAVING bool_or(recorded_at >= $1 AND recorded_at < $2)`,
+      [start, end, maxGapSeconds],
+    );
+    return new Map(res.rows.map((r) => [r.vehicleId, r.seconds]));
+  }
+
   /** Current positions of vehicles (internal ids), for the simulator's check and tests. */
   async currentLocations(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, { lat: number; lng: number; recordedAt: Date; updatedAt: Date }>> {
     const res = await db.query<{ vehicleId: string; lat: number; lng: number; recordedAt: Date; updatedAt: Date }>(
