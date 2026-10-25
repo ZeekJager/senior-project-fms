@@ -87,3 +87,9 @@ def test_the_hash_is_stable_and_changes_with_any_input_definition(monkeypatch):
     reworded["id_columns"][0]["description"] = "Reworded."
     monkeypatch.setattr(spec, "load_spec", lambda: reworded)
     assert spec.spec_hash() == second
+
+
+def test_the_core_hashes_the_spec_to_the_same_value():
+    # The core computes the same SHA-256 in Node (FMS-127, backend domain/ml-model.test.ts) and refuses to score with a
+    # model whose hash is not its own. A change to the spec changes it on both sides: update both tests' value.
+    assert spec.spec_hash() == "b81af7ff0446aaf63946fcb12fae3a4b0cccaeecbc1a94d04d2b035a048e2f10"

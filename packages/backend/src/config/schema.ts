@@ -3,6 +3,9 @@ import { z } from 'zod';
 /** Placeholder used in `.env.example`; never valid outside development. */
 export const PLACEHOLDER = 'change-me';
 
+/** The ML service refuses a shorter token (FMS-54), so the core does too. */
+export const MIN_ML_SERVICE_TOKEN_LENGTH = 32;
+
 const port = z.coerce
   .number({ error: 'must be a port number (1-65535)' })
   .int('must be a port number (1-65535)')
@@ -55,6 +58,11 @@ const appSchema = z
     TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
     // Alert engine (FMS-92): a critical alert unacknowledged this many minutes escalates to the next tier, and again after as many more.
     ALERT_ESCALATION_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+    // Predictive maintenance service (FMS-54/55/127): unset, nothing is scored.
+    ML_SERVICE_URL: z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
+    ML_SERVICE_TOKEN: z.string().optional(),
+    // The feature spec the core's extractor implements, shared with the ML service (FMS-127). Relative to the working directory.
+    ML_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec.json'),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -64,6 +72,9 @@ const appSchema = z
     }
     if (env.REDIS_HOST && !env.REDIS_PASSWORD) {
       ctx.addIssue({ code: 'custom', path: ['REDIS_PASSWORD'], message: 'is required when REDIS_HOST is set' });
+    }
+    if (env.ML_SERVICE_URL && (env.ML_SERVICE_TOKEN ?? '').length < MIN_ML_SERVICE_TOKEN_LENGTH) {
+      ctx.addIssue({ code: 'custom', path: ['ML_SERVICE_TOKEN'], message: `must be at least ${MIN_ML_SERVICE_TOKEN_LENGTH} characters when ML_SERVICE_URL is set` });
     }
     if (env.NODE_ENV !== 'production') return;
     if (!env.REDIS_HOST) ctx.addIssue({ code: 'custom', path: ['REDIS_HOST'], message: 'is required in production' });
@@ -102,6 +113,14 @@ export interface AppConfig {
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number };
   alerts: { escalationMinutes: number };
+  ml: MlConfig;
+}
+
+/** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
+export interface MlConfig {
+  /** Null when ML_SERVICE_URL is not set: nothing is scored. */
+  service: { url: string; token: string } | null;
+  featureSpecPath: string;
 }
 
 /** Provider secrets (FMS-85), by provider code. Never stored in the database, never returned by the API. */
@@ -220,6 +239,10 @@ export function loadAppConfig(env: Env): AppConfig {
     integrations: { secrets: integrations.secrets },
     tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
+    ml: {
+      service: e.ML_SERVICE_URL ? { url: e.ML_SERVICE_URL.replace(/\/+$/, ''), token: e.ML_SERVICE_TOKEN! } : null,
+      featureSpecPath: e.ML_FEATURE_SPEC_PATH,
+    },
   };
 }
 

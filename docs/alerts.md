@@ -16,6 +16,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `FuelAnomalyDetected` (FMS-82) | `fuel_anomaly` | `severity`, else high | vehicle | vehicle and anomaly type (24 h) | depot admin, fleet manager |
 | `TelemetryFlagRaised` (FMS-46, docs/telemetry-rules.md) | `unsafe_driving`, or `geofence_violation` | `severity`: high for speeding, medium for idling | vehicle, or `depot_id` | vehicle and flag type (30 min) | dispatcher, depot admin |
 | `MaintenanceRiskDetected` (FMS-55) | `maintenance_risk` | `risk_level`, else medium | vehicle | vehicle (24 h) | technician, depot admin |
+| `MlScoringBlocked` (FMS-127, [ml-model-registry.md](ml-model-registry.md)) | `ml_scoring_blocked` | medium when the model is not active, high otherwise | none: fleet-wide | the model and reason (24 h) | admin |
 | `BatteryThresholdExceeded` (FMS-96) | `battery` | `severity`, else high | vehicle | vehicle and metric (60 min) | dispatcher, depot admin |
 | `IncidentReported` (FMS-38, docs/incidents.md) | `incident` | critical: only a critical incident is an alert | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
 

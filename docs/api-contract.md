@@ -571,6 +571,21 @@ Inventory rules (FMS-23):
 |---|---|---|---|
 | `GET /maintenance-predictions` | Persisted ML predictions | `prediction:read` | Paged `Prediction[]` |
 | `GET /vehicles/{vehicle_id}/maintenance-risk` | Current maintenance risk | `prediction:read` | `MaintenanceRisk` |
+| `GET /ml-models` | The model registry (FMS-127) | `prediction:read` | `status?`, paging -> `MlModel[]`, newest first |
+| `GET /ml-models/{model_id}` | One registered model | `prediction:read` | `MlModel` |
+| `POST /ml-models/{model_id}/activate` | Let a registered model score | `ml-model:activate` (admin) | -> `MlModel`; `409` when trained on other inputs |
+
+**The model registry (FMS-127).** Every prediction can be traced to the model, data and metrics behind it. How it works: [docs/ml-model-registry.md](ml-model-registry.md).
+
+- **`MlModel`:**
+  - `id`, `name`, `version`, `status` (`registered`, `active`, `retired`);
+  - `algorithm`, `features` (in order), `feature_spec_version`, `feature_spec_hash`, `features_match`;
+  - `metrics` (`roc_auc`, `brier`, `at_alert_threshold.precision`, `.recall`, `.f1`, ...), `training_data` (file and its SHA-256, rows, vehicles, dates, split);
+  - `trained_at`, `artefact_sha256`, `first_seen_at`, `activated_at`, `activated_by`, `retired_at`.
+- **Registration** is the scoring job's alone, the first time the ML service serves a version (`GET /model`, §10.3). There is no endpoint to register or change a model.
+- **Scoring needs** the served model to be active and trained on the core's feature spec: its `feature_spec_hash` is the SHA-256 of `feature_spec.json`'s inputs and label, hashed the same way in Python and Node. Otherwise nothing is scored, and administrators get an `ml_scoring_blocked` alert (`MlScoringBlocked`).
+- **Activation** is explicit: a new version scores only once an administrator activates it, here or with `npm run ml:model -- activate <version> --by <email>`. It retires the model that was active (one active model per name). Activating a retired model again is a rollback. A model with `features_match: false` is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `feature_spec_mismatch`.
+- **Predictions** name a registered model: `maintenance_predictions (model_name, model_version)` references the registry.
 
 ### 10.3 Internal ML service contract
 

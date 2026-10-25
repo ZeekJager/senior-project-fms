@@ -185,6 +185,36 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     audience: ['technician', 'depot_admin'],
   },
 
+  // The model registry (FMS-127): the nightly scoring did not score. `model_id`, `model_version`, `reason`
+  // (feature_spec_mismatch, artefact_mismatch, not_active). Fleet-wide: for administrators.
+  MlScoringBlocked: {
+    type: () => 'ml_scoring_blocked',
+    module: 'maintenance',
+    facts: (p) => ({
+      severity: str(p, 'reason') === 'not_active' ? 'medium' : 'high',
+      vehicleId: null,
+      driverId: null,
+      tripId: null,
+      depotId: null,
+      entity: str(p, 'model_id') ? { type: 'ml_model', id: str(p, 'model_id')! } : null,
+      dedupKey: `ml_scoring_blocked:${str(p, 'model_id')}:${str(p, 'reason')}`,
+    }),
+    windowMinutes: DAY,
+    title: (p) => `Maintenance scoring paused: model ${str(p, 'model_version') ?? 'unknown'}`,
+    message: (p) => {
+      const version = str(p, 'model_version') ?? 'unknown';
+      switch (str(p, 'reason')) {
+        case 'not_active':
+          return `Model ${version} is registered but not active. Review it and activate it to resume scoring.`;
+        case 'artefact_mismatch':
+          return `The ML service serves another model under version ${version}, which names a registered model. No vehicle is scored until it serves a new version.`;
+        default:
+          return `Model ${version} was trained on other inputs than the core computes. No vehicle is scored until a matching model is served.`;
+      }
+    },
+    audience: ['admin'],
+  },
+
   // EV battery monitoring (FMS-96): `vehicle_id`, `metric`, `value`, `threshold`, `severity`.
   BatteryThresholdExceeded: {
     type: () => 'battery',
