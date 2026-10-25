@@ -40,6 +40,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 034 | `alert` | Incident reports (FMS-38): `incident_reports.depot_id` (scope: the vehicle's depot, or the reporter's), filled in from the vehicle for existing rows; a location is both coordinates or neither; indexes for a depot's incidents and a reporter's own |
 | 035 | `tracking` | Telemetry rules (FMS-46): `rule_thresholds` (speed limit, pings to raise and to clear, idling minutes; one fleet row, overridden per depot; the fleet row starts at 80 km/h, 3, 3, 5 min); one ongoing flag per vehicle and type (`ux_telemetry_flags_ongoing`), older duplicates closed first |
 | 036 | `maintenance` | Failure records (FMS-125): `failure_events` (vehicle, the repair or incident it came from, component, failure mode, unplanned, how it was detected, when, odometer); the component, mode and detection catalogues as enums; indexes by vehicle and by component, newest first |
+| 037 | `maintenance` | Part service items (FMS-52): `service_item` enum (engine oil, air and fuel filters, coolant, brake pads and fluid, clutch fluid, tyres, battery, gearbox oil, belts); `inventory_parts.service_item`, what a part renews when a completed repair uses it, so the predictive model knows when each was last changed; index on it |
 
 ## Important
 

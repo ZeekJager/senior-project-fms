@@ -15,7 +15,7 @@ const QUERIES: Record<string, string> = {
                FROM fleet.vehicles v JOIN fleet.depots d ON d.id = v.depot_id ORDER BY v.registration_number`,
   drivers: `SELECT dr.license_number, dr.license_categories, dr.license_expiry::text, dr.hire_date::text, dr.emergency_phone, u.email
               FROM fleet.drivers dr JOIN auth.users u ON u.id = dr.user_id ORDER BY dr.license_number`,
-  parts: 'SELECT part_number, name, unit_cost_cents, stock_quantity, reorder_threshold FROM maintenance.inventory_parts ORDER BY part_number',
+  parts: 'SELECT part_number, name, unit_cost_cents, stock_quantity, reorder_threshold, service_item FROM maintenance.inventory_parts ORDER BY part_number',
   movements: `SELECT p.part_number, m.movement_type, m.quantity_delta FROM maintenance.inventory_movements m
                 JOIN maintenance.inventory_parts p ON p.id = m.inventory_part_id ORDER BY p.part_number, m.movement_type, m.quantity_delta`,
   maintenance: `SELECT v.registration_number, r.description, r.maintenance_type, r.status, r.priority, r.labor_hours, r.total_cost_cents,

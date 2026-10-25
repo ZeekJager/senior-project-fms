@@ -7,6 +7,23 @@ import type { PageMeta } from '@/lib/api/client'
 
 export type StockStatus = 'out' | 'low' | 'ok'
 
+/** What a part renews when a repair uses it (FMS-52): the predictive model reads each item's last change from it. */
+export type ServiceItem = 'engine_oil' | 'air_filter' | 'fuel_filter' | 'coolant' | 'brake_pads' | 'brake_fluid' | 'clutch_fluid' | 'tyres' | 'battery' | 'gearbox_oil' | 'belts'
+
+export const SERVICE_ITEM_LABELS: Record<ServiceItem, string> = {
+  engine_oil: 'Engine oil',
+  air_filter: 'Air filter',
+  fuel_filter: 'Fuel filter',
+  coolant: 'Coolant',
+  brake_pads: 'Brake pads',
+  brake_fluid: 'Brake fluid',
+  clutch_fluid: 'Clutch fluid',
+  tyres: 'Tyres',
+  battery: 'Battery',
+  gearbox_oil: 'Gearbox oil',
+  belts: 'Drive belts',
+}
+
 export interface Part {
   id: string
   part_number: string
@@ -17,6 +34,7 @@ export interface Part {
   reorder_threshold: number
   below_reorder: boolean
   stock_status: StockStatus
+  service_item: ServiceItem | null
   is_active: boolean
   version: number
   updated_at: string

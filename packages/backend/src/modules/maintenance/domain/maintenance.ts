@@ -1,5 +1,6 @@
 import { AppError } from '../../../shared/errors/app-error';
 import type { FailureEventView } from './failure';
+import type { ServiceItem } from './inventory';
 
 /** As in maintenance.maintenance_type / maintenance_status and chk_maintenance_priority. */
 export const MAINTENANCE_TYPES = ['preventive', 'corrective', 'predictive', 'inspection', 'other'] as const;
@@ -52,6 +53,18 @@ export interface MaintenanceRecordView {
   updated_at: Date;
 }
 
+/** When a wearing part or fluid was last changed on a vehicle (FMS-52): one per service item. */
+export interface ServiceItemView {
+  service_item: ServiceItem;
+  /** Null: never changed in the system (the model then counts from the vehicle's build). */
+  last_changed_at: Date | null;
+  /** The completed repair that changed it. */
+  maintenance_record_id: string | null;
+  /** The odometer on that repair, if it was entered. */
+  odometer_km: number | null;
+  part_number: string | null;
+}
+
 /** Things the caller should know but that did not stop the write; returned in `meta.warnings`. */
 export type MaintenanceWarning =
   /** More of the part was used than the stock record held: stock is now 0 and `shortfall` were not on record. */
@@ -65,6 +78,9 @@ export const MAINTENANCE_EVENTS = {
 } as const;
 
 export const maintenanceNotFound = () => new AppError(404, 'NOT_FOUND', 'Maintenance record not found.');
+
+/** A vehicle that does not exist or is outside the caller's depots, named in a path. */
+export const maintenanceVehicleMissing = () => new AppError(404, 'NOT_FOUND', 'Vehicle not found.');
 
 export const maintenanceVehicleNotFound = () =>
   new AppError(400, 'VALIDATION_FAILED', 'The vehicle does not exist or is outside your depots.', [

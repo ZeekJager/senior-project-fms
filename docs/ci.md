@@ -6,6 +6,7 @@ Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`,
 |---|---|---|
 | `backend-ci` | `npm ci`, ESLint (including `no-float-in-money-path` and the module boundary rules `no-cross-module-import` / `no-cross-schema-sql`), the ESLint rule tests, `tsc --noEmit`, `tsc` build, then unit and integration tests with coverage against PostgreSQL 16 as `fms_app` (the tests create and migrate their own `fms_test` database); uploads the `backend-coverage` report | Lint error (including a cross-module import or cross-schema SQL), type error, build error, failing test, a test leaving rows behind |
 | `frontend-ci` | `npm ci`, ESLint, `tsc -b`, component tests with coverage (uploads `frontend-coverage`), `vite build` | Lint error, type error, failing test, build error |
+| `ai-service-ci` | Python 3.12, `pip install` of `packages/ai-service` (requirements and requirements-dev), `pytest` (the feature spec, the training dataset and its quality checks, FMS-52), then the dataset generated twice and compared byte for byte | A failing test, a dataset that fails its checks, a generator that is not reproducible |
 | `migrations-ci` | Applies every migration Up twice, every Down in reverse, Up again; then runs `npm run migrate` on a fresh database twice | A migration is not idempotent or not reversible, Down leaves a schema behind, the runner fails or re-applies a file |
 | `docker-stack` | Creates a `.env` with generated secrets, builds the Compose images, starts the stack, waits for `GET /health/ready` | An image does not build or the backend does not start |
 | `secrets-scan` | gitleaks over the checked-out files, with the default rules plus `.gitleaks.toml` (weak hardcoded passwords, literal fallbacks in code, SQL role passwords) | Any secret is committed |
@@ -28,7 +29,7 @@ npm test
 A repository admin sets this once in **Settings → Branches → Add branch protection rule** (or **Rules → Rulesets**) for `master`:
 
 - **Require a pull request before merging**, with **1 approval**, and **dismiss stale approvals when new commits are pushed**.
-- **Require status checks to pass**, with **require branches to be up to date**, and select: `backend-ci`, `frontend-ci`, `migrations-ci`, `docker-stack`, `secrets-scan`. A check only appears in the list after it has run once on a PR.
+- **Require status checks to pass**, with **require branches to be up to date**, and select: `backend-ci`, `frontend-ci`, `ai-service-ci`, `migrations-ci`, `docker-stack`, `secrets-scan`. A check only appears in the list after it has run once on a PR.
 - **Do not allow bypassing the above settings** (applies the rules to admins too, so nobody can push to `master` directly).
 - **Block force pushes** and **block deletions**.
 

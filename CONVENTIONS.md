@@ -20,6 +20,7 @@ Read this with the four reference documents: the [API contract](docs/api-contrac
 | Call an outside system or receive its webhook | Write an adapter in the integration module; call only through its client (timeout, retries, breaker). Secrets in `INTEGRATION_<CODE>_*`, never in the database (`docs/integrations.md`) |
 | Show a status | `<StatusBadge status="...">`, not your own coloured span |
 | Show or enter money/fuel | `MoneyDisplay`, `FuelDisplay`, `MoneyInput`, `FuelInput` |
+| Add or change a predictive-maintenance input | Edit `packages/ai-service/feature_spec.json` and the core's feature extractor in the same change. The spec hash changes, so the model is retrained ([docs/ml-dataset.md](docs/ml-dataset.md)) |
 
 ## Money and fuel
 
@@ -282,4 +283,5 @@ The `middleware/` files that predate this (`auditLog.ts`, `requestContext.ts`, `
 
 - Branches, commits and the Jira board: [README](README.md#-contribution--jira-workflow) and CFG-1 in Jira.
 - Tests: [docs/testing.md](docs/testing.md). CI: [docs/ci.md](docs/ci.md).
+- The predictive model's inputs, label and training data: [docs/ml-dataset.md](docs/ml-dataset.md).
 - Sign-in, tokens and sessions: [docs/auth.md](docs/auth.md).

@@ -14,6 +14,7 @@ import {
   stockStatus,
   type InventoryMovementView,
   type InventoryPartView,
+  type ServiceItem,
 } from '../domain/inventory';
 import type { InventoryRepository, PartRow, PartWrite } from '../infrastructure/inventory.repository';
 import type { Caller } from './maintenance.service';
@@ -26,6 +27,8 @@ export interface PartCreate {
   depot_id?: string | null;
   unit_cost_cents?: number | null;
   reorder_threshold?: number;
+  /** What the part renews when a repair uses it (FMS-52); null or absent: none. */
+  service_item?: ServiceItem | null;
   /** Opening stock, recorded in the ledger as a purchase. */
   stock_quantity?: number;
 }
@@ -136,6 +139,7 @@ export class InventoryService {
           depot_id: depotId,
           unit_cost_cents: input.unit_cost_cents ?? null,
           reorder_threshold: input.reorder_threshold ?? 0,
+          service_item: input.service_item ?? null,
           stock_quantity: opening,
         },
         client,
@@ -159,7 +163,7 @@ export class InventoryService {
       if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
       if (row.depotId === null && depotScope(caller.user).kind !== 'all') throw sharedStockForbidden();
       const data: PartWrite = {};
-      for (const key of ['part_number', 'name', 'description', 'unit_cost_cents', 'reorder_threshold', 'is_active'] as const) {
+      for (const key of ['part_number', 'name', 'description', 'unit_cost_cents', 'reorder_threshold', 'service_item', 'is_active'] as const) {
         if (patch[key] !== undefined) (data as Record<string, unknown>)[key] = patch[key];
       }
       if (patch.depot_id !== undefined) data.depot_id = await this.depotFor(client, caller, patch.depot_id);
@@ -230,6 +234,7 @@ export class InventoryService {
       reorder_threshold: r.reorderThreshold,
       below_reorder: r.stockQuantity <= r.reorderThreshold,
       stock_status: stockStatus(r.stockQuantity, r.reorderThreshold),
+      service_item: r.serviceItem,
       is_active: r.isActive,
       version: r.version,
       created_at: r.createdAt,

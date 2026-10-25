@@ -1,5 +1,25 @@
 import { AppError } from '../../../shared/errors/app-error';
 
+/**
+ * What a part renews when a completed repair uses it (maintenance.service_item, migration 037): the
+ * wearing parts and fluids whose age the predictive model reads (docs/ml-dataset.md).
+ */
+export const SERVICE_ITEMS = [
+  'engine_oil',
+  'air_filter',
+  'fuel_filter',
+  'coolant',
+  'brake_pads',
+  'brake_fluid',
+  'clutch_fluid',
+  'tyres',
+  'battery',
+  'gearbox_oil',
+  'belts',
+] as const;
+
+export type ServiceItem = (typeof SERVICE_ITEMS)[number];
+
 /** How the inventory screen (FMS-28) colours a part: out of stock, at or below its reorder point, fine. */
 export type StockStatus = 'out' | 'low' | 'ok';
 
@@ -25,6 +45,8 @@ export interface InventoryPartView {
   reorder_threshold: number;
   below_reorder: boolean;
   stock_status: StockStatus;
+  /** What the part renews when a repair uses it; null for a part that renews none of them. */
+  service_item: ServiceItem | null;
   is_active: boolean;
   version: number;
   created_at: Date;

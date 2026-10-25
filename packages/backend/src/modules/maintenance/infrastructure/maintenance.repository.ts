@@ -3,6 +3,7 @@ import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
+import type { ServiceItem } from '../domain/inventory';
 import { OPEN_STATUSES, type MaintenancePriority, type MaintenanceStatus, type MaintenanceType } from '../domain/maintenance';
 
 /** A maintenance.maintenance_records row (internal ids). */
@@ -46,6 +47,15 @@ export interface LockedPart {
   isActive: boolean;
   stockQuantity: number;
   reorderThreshold: number;
+}
+
+/** The vehicle's last completed repair that renewed an item (FMS-52). */
+export interface LastServiceItemRow {
+  item: ServiceItem;
+  changedAt: Date;
+  recordPublicId: string;
+  odometerKm: number | null;
+  partNumber: string;
 }
 
 export interface RecordListFilter extends Page {
@@ -198,6 +208,27 @@ export class MaintenanceRepository extends Repository {
       [vehicleIds, OPEN_STATUSES],
     );
     return new Map(res.rows.map(({ vehicleId, ...summary }) => [vehicleId, summary]));
+  }
+
+  /**
+   * The last change of each item on the vehicle (FMS-52): its latest completed
+   * repair, before `before` when given, that used a part renewing the item. An
+   * item never changed in the system has no row.
+   */
+  async lastServiceItems(db: Queryable, vehicleId: string, before: Date | null = null): Promise<LastServiceItemRow[]> {
+    const res = await db.query<LastServiceItemRow>(
+      `SELECT DISTINCT ON (p.service_item)
+              p.service_item AS item, r.completed_at AS "changedAt", r.public_id AS "recordPublicId",
+              r.odometer_km::float8 AS "odometerKm", p.part_number AS "partNumber"
+         FROM maintenance.maintenance_records r
+         JOIN maintenance.maintenance_parts mp ON mp.maintenance_record_id = r.id
+         JOIN maintenance.inventory_parts p ON p.id = mp.inventory_part_id
+        WHERE r.vehicle_id = $1 AND r.status = 'completed' AND p.service_item IS NOT NULL
+          AND ($2::timestamptz IS NULL OR r.completed_at < $2)
+        ORDER BY p.service_item, r.completed_at DESC, r.id DESC`,
+      [vehicleId, before],
+    );
+    return res.rows;
   }
 
   /** Row-locks the parts by public id, in id order (two repairs using the same parts never deadlock). */

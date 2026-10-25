@@ -10,7 +10,7 @@ info:
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
     status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38);
-    failure records on corrective repairs (FMS-125).
+    failure records on corrective repairs (FMS-125); each vehicle's part history (FMS-52).
 servers:
   - url: /api/v1
 security:
@@ -1052,6 +1052,37 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /vehicles/{vehicle_id}/service-items:
+    get:
+      tags: [Maintenance]
+      operationId: listVehicleServiceItems
+      summary: When each wearing part and fluid was last changed (FMS-52)
+      description: >
+        Every service item, in a fixed order, with the vehicle's latest completed repair that used a stocked part
+        renewing it (inventory_parts.service_item). An item never changed in the system has nulls. Open or cancelled
+        work does not count. The predictive model's part history reads this (docs/ml-dataset.md). Needs
+        maintenance:read, in the caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+      responses:
+        '200':
+          description: The items.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    minItems: 11
+                    maxItems: 11
+                    items: { $ref: '#/components/schemas/ServiceItem' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /notifications:
     get:
       tags: [Notifications]
@@ -1894,3 +1925,14 @@ components:
         notes: { type: [string, 'null'] }
         recorded_by: { type: [string, 'null'], format: uuid, description: The user who recorded it. }
         created_at: { type: string, format: date-time }
+
+    ServiceItem:
+      type: object
+      description: When a wearing part or fluid was last changed on a vehicle (FMS-52).
+      required: [service_item, last_changed_at, maintenance_record_id, odometer_km, part_number]
+      properties:
+        service_item: { type: string, enum: [engine_oil, air_filter, fuel_filter, coolant, brake_pads, brake_fluid, clutch_fluid, tyres, battery, gearbox_oil, belts] }
+        last_changed_at: { type: [string, 'null'], format: date-time, description: The completed_at of the repair; null when never changed in the system. }
+        maintenance_record_id: { type: [string, 'null'], format: uuid }
+        odometer_km: { type: [number, 'null'], description: "The repair's odometer, if it was entered." }
+        part_number: { type: [string, 'null'], description: The part that renewed it. }
