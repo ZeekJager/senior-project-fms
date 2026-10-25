@@ -231,6 +231,19 @@ export class MaintenanceRepository extends Repository {
     return res.rows;
   }
 
+  /** Completed repairs with an odometer, completed at or after `since` (null: all): meter readings (FMS-126). */
+  async completedOdometers(db: Queryable, since: Date | null): Promise<{ vehicleId: string; ref: string; odometerKm: number; at: Date }[]> {
+    const res = await db.query<{ vehicleId: string; ref: string; odometerKm: number; at: Date }>(
+      `SELECT vehicle_id AS "vehicleId", public_id::text AS ref, odometer_km::float8 AS "odometerKm", completed_at AS at
+         FROM maintenance.maintenance_records
+        WHERE status = 'completed' AND odometer_km IS NOT NULL AND completed_at IS NOT NULL
+          AND ($1::timestamptz IS NULL OR completed_at >= $1)
+        ORDER BY completed_at, id`,
+      [since],
+    );
+    return res.rows;
+  }
+
   /** Row-locks the parts by public id, in id order (two repairs using the same parts never deadlock). */
   async lockParts(client: PoolClient, publicIds: readonly string[]): Promise<LockedPart[]> {
     if (publicIds.length === 0) return [];

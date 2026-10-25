@@ -27,6 +27,16 @@ describe('seed generator', () => {
     );
     expect(Object.fromEntries(audited.rows.map((r) => [r.entity_type, r.n]))).toEqual({ 'fleet.vehicles': 24, 'fleet.drivers': 30, 'trip.trips': 80, 'document.documents': 48 });
 
+    // Every vehicle's registered odometer, fuel log and completed repair with an odometer is a meter reading (FMS-126).
+    const readings = await pool.query<{ source: string; n: number }>('SELECT source, count(*)::int AS n FROM fleet.meter_readings GROUP BY 1');
+    const completedWithOdometer = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM maintenance.maintenance_records WHERE status = 'completed' AND odometer_km IS NOT NULL");
+    expect(Object.fromEntries(readings.rows.map((r) => [r.source, r.n]))).toEqual({
+      manual: 24,
+      fuel_log: summary.counts.fuel_logs,
+      maintenance: completedWithOdometer.rows[0].n,
+    });
+    expect(summary.counts.meter_readings).toBe(24 + summary.counts.fuel_logs + completedWithOdometer.rows[0].n);
+
     // The accounts it lists can sign in.
     expect(await canSignIn(SEED_ADMIN_EMAIL)).toBe(true);
 

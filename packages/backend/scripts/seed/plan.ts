@@ -436,6 +436,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   // in time order so each vehicle's odometer only goes up. About 3% are
   // well above what the distance explains, for the reconciliation screen.
   const odometer = vehicles.map((v) => v.odometer_km);
+  const baseOdometer = [...odometer];
   const fuelLogs: PlannedFuelLog[] = [];
   const completed = trips.map((trip, i) => ({ trip, i })).filter(({ trip }) => trip.status === 'completed').sort((a, b) => a.trip.actual_end!.localeCompare(b.trip.actual_end!) || a.i - b.i);
   for (const { trip, i } of completed) {
@@ -465,6 +466,10 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   }
   vehicles.forEach((v, i) => (v.odometer_km = odometer[i]));
 
+  /** A vehicle's odometer at a time: its base reading plus its trips completed by then (a repair's reading, FMS-126). */
+  const odometerAt = (vehicle: number, time: number) =>
+    round1(baseOdometer[vehicle] + completed.filter(({ trip }) => trip.vehicle === vehicle && Date.parse(trip.actual_end!) <= time).reduce((km, { trip }) => km + trip.actual_distance_km!, 0));
+
   // Maintenance history: mostly completed work, some open and scheduled.
   const maintenance: PlannedMaintenance[] = [];
   for (let m = 0; m < profile.maintenance; m++) {
@@ -475,6 +480,9 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     const hours = round1(repair.hours * rng.between(0.8, 1.4));
     const partsCost = used.reduce((sum, u) => sum + parts[u.part].unit_cost_cents * u.quantity, 0);
     const day = status === 'completed' ? -rng.int(1, 180) : status === 'scheduled' ? rng.int(1, 30) : -rng.int(0, 5);
+    const completedAt = status === 'completed' ? at(day, rng.int(9, 17)) : null;
+    // The odometer when the vehicle came in; scheduled work has not happened yet.
+    const slack = rng.int(0, 400);
     maintenance.push({
       vehicle,
       description: repair.description,
@@ -486,8 +494,8 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       // Scheduled work takes its parts when it is done, not now.
       parts: status === 'scheduled' ? [] : used,
       scheduled_at: status === 'scheduled' ? iso(at(day, 8)) : null,
-      completed_at: status === 'completed' ? iso(at(day, rng.int(9, 17))) : null,
-      odometer_km: round1(Math.max(0, vehicles[vehicle].odometer_km - rng.int(0, 400))),
+      completed_at: completedAt === null ? null : iso(completedAt),
+      odometer_km: status === 'scheduled' ? round1(Math.max(0, vehicles[vehicle].odometer_km - slack)) : odometerAt(vehicle, completedAt ?? at(day, 9)),
       workshop: rng.pick(WORKSHOPS),
       failures: [],
     });

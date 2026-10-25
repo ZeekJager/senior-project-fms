@@ -63,6 +63,8 @@ Through the application's own HTTP API, served in the seed process on a loopback
 
 Routes, trips and fuel logs have no API yet. They are inserted with `auditedMutation`, which writes the same audit entry a service would. Only the first admin is inserted directly, because the API needs someone to sign in as.
 
+Then every read model is rebuilt (`rebuildReadModels()`), because those inserts publish no events. That includes the meter readings of the fuel logs and completed repairs (FMS-126). Each vehicle's registered odometer is a manual reading. Each completed repair reads the odometer the vehicle had on its date: its base reading plus the trips completed by then.
+
 ## Repeatable
 
 `buildPlan(profile, seed, anchor)` (`scripts/seed/plan.ts`) turns the inputs into the whole dataset as plain data, with a seeded generator (mulberry32) and no clock. Running it with the same seed and anchor gives the same rows. The script prints a `fingerprint`: a SHA-256 of the business content of every seeded table. Two runs with the same seed and anchor print the same fingerprint.

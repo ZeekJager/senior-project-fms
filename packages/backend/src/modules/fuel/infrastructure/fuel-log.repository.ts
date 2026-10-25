@@ -125,6 +125,18 @@ export class FuelLogRepository extends Repository {
     return res.rows[0];
   }
 
+  /** Every fuel log's odometer, recorded at or after `since` (null: all): meter readings (FMS-126). */
+  async odometerReadings(db: Queryable, since: Date | null): Promise<{ vehicleId: string; ref: string; odometerKm: number; at: Date }[]> {
+    const res = await db.query<{ vehicleId: string; ref: string; odometerKm: number; at: Date }>(
+      `SELECT vehicle_id AS "vehicleId", public_id::text AS ref, odometer_km::float8 AS "odometerKm", recorded_at AS at
+         FROM fuel.fuel_logs
+        WHERE odometer_km IS NOT NULL AND ($1::timestamptz IS NULL OR recorded_at >= $1)
+        ORDER BY recorded_at, id`,
+      [since],
+    );
+    return res.rows;
+  }
+
   /** The highest odometer reading of a vehicle's fuel logs recorded at or before `at`, or null if none. */
   async lastOdometer(db: Queryable, vehicleId: string, at: Date): Promise<number | null> {
     const res = await db.query<{ km: number | null }>('SELECT max(odometer_km)::float8 AS km FROM fuel.fuel_logs WHERE vehicle_id = $1 AND recorded_at <= $2', [
