@@ -103,6 +103,15 @@ The rules that decide whether a driver and vehicle may be put on a trip are test
 
 The overlap decision is SQL (`tstzrange(..., '[]')`), not a function, so a unit test with a faked repository could only check its own stub. That is why the interval cases run against PostgreSQL. A unit test here answers "does the service do the right thing with that answer", never "is that the right answer".
 
+### The OpenAPI spec, both ways (FMS-119)
+
+`test/integration/openapi.test.ts` keeps `docs/openapi.yaml` and the mounted routes in step in both directions:
+
+- **Listed, so mounted.** Every operation in the spec answers on the real app (not "No route for"), every `$ref` resolves and every error code it names is in `ERROR_CODES`.
+- **Mounted, so listed.** The routes are read off the running app (`mountedRoutes`, the same walk as the startup access-policy check) and compared with the spec, method and path, with every parameter as `{}` (`:tripId` and `{trip_id}` are the same route). A route in neither the spec nor the exceptions fails: **mounting a route without documenting it fails CI**.
+- **The exceptions only shrink.** `test/support/openapi-baseline.ts` lists the routes that predate the spec (`NOT_YET_DOCUMENTED`), second mounts of a documented operation (`ALIASES`) and routes outside `/api/v1` (health). A line for a route that is gone, or that the spec now describes, fails the test, so documenting an operation means deleting its line. Never add a line for new work.
+- **Is the spec right?** These checks prove an operation exists, not that its schema is true. When you write one, run the real call and validate the response against the schema once (Ajv, from a scratch test); FMS-119's schemas were checked that way.
+
 ## Frontend
 
 Component tests sit next to the component as `*.test.tsx` and run in `jsdom` with [React Testing Library](https://testing-library.com/docs/react-testing-library/intro/). Query the page the way a user sees it (`getByRole`, `getByLabelText`), not by class names.

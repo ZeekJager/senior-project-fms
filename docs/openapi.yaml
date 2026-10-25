@@ -5,8 +5,11 @@ info:
   description: >
     Machine-readable contract for the endpoints listed here. docs/api-contract.md
     stays the full reference; an endpoint is added here as its card is built, and
-    test/integration/openapi.test.ts checks that every operation listed is mounted
-    and that every error code named is one the API sends.
+    test/integration/openapi.test.ts checks that every operation listed is mounted,
+    that every route the API mounts is listed (the ones that predate this file are
+    grandfathered in test/support/openapi-baseline.ts) and that every error code
+    named is one the API sends.
+    Trips, routes, inspections and fuel-log reads were added with FMS-119.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
     status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38);
@@ -18,6 +21,8 @@ security:
 
 tags:
   - name: Trips
+  - name: Routes
+  - name: Inspections
   - name: Vehicles
   - name: Dispatch
   - name: Integrations
@@ -29,6 +34,426 @@ tags:
   - name: Notifications
 
 paths:
+  /trips:
+    get:
+      tags: [Trips]
+      operationId: listTrips
+      summary: Trip history, newest first (FMS-30)
+      description: >
+        Needs trip:read. Staff see their depots' trips and a driver only their own. Keyset paging: pass the
+        previous page's meta.next_cursor as cursor; next_cursor is null on the last page. A filter that names
+        something unknown or outside the caller's scope matches nothing: an empty page, not an error. A date
+        in from or to means that Addis Ababa day (UTC+3); `to` covers the whole day. api-contract §7.2.
+      parameters:
+        - { name: status, in: query, description: 'One status or several, comma-separated: scheduled,assigned.', schema: { type: string } }
+        - { name: driver_id, in: query, schema: { type: string, format: uuid } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: route_id, in: query, schema: { type: string, format: uuid } }
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: A date or an instant (with offset)., schema: { type: string } }
+        - { name: to, in: query, description: 'A date or an instant (with offset); must be after from.', schema: { type: string } }
+        - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 200 } }
+      responses:
+        '200':
+          description: A page of trips.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Trip' }
+                  meta:
+                    type: object
+                    required: [page_size, next_cursor, request_id]
+                    properties:
+                      page_size: { type: integer }
+                      next_cursor: { type: [string, 'null'] }
+                      request_id: { type: string, format: uuid }
+        '400':
+          description: >
+            VALIDATION_FAILED (an unknown parameter, a bad status or date, an invalid_cursor) or
+            VALIDATION_INVALID_DATE_RANGE (to not after from).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Trips]
+      operationId: createTrip
+      summary: Schedule a trip on a route (FMS-30)
+      description: >
+        Needs trip:write (admin, fleet manager, dispatcher). The trip copies the route's origin, destination,
+        distance, duration and stops, starts as scheduled and has no driver or vehicle yet (assign them with
+        POST /trips/{trip_id}/assign). The route must be active and in the caller's depots. Publishes
+        TripCreated. Audited. Location names the trip.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [route_id, scheduled_start, scheduled_end]
+              properties:
+                route_id: { type: string, format: uuid }
+                scheduled_start: { type: string, format: date-time, description: With an offset. }
+                scheduled_end: { type: string, format: date-time, description: With an offset; after scheduled_start. }
+      responses:
+        '201':
+          description: Scheduled.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Trip' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a field that is not writable; route_id references_missing_record or
+            route_retired) or VALIDATION_INVALID_DATE_RANGE (scheduled_end not after scheduled_start).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /trips/{trip_id}:
+    get:
+      tags: [Trips]
+      operationId: getTrip
+      summary: One trip (FMS-30)
+      description: Needs trip:read. A trip outside the caller's depots, or another driver's, is 404. The ETag is the version.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: The trip.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Trip' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Trips]
+      operationId: updateTrip
+      summary: Reschedule or cancel a trip (FMS-30)
+      description: >
+        Needs trip:write. Send scheduled_start and/or scheduled_end to reschedule, or status cancelled to cancel;
+        at least one field. Only an open trip (draft, scheduled, assigned) changes: a trip under way is ended, not
+        cancelled, and a completed or cancelled trip never changes. A draft that gets both times becomes
+        scheduled. Send If-Match to refuse a stale write. Publishes TripUpdated (rescheduled) or TripCancelled.
+        Audited.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                scheduled_start: { type: string, format: date-time }
+                scheduled_end: { type: string, format: date-time }
+                status: { type: string, enum: [cancelled] }
+      responses:
+        '200':
+          description: The trip after the change (unchanged if the body changed nothing).
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Trip' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (an empty_update, or a field that is not writable) or
+            VALIDATION_INVALID_DATE_RANGE (the end not after the start).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >
+            CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match) or CONFLICT_INVALID_STATE_TRANSITION (a trip
+            under way cancelled, or a completed or cancelled trip changed).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /routes:
+    get:
+      tags: [Routes]
+      operationId: listRoutes
+      summary: Routes (FMS-83)
+      description: >
+        Needs route:read. Depot scope applies: a depot's dispatcher never sees another depot's routes. The
+        default list is the active routes (the ones offered for new trips); status retired lists the retired,
+        all both. search matches name, origin and destination. api-contract §7.1.
+      parameters:
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: status, in: query, schema: { type: string, enum: [active, retired, all], default: active } }
+        - { name: sort_by, in: query, schema: { type: string, enum: [name, distance_km, updated_at], default: name } }
+        - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of routes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Route' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED, or VALIDATION_INVALID_ENUM (an unknown status or sort).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Routes]
+      operationId: createRoute
+      summary: Create a route (FMS-83)
+      description: >
+        Needs route:write (admin, fleet manager, dispatcher, depot admin). The depot is required and must be one
+        of the caller's. Active route names are unique within a depot, case-insensitively. The distance is
+        entered by hand until the mapping adapter measures it. Publishes RouteCreated. Audited. Location names
+        the route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/RouteFields'
+                - type: object
+                  required: [name, depot_id]
+      responses:
+        '201':
+          description: Created.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Route' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a required field missing; depot_id references_missing_record; a coordinate out of
+            range, incomplete_coordinates or too_many_decimals; too many stops).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (the depot already has an active route with this name).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /routes/{route_id}:
+    get:
+      tags: [Routes]
+      operationId: getRoute
+      summary: One route (FMS-83)
+      description: Needs route:read. A route outside the caller's depots is 404. The ETag is the version.
+      parameters:
+        - $ref: '#/components/parameters/RouteId'
+      responses:
+        '200':
+          description: The route.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Route' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Routes]
+      operationId: updateRoute
+      summary: Change or retire a route (FMS-83)
+      description: >
+        Needs route:write. Send the fields to change, at least one; null clears an origin, a destination, the
+        distance or the duration. is_active false retires the route: past trips keep pointing at it, it is no
+        longer offered for new ones and its name is free again; bringing it back can collide on the name. A
+        request that changes nothing writes and publishes nothing. Send If-Match to refuse a stale write.
+        Publishes RouteUpdated with changed_fields. Audited.
+      parameters:
+        - $ref: '#/components/parameters/RouteId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/RouteFields'
+                - type: object
+                  minProperties: 1
+                  properties:
+                    is_active: { type: boolean, description: False retires the route. }
+      responses:
+        '200':
+          description: The route after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Route' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (an empty_update; a field that is not writable, geometry included; a null
+            depot_id; the same coordinate rules as creating).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match) or CONFLICT_DUPLICATE (the name is taken by an active route).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /dvir-reports:
+    post:
+      tags: [Inspections]
+      operationId: submitDvir
+      summary: Submit a vehicle inspection (FMS-36)
+      description: >
+        Needs dvir:write (drivers, technicians, depot admins, fleet managers, admins). A driver submits their own
+        (driver_id is not writable for them); everyone else must name the driver. items is the checklist and a
+        failed item is a defect: any defect forces issues_found true, flags the vehicle for maintenance in the same
+        transaction and publishes VehicleFaultDetected. submitted_at is when the driver pressed submit, so an
+        inspection queued offline keeps its time (not in the future, not over 30 days old). A trip's inspection of
+        one type is recorded once: submitting it again answers 200 with the original and meta.created false.
+        Publishes nothing else. api-contract §6.4.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DvirInput' }
+      responses:
+        '201': { $ref: '#/components/responses/DvirRecorded' }
+        '200': { $ref: '#/components/responses/DvirRecorded' }
+        '400':
+          description: >
+            VALIDATION_FAILED (vehicle, trip or driver references_missing_record; vehicle_retired;
+            trip_vehicle_mismatch; driver required, not_writable or no_driver_profile; submitted_at in_future or
+            too_old; a duplicate_item), or VALIDATION_INVALID_ENUM (an unknown type).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /dvir:
+    post:
+      tags: [Inspections]
+      operationId: submitDvirAlias
+      summary: Submit a vehicle inspection (alias of POST /dvir-reports)
+      description: The legacy-compatible alias of POST /dvir-reports, with the same behaviour, body and responses.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DvirInput' }
+      responses:
+        '201': { $ref: '#/components/responses/DvirRecorded' }
+        '200': { $ref: '#/components/responses/DvirRecorded' }
+        '400':
+          description: As POST /dvir-reports.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /vehicles/{vehicle_id}/dvir-reports:
+    get:
+      tags: [Inspections]
+      operationId: listVehicleDvirReports
+      summary: A vehicle's inspection history (FMS-36)
+      description: >
+        Needs dvir:read. A driver sees only their own reports; a vehicle outside the caller's depots is 404. Newest
+        first by submitted_at (sort_order asc for oldest first). A date in from or to means that Addis Ababa day
+        (UTC+3).
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: type, in: query, schema: { type: string, enum: [pre_trip, post_trip, routine, other] } }
+        - { name: issues_found, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: from, in: query, description: A date or an instant (with offset)., schema: { type: string } }
+        - { name: to, in: query, description: A date or an instant (with offset)., schema: { type: string } }
+        - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of inspection reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DvirReport' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED, or VALIDATION_INVALID_ENUM (an unknown type).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /trips/{trip_id}/assign:
     post:
       tags: [Trips]
@@ -785,6 +1210,41 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /fuel-logs:
+    get:
+      tags: [Fuel]
+      operationId: listFuelLogs
+      summary: Fuel logs, newest first (FMS-39)
+      description: >
+        Needs fuel:read. Staff see their depots' logs; a driver lists only their own. Newest first by recorded_at
+        (sort_order asc for oldest first). A date in from or to means that Addis Ababa day (UTC+3). A filter
+        naming something outside the caller's scope matches nothing. api-contract §9.1.
+      parameters:
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: driver_id, in: query, schema: { type: string, format: uuid } }
+        - { name: trip_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: A date or an instant (with offset)., schema: { type: string } }
+        - { name: to, in: query, description: A date or an instant (with offset)., schema: { type: string } }
+        - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of fuel logs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FuelLog' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown parameter, a bad date or id).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Fuel]
       operationId: logFuel
@@ -842,6 +1302,29 @@ paths:
             fueled_at; above_later_reading: higher than a log after it), CONFLICT_IDEMPOTENCY_KEY_REUSED or
             CONFLICT_IDEMPOTENCY_IN_PROGRESS.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /fuel-logs/{fuel_log_id}:
+    get:
+      tags: [Fuel]
+      operationId: getFuelLog
+      summary: One fuel log (FMS-39)
+      description: Needs fuel:read. Another driver's log, or one outside the caller's depots, is 404, the same as a missing one.
+      parameters:
+        - $ref: '#/components/parameters/FuelLogId'
+      responses:
+        '200':
+          description: The fuel log.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelLog' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /incidents:
     post:
@@ -1213,6 +1696,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    RouteId:
+      name: route_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    FuelLogId:
+      name: fuel_log_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     IfMatch:
       name: If-Match
       in: header
@@ -1294,6 +1787,23 @@ components:
         malformed_signature or signature_mismatch) or AUTH_TOKEN_EXPIRED (a genuine signature with a timestamp more
         than 5 minutes from the server clock: a replay). Nothing is stored.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    DvirRecorded:
+      description: >
+        The inspection: 201 when it was recorded now, 200 when this trip already had one of this type (the original
+        is returned and meta.created is false).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/DvirReport' }
+              meta:
+                type: object
+                required: [created, request_id]
+                properties:
+                  created: { type: boolean }
+                  request_id: { type: string, format: uuid }
     Unauthenticated:
       description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
@@ -1342,6 +1852,136 @@ components:
           properties:
             request_id: { type: string, format: uuid }
             timestamp: { type: string, format: date-time }
+
+    PageMeta:
+      type: object
+      description: The meta of a paged list (api-contract §18).
+      required: [page, page_size, total_items, total_pages, request_id]
+      properties:
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 100 }
+        total_items: { type: integer, minimum: 0 }
+        total_pages: { type: integer, minimum: 0 }
+        request_id: { type: string, format: uuid }
+
+    Coordinates:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90, description: At most 6 decimals. }
+        longitude: { type: number, minimum: -180, maximum: 180, description: At most 6 decimals. }
+
+    RouteFields:
+      type: object
+      description: >
+        What a route is made of. Anything else is refused (VALIDATION_FAILED, reason not_writable). Strings are
+        trimmed.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        depot_id: { type: string, format: uuid, description: One of the caller's depots; never null. }
+        origin_name: { type: [string, 'null'], maxLength: 255 }
+        origin: { oneOf: [{ $ref: '#/components/schemas/Coordinates' }, { type: 'null' }] }
+        destination_name: { type: [string, 'null'], maxLength: 255 }
+        destination: { oneOf: [{ $ref: '#/components/schemas/Coordinates' }, { type: 'null' }] }
+        stops:
+          type: array
+          maxItems: 25
+          description: In travel order. A stop gives both latitude and longitude, or neither.
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, minLength: 1, maxLength: 255 }
+              latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+              longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+        distance_km: { type: [number, 'null'], minimum: 0, maximum: 100000, description: Entered by hand; at most 3 decimals. }
+        estimated_duration_seconds: { type: [integer, 'null'], minimum: 0, maximum: 2592000 }
+
+    Route:
+      type: object
+      description: A reusable route (FMS-83). A retired route (is_active false) stays readable for the trips that used it.
+      required: [id, name, depot_id, origin_name, origin, destination_name, destination, stops, distance_km, estimated_duration_seconds, is_active, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        depot_id: { type: string, format: uuid }
+        origin_name: { type: [string, 'null'] }
+        origin: { oneOf: [{ $ref: '#/components/schemas/Coordinates' }, { type: 'null' }] }
+        destination_name: { type: [string, 'null'] }
+        destination: { oneOf: [{ $ref: '#/components/schemas/Coordinates' }, { type: 'null' }] }
+        stops:
+          type: array
+          items:
+            type: object
+            required: [name, latitude, longitude]
+            properties:
+              name: { type: string }
+              latitude: { type: [number, 'null'] }
+              longitude: { type: [number, 'null'] }
+        distance_km: { type: [number, 'null'] }
+        estimated_duration_seconds: { type: [integer, 'null'] }
+        is_active: { type: boolean }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DvirInput:
+      type: object
+      additionalProperties: false
+      required: [vehicle_id, type, items]
+      properties:
+        vehicle_id: { type: string, format: uuid, description: A live vehicle in the caller's depots. }
+        trip_id: { type: string, format: uuid, description: A trip the caller may see; if it has a vehicle, this one. }
+        driver_id: { type: string, format: uuid, description: Required for staff; a driver must leave it out. }
+        type: { type: string, enum: [pre_trip, post_trip, routine, other] }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: The checklist; each name once (case-insensitively).
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, passed]
+            properties:
+              name: { type: string, minLength: 1, maxLength: 100 }
+              passed: { type: boolean, description: False is a defect. }
+              notes: { type: [string, 'null'], maxLength: 1000 }
+        issues_found: { type: boolean, description: The driver's own answer; any failed item forces it true. }
+        submitted_at: { type: string, format: date-time, description: 'When the driver pressed submit. Default now; not in the future (5 minutes of clock drift allowed), not over 30 days ago.' }
+
+    DvirReport:
+      type: object
+      description: A vehicle inspection (FMS-36).
+      required: [id, vehicle_id, driver_id, trip_id, type, status, items, defects, issues_found, submitted_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        trip_id: { type: [string, 'null'], format: uuid }
+        type: { type: string, enum: [pre_trip, post_trip, routine, other] }
+        status: { type: string, enum: [submitted, reviewed, requires_action, closed] }
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, passed, notes]
+            properties:
+              name: { type: string }
+              passed: { type: boolean }
+              notes: { type: [string, 'null'] }
+        defects:
+          type: array
+          description: The failed items.
+          items:
+            type: object
+            required: [name, notes]
+            properties:
+              name: { type: string }
+              notes: { type: [string, 'null'] }
+        issues_found: { type: boolean }
+        submitted_at: { type: string, format: date-time, description: Earlier than created_at when it came from the offline queue. }
+        created_at: { type: string, format: date-time }
 
     TripStatus:
       type: string

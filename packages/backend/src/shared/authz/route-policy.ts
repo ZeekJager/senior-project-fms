@@ -35,7 +35,7 @@ export function publicRoute(): RequestHandler {
 interface Layer {
   name?: string;
   regexp?: RegExp;
-  route?: { path: string; methods: Record<string, boolean>; stack: { handle: unknown }[] };
+  route?: { path: string | string[]; methods: Record<string, boolean>; stack: { handle: unknown }[] };
   handle?: { stack?: Layer[] };
 }
 
@@ -49,29 +49,40 @@ function mountPath(layer: Layer): string {
     .replace(/^\/?$/, '');
 }
 
-function collect(stack: Layer[], prefix: string, out: { route: string; ok: boolean }[]): void {
+/** One mounted route: an upper-case method, its full path (`/api/v1/trips/:tripId`), and whether it declares a policy. */
+export interface MountedRoute {
+  method: string;
+  path: string;
+  ok: boolean;
+}
+
+function collect(stack: Layer[], prefix: string, out: MountedRoute[]): void {
   for (const layer of stack) {
     if (layer.route) {
-      const methods = Object.keys(layer.route.methods)
-        .filter((m) => layer.route!.methods[m])
-        .map((m) => m.toUpperCase())
-        .join(',');
-      out.push({
-        route: `${methods} ${prefix}${layer.route.path}`,
-        ok: layer.route.stack.some((s) => policyOf(s.handle) !== undefined),
-      });
+      const ok = layer.route.stack.some((s) => policyOf(s.handle) !== undefined);
+      const methods = Object.keys(layer.route.methods).filter((m) => layer.route!.methods[m]);
+      for (const path of [layer.route.path].flat()) {
+        for (const method of methods) out.push({ method: method.toUpperCase(), path: `${prefix}${path}`, ok });
+      }
     } else if (layer.name === 'router' && layer.handle?.stack) {
       collect(layer.handle.stack, prefix + mountPath(layer), out);
     }
   }
 }
 
+/** Every route the app serves, one entry per method and path. */
+export function mountedRoutes(app: Express): MountedRoute[] {
+  const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack ?? [];
+  const routes: MountedRoute[] = [];
+  collect(stack, '', routes);
+  return routes;
+}
+
 /** Every route (method and path) that declares no policy. */
 export function routesWithoutPolicy(app: Express): string[] {
-  const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack ?? [];
-  const routes: { route: string; ok: boolean }[] = [];
-  collect(stack, '', routes);
-  return routes.filter((r) => !r.ok).map((r) => r.route);
+  return mountedRoutes(app)
+    .filter((r) => !r.ok)
+    .map((r) => `${r.method} ${r.path}`);
 }
 
 /**
