@@ -1128,6 +1128,35 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /vehicles/{vehicle_id}/maintenance-risk:
+    get:
+      tags: [Maintenance]
+      operationId: getVehicleMaintenanceRisk
+      summary: A vehicle's latest health score and what drives it (FMS-56)
+      description: >
+        The vehicle's latest prediction from the nightly scoring (FMS-55, docs/ml-scoring.md): health score, risk
+        level, failure probability within 30 days, and up to 3 factors (the inputs raising its risk most, largest
+        first) with the vehicle's value when scored. Never a new model call. A vehicle never scored has null score
+        fields and no factors. stale is true when the score is more than 25 hours old. Needs prediction:read
+        (not dispatchers or drivers: they see health_score on the vehicle only), in the caller's depot scope; a
+        vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+      responses:
+        '200':
+          description: The vehicle's maintenance risk.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MaintenanceRisk' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /ml-models:
     get:
       tags: [Maintenance]
@@ -2080,6 +2109,34 @@ components:
         maintenance_record_id: { type: [string, 'null'], format: uuid }
         odometer_km: { type: [number, 'null'], description: "The repair's odometer, if it was entered." }
         part_number: { type: [string, 'null'], description: The part that renewed it. }
+
+    MaintenanceRisk:
+      type: object
+      description: A vehicle's latest prediction (FMS-55, FMS-56). Score fields are null for a vehicle never scored.
+      required: [vehicle_id, prediction_id, health_score, risk_level, failure_probability, prediction_horizon_days, factors, model_name, model_version, as_of, scored_at, stale]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        prediction_id: { type: [string, 'null'], format: uuid }
+        health_score: { type: [integer, 'null'], minimum: 0, maximum: 100, description: 'round((1 - failure_probability) * 100)' }
+        risk_level: { type: [string, 'null'], enum: [low, medium, high, null], description: 'low at 75 and up, high at 40 and below.' }
+        failure_probability: { type: [number, 'null'], minimum: 0, maximum: 1, description: The chance of an unplanned failure within the horizon. }
+        prediction_horizon_days: { type: [integer, 'null'], example: 30 }
+        factors:
+          type: array
+          maxItems: 3
+          description: The inputs raising this vehicle's risk most, largest first. Empty for a healthy or unscored vehicle.
+          items:
+            type: object
+            required: [feature, value, unit]
+            properties:
+              feature: { type: string, example: days_since_last_service, description: An input of feature_spec.json. }
+              value: { type: [number, 'null'], example: 100, description: "The vehicle's value when scored." }
+              unit: { type: [string, 'null'], example: d }
+        model_name: { type: [string, 'null'], example: predictive-maintenance }
+        model_version: { type: [string, 'null'], example: pm-2026.10 }
+        as_of: { type: [string, 'null'], format: date-time, description: The scoring time the inputs were computed as of (the start of the day, Addis Ababa). }
+        scored_at: { type: [string, 'null'], format: date-time }
+        stale: { type: boolean, description: Scored more than 25 hours ago. }
 
     MlModel:
       type: object

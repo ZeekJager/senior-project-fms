@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
 import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
 import type { DocumentHealth } from '@/features/documents/expiry'
+import { HealthBadge } from '@/features/health/HealthBadge'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
 
 const TYPE_ICONS: Record<VehicleType, LucideIcon> = {
@@ -26,6 +27,8 @@ export interface ColumnContext {
   onOpenDocuments: (vehicle: Vehicle) => void
   /** Status and availability (FMS-76): everyone who sees the list may open it. */
   onStatus: (vehicle: Vehicle) => void
+  /** The health score's breakdown (FMS-56): given only with prediction:read; others see the badge alone. */
+  onHealth?: (vehicle: Vehicle) => void
 }
 
 /**
@@ -118,6 +121,17 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       optional: true,
       cell: (v) => <StatusText status={v.status} />,
       skeleton: <Skeleton className="h-5 w-20 rounded-full" />,
+    },
+    {
+      key: 'health',
+      header: 'Health',
+      sortKey: 'health_score',
+      width: 'w-[128px]',
+      hideBelow: 'md',
+      optional: true,
+      label: 'Health score',
+      cell: (v) => <HealthBadge score={v.health_score} updatedAt={v.health_score_updated_at} onOpen={ctx.onHealth ? () => ctx.onHealth!(v) : undefined} />,
+      skeleton: <Skeleton className="h-6 w-14 rounded-full" />,
     },
     {
       key: 'trip',

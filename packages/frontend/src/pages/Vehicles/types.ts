@@ -30,6 +30,8 @@ export interface Vehicle {
   status: VehicleStatus
   maintenance_flag: boolean
   health_score: number | null
+  /** When the nightly scoring last set it (FMS-55); null when never scored. */
+  health_score_updated_at: string | null
   depot_id: string
   odometer_km: number
   current_trip: VehicleTrip | null

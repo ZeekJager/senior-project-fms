@@ -1,10 +1,11 @@
-import { Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
+import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
@@ -73,6 +74,14 @@ export const portals: Portal[] = [
         element: <MaintenancePage />,
         permission: 'maintenance:read',
         nav: { label: 'Repair log', icon: Wrench },
+      },
+      {
+        // S-19 (FMS-56). prediction:read: admin, fleet manager, depot admin, technician, compliance officer, fleet owner.
+        // Dispatchers see a vehicle's health badge on Vehicles, not this screen or the breakdown.
+        path: '/predictive-maintenance',
+        element: <PredictiveMaintenancePage />,
+        permission: 'prediction:read',
+        nav: { label: 'Vehicle health', icon: Activity },
       },
       {
         // S-09. inventory:read: admin, fleet manager, depot admin, technician (FMS-25).

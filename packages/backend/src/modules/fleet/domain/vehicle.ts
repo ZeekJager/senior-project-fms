@@ -33,6 +33,8 @@ export interface VehicleView {
   status: VehicleStatus;
   maintenance_flag: boolean;
   health_score: number | null;
+  /** When the nightly scoring (FMS-55) last set `health_score`; null when never scored. */
+  health_score_updated_at: Date | null;
   depot_id: string;
   odometer_km: number;
   /** The assigned or en-route trip, if any (en route first). */
@@ -42,6 +44,15 @@ export interface VehicleView {
   created_at: Date;
   updated_at: Date;
 }
+
+/**
+ * The health score's bands (FMS-56), as the screens colour them: below 75 at risk (the alert line, CFG-3),
+ * 75 to 84 watch, 85 and up healthy. A score older than 25 hours is stale whatever its value: the nightly
+ * scoring missed it. The `health` list filter takes these, plus `unscored`.
+ */
+export const HEALTH_BANDS = { atRiskBelow: 75, healthyFrom: 85, staleAfterHours: 25 } as const;
+export const HEALTH_FILTERS = ['at_risk', 'watch', 'healthy', 'stale', 'unscored'] as const;
+export type HealthFilter = (typeof HEALTH_FILTERS)[number];
 
 /** Event types this module publishes (CONVENTIONS.md, Events). */
 export const VEHICLE_EVENTS = {
