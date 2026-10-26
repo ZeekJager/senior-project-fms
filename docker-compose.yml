@@ -116,19 +116,24 @@ services:
     depends_on:
       - backend
 
-  # 5. Python AI Service
+  # 5. The predictive maintenance service (FMS-54, docs/ml-service.md). Internal
+  # only: not published to the host; the backend reaches it at
+  # http://ai-service:5000 with ML_SERVICE_TOKEN. Its model is trained when
+  # the image is built.
   ai-service:
     build:
       context: ./packages/ai-service
       dockerfile: Dockerfile.dev
     container_name: fms_ai_service
-    ports:
-      - "5000:5000"
     volumes:
       - ./packages/ai-service:/app
     environment:
-      FLASK_ENV: development
       ML_SERVICE_TOKEN: "${ML_SERVICE_TOKEN:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

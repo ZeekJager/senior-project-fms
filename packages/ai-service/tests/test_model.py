@@ -14,19 +14,7 @@ from ml.spec import feature_names, spec_hash, target_name
 import evaluate as evaluate_cli
 import train as train_cli
 
-VERSION = "pm-2026.10"
-
-
-@pytest.fixture(scope="module")
-def trained(tmp_path_factory):
-    """The dataset, written as the generator writes it, and the model train.py makes from it."""
-    root = tmp_path_factory.mktemp("model")
-    data = root / "training_data.csv"
-    to_csv(generate(), data)
-    assert train_cli.main(["--data", str(data), "--out", str(root / "models"), "--version", VERSION]) == 0
-    folder = root / "models" / VERSION
-    metadata, metrics = artefact.read(folder)
-    return {"root": root, "data": data, "folder": folder, "metadata": metadata, "metrics": metrics}
+from conftest import VERSION
 
 
 def test_the_split_holds_out_one_vehicle_in_five_with_the_fleets_share_of_failures():
@@ -81,6 +69,9 @@ def test_the_folder_carries_its_version_inputs_spec_hash_training_data_and_check
     assert data["sha256"] == artefact.sha256(trained["data"])
     assert data["train_rows"] + data["test_rows"] == 12000 and len(data["test_vehicles"]) == trained["metrics"]["test"]["vehicles"]
     assert (folder / "model.joblib").stat().st_size < 50e6
+    # The training rows' typical inputs, which the service explains a prediction against (FMS-54).
+    assert list(meta["feature_medians"]) == feature_names()
+    assert meta["feature_medians"]["age_years"] == trained["metrics"]["examples"]["high_risk"]["inputs"]["age_years"]
 
 
 def test_feature_importance_lists_every_input_most_important_first(trained):

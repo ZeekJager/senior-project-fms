@@ -3,5 +3,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+# The model the service starts with, trained at build time from the seeded dataset (the same data every
+# build). It lives outside /app, so the source volume of docker-compose.yml does not hide it.
+RUN python scripts/generate_training_data.py --out /tmp/training_data.csv \
+ && python scripts/train.py --data /tmp/training_data.csv --out /opt/models \
+ && rm /tmp/training_data.csv
+ENV ML_MODELS_DIR=/opt/models
+RUN useradd --system --uid 10001 ml
+USER ml
 EXPOSE 5000
-CMD ["python", "app.py"]
+CMD ["uvicorn", "app:create_app", "--factory", "--host", "0.0.0.0", "--port", "5000"]

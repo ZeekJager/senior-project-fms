@@ -31,8 +31,8 @@ secretGroup = 1
 keywords = ["pass", "secret", "token"]
 
   [[rules.allowlists]]
-  # Test-only code (test files, test/ support folders) uses obvious fake values.
-  paths = ['''(?i)\.test\.(ts|tsx|js)$''', '''(?i)(^|[/\\])test[/\\]''']
+  # Test-only code (test files, test/ support folders, the Python services' tests/) uses obvious fake values.
+  paths = ['''(?i)\.test\.(ts|tsx|js)$''', '''(?i)(^|[/\\])test[/\\]''', '''(?i)(^|[/\\])tests[/\\][^/\\]+\.py$''']
 
   [[rules.allowlists]]
   # The Impeccable design skill (.claude/ and .github/) ships minified scripts

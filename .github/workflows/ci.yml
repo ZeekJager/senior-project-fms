@@ -119,7 +119,8 @@ jobs:
         run: npm run build -w fms-frontend
 
   # The Python ML service: the feature spec, the training dataset generator and
-  # its data quality checks (FMS-52), and the predictive model (FMS-53), under pytest.
+  # its data quality checks (FMS-52), the predictive model (FMS-53) and the service
+  # that serves it (FMS-54), under pytest.
   ai-service:
     name: ai-service-ci
     runs-on: ubuntu-24.04

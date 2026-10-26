@@ -104,6 +104,7 @@ The health score is read as a probability, and the core alerts below 75, a 25% c
 - `features` (in order), `target` and the health score formula;
 - `feature_spec_version` and `feature_spec_hash`;
 - `training_data`: the file's SHA-256, its rows, vehicles and date range, the split, and the held-out vehicles;
+- `feature_medians`: each input's median in the training rows, which the service explains a prediction against ([ml-service.md](ml-service.md));
 - the library versions;
 - `artefact_sha256`, the checksum of `model.joblib`.
 
