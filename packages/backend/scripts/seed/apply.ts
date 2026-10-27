@@ -3,6 +3,7 @@ import { config } from '../../src/config';
 import { pool } from '../../src/db';
 import { rebuildReadModels } from '../../src/modules';
 import { hashPassword } from '../../src/modules/auth';
+import { recordAuditEntry } from '../../src/shared/infrastructure/audit-log';
 import { auditedMutation, type MutationContext } from '../../src/shared/infrastructure/audited-mutation';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
 import { SeedApi } from './api-client';
@@ -10,6 +11,10 @@ import { fingerprint } from './fingerprint';
 import { assertNotProduction } from './guard';
 import { placeholderPdf } from './pdf';
 import { buildPlan, type ProfileName, type SeedPlan } from './plan';
+import { tripTrack } from './tracks';
+
+/** GPS pings written per statement (and per audit entry, as the ingestion audits a batch). */
+const PING_BATCH = 5000;
 
 export interface SeedOptions {
   profile: ProfileName;
@@ -292,6 +297,30 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
       });
     }
     log(`fuel logs: ${plan.fuelLogs.length}`);
+
+    // Each completed trip's GPS track (FMS-136), as the driver's phone reports it: in batches, one audit entry
+    // each, like the ingestion. Each vehicle's current location follows its newest ping (trigger).
+    const pings = plan.trips.flatMap((t, i) => tripTrack(plan, i).map((p) => ({ ...p, vehicle: vehicles[t.vehicle!], trip: trips[i] })));
+    for (let i = 0; i < pings.length; i += PING_BATCH) {
+      const batch = pings.slice(i, i + PING_BATCH);
+      const col = <K extends keyof (typeof batch)[number]>(key: K) => batch.map((p) => p[key]);
+      await client.query(
+        `INSERT INTO tracking.gps_pings (vehicle_id, trip_id, latitude, longitude, speed_kmh, heading_degrees, source, recorded_at)
+         SELECT v, t, lat, lng, speed, heading, 'phone', at
+           FROM unnest($1::bigint[], $2::bigint[], $3::numeric[], $4::numeric[], $5::smallint[], $6::numeric[], $7::timestamptz[])
+                AS u(v, t, lat, lng, speed, heading, at)`,
+        [col('vehicle'), col('trip'), col('latitude'), col('longitude'), col('speed_kmh'), col('heading'), col('recorded_at')],
+      );
+      await recordAuditEntry(client, {
+        action: 'tracking.pings_ingested',
+        userId: ctx.userId,
+        entityType: 'tracking.gps_pings',
+        entityId: null,
+        correlationId: ctx.correlationId,
+        details: { source: 'phone', seeded: true, received: batch.length, accepted: batch.length },
+      });
+    }
+    log(`gps pings: ${pings.length}`);
   });
 }
 
@@ -308,6 +337,7 @@ async function countRows(anchor: string): Promise<Record<string, number>> {
            (SELECT count(*) FROM trip.trips)::int AS trips,
            (SELECT count(DISTINCT status) FROM trip.trips)::int AS trip_statuses,
            (SELECT count(*) FROM fuel.fuel_logs)::int AS fuel_logs,
+           (SELECT count(*) FROM tracking.gps_pings)::int AS gps_pings,
            (SELECT count(*) FROM fleet.meter_readings)::int AS meter_readings,
            (SELECT count(*) FROM maintenance.maintenance_records)::int AS maintenance_records,
            (SELECT count(*) FROM maintenance.failure_events)::int AS failure_events,

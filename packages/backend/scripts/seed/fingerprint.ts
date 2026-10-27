@@ -50,6 +50,11 @@ const QUERIES: Record<string, string> = {
                 f.odometer_km, f.station_name, f.source, f.recorded_at
            FROM fuel.fuel_logs f JOIN fleet.vehicles v ON v.id = f.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = f.driver_id
           ORDER BY f.recorded_at, v.registration_number`,
+  // GPS tracks (FMS-136): about 55,000 pings on the budget profile, so per vehicle, not row by row.
+  gps: `SELECT v.registration_number, count(*) AS pings, min(p.recorded_at) AS first, max(p.recorded_at) AS last,
+               sum(p.latitude) AS lat, sum(p.longitude) AS lng, sum(p.speed_kmh) AS speed, sum(p.heading_degrees) AS heading
+          FROM tracking.gps_pings p JOIN fleet.vehicles v ON v.id = p.vehicle_id
+         GROUP BY v.registration_number ORDER BY v.registration_number`,
 };
 
 /** SHA-256 (hex) over every query's rows, in a fixed order. */

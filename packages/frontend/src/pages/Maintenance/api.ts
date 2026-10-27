@@ -73,6 +73,8 @@ export interface RecordFilters {
   view: 'open' | 'completed' | 'all'
   vehicleId: string
   page: number
+  /** By when the work happened instead of when it was entered: a vehicle's history (FMS-136). */
+  byWorkDate?: boolean
 }
 
 export function useRecords(filters: RecordFilters) {
@@ -84,6 +86,7 @@ export function useRecords(filters: RecordFilters) {
       if (filters.view === 'open') q.set('open', 'true')
       if (filters.view === 'completed') q.set('status', 'completed')
       if (filters.vehicleId) q.set('vehicle_id', filters.vehicleId)
+      if (filters.byWorkDate) q.set('sort_by', 'work_date')
       const { data, meta } = await api.requestEnvelope<MaintenanceRecord[]>(`/maintenance?${q}`)
       return { records: data, meta: meta as unknown as PageMeta }
     },

@@ -93,7 +93,7 @@ export function HealthDrawer({ vehicle, onClose, onSchedule }: HealthDrawerProps
   )
 }
 
-function HealthDetail({ view }: { view: MaintenanceRisk }) {
+export function HealthDetail({ view }: { view: MaintenanceRisk }) {
   const score = view.health_score!
   const band = bandOf(score)
   const chance = view.failure_probability === null ? null : Math.round(view.failure_probability * 100)
@@ -219,7 +219,7 @@ function ScoreGauge({ score, band }: { score: number; band: HealthBand | null })
   )
 }
 
-function HealthSkeleton() {
+export function HealthSkeleton() {
   return (
     <div className="space-y-8" aria-hidden="true">
       <div className="flex flex-col items-center gap-3">

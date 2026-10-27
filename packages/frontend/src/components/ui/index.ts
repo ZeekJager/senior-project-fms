@@ -1,5 +1,5 @@
 // The design system's building blocks (docs/design-system.md).
-export { Button, IconButton, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
+export { Button, IconButton, iconButtonClass, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
 export { cn } from './cn'
 export { Combobox, type ComboboxOption } from './Combobox'
 export { SelectField, TextAreaField, TextField, type SelectFieldProps, type TextAreaFieldProps, type TextFieldProps } from './Field'

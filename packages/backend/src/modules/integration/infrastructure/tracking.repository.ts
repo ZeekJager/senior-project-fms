@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { PingSource } from '../domain/gps';
 import { STOPPED_LOOKBACK_HOURS } from '../domain/live-map';
+import type { TrackPointRow, TrackQuery } from '../domain/track-history';
 import type { RulePing } from '../domain/telemetry-rules';
 
 /** A ping ready to store: internal ids, integer speed. */
@@ -154,6 +155,28 @@ export class TrackingRepository {
         WHERE f.vehicle_id = ANY($1::bigint[]) AND f.status = 'open' AND f.resolved_at IS NULL
         ORDER BY f.vehicle_id, f.flag_type, f.observed_at DESC`,
       [vehicleIds],
+    );
+    return res.rows;
+  }
+
+  /**
+   * A vehicle's GPS history (FMS-136): its pings in [from, to], oldest first, after the cursor, at most `limit`.
+   * The (vehicle, time) index serves it; (recorded_at, id) is the table's key, so the order is total.
+   */
+  async history(db: Queryable, vehicleId: string, query: TrackQuery): Promise<TrackPointRow[]> {
+    const res = await db.query<TrackPointRow>(
+      `SELECT id::text AS id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at, recorded_at AS "recordedAt",
+              latitude::float8 AS lat, longitude::float8 AS lng, speed_kmh AS "speedKmh", heading_degrees::float8 AS heading,
+              altitude_m::float8 AS "altitudeM", accuracy_m::float8 AS "accuracyM", ignition_on AS "ignitionOn",
+              odometer_km::float8 AS "odometerKm", source, trip_id::text AS "tripId"
+         FROM tracking.gps_pings
+        WHERE vehicle_id = $1
+          AND ($2::timestamptz IS NULL OR recorded_at >= $2)
+          AND ($3::timestamptz IS NULL OR recorded_at <= $3)
+          AND ($4::timestamptz IS NULL OR (recorded_at, id) > ($4::timestamptz, $5::bigint))
+        ORDER BY recorded_at, id
+        LIMIT $6`,
+      [vehicleId, query.from, query.to, query.cursor?.at ?? null, query.cursor?.id ?? null, query.limit],
     );
     return res.rows;
   }

@@ -65,6 +65,8 @@ export interface RecordListFilter extends Page {
   status?: MaintenanceStatus;
   open?: boolean;
   maintenanceType?: MaintenanceType;
+  /** created_at: when entered; work_date: when the work happened (completed, else started, else scheduled, else entered). */
+  sortBy: 'created_at' | 'work_date';
   sortOrder: 'asc' | 'desc';
 }
 
@@ -123,8 +125,9 @@ export class MaintenanceRepository extends Repository {
     const count = await db.query<{ total: number }>(`SELECT count(*)::int AS total FROM maintenance.maintenance_records r ${whereSql}`, params);
     const { limit, offset } = limitOffset(f);
     const dir = f.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const key = f.sortBy === 'work_date' ? 'COALESCE(r.completed_at, r.started_at, r.scheduled_at, r.created_at)' : 'r.created_at';
     const res = await db.query<RecordRow>(
-      `${ROW_SQL} ${whereSql} ORDER BY r.created_at ${dir}, r.id ${dir} LIMIT ${add(limit)} OFFSET ${add(offset)}`,
+      `${ROW_SQL} ${whereSql} ORDER BY ${key} ${dir}, r.id ${dir} LIMIT ${add(limit)} OFFSET ${add(offset)}`,
       params,
     );
     return { rows: res.rows, total: count.rows[0].total };

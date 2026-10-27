@@ -104,6 +104,7 @@ export interface MaintenanceListQuery {
   status?: MaintenanceStatus;
   open?: boolean;
   maintenance_type?: MaintenanceType;
+  sort_by: 'created_at' | 'work_date';
   sort_order: 'asc' | 'desc';
 }
 
@@ -191,6 +192,7 @@ export class MaintenanceService {
         status: query.status,
         open: query.open,
         maintenanceType: query.maintenance_type,
+        sortBy: query.sort_by,
         sortOrder: query.sort_order,
       });
       return { items: await this.views(client, rows), total };
