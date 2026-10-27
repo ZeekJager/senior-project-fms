@@ -101,14 +101,15 @@ describe('Vehicle health (S-19)', () => {
     renderApp('/predictive-maintenance')
 
     await screen.findByRole('heading', { name: 'Vehicle health' })
-    await waitFor(() => expect(within(table()).getAllByRole('row').length).toBeGreaterThan(5))
+    // Wait for the plates, not a row count: while loading, the table holds skeleton rows without plates.
+    const plates = () =>
+      within(table())
+        .getAllByRole('row')
+        .map((r) => r.querySelector('.plate')?.textContent)
+        .filter(Boolean)
+    await waitFor(() => expect(plates()).toEqual([stale, risky, watch, healthy, unscored].map((v) => v.registration_number)))
     expect(api.listQueries().at(-1)!.get('sort_by')).toBe('health_score')
     expect(api.listQueries().at(-1)!.get('sort_order')).toBe('asc')
-    const plates = within(table())
-      .getAllByRole('row')
-      .map((r) => r.querySelector('.plate')?.textContent)
-      .filter(Boolean)
-    expect(plates).toEqual([stale, risky, watch, healthy, unscored].map((v) => v.registration_number))
 
     expect(within(rowFor(risky.registration_number)).getByRole('button', { name: /Health score 60, at risk/ })).toHaveClass('bg-danger-soft')
     expect(within(rowFor(watch.registration_number)).getByRole('button', { name: /Health score 80, watch/ })).toHaveClass('bg-warning-soft')
