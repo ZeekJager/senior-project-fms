@@ -13,6 +13,7 @@ import { notificationRouter } from './api/notification.routes';
 import { AlertService } from './application/alert.service';
 import { IncidentService } from './application/incident.service';
 import { InboxService } from './application/inbox.service';
+import type { IncidentType } from './domain/incident';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
 import { IncidentRepository } from './infrastructure/incident.repository';
@@ -102,6 +103,9 @@ export const alertEngine = {
 export const incidentLookup = {
   find: (db: Queryable, publicId: string) => incidentRepository.refByPublicId(db, publicId),
   publicIds: (db: Queryable, ids: readonly string[]) => incidentRepository.publicIds(db, ids),
+  /** For the nightly scoring (FMS-55): each vehicle's incidents of these types in [from, to), by internal id. */
+  countsByVehicle: (db: Queryable, vehicleIds: readonly string[], types: readonly IncidentType[], from: Date, to: Date) =>
+    incidentRepository.countsByVehicle(db, vehicleIds, types, from, to),
 };
 
 export { ALERT_EVENTS, SEVERITIES as ALERT_SEVERITIES, type AlertView } from './domain/alert';

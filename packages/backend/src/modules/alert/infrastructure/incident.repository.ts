@@ -123,6 +123,18 @@ export class IncidentRepository extends Repository {
     return new Map(res.rows.map((r) => [r.id, r.public_id]));
   }
 
+  /** Each vehicle's incidents of these types that occurred in [from, to). Vehicles with none are absent. */
+  async countsByVehicle(db: Queryable, vehicleIds: readonly string[], types: readonly string[], from: Date, to: Date): Promise<Map<string, number>> {
+    if (vehicleIds.length === 0) return new Map();
+    const res = await db.query<{ vehicleId: string; count: number }>(
+      `SELECT vehicle_id AS "vehicleId", count(*)::int AS count FROM alert.incident_reports
+        WHERE vehicle_id = ANY($1::bigint[]) AND incident_type = ANY($2::text[]) AND occurred_at >= $3 AND occurred_at < $4
+        GROUP BY vehicle_id`,
+      [vehicleIds, types, from, to],
+    );
+    return new Map(res.rows.map((r) => [r.vehicleId, r.count]));
+  }
+
   /** Newest first (when it happened). */
   async list(db: Queryable, f: IncidentFilter): Promise<{ rows: IncidentRow[]; total: number }> {
     const params: unknown[] = [];

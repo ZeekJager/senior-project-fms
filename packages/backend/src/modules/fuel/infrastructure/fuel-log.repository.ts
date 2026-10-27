@@ -137,6 +137,18 @@ export class FuelLogRepository extends Repository {
     return res.rows;
   }
 
+  /** Each vehicle's fuel logged (ml) in [from, to). Vehicles (internal ids) with none are absent. */
+  async loggedMl(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<Map<string, number>> {
+    if (vehicleIds.length === 0) return new Map();
+    const res = await db.query<{ vehicleId: string; ml: number }>(
+      `SELECT vehicle_id AS "vehicleId", sum(quantity_ml)::float8 AS ml FROM fuel.fuel_logs
+        WHERE vehicle_id = ANY($1::bigint[]) AND recorded_at >= $2 AND recorded_at < $3
+        GROUP BY vehicle_id`,
+      [vehicleIds, from, to],
+    );
+    return new Map(res.rows.map((r) => [r.vehicleId, r.ml]));
+  }
+
   /** The highest odometer reading of a vehicle's fuel logs recorded at or before `at`, or null if none. */
   async lastOdometer(db: Queryable, vehicleId: string, at: Date): Promise<number | null> {
     const res = await db.query<{ km: number | null }>('SELECT max(odometer_km)::float8 AS km FROM fuel.fuel_logs WHERE vehicle_id = $1 AND recorded_at <= $2', [

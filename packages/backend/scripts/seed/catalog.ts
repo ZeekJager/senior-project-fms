@@ -94,7 +94,18 @@ export const EV_MODELS: readonly VehicleModel[] = [
 export const CATEGORY_FOR: Readonly<Record<SeedVehicleType, string>> = { car: 'B', suv: 'B', van: 'B', truck: 'C', bus: 'D' };
 
 /** What a part renews when a repair uses it (maintenance.service_item, FMS-52); none for the rest. */
-export type ServiceItem = 'engine_oil' | 'air_filter' | 'fuel_filter' | 'coolant' | 'brake_pads' | 'tyres' | 'battery' | 'belts';
+export type ServiceItem =
+  | 'engine_oil'
+  | 'air_filter'
+  | 'fuel_filter'
+  | 'coolant'
+  | 'brake_pads'
+  | 'brake_fluid'
+  | 'clutch_fluid'
+  | 'tyres'
+  | 'battery'
+  | 'gearbox_oil'
+  | 'belts';
 
 export const PARTS: readonly { number: string; name: string; costCents: number; renews?: ServiceItem }[] = [
   { number: 'FLT-OIL-200', name: 'Oil filter', costCents: 85_000, renews: 'engine_oil' },
@@ -161,6 +172,31 @@ export const REPAIRS: readonly {
     failure: { component: 'fuel_system', failure_mode: 'other', unplanned: 0.9 },
   },
   { description: 'Coolant top-up and leak check', type: 'preventive', parts: ['CLN-50-5L'], hours: 0.5 },
+];
+
+/** Fluids the service history renews (FMS-55): stocked after the parts above, so their draws come last. */
+export const FLUID_PARTS: readonly { number: string; name: string; costCents: number; renews: ServiceItem }[] = [
+  { number: 'FLD-BRK-DOT4', name: 'Brake fluid DOT 4, 1 L', costCents: 45_000, renews: 'brake_fluid' },
+  { number: 'FLD-CLT-1L', name: 'Clutch fluid, 1 L', costCents: 40_000, renews: 'clutch_fluid' },
+  { number: 'OIL-GBX-75W90', name: 'Gearbox oil 75W-90, 5 L', costCents: 420_000, renews: 'gearbox_oil' },
+];
+
+/** The tyre a vehicle type runs on: `TYRES` in a service's parts. */
+export const TYRE_FOR: Readonly<Record<SeedVehicleType, string>> = { car: 'TYR-195-15', suv: 'TYR-195-15', van: 'TYR-195-15', truck: 'TYR-295-80', bus: 'TYR-295-80' };
+
+/**
+ * Planned work that keeps a vehicle running (FMS-55): every wearing part and fluid the predictive model
+ * reads (feature_spec.json), grouped as a workshop does it, with the interval it is usually done at.
+ * The seed gives each vehicle the last time each was done, so its health score has a history to read.
+ */
+export const SERVICE_SCHEDULE: readonly { description: string; parts: string[]; intervalDays: number; hours: number; combustionOnly: boolean }[] = [
+  { description: 'Scheduled service: engine oil and filters', parts: ['OIL-15W40-5', 'FLT-OIL-200', 'FLT-AIR-310'], intervalDays: 120, hours: 2, combustionOnly: true },
+  { description: 'Fuel filter replaced at its interval', parts: ['FLT-FUEL-115'], intervalDays: 365, hours: 1, combustionOnly: true },
+  { description: 'Coolant and brake fluid changed', parts: ['CLN-50-5L', 'FLD-BRK-DOT4'], intervalDays: 730, hours: 1.5, combustionOnly: false },
+  { description: 'Brake pads replaced at the wear limit', parts: ['BRK-PAD-F40', 'BRK-PAD-R40'], intervalDays: 540, hours: 2, combustionOnly: false },
+  { description: 'Tyres replaced at the tread limit', parts: ['TYRES'], intervalDays: 1460, hours: 2, combustionOnly: false },
+  { description: 'Battery replaced at the end of its service life', parts: ['BAT-12V-100'], intervalDays: 1460, hours: 0.5, combustionOnly: false },
+  { description: 'Drive belt, gearbox oil and clutch fluid changed', parts: ['BLT-ALT-06', 'OIL-GBX-75W90', 'FLD-CLT-1L'], intervalDays: 1095, hours: 3, combustionOnly: true },
 ];
 
 export const WORKSHOPS: readonly string[] = ['Depot workshop', 'Moenco service centre', 'Nyala Motors workshop', 'Roadside repair'];

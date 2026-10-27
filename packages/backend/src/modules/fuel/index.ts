@@ -27,4 +27,9 @@ export const fuelMeterReadings = {
   odometers: (db: Queryable, since: Date | null) => fuelLogs.odometerReadings(db, since),
 };
 
+/** For the nightly scoring (FMS-55): each vehicle's fuel logged (ml) in [from, to), by internal id. */
+export const fuelUsage = {
+  loggedMl: (db: Queryable, vehicleIds: readonly string[], from: Date, to: Date) => fuelLogs.loggedMl(db, vehicleIds, from, to),
+};
+
 export { FUEL_EVENTS } from './domain/fuel-log';

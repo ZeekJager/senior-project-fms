@@ -18,8 +18,8 @@ import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
-import { ProviderRegistry } from './application/provider-registry';
-import type { AdapterContext, ProviderAdapter } from './domain/adapter';
+import { ProviderRegistry, type InternalService } from './application/provider-registry';
+import type { AdapterContext, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
 import { INTEGRATION_EVENTS } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
@@ -117,6 +117,11 @@ export const integrationGateway = {
   register: (adapter: ProviderAdapter): void => registry.register(adapter),
   /** A provider's client and API key, to call it from another module. 404 if unknown, 400 if switched off. */
   contextFor: (code: string, correlationId: string): Promise<AdapterContext> => service.contextFor(code, correlationId),
+  /**
+   * A client for a service of the stack itself, set up from the environment (the ML service, FMS-55):
+   * a timeout on each attempt, retries for idempotent calls, and a breaker per service on this instance.
+   */
+  internalClient: (service: InternalService, correlationId: string): ProviderClient => registry.internalClient(service, correlationId),
   /** Resolves when the manual syncs started so far have finished (tests, shutdown). */
   settled: (): Promise<void> => service.settled(),
   /** Counts for /health/ready: providers called, circuits open and half-open on this instance. */
@@ -182,6 +187,7 @@ export {
   type ProviderType,
   type SyncOutcome,
 } from './domain/adapter';
+export type { InternalService } from './application/provider-registry';
 export { INTEGRATION_EVENTS } from './domain/provider';
 export { MAX_PINGS_PER_BATCH, TRACKING_EVENTS, type PingInput } from './domain/gps';
 export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-map';

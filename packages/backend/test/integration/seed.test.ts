@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { runSeed, SEED_ADMIN_EMAIL } from '../../scripts/seed/apply';
+import { buildPlan } from '../../scripts/seed/plan';
 import { pool } from '../../src/db';
 import { verifyPassword } from '../../src/modules/auth/infrastructure/password-hasher';
 
@@ -13,7 +14,10 @@ describe('seed generator', () => {
   test('the small profile writes every kind of data through the API, audited', { timeout: 120_000 }, async () => {
     const summary = await runSeed(OPTIONS);
     fingerprints.push(summary.fingerprint);
-    expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 16, maintenance_records: 20, vehicle_documents: 48 });
+    expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 19, vehicle_documents: 48 });
+    // 20 repairs, then each vehicle's service history (FMS-55).
+    expect(summary.counts.maintenance_records).toBe(buildPlan(OPTIONS.profile, OPTIONS.seed, OPTIONS.anchor).maintenance.length);
+    expect(summary.counts.maintenance_records).toBeGreaterThan(100);
     expect(summary.counts.electric_vehicles).toBeGreaterThan(0);
     expect(summary.counts.fuel_logs).toBeGreaterThan(0);
     expect(summary.counts.failure_events).toBeGreaterThan(0);
@@ -26,6 +30,9 @@ describe('seed generator', () => {
       "SELECT entity_type, count(*)::int AS n FROM audit.audit_logs WHERE action = 'INSERT' AND entity_type IN ('fleet.vehicles', 'fleet.drivers', 'trip.trips', 'document.documents') GROUP BY 1",
     );
     expect(Object.fromEntries(audited.rows.map((r) => [r.entity_type, r.n]))).toEqual({ 'fleet.vehicles': 24, 'fleet.drivers': 30, 'trip.trips': 80, 'document.documents': 48 });
+    // Each vehicle joined the fleet when the plan says, years ago.
+    const registered = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM fleet.vehicles WHERE created_at < now() - interval '60 days'");
+    expect(registered.rows[0].n).toBe(24);
 
     // Every vehicle's registered odometer, fuel log and completed repair with an odometer is a meter reading (FMS-126).
     const readings = await pool.query<{ source: string; n: number }>('SELECT source, count(*)::int AS n FROM fleet.meter_readings GROUP BY 1');

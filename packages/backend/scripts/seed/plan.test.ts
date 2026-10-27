@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { CATEGORY_FOR } from './catalog';
+import { CATEGORY_FOR, SERVICE_SCHEDULE } from './catalog';
 import { assertNotProduction } from './guard';
 import { sniffContentType } from '../../src/modules/fleet/domain/document';
 import { placeholderPdf } from './pdf';
@@ -92,6 +92,51 @@ describe('buildPlan', () => {
       expect(m.odometer_km).toBeGreaterThanOrEqual(Math.max(0, ...before));
       expect(m.odometer_km).toBeLessThanOrEqual(Math.min(budget.vehicles[m.vehicle].odometer_km, ...after));
     }
+  });
+
+  test('every vehicle joined the fleet years ago, and has kept up its service since (FMS-55)', () => {
+    const DAY = 86_400_000;
+    const anchor = anchorMidnight(ANCHOR);
+    const done = budget.maintenance.filter((m) => m.completed_at !== null);
+    const history = done.filter((m) => SERVICE_SCHEDULE.some((s) => s.description === m.description));
+    budget.vehicles.forEach((v, i) => {
+      const registered = Date.parse(v.registered_at);
+      expect(registered).toBeGreaterThanOrEqual(anchorMidnight(`${v.year}-01-01`));
+      expect(registered).toBeLessThanOrEqual(anchor - 60 * DAY);
+      // No work, history or otherwise, before the vehicle joined the fleet.
+      for (const m of done.filter((h) => h.vehicle === i)) {
+        expect(Date.parse(m.completed_at!)).toBeGreaterThan(registered);
+        expect(Date.parse(m.completed_at!)).toBeLessThan(anchor);
+      }
+    });
+    // Every item the model reads is renewed on most vehicles; most combustion vehicles were serviced within 4 months.
+    for (const item of ['engine_oil', 'air_filter', 'fuel_filter', 'coolant', 'brake_pads', 'brake_fluid', 'clutch_fluid', 'tyres', 'battery', 'gearbox_oil', 'belts']) {
+      const renewed = new Set(history.filter((m) => m.parts.some((u) => budget.parts[u.part].service_item === item)).map((m) => m.vehicle));
+      const eligible = budget.vehicles.filter((v) => v.fuel_type !== 'electric' || !['engine_oil', 'air_filter', 'fuel_filter', 'gearbox_oil', 'clutch_fluid', 'belts'].includes(item));
+      expect(renewed.size / eligible.length, item).toBeGreaterThan(0.6);
+    }
+    const combustion = budget.vehicles.map((v, i) => ({ v, i })).filter(({ v }) => v.fuel_type !== 'electric');
+    const serviced = combustion.filter(({ i }) => history.some((m) => m.vehicle === i && m.description.startsWith('Scheduled service') && Date.parse(m.completed_at!) > anchor - 120 * DAY));
+    expect(serviced.length / combustion.length).toBeGreaterThan(0.8);
+    expect(serviced.length).toBeLessThan(combustion.length);
+  });
+
+  test("each vehicle's repairs read an odometer that only goes up over time (none is a suspect reading)", () => {
+    const done = budget.maintenance.filter((m) => m.completed_at !== null).sort((a, b) => a.completed_at!.localeCompare(b.completed_at!));
+    const last = new Map<number, number>();
+    for (const m of done) {
+      expect(m.odometer_km, budget.vehicles[m.vehicle].registration_number).toBeGreaterThanOrEqual(last.get(m.vehicle) ?? 0);
+      last.set(m.vehicle, m.odometer_km);
+    }
+  });
+
+  test('the opening stock covers every repair, leaving the low and out-of-stock parts as drawn', () => {
+    const used = new Map<number, number>();
+    for (const m of budget.maintenance) for (const u of m.parts) used.set(u.part, (used.get(u.part) ?? 0) + u.quantity);
+    budget.parts.forEach((p, i) => expect(p.stock_quantity - (used.get(i) ?? 0), p.part_number).toBeGreaterThanOrEqual(0));
+    expect(budget.parts.filter((p) => p.service_item !== null)).toHaveLength(14);
+    const left = (number: string) => budget.parts.find((p) => p.part_number === number)!.stock_quantity;
+    expect([left('WPR-BLD-24'), left('LMP-HDL-H4')]).toEqual([3, 0]);
   });
 
   test('nothing the API would refuse: hire dates and attendance not after the anchor', () => {

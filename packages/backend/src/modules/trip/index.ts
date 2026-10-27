@@ -98,3 +98,6 @@ export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activ
 
 /** For the telemetry rules (FMS-46): a flag's trip, by the internal id its pings carry, with its driver. */
 export { tripPartiesByIds, type TripParties } from './infrastructure/trip-activity.queries';
+
+/** For the nightly scoring (FMS-55): completed trips' kilometres and driving time over a window, and kilometres since a time. */
+export { completedDistanceAfter, completedTripUsage, type TripUsage } from './infrastructure/trip-usage.queries';

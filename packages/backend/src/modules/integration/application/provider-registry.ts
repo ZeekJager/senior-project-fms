@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ProviderSecrets } from '../../../config/schema';
-import type { AdapterContext, ProviderAdapter, ProviderType } from '../domain/adapter';
+import type { AdapterContext, ProviderAdapter, ProviderClient, ProviderType } from '../domain/adapter';
 import type { CircuitView } from '../domain/provider';
 import type { ProviderRow } from '../infrastructure/integration.repository';
 import { DEFAULT_BREAKER, ProviderBreaker, type BreakerLog, type BreakerSettings } from './circuit-breaker';
@@ -19,6 +19,14 @@ const providerSettings = z.object({
 export interface ProviderSettings {
   client: ClientSettings;
   breaker: BreakerSettings;
+}
+
+/** A service of the stack reached through the gateway (`internalClient`): its name in logs, URL and per-attempt timeout. */
+export interface InternalService {
+  code: string;
+  baseUrl: string;
+  timeoutMs: number;
+  maxRetries?: number;
 }
 
 export interface HealthResult {
@@ -112,6 +120,26 @@ export class ProviderRegistry {
       apiKey: this.secretsFor(provider.code).apiKey,
       correlationId,
     };
+  }
+
+  /**
+   * A client for a service of the stack itself (the ML service, FMS-55), configured from the environment
+   * rather than integration.external_providers: the same timeouts and retries, and a breaker of its own
+   * kept across calls, so a service that is down is not called again until the breaker lets a trial through.
+   */
+  internalClient(service: InternalService, correlationId: string): ProviderClient {
+    const key = `internal:${service.code}`;
+    const current = this.breakers.get(key);
+    const breaker = current?.breaker ?? new ProviderBreaker(service.code, DEFAULT_BREAKER, this.log);
+    if (!current) this.breakers.set(key, { settings: JSON.stringify(DEFAULT_BREAKER), breaker });
+    return new HttpProviderClient({
+      code: service.code,
+      baseUrl: service.baseUrl,
+      settings: { ...DEFAULT_CLIENT, timeoutMs: service.timeoutMs, maxRetries: service.maxRetries ?? DEFAULT_CLIENT.maxRetries },
+      breaker,
+      correlationId,
+      fetch: this.fetchImpl,
+    });
   }
 
   recordHealth(provider: ProviderRow, result: HealthResult): void {

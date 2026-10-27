@@ -162,7 +162,8 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     audience: ['dispatcher', 'depot_admin'],
   },
 
-  // Predictive maintenance (FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
+  // Predictive maintenance (FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `health_score`,
+  // `factors` (the inputs raising the risk most), `component` (null: the model names none).
   MaintenanceRiskDetected: {
     type: () => 'maintenance_risk',
     module: 'maintenance',
@@ -179,8 +180,19 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     title: (_p, n) => `Maintenance risk on ${vehicleName(n)}`,
     message: (p) => {
       const probability = num(p, 'failure_probability');
+      const score = num(p, 'health_score');
       const component = str(p, 'component');
-      return `${component ? `${capitalize(humanize(component))}: ` : ''}failure likely${probability !== null ? ` (${Math.round(probability * 100)}%)` : ''}. Schedule an inspection.`;
+      const factors = Array.isArray(p.factors) ? p.factors.filter((f): f is string => typeof f === 'string') : [];
+      const chance = probability !== null ? `a ${Math.round(probability * 100)}% chance of a breakdown within 30 days` : 'a breakdown is likely';
+      return [
+        component ? `${capitalize(humanize(component))}: ` : '',
+        score !== null ? `health score ${score}, ` : '',
+        chance,
+        factors.length ? `, mostly from ${factors.map(humanize).join(', ')}` : '',
+        '. Schedule an inspection.',
+      ]
+        .join('')
+        .replace(/^./, (c) => c.toUpperCase());
     },
     audience: ['technician', 'depot_admin'],
   },

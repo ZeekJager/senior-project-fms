@@ -37,7 +37,7 @@ const TIMEZONE = 'Africa/Addis_Ababa';
  * Writes the plan for (profile, seed, anchor). Everything with an API goes
  * through it; trips, routes and fuel logs have no API yet (their cards come
  * later), so they are inserted with auditedMutation, which audits each row
- * like the services do. Refuses a database that already holds data: reset
+ * like the services do, and so is each vehicle's registration date. Refuses a database that already holds data: reset
  * first (`--reset`), so a run always starts from the same state.
  */
 export async function runSeed(options: SeedOptions): Promise<SeedSummary> {
@@ -228,6 +228,11 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
   const drivers = await internalIds('fleet.drivers', ids.drivers);
 
   await withTransaction(pool, async (client) => {
+    // When each vehicle joined the fleet (its history starts there): the API registers it today.
+    for (const [i, v] of plan.vehicles.entries()) {
+      await auditedMutation(client, ctx, 'fleet.vehicles', 'UPDATE', vehicles[i], { created_at: v.registered_at });
+    }
+
     const routes: string[] = [];
     for (const r of plan.routes) {
       const row = await auditedMutation(client, ctx, 'trip.routes', 'INSERT', null, {

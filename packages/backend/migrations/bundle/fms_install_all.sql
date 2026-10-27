@@ -2459,3 +2459,26 @@ INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM auth.roles r, auth.permissions p
  WHERE r.name = 'admin' AND p.code = 'ml-model:activate'
 ON CONFLICT DO NOTHING;
+
+-- ===== 040_prediction_scores.sql =====
+ALTER TABLE maintenance.maintenance_predictions
+    ADD COLUMN IF NOT EXISTS health_score SMALLINT,
+    ADD COLUMN IF NOT EXISTS risk_level   VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS factors      JSONB,
+    ADD COLUMN IF NOT EXISTS as_of        TIMESTAMPTZ;
+
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_predictions
+        ADD CONSTRAINT chk_prediction_health_score CHECK (health_score IS NULL OR health_score BETWEEN 0 AND 100),
+        ADD CONSTRAINT chk_prediction_risk_level CHECK (risk_level IS NULL OR risk_level IN ('low', 'medium', 'high')),
+        ADD CONSTRAINT chk_prediction_factors
+            CHECK (factors IS NULL OR (jsonb_typeof(factors) = 'array' AND jsonb_array_length(factors) <= 3)),
+        ADD CONSTRAINT chk_prediction_scored
+            CHECK ((health_score IS NULL) = (risk_level IS NULL)
+               AND (health_score IS NULL) = (factors IS NULL)
+               AND (health_score IS NULL) = (as_of IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_predictions_scoring
+    ON maintenance.maintenance_predictions(vehicle_id, prediction_type, as_of, model_name, model_version)
+    WHERE as_of IS NOT NULL;
