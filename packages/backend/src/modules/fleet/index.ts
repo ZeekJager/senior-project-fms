@@ -498,4 +498,4 @@ export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
 export { DOCUMENT_EVENTS } from './domain/document';
 export { EXPIRY_EVENTS } from './domain/expiry';
-export { VEHICLE_EVENTS } from './domain/vehicle';
+export { HEALTH_BANDS, HEALTH_FILTERS, VEHICLE_EVENTS, type HealthFilter } from './domain/vehicle';

@@ -9,16 +9,18 @@ import { logger } from '../../shared/logging/logger';
 import type { AppModule } from '../../shared/module';
 import { incidentLookup } from '../alert';
 import { userDirectory } from '../auth';
-import { depotRefs, scoringRefs, vehicleMaintenance } from '../fleet';
+import { depotRefs, HEALTH_BANDS, scoringRefs, vehicleMaintenance } from '../fleet';
 import { fuelUsage } from '../fuel';
 import { integrationGateway } from '../integration';
 import { completedDistanceAfter, completedTripUsage } from '../trip';
 import { inventoryRouter } from './api/inventory.routes';
 import { maintenanceRouter } from './api/maintenance.routes';
 import { mlModelRouter } from './api/ml-model.routes';
+import { predictionRouter } from './api/prediction.routes';
 import { InventoryService } from './application/inventory.service';
 import { MaintenanceService } from './application/maintenance.service';
 import { MlModelService } from './application/ml-model.service';
+import { PredictionService } from './application/prediction.service';
 import { ScoringService } from './application/scoring.service';
 import { FailureRepository } from './infrastructure/failure.repository';
 import { featureSpecLoader } from './infrastructure/feature-spec';
@@ -70,10 +72,12 @@ const mlModelService = new MlModelService({
   log: logger,
 });
 
+const scoringRepository = new ScoringRepository(pool);
+
 // The nightly scoring (FMS-55, docs/ml-scoring.md): features from each module that owns the data.
 const scoringService = new ScoringService({
   db: pool,
-  predictions: new ScoringRepository(pool),
+  predictions: scoringRepository,
   registry: mlModelService,
   client: mlClient,
   spec: featureSpec,
@@ -91,10 +95,19 @@ const scoringService = new ScoringService({
   log: logger,
 });
 
+// The health score screen's reads (FMS-56).
+const predictionService = new PredictionService({
+  predictions: scoringRepository,
+  vehicles: vehicleMaintenance,
+  spec: featureSpec,
+  staleAfterHours: HEALTH_BANDS.staleAfterHours,
+});
+
 const router = Router();
 router.use(maintenanceRouter(maintenanceService));
 router.use(inventoryRouter(inventoryService));
 router.use(mlModelRouter(mlModelService));
+router.use(predictionRouter(predictionService));
 
 export const maintenanceModule: AppModule = {
   name: 'maintenance',
@@ -145,6 +158,6 @@ export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/fail
 export { INVENTORY_EVENTS, SERVICE_ITEMS, type ServiceItem } from './domain/inventory';
 export { MAINTENANCE_EVENTS } from './domain/maintenance';
 export { ML_MODEL_EVENTS, type MlModelView, type ScoringCheck } from './domain/ml-model';
-export { PREDICTION_EVENTS, RISK_ALERT_BELOW } from './domain/scoring';
+export { PREDICTION_EVENTS, RISK_ALERT_BELOW, type MaintenanceRiskView } from './domain/scoring';
 export type { ScoringResult } from './application/scoring.service';
 export { MlServiceError } from './infrastructure/ml-service.client';

@@ -20,6 +20,21 @@ export interface PredictionWrite {
   asOf: Date;
 }
 
+/** A stored prediction as the health score screen reads it (FMS-56). */
+export interface LatestPrediction {
+  publicId: string;
+  healthScore: number;
+  riskLevel: RiskLevel;
+  failureProbability: number;
+  horizonDays: number | null;
+  factors: string[];
+  features: Record<string, number> | null;
+  modelName: string;
+  modelVersion: string;
+  asOf: Date;
+  scoredAt: Date;
+}
+
 /** The nightly scoring's reads of maintenance's own tables, and its predictions. Internal ids. */
 export class ScoringRepository extends Repository {
   constructor(db: Pool) {
@@ -70,6 +85,21 @@ export class ScoringRepository extends Repository {
       [vehicleIds, before],
     );
     return res.rows;
+  }
+
+  /** The vehicle's latest active prediction of this type, as scored (FMS-56), or null. */
+  async latest(db: Queryable, vehicleId: string, predictionType: string): Promise<LatestPrediction | null> {
+    const res = await db.query<LatestPrediction>(
+      `SELECT public_id AS "publicId", health_score AS "healthScore", risk_level AS "riskLevel", risk_score::float8 AS "failureProbability",
+              prediction_horizon_days AS "horizonDays", factors, feature_snapshot AS features, model_name AS "modelName",
+              model_version AS "modelVersion", as_of AS "asOf", generated_at AS "scoredAt"
+         FROM maintenance.maintenance_predictions
+        WHERE vehicle_id = $1 AND prediction_type = $2 AND status = 'active' AND health_score IS NOT NULL
+        ORDER BY generated_at DESC, id DESC
+        LIMIT 1`,
+      [vehicleId, predictionType],
+    );
+    return res.rows[0] ?? null;
   }
 
   /** The vehicles' active predictions of this type, which a new one supersedes. */

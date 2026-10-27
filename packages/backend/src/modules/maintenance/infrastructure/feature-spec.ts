@@ -24,7 +24,7 @@ export function featureSpecLoader(file: string): () => FeatureSpec {
     spec = {
       version: raw.spec_version,
       features: raw.features.map((f) => f.name),
-      inputs: raw.features.map(({ name, type, min, max, decimals }) => ({ name, type, min, max, decimals })),
+      inputs: raw.features.map(({ name, type, unit, min, max, decimals }) => ({ name, type, unit, min, max, decimals })),
       hash: featureSpecHash(raw),
     };
     return spec;

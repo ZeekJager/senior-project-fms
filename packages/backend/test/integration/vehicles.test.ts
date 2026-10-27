@@ -82,7 +82,7 @@ describe('POST /vehicles', () => {
     expect(res.body.data.id).toMatch(UUID);
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
-        'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'id', 'maintenance_flag',
+        'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'health_score_updated_at', 'id', 'maintenance_flag',
         'make', 'model', 'odometer_km', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );

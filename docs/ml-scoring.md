@@ -10,7 +10,7 @@ Card: FMS-55 (SE-91). Code:
 
 Architecture §23 (predictive maintenance), Scenario C, §28.3 (timeouts, retries, circuit breaking).
 
-Every night the job gives each vehicle a health score, so screens show the risk without calling the model on every page load.
+Every night the job gives each vehicle a health score, so screens show the risk without calling the model on every page load. The screens are in [vehicle-health.md](vehicle-health.md).
 
 ## A run
 

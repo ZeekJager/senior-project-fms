@@ -144,7 +144,7 @@ describe('the feature extractor', () => {
   });
 
   test('refuses an input it has no formula for', () => {
-    const unknown: FeatureInput = { name: 'tyre_pressure_kpa', type: 'float', min: 0, max: 1000, decimals: 1 };
+    const unknown: FeatureInput = { name: 'tyre_pressure_kpa', type: 'float', unit: 'kPa', min: 0, max: 1000, decimals: 1 };
     expect(() => computeFeatures([...spec.inputs, unknown], facts(), t)).toThrow(/no formula for 'tyre_pressure_kpa'/);
   });
 });

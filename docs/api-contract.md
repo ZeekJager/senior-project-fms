@@ -256,7 +256,7 @@ Depot rules (FMS-20):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /vehicles` | List/search vehicles | `vehicle:read` | `page,page_size,status,depot_id,maintenance_flag,ready_to_dispatch,documents,search,sort_by,sort_order,then_by,then_order` -> `Vehicle[]` |
+| `GET /vehicles` | List/search vehicles | `vehicle:read` | `page,page_size,status,depot_id,maintenance_flag,ready_to_dispatch,documents,health,search,sort_by,sort_order,then_by,then_order` -> `Vehicle[]` |
 | `POST /vehicles` | Create vehicle | `vehicle:write` | `VehicleCreate` -> `Vehicle` |
 | `GET /vehicles/{vehicle_id}` | Get vehicle | `vehicle:read` | `Vehicle` |
 | `PATCH /vehicles/{vehicle_id}` | Update vehicle | `vehicle:write` | `VehicleUpdate` -> `Vehicle` |
@@ -292,6 +292,7 @@ Vehicle rules (FMS-15):
 - **Retirement:** `DELETE` sets `status = retired` and `is_active = false` (one audit row) and returns `204`. It is refused with `409 CONFLICT_VEHICLE_IN_USE` while the vehicle is on an `assigned` or `en_route` trip or has an active driver assignment. Retiring a retired vehicle returns `204` and changes nothing. A retired vehicle is left out of `GET /vehicles` unless `status=retired` is asked for, can still be read by id, and cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`). Its plate stays taken.
 - **List:** `page` from 1, `page_size` default 25, capped at 100. `search` matches registration number, VIN, make or model (case-insensitive, wildcards literal). `sort_by`: `registration_number` (default), `make`, `model`, `year`, `odometer_km`, `health_score`, `created_at`, `updated_at`, `status`, `vehicle_type`, `depot` (the depot's name); `sort_order` `asc` (default) or `desc`. `then_by` (the same columns) and `then_order` add a second sort for the rows the first leaves tied; the same column twice is just the first sort.
 - **Dispatch and document filters** (FMS-18): `ready_to_dispatch=true` lists the vehicles that can be sent out now: `status` is `active`, `maintenance_flag` is false, no `assigned` or `en_route` trip, and no live document past its `expires_on`. `ready_to_dispatch=false` lists the rest. `documents=expired` lists vehicles with a live document past its date; `documents=expiring` those with one expiring within 30 days (today included, the same window as the expiry warnings); `documents=due` either. A deleted document never counts. Dates are calendar dates in Addis Ababa. The filters combine with every other filter, and `meta.total_items` counts the filtered set, so a client can show each view's count with `page_size=1`.
+- **Health filter** (FMS-56): `health` is the health score's band, as the screens colour it: `at_risk` (below 75), `watch` (75 to 84), `healthy` (85 and up), each for a score set in the last 25 hours; `stale` (scored more than 25 hours ago, whatever the score); `unscored`. The five are disjoint. Any other value is `400`. Every vehicle reader sees `health_score` and `health_score_updated_at` (when the nightly scoring last set it, null when never); the breakdown behind it is `GET /vehicles/{vehicle_id}/maintenance-risk` (§10.2, `prediction:read`).
 - **Current trip:** every `Vehicle` carries `current_trip`: the trip it is on now (`assigned` or `en_route`; en route first, then the earliest scheduled), as `{ id, status, origin, destination, scheduled_start }`, or `null`. Read only; it comes from the trip module (FMS-18).
 - **Events:** `VehicleRegistered`, `VehicleUpdated` (with `changed_fields`) and `VehicleRetired`, each with `vehicle_id` and `depot_id` (public ids).
 - **Concurrency:** `version` and `ETag` / `If-Match` as described under the driver rules (§6.3).
@@ -595,6 +596,12 @@ Inventory rules (FMS-23):
 - **Risk:** a score falling below 75, or its risk level rising, publishes `MaintenanceRiskDetected`: a `maintenance_risk` alert for the vehicle's technicians and depot admins.
 - **Failures:** an ML service that is down, a failing batch, an open breaker, or a model that may not score skips those vehicles, which keep their last score. The run still finishes.
 
+**Maintenance risk (FMS-56).** `GET /vehicles/{vehicle_id}/maintenance-risk` (`prediction:read`: not dispatchers or drivers; depot scope, `404` outside it or for an id that is not a UUID) is the vehicle's latest stored prediction, never a new model call. How the screen uses it: [docs/vehicle-health.md](vehicle-health.md).
+
+- **`MaintenanceRisk`:** `vehicle_id`, `prediction_id`, `health_score`, `risk_level` (`low`, `medium`, `high`), `failure_probability`, `prediction_horizon_days` (30), `factors`, `model_name`, `model_version`, `as_of` (the time the inputs were computed as of), `scored_at`, `stale` (scored more than 25 hours ago).
+- **`factors`:** up to 3 `{ feature, value, unit }`, the inputs raising the vehicle's risk most, largest first, with its value when scored and the spec's unit (`km`, `h`, `d`, `count`, `%`, `years`). Empty for a healthy vehicle.
+- **Never scored:** every score field is null, `factors` is empty and `stale` is false.
+
 ### 10.3 Internal ML service contract
 
 The predictive maintenance service (FMS-54, [ml-service.md](ml-service.md)) is reachable only inside the Docker network (`http://ai-service:5000`). Every call but `GET /health` sends `X-Internal-Token: <ML_SERVICE_TOKEN>`; without it, or with a wrong one, `401 AUTH_TOKEN_INVALID`.
@@ -854,6 +861,7 @@ Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING
   "status": "active",
   "maintenance_flag": false,
   "health_score": 87,
+  "health_score_updated_at": "2026-10-26T02:00:04Z",
   "depot_id": "uuid",
   "odometer_km": 128450.5,
   "current_trip": {

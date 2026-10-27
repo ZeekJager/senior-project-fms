@@ -35,6 +35,8 @@ export const WINDOW_DAYS = { use: 30, faults: 90 } as const;
 export interface FeatureInput {
   name: string;
   type: 'int' | 'float';
+  /** km, h, d, count, %, years: how a screen labels the value. */
+  unit: string;
   min: number;
   max: number;
   decimals: number;
@@ -56,6 +58,34 @@ export interface MlPrediction {
   horizonDays: number;
   modelVersion: string;
   factors: string[];
+}
+
+/** One input behind a vehicle's risk (FMS-56): its name, the vehicle's value when scored, and its unit. */
+export interface RiskFactorView {
+  feature: string;
+  value: number | null;
+  unit: string | null;
+}
+
+/**
+ * GET /vehicles/{vehicle_id}/maintenance-risk (FMS-56): the vehicle's latest prediction. Every score field is
+ * null, and `factors` empty, for a vehicle never scored. `stale`: scored more than 25 hours ago.
+ */
+export interface MaintenanceRiskView {
+  vehicle_id: string;
+  prediction_id: string | null;
+  health_score: number | null;
+  risk_level: RiskLevel | null;
+  failure_probability: number | null;
+  prediction_horizon_days: number | null;
+  /** Up to 3, the input raising the risk most first. */
+  factors: RiskFactorView[];
+  model_name: string | null;
+  model_version: string | null;
+  /** The scoring time t the inputs were computed as of. */
+  as_of: Date | null;
+  scored_at: Date | null;
+  stale: boolean;
 }
 
 /** What the features of one vehicle at t are computed from, read from the modules that own it. */
