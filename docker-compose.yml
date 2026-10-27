@@ -64,6 +64,9 @@ services:
       - /app/node_modules
       # Uploaded documents (FMS-17), kept in a volume outside the source tree.
       - document_files:/app/storage
+      # The feature spec shared with the ML service (FMS-127): ML_FEATURE_SPEC_PATH's
+      # default, ../ai-service/feature_spec.json, from /app as from packages/backend.
+      - ./packages/ai-service/feature_spec.json:/ai-service/feature_spec.json:ro
     environment:
       NODE_ENV: development
       PORT: "3000"
@@ -82,6 +85,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to add it to .env}"
+      # Predictive maintenance service (FMS-54), on this network only.
+      ML_SERVICE_URL: http://ai-service:5000
+      ML_SERVICE_TOKEN: "${ML_SERVICE_TOKEN:?is not set - run make env or node scripts/init-env.mjs to create .env}"
     healthcheck:
       # 200 when the API can reach PostgreSQL (GET /health/ready); a Redis
       # outage shows as "degraded" but keeps it healthy.

@@ -1128,6 +1128,100 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /ml-models:
+    get:
+      tags: [Maintenance]
+      operationId: listMlModels
+      summary: The model registry (FMS-127)
+      description: >
+        Every predictive maintenance model version the ML service has served, newest first by when the scoring job
+        first saw it, with its inputs, the SHA-256 of the feature spec it was trained on, metrics, training data and
+        artefact checksum. features_match false means its inputs are not the ones the core computes: it can never
+        score. Registration is the scoring job's alone (docs/ml-model-registry.md). Needs prediction:read.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [registered, active, retired] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of models.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MlModel' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown status, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /ml-models/{model_id}:
+    get:
+      tags: [Maintenance]
+      operationId: getMlModel
+      summary: One registered model (FMS-127)
+      description: The model behind a prediction's model_name and model_version. Needs prediction:read; an unknown id, or one that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/MlModelId'
+      responses:
+        '200':
+          description: The model.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MlModel' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ml-models/{model_id}/activate:
+    post:
+      tags: [Maintenance]
+      operationId: activateMlModel
+      summary: Let a registered model score (FMS-127)
+      description: >
+        Makes the model the active one of its name, so the nightly scoring scores with it while the ML service
+        serves it, and retires the model that was active. Activating the active model changes nothing; a retired
+        model may be activated again (a rollback). A model whose feature spec hash is not the core's is refused.
+        Each change is audited. Needs ml-model:activate (administrators).
+      parameters:
+        - $ref: '#/components/parameters/MlModelId'
+      responses:
+        '200':
+          description: The model, now active.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MlModel' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, reason feature_spec_mismatch (trained on other inputs than the core computes).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /notifications:
     get:
       tags: [Notifications]
@@ -1281,6 +1375,11 @@ components:
       schema: { type: string, format: uuid }
     TripId:
       name: trip_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MlModelId:
+      name: model_id
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1982,6 +2081,28 @@ components:
         odometer_km: { type: [number, 'null'], description: "The repair's odometer, if it was entered." }
         part_number: { type: [string, 'null'], description: The part that renewed it. }
 
+    MlModel:
+      type: object
+      description: A registered predictive maintenance model version (FMS-127). Written once when first seen; only its status changes.
+      required: [id, name, version, status, algorithm, features, feature_spec_version, feature_spec_hash, features_match, metrics, training_data, trained_at, artefact_sha256, first_seen_at, activated_at, activated_by, retired_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: predictive-maintenance }
+        version: { type: string, example: pm-2026.10 }
+        status: { type: string, enum: [registered, active, retired], description: 'registered: seen, not allowed to score; active: the one that scores (at most one per name); retired: replaced.' }
+        algorithm: { type: string }
+        features: { type: array, items: { type: string }, description: "The model's inputs, in the order it takes them." }
+        feature_spec_version: { type: integer }
+        feature_spec_hash: { type: string, pattern: '^[0-9a-f]{64}$', description: 'SHA-256 of the canonical feature definitions it was trained on (feature_spec.json).' }
+        features_match: { type: boolean, description: "Whether feature_spec_hash is the core's: false, it can never score." }
+        metrics: { type: object, additionalProperties: true, description: 'As the ML service reported them: roc_auc, brier, at_alert_threshold (precision, recall, f1), and more.' }
+        training_data: { type: object, additionalProperties: true, description: 'Which data: file and its SHA-256, rows, vehicles, dates, split.' }
+        trained_at: { type: string, format: date-time }
+        artefact_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        first_seen_at: { type: string, format: date-time, description: 'When the scoring job first saw the ML service serve it.' }
+        activated_at: { type: [string, 'null'], format: date-time }
+        activated_by: { type: [string, 'null'], format: uuid, description: 'The administrator who last activated it.' }
+        retired_at: { type: [string, 'null'], format: date-time }
     MeterReading:
       type: object
       description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).
