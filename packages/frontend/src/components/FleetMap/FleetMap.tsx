@@ -18,8 +18,8 @@ export const DEFAULT_ZOOM = 12
 
 // OpenStreetMap's tiles need no key, but their usage policy is for light use: a production deployment
 // with many dispatchers points these at its own tile server or a provider (docs/shared-ui.md).
-const TILE_URL: string = import.meta.env.VITE_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-const TILE_ATTRIBUTION: string =
+export const TILE_URL: string = import.meta.env.VITE_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+export const TILE_ATTRIBUTION: string =
   import.meta.env.VITE_MAP_TILE_ATTRIBUTION || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
 /** How often markers are re-checked against the clock, so one turns grey when its pings stop. */

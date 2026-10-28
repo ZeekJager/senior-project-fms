@@ -18,6 +18,7 @@ import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
+import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
 import type { AdapterContext, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
@@ -99,6 +100,13 @@ const telemetryRules = new TelemetryRulesService({
 });
 eventBus.subscribe(TRACKING_EVENTS.locationUpdated, 'integration.telemetry-rules', (event, tx) => telemetryRules.onLocationUpdated(tx, event));
 
+// A vehicle's GPS history (FMS-136): its stored pings, a page at a time, for the vehicle page's trip map.
+const trackHistory = new TrackHistoryService({
+  db: pool,
+  tracking,
+  refs: { vehicles: { byPublicIds: trackingRefs.vehicles.byPublicIds }, trips: { partiesByIds: tripPartiesByIds } },
+});
+
 // A flag opening or closing also drops the live map's snapshot, so its legend counts it at once.
 for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVENTS), TRACKING_EVENTS.flagRaised, TRACKING_EVENTS.flagResolved]) {
   eventBus.subscribe(type, 'integration.live-map-cache', () => liveMap.invalidate());
@@ -107,7 +115,7 @@ for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVEN
 const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
-router.use(trackingRouter(ingestion, liveMap, telemetryRules));
+router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
 
 export const integrationModule: AppModule = { name: 'integration', router };
 

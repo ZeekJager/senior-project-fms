@@ -85,7 +85,7 @@ export function ExpiryBadge({ expiresOn }: { expiresOn: string | null }) {
   )
 }
 
-function DocumentRow({ doc, canDelete }: { doc: OwnedDocument; canDelete: boolean }) {
+export function DocumentRow({ doc, canDelete }: { doc: OwnedDocument; canDelete: boolean }) {
   const link = useDocumentLink()
   const remove = useDeleteDocument()
   const { toast } = useToast()

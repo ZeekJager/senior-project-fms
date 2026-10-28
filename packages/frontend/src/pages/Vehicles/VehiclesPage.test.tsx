@@ -524,6 +524,14 @@ describe('Vehicle Management (S-04)', () => {
       expect(await screen.findByRole('dialog', { name: `Edit ${v.registration_number}` })).toBeInTheDocument()
     })
 
+    it("each row links to the vehicle's history page (FMS-136)", async () => {
+      const v = vehicle()
+      serveFleet([v])
+      await openVehicles()
+      await within(table()).findByText(v.registration_number)
+      expect(within(rowFor(v.registration_number)).getByRole('link', { name: `History of ${v.registration_number}` })).toHaveAttribute('href', `/vehicles/${v.id}`)
+    })
+
     it('J, K and Enter open a vehicle from the keyboard', async () => {
       const v = vehicle()
       serveFleet([v])

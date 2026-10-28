@@ -12,6 +12,7 @@ import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
+import { VehicleHistoryPage } from '@/pages/VehicleHistory'
 import { VehiclesPage } from '@/pages/Vehicles'
 
 export interface AppRoute {
@@ -52,6 +53,12 @@ export const portals: Portal[] = [
         element: <VehiclesPage />,
         permission: { all: ['vehicle:read', 'depot:read'] },
         nav: { label: 'Vehicles', icon: Truck },
+      },
+      {
+        // S-22. One vehicle's history (FMS-136), opened from the list; each section needs its own read permission.
+        path: '/vehicles/:vehicleId',
+        element: <VehicleHistoryPage />,
+        permission: { all: ['vehicle:read', 'depot:read'] },
       },
       {
         // S-05. driver:read is staff-only: drivers see their own profile at /drivers/me instead (FMS-19).

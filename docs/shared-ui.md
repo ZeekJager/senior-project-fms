@@ -124,3 +124,17 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 **View.** The map opens on Addis Ababa at zoom 12. It fits the view to the vehicles the first time any are given, and never again, so a dispatcher's own panning wins.
 
 **Tile server.** OpenStreetMap's tiles need no key, but their usage policy is for light use. A production deployment points `VITE_MAP_TILE_URL` (and `VITE_MAP_TILE_ATTRIBUTION`) at its own tile server or a provider. Tile requests are cross-origin, so the driver app's service worker never caches them.
+
+## Trip map
+
+Card: FMS-136 (SE-180). Code: `packages/frontend/src/components/TripMap/`. Import from `@/components/TripMap`. One trip on a map, on the vehicle page (S-22): the route it was planned on as a dashed line from origin to destination, the GPS track it drove as a solid line in the brand colour, a ring where it set off and a dot where it got to, and a legend for the lines it shows.
+
+| Prop | Notes |
+|---|---|
+| `planned` | `{origin, destination}`, each `[lat, lng]` or null: the route's ends (`GET /routes/{id}`) |
+| `track` | `[lat, lng][]`, oldest first: the trip's points from `GET /vehicles/{id}/tracking` between its actual start and end |
+| `label` | The map region's accessible name |
+| `className` | Size the map here; a height is required |
+
+It shares the fleet map's tiles, controls and dark theme (`.fleet-map`), creates the map only once it is on screen, and frames every point once they are known (`tripMapBounds`). With nothing to draw it says so.
+

@@ -681,6 +681,59 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /vehicles/{vehicle_id}/tracking:
+    get:
+      tags: [Tracking]
+      operationId: getVehicleTracking
+      summary: A vehicle's GPS history (FMS-136)
+      description: >
+        The vehicle's stored positions, oldest first, a page at a time: the vehicle page draws a trip's track from
+        the points between its actual start and end. Behavioural data: needs tracking:read (never drivers), in the
+        caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404. Each point names its trip,
+        not the driver.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - name: from
+          in: query
+          description: recorded_at at or after this instant.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: recorded_at at or before this instant.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+        - name: cursor
+          in: query
+          description: meta.next_cursor of the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The points, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrackPoint' }
+                  meta:
+                    type: object
+                    required: [page_size, next_cursor, request_id]
+                    properties:
+                      page_size: { type: integer }
+                      next_cursor: { type: [string, 'null'], description: The next page's cursor; null on the last page. }
+                      request_id: { type: string }
+        '400':
+          description: VALIDATION_FAILED (a time without offset, limit out of range, to before from, a cursor the API did not issue, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /alerts:
     get:
       tags: [Alerts]
@@ -1893,6 +1946,23 @@ components:
             flagged_at (the ping that crossed the threshold). On closing: end_reason (cleared, moving, engine_off,
             signal_lost), duration_seconds and, for speeding, max_speed_kmh.
           additionalProperties: true
+
+    TrackPoint:
+      type: object
+      description: A stored position of a vehicle (FMS-136), as GET /vehicles/{vehicle_id}/tracking returns it.
+      required: [recorded_at, lat, lng, speed_kmh, heading, altitude_m, accuracy_m, ignition_on, odometer_km, source, trip_id]
+      properties:
+        recorded_at: { type: string, format: date-time }
+        lat: { type: number }
+        lng: { type: number }
+        speed_kmh: { type: integer, minimum: 0 }
+        heading: { type: [number, 'null'], description: Degrees from north, 0-360. }
+        altitude_m: { type: [number, 'null'] }
+        accuracy_m: { type: [number, 'null'] }
+        ignition_on: { type: [boolean, 'null'], description: Null when the reporter cannot tell (a phone). }
+        odometer_km: { type: [number, 'null'] }
+        source: { type: string, enum: [device, phone, api, telematics], description: Who reported it. }
+        trip_id: { type: [string, 'null'], format: uuid, description: The trip the vehicle was on, if any. }
 
     VehicleLocation:
       type: object

@@ -43,6 +43,7 @@ Counts that depend on the random draws are given for the default seed (20261007)
 | Trips: draft, scheduled, assigned, en route, completed, cancelled | 80 | 1,000 |
 | Fuel logs: one after each completed trip of a combustion vehicle, about 3% suspiciously high | 40 (27–43) | 526 (455–526) |
 | Maintenance records: mostly completed, some open or scheduled, with parts used | 20 | 150 |
+| GPS pings: a track for every completed trip, one every five minutes (below) | 5,090 | 55,951 |
 | Service history: completed preventive work since each vehicle joined the fleet (below) | 147 (143–158) | 1,305 (1,282–1,310) |
 | Spare parts: one shared catalogue; one low and one out of stock | 19 | 19 |
 | Attendance | 3 days | the anchor day |
@@ -79,6 +80,15 @@ The predictive model (FMS-55, [ml-scoring.md](ml-scoring.md)) reads when each we
 
 On the budget profile, scored by the model `pm-2026.10`, combustion vehicles average a health score of 86, and about 11% fall below 75. Electric vehicles score low: see [ml-scoring.md](ml-scoring.md#on-the-seeded-fleet).
 
+## GPS tracks
+
+Every completed trip has the GPS track a driver's phone would have reported (FMS-136), so the vehicle page can show the route each trip drove (`GET /vehicles/{vehicle_id}/tracking`). `scripts/seed/tracks.ts` draws it from the plan:
+
+- **The road.** Each route gets a gentle curve between its two cities, the same for every trip on it.
+- **The trip.** A ping every five minutes from the trip's actual start to its actual end, from origin to destination. The speed drifts between 75% and 125% of the trip's average, and a trip over three hours stops once on the way for 15 to 30 minutes. The speeds add up to the trip's `actual_distance_km`.
+- **As stored.** `source` is `phone` and there is no ignition reading, so the engine-hours job and the odometer readings ignore them. Each vehicle's current location (the live map) is where its last trip ended.
+- **Repeatable.** The tracks use their own random generator, seeded by route and by trip, so they do not change anything else the plan draws.
+
 ## Signing in
 
 The script prints one account per role (`seed.admin@fleet.demo`, then one per role, then the first driver). They all share one password: `FMS_SEED_PASSWORD` if set, otherwise a generated one, printed once at the end. The other accounts are invited, without a password (see [auth.md](auth.md), Creating a user).
@@ -87,7 +97,7 @@ The script prints one account per role (`seed.admin@fleet.demo`, then one per ro
 
 Through the application's own HTTP API, served in the seed process on a loopback port: depots, users (`POST /users`, then the invitation link through `POST /auth/password`), vehicles, drivers, spare parts, maintenance, attendance and vehicle documents (`POST /documents`, multipart, into the configured document storage). Validation, business rules, audit entries and events all apply. Nothing reaches the database that the API would refuse.
 
-Routes, trips and fuel logs have no API yet. They are inserted with `auditedMutation`, which writes the same audit entry a service would. Only the first admin is inserted directly, because the API needs someone to sign in as.
+Routes, trips and fuel logs have no API yet. They are inserted with `auditedMutation`, which writes the same audit entry a service would. GPS pings are inserted 5,000 to a statement with one `tracking.pings_ingested` audit entry each, as the ingestion audits a batch. Only the first admin is inserted directly, because the API needs someone to sign in as.
 
 Then every read model is rebuilt (`rebuildReadModels()`), because those inserts publish no events. That includes the meter readings of the fuel logs and completed repairs (FMS-126). Each vehicle's registered odometer is a manual reading. Each completed repair reads the odometer the vehicle had on its date: its base reading plus the trips completed by then.
 
@@ -95,7 +105,7 @@ Then every read model is rebuilt (`rebuildReadModels()`), because those inserts 
 
 `buildPlan(profile, seed, anchor)` (`scripts/seed/plan.ts`) turns the inputs into the whole dataset as plain data, with a seeded generator (mulberry32) and no clock. Running it with the same seed and anchor gives the same rows. The script prints a `fingerprint`: a SHA-256 of the business content of every seeded table. Two runs with the same seed and anchor print the same fingerprint.
 
-The fingerprint leaves out what differs on every run by design: ids, public ids, created/updated timestamps (except a vehicle's `created_at`, which the seed sets), password hashes (salted) and audit correlation ids. Other values derived from the current time are also left out (for example a repair's `started_at`).
+GPS pings enter it per vehicle (count, first and last time, sums of position, speed and heading), not row by row. The fingerprint leaves out what differs on every run by design: ids, public ids, created/updated timestamps (except a vehicle's `created_at`, which the seed sets), password hashes (salted) and audit correlation ids. Other values derived from the current time are also left out (for example a repair's `started_at`).
 
 ## Where it is tested
 

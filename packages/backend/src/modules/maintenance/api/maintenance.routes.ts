@@ -141,6 +141,8 @@ const listQuery = z.object({
   status: z.enum(MAINTENANCE_STATUSES).optional(),
   open: flag,
   maintenance_type: z.enum(MAINTENANCE_TYPES).optional(),
+  // created_at: when the record was entered; work_date: when the work happened (FMS-136, a vehicle's history).
+  sort_by: z.enum(['created_at', 'work_date']).default('created_at'),
   sort_order: z.enum(['asc', 'desc']).default('desc'),
 });
 

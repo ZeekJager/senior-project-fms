@@ -528,7 +528,7 @@ Fuel log rules (FMS-39):
 |---|---|---|---|
 | `GET /maintenance` | Legacy-compatible maintenance list | `maintenance:read` | Paged repair records |
 | `POST /maintenance` | Legacy-compatible maintenance create | `maintenance:write` | `vehicle_id,description,labour_hours,cost_cents`; activates maintenance flag |
-| `GET /maintenance-records` | Canonical maintenance list | `maintenance:read` | Paged `MaintenanceRecord[]` |
+| `GET /maintenance-records` | Canonical maintenance list | `maintenance:read` | `vehicle_id`, `status`, `open`, `maintenance_type`, `sort_by` (`created_at`, when entered, the default; or `work_date`, when the work happened: completed, else started, else scheduled; FMS-136), `sort_order` (`desc` default) -> Paged `MaintenanceRecord[]` (also `GET /maintenance`) |
 | `POST /maintenance-records` | Canonical maintenance create | `maintenance:write` | `MaintenanceRecordCreate` -> `MaintenanceRecord` |
 | `GET /maintenance-records/{id}` | Maintenance detail | `maintenance:read` | `MaintenanceRecord` (also `/maintenance/{id}`) |
 | `PATCH /maintenance-records/{id}` | Update maintenance | `maintenance:write` | `MaintenanceRecordUpdate` -> `MaintenanceRecord`; `PUT` too (also `/maintenance/{id}`) |
@@ -660,7 +660,7 @@ The ML service never directly updates fleet master data. The Node.js core valida
 |---|---|---|---|
 | `GET /tracking/vehicles/current` | Current fleet locations (the live map, FMS-45) | `tracking:read` | `depot_id?` -> `VehicleLocation[]`; cached 5 s |
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
-| `GET /vehicles/{vehicle_id}/tracking` | Historical GPS | `tracking:read` | `from,to,limit,cursor` -> `GPSPoint[]` |
+| `GET /vehicles/{vehicle_id}/tracking` | Historical GPS (FMS-136) | `tracking:read` | `from`, `to` (both included), `limit` (1-1000, default 500), `cursor` -> `TrackPoint[]` oldest first, `meta.next_cursor` for the next page or `null`; depot scope, another depot's vehicle is `404` |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
 | `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
 

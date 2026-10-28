@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { runSeed, SEED_ADMIN_EMAIL } from '../../scripts/seed/apply';
 import { buildPlan } from '../../scripts/seed/plan';
+import { tripTrack } from '../../scripts/seed/tracks';
 import { pool } from '../../src/db';
 import { verifyPassword } from '../../src/modules/auth/infrastructure/password-hasher';
 
@@ -24,6 +25,21 @@ describe('seed generator', () => {
     expect(summary.counts.documents_expiring_amber).toBeGreaterThan(0);
     expect(summary.counts.documents_expiring_red).toBeGreaterThan(0);
     expect(summary.logins.map((l) => l.role)).toEqual(expect.arrayContaining(['admin', 'fleet_manager', 'dispatcher', 'driver']));
+
+    // Every completed trip's GPS track (FMS-136), within its actual start and end, and the vehicles' current
+    // location from it; batches audited like the ingestion's.
+    const plan = buildPlan(OPTIONS.profile, OPTIONS.seed, OPTIONS.anchor);
+    expect(summary.counts.gps_pings).toBe(plan.trips.reduce((n, _, i) => n + tripTrack(plan, i).length, 0));
+    const tracks = await pool.query<{ outside: number; trips: number; completed: number; located: number; batches: number }>(
+      `SELECT (SELECT count(*) FROM tracking.gps_pings p JOIN trip.trips t ON t.id = p.trip_id
+                WHERE p.recorded_at NOT BETWEEN t.actual_start AND t.actual_end OR p.vehicle_id <> t.vehicle_id)::int AS outside,
+              (SELECT count(DISTINCT trip_id) FROM tracking.gps_pings)::int AS trips,
+              (SELECT count(*) FROM trip.trips WHERE status = 'completed')::int AS completed,
+              (SELECT count(*) FROM tracking.vehicle_current_location)::int AS located,
+              (SELECT count(*) FROM audit.audit_logs WHERE action = 'tracking.pings_ingested')::int AS batches`,
+    );
+    expect(tracks.rows[0]).toMatchObject({ outside: 0, trips: tracks.rows[0].completed, batches: Math.ceil(summary.counts.gps_pings / 5000) });
+    expect(tracks.rows[0].located).toBeGreaterThan(0);
 
     // Every row has its audit entry: written by the services, or by auditedMutation for trips.
     const audited = await pool.query<{ entity_type: string; n: number }>(

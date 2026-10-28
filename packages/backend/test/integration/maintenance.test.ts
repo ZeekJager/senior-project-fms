@@ -257,6 +257,22 @@ describe('GET /maintenance', () => {
     expect(open.body.data.map((r: { id: string }) => r.id)).toEqual([second.body.data.id]);
     expect((await api.get(`/maintenance?vehicle_id=${foreign.public_id}`, cookie)).body.data).toEqual([]);
   });
+
+  test('sort_by=work_date orders by when the work happened, not when it was entered (FMS-136)', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    const vehicle = await createVehicle({ depot });
+    const recent = await api.post('/maintenance', body(vehicle, { description: 'Done today', maintenance_type: 'preventive' }), cookie);
+    const backlog = await api.post('/maintenance', body(vehicle, { description: 'Logged late', maintenance_type: 'preventive', scheduled_at: '2026-01-15T06:00:00Z' }), cookie);
+    await api.put(`/maintenance/${recent.body.data.id}`, { completed_at: new Date().toISOString() }, cookie);
+    expect((await api.put(`/maintenance/${backlog.body.data.id}`, { completed_at: '2026-01-15T08:00:00Z' }, cookie)).body).toMatchObject({ data: { status: 'completed' } });
+
+    const ids = async (query: string) => ((await api.get(`/maintenance?vehicle_id=${vehicle.public_id}${query}`, cookie)).body.data as { id: string }[]).map((r) => r.id);
+    expect(await ids('')).toEqual([backlog.body.data.id, recent.body.data.id]);
+    expect(await ids('&sort_by=work_date')).toEqual([recent.body.data.id, backlog.body.data.id]);
+    expect(await ids('&sort_by=work_date&sort_order=asc')).toEqual([backlog.body.data.id, recent.body.data.id]);
+    expect((await api.get('/maintenance?sort_by=cost', cookie)).status).toBe(400);
+  });
 });
 
 describe('maintenance events', () => {
