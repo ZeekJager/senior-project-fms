@@ -212,7 +212,7 @@ Audit reader rules (FMS-28):
   - `entity_type`: a schema-qualified table, e.g. `fleet.vehicles`.
   - `entity_id`: the entity's public id. It matches mutation rows of that entity and, for a user account, its sign-in events and role changes.
   - `correlation_id`: one request or job run.
-  - `action`, e.g. `UPDATE` or `auth.login_failed`.
+  - `action`, e.g. `UPDATE` or `auth.login_failed`. Up to 10, comma-separated, each an exact action or a prefix ending in `.*`: `INSERT,UPDATE,DELETE,ROLE_CHANGE` is every data change, `auth.*` every sign-in event (FMS-29). Anything else is `400`, `reason: "invalid_action"`.
   - `result`: `success`, `denied` or `failed`.
   - `from` and `to`: an ISO instant, or a date meaning that Addis Ababa day. A `to` date includes its day; `from` must come before `to`.
   - An unknown `user_id` returns no rows, not `404`.
