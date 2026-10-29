@@ -60,8 +60,10 @@ export function auditLogRouter(service: AuditLogService): Router {
   const router = Router();
   const handler: RequestHandler = asyncHandler(async (req, res) => {
     const q = parseInput(listQuery, req.query);
-    const { items, nextCursor } = await service.list({ ...q, from: bound(q.from, false), to: bound(q.to, true) });
-    res.set('Cache-Control', 'no-store').json({ data: items, meta: { page_size: q.page_size, next_cursor: nextCursor, request_id: req.correlationId } });
+    const { items, nextCursor, freshness } = await service.list({ ...q, from: bound(q.from, false), to: bound(q.to, true) });
+    res
+      .set('Cache-Control', 'no-store')
+      .json({ data: items, meta: { page_size: q.page_size, next_cursor: nextCursor, data_freshness: freshness, request_id: req.correlationId } });
   });
   router.get('/audit-logs', authorize('audit:read'), handler);
   router.get('/audit', authorize('audit:read'), handler);

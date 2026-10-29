@@ -225,6 +225,12 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 - A new or changed endpoint also goes in `docs/openapi.yaml` (OpenAPI 3.1). `test/integration/openapi.test.ts` fails if an operation listed there is not mounted, a `$ref` is broken, or an error code it names is not in `ERROR_CODES`.
 
+## Read replica
+
+- **Reporting reads go to the replica** (FMS-94, `docs/read-replica.md`): analytics, reconciliation, history and audit searches that scan many rows. A service takes `reads` (`src/db.ts`, `{ session(): Promise<ReadSession> }`) in its deps, opens one session per request (`await reads.session()`) and runs that request's queries on it. The response puts `session.freshness()` in `meta.data_freshness`.
+- **Never** for a read that a write in the same request depends on, for a check before a write (a conflict, a balance, a duplicate) or for a screen that must show what was just saved (forms, dispatch, the live map): those read the primary (`pool`), in the write's transaction where there is one. The replica is seconds behind and refuses locks (`FOR SHARE`, `FOR UPDATE`).
+- The session falls back to the primary by itself (the replica down or too far behind) and says so. Code never chooses the database.
+
 ## Redis
 
 Redis (FMS-72) holds the cache, the shared login throttle, job leases and the telemetry rules' counters (FMS-46), and carries domain events to the real-time layer (FMS-73). It is **never the system of record**. Every use has a PostgreSQL or in-process fallback: if Redis is down, the API serves from PostgreSQL, throttles logins per process, locks jobs in `jobs.job_runs`, and domain events wait in the outbox (consumers still get them). `/health/ready` then reports `redis: "degraded"` and stays `200`.
