@@ -1,5 +1,5 @@
 import { AlertCircle, ArrowUpRight, ClipboardCheck, Clock, Gauge } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
 import { Badge, Button, cn, Drawer, Skeleton, type BadgeTone } from '@/components/ui'
@@ -29,6 +29,8 @@ interface HealthDrawerProps {
   onClose: () => void
   /** Given (maintenance:write): "Schedule inspection" opens the repair form for this vehicle. */
   onSchedule?: (vehicle: HealthVehicle, risk: MaintenanceRisk) => void
+  /** Rendered under the breakdown of a scored vehicle: S-19 asks what the inspection found there (FMS-128). */
+  below?: (vehicle: HealthVehicle, risk: MaintenanceRisk) => ReactNode
 }
 
 const ARC_TONE: Record<HealthBand, string> = { at_risk: 'text-danger', watch: 'text-warning', healthy: 'text-success' }
@@ -39,7 +41,7 @@ const RISK_TONE: Record<RiskLevel, BadgeTone> = { high: 'danger', medium: 'warni
  * line, its risk level and breakdown chance, when it was scored and by which model, and the inputs that
  * raise its risk most. For prediction:read; dispatchers see the badge only.
  */
-export function HealthDrawer({ vehicle, onClose, onSchedule }: HealthDrawerProps) {
+export function HealthDrawer({ vehicle, onClose, onSchedule, below }: HealthDrawerProps) {
   const risk = useMaintenanceRisk(vehicle?.id ?? null)
   const view = risk.data
   const scored = view?.health_score != null
@@ -87,7 +89,10 @@ export function HealthDrawer({ vehicle, onClose, onSchedule }: HealthDrawerProps
           headingLevel="h3"
         />
       ) : (
-        <HealthDetail view={view} />
+        <div className="space-y-8">
+          <HealthDetail view={view} />
+          {vehicle && below?.(vehicle, view)}
+        </div>
       )}
     </Drawer>
   )

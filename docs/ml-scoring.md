@@ -123,6 +123,22 @@ The budget seed (200 vehicles, [seed-data.md](seed-data.md#service-history)), sc
 
 The model scores electric vehicles low. The spec has no notion of an engine that needs no oil, so an electric vehicle's oil, fuel filter, belt, gearbox oil and clutch fluid count as never changed, and the synthetic fleet it was trained on has no electric vehicles. Scoring them properly needs a change to the spec (FMS-52).
 
+## Feedback from technicians (FMS-128)
+
+Nothing else tells the system whether a high-risk prediction was right. A technician who inspects a flagged vehicle says what they found, on the vehicle's health breakdown ([vehicle-health.md](vehicle-health.md)) or with `POST /maintenance-predictions/{prediction_id}/feedback`:
+
+| Outcome | Means |
+|---|---|
+| `confirmed_issue` | The inspection found what the model feared. May name the component found and the failure record ([maintenance.md](maintenance.md)) it led to. |
+| `no_issue_found` | Nothing wrong. |
+| `already_fixed` | A real problem, repaired before the inspection. |
+| `not_inspected` | Nobody looked: the prediction is left unjudged. |
+
+- **Stored** in `maintenance.prediction_feedback` (migration 043): one row per prediction, who gave it, never deleted. Its author can change it for 7 days. A confirmed issue's failure record is the same vehicle's, which also makes the failure a labelled example for retraining.
+- **The figure.** For each model version, the registry ([ml-model-registry.md](ml-model-registry.md)) reports the confirmed share of its **high-risk** predictions: `precision = confirmed_issue / (confirmed_issue + no_issue_found + already_fixed)`. `not_inspected` judges nothing, so it is left out; `already_fixed` counts against, since an inspection cannot confirm what was repaired before it. The counts are reported beside it so anyone can compute another reading. `by_month` lists the last 12 months by when the feedback was given (Addis Ababa).
+- **Only a flag is judged.** A technician can give feedback on any scored prediction, but only `high` ones count in the figure, and the health breakdown asks about those.
+- **Event.** `PredictionFeedbackRecorded` on each write (a later change has `edited: true`).
+
 ## Tests
 
 `src/modules/maintenance/domain/scoring.test.ts` covers the extractor:

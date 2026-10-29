@@ -1,6 +1,8 @@
-import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
-import type { HealthView } from '@/features/health/health'
+import { healthKeys } from '@/features/health/api'
+import type { HealthView, PredictionFeedback } from '@/features/health/health'
+import type { FailureEvent } from '@/pages/Maintenance/failures'
 import type { Vehicle } from '@/pages/Vehicles/types'
 
 export type HealthSort = 'health_score' | 'registration_number' | 'depot'
@@ -69,6 +71,37 @@ export function useHealthList(f: HealthFilters) {
       const { data, meta } = await api.requestEnvelope<Vehicle[]>(`/vehicles?${q}`)
       return { vehicles: data, total: (meta as unknown as PageMeta).total_items }
     },
+  })
+}
+
+/**
+ * The vehicle's latest failure records (GET /failure-events, maintenance:read), newest first: what a confirmed
+ * issue can say it led to (FMS-128). Idle until asked for; a user who may not read them just gets none.
+ */
+export function useVehicleFailures(vehicleId: string, enabled: boolean) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['failure-events', 'vehicle', vehicleId],
+    queryFn: () => api.request<FailureEvent[]>(`/failure-events?vehicle_id=${vehicleId}&page_size=10`),
+    enabled,
+    retry: false,
+    staleTime: 30_000,
+  })
+}
+
+/**
+ * POST (first time) or PATCH (the author, within 7 days) /maintenance-predictions/{id}/feedback (FMS-128). The
+ * vehicle's breakdown and the model registry's precision are read again afterwards.
+ */
+export function useSaveFeedback(vehicleId: string, predictionId: string) {
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ body, existing }: { body: Record<string, unknown>; existing: boolean }) =>
+      api.request<PredictionFeedback>(`/maintenance-predictions/${predictionId}/feedback`, { method: existing ? 'PATCH' : 'POST', json: body }),
+    // Also after a refusal: a second technician's answer may already be there.
+    onSettled: () =>
+      Promise.all([queryClient.invalidateQueries({ queryKey: healthKeys.risk(vehicleId) }), queryClient.invalidateQueries({ queryKey: ['ml-models'] })]),
   })
 }
 

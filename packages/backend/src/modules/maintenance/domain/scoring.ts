@@ -1,4 +1,5 @@
 import type { ServiceItem } from './inventory';
+import type { PredictionFeedbackView } from './prediction-feedback';
 
 // The nightly scoring (FMS-55, docs/ml-scoring.md): every vehicle in service gets the 19 inputs of
 // feature_spec.json (FMS-52), computed from the core's own tables as of a scoring time t, a health score
@@ -86,6 +87,8 @@ export interface MaintenanceRiskView {
   as_of: Date | null;
   scored_at: Date | null;
   stale: boolean;
+  /** What a technician found when they inspected the vehicle for this prediction (FMS-128), or null. */
+  feedback: PredictionFeedbackView | null;
 }
 
 /** What the features of one vehicle at t are computed from, read from the modules that own it. */

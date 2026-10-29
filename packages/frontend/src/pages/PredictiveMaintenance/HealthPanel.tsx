@@ -3,6 +3,7 @@ import { useAuth } from '@/context/AuthContext'
 import { HealthDrawer, type HealthVehicle } from '@/features/health/HealthDrawer'
 import { BAND_LABELS, bandOf, featureLabel, type MaintenanceRisk } from '@/features/health/health'
 import { LogRepairDrawer, type RepairPreset } from '@/pages/Maintenance'
+import { FeedbackSection } from './FeedbackSection'
 
 /** The repair form's description for an inspection a health score asked for: the score and what drives it. */
 export function inspectionDescription(risk: MaintenanceRisk): string {
@@ -24,6 +25,7 @@ export function HealthPanel({ vehicle, onClose }: { vehicle: HealthVehicle | nul
       <HealthDrawer
         vehicle={preset ? null : vehicle}
         onClose={onClose}
+        below={(v, risk) => <FeedbackSection vehicle={v} risk={risk} />}
         onSchedule={
           hasPermission('maintenance:write')
             ? (v, risk) => setPreset({ vehicle: v, type: 'inspection', description: inspectionDescription(risk) })

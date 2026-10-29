@@ -16,10 +16,12 @@ import { completedDistanceAfter, completedTripUsage } from '../trip';
 import { inventoryRouter } from './api/inventory.routes';
 import { maintenanceRouter } from './api/maintenance.routes';
 import { mlModelRouter } from './api/ml-model.routes';
+import { predictionFeedbackRouter } from './api/prediction-feedback.routes';
 import { predictionRouter } from './api/prediction.routes';
 import { InventoryService } from './application/inventory.service';
 import { MaintenanceService } from './application/maintenance.service';
 import { MlModelService } from './application/ml-model.service';
+import { PredictionFeedbackService } from './application/prediction-feedback.service';
 import { PredictionService } from './application/prediction.service';
 import { ScoringService } from './application/scoring.service';
 import { FailureRepository } from './infrastructure/failure.repository';
@@ -27,15 +29,17 @@ import { featureSpecLoader } from './infrastructure/feature-spec';
 import { InventoryRepository } from './infrastructure/inventory.repository';
 import { MaintenanceRepository } from './infrastructure/maintenance.repository';
 import { MlModelRepository, type MlModelListFilter } from './infrastructure/ml-model.repository';
+import { PredictionFeedbackRepository } from './infrastructure/prediction-feedback.repository';
 import { HttpMlServiceClient, ML_SERVICE_TIMEOUT_MS } from './infrastructure/ml-service.client';
 import { ScoringRepository } from './infrastructure/scoring.repository';
 
 const maintenanceRepository = new MaintenanceRepository(pool);
+const failureRepository = new FailureRepository(pool);
 
 const maintenanceService = new MaintenanceService({
   records: maintenanceRepository,
   vehicles: vehicleMaintenance,
-  failures: new FailureRepository(pool),
+  failures: failureRepository,
   incidents: incidentLookup,
   users: userDirectory,
   depots: depotRefs,
@@ -63,11 +67,14 @@ function mlClient(): HttpMlServiceClient | null {
   );
 }
 
+const feedbackRepository = new PredictionFeedbackRepository(pool);
+
 const mlModelService = new MlModelService({
   models: new MlModelRepository(pool),
   client: mlClient,
   spec: featureSpec,
   users: userDirectory,
+  feedback: feedbackRepository,
   events: eventBus,
   log: logger,
 });
@@ -95,11 +102,21 @@ const scoringService = new ScoringService({
   log: logger,
 });
 
+// What a technician found when they inspected a flagged vehicle (FMS-128).
+const predictionFeedbackService = new PredictionFeedbackService({
+  feedback: feedbackRepository,
+  vehicles: vehicleMaintenance,
+  failures: failureRepository,
+  users: userDirectory,
+  events: eventBus,
+});
+
 // The health score screen's reads (FMS-56).
 const predictionService = new PredictionService({
   predictions: scoringRepository,
   vehicles: vehicleMaintenance,
   spec: featureSpec,
+  feedback: predictionFeedbackService,
   staleAfterHours: HEALTH_BANDS.staleAfterHours,
 });
 
@@ -108,6 +125,7 @@ router.use(maintenanceRouter(maintenanceService));
 router.use(inventoryRouter(inventoryService));
 router.use(mlModelRouter(mlModelService));
 router.use(predictionRouter(predictionService));
+router.use(predictionFeedbackRouter(predictionFeedbackService));
 
 export const maintenanceModule: AppModule = {
   name: 'maintenance',
@@ -158,6 +176,7 @@ export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/fail
 export { INVENTORY_EVENTS, SERVICE_ITEMS, type ServiceItem } from './domain/inventory';
 export { MAINTENANCE_EVENTS } from './domain/maintenance';
 export { ML_MODEL_EVENTS, type MlModelView, type ScoringCheck } from './domain/ml-model';
+export { PREDICTION_FEEDBACK_EVENTS, PREDICTION_OUTCOMES } from './domain/prediction-feedback';
 export { PREDICTION_EVENTS, RISK_ALERT_BELOW, type MaintenanceRiskView } from './domain/scoring';
 export type { ScoringResult } from './application/scoring.service';
 export { MlServiceError } from './infrastructure/ml-service.client';

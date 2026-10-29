@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AppError } from '../../../shared/errors/app-error';
+import type { ModelFeedbackStats } from './prediction-feedback';
 
 /** As in maintenance.ml_model_status (migration 039): seen, allowed to score, replaced. */
 export const ML_MODEL_STATUSES = ['registered', 'active', 'retired'] as const;
@@ -59,6 +60,8 @@ export interface MlModelView {
   activated_at: Date | null;
   activated_by: string | null;
   retired_at: Date | null;
+  /** How its high-risk predictions fared when technicians inspected the vehicles (FMS-128). */
+  feedback: ModelFeedbackStats;
 }
 
 /** The scoring job's answer: score with this model, or do not score, and why. */

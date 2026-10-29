@@ -54,6 +54,11 @@ A drawer, from either screen:
 - **The gauge.** A 0 to 100 arc in the band's colour, drawn in when the drawer opens; reduced motion shows it at once. A tick marks 75, the alert line. It is grey for a stale score, which also gets a note that last night's scoring missed the vehicle.
 - **The facts.** Risk level, the breakdown chance within 30 days, when it was scored (date and age, in the user's calendar), and the model version.
 - **What drives it.** Up to 3 inputs that raise this vehicle's risk most, largest effect first, each with the vehicle's value when scored ("Time since last service · 100 days", "Distance since oil change · 17,380 km"). They come from the ML service's `factors`: each one, set back to a typical vehicle's value, lowers the risk the most. A healthy vehicle has none, and the drawer says nothing stands out.
+- **What the inspection found (FMS-128).** Under the breakdown of a **high-risk** vehicle (medium and low are not asked about: only a flag is judged) the panel asks what the inspection found, so the system can tell whether the prediction was right ([ml-scoring.md](ml-scoring.md#feedback-from-technicians-fms-128)):
+  - A technician (`maintenance:write`) chooses **Found a problem**, **Nothing wrong**, **Already fixed** or **Not inspected**. For a problem they may name the part of the vehicle and the failure record it led to (the vehicle's latest ten, from `GET /failure-events`; choosing one fills in and locks the part, which follows the record), and add notes. **Save** sends `POST /maintenance-predictions/{prediction_id}/feedback`.
+  - Once given, the panel shows what was found, with who can change it: its author sees "You can change it until …" and **Change** for 7 days (the form comes back filled in; **Save changes** is a `PATCH`). Nobody else can change it.
+  - Someone without `maintenance:write` (a fleet owner, an auditor) sees nothing to fill in, only what was found once someone has said.
+  - Two technicians answering the same prediction: the second is told it is already recorded and sees the first's answer. A change after the week is refused the same way.
 - **Never scored:** an empty state saying the nightly scoring has not reached it yet.
 - **Footer actions:**
   - **View maintenance history** opens the Repair log filtered to the vehicle.

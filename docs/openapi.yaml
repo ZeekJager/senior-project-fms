@@ -1306,6 +1306,108 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /maintenance-predictions/{prediction_id}/feedback:
+    post:
+      tags: [Maintenance]
+      operationId: recordPredictionFeedback
+      summary: Say what an inspection of a flagged vehicle found (FMS-128)
+      description: >
+        A technician records the outcome of inspecting the vehicle a prediction flagged: confirmed_issue,
+        no_issue_found, already_fixed or not_inspected. A confirmed issue may name the component found and the
+        failure record (FMS-125) it led to (the same vehicle's; the component defaults to the failure's and may
+        not contradict it); the other outcomes carry neither. One feedback per prediction. The prediction must be
+        on a vehicle in the caller's depots (anything else, an unscored row included, is a 404) and may be a
+        superseded one. Needs prediction:read and maintenance:write (technicians, depot admins, fleet managers,
+        admins). Publishes PredictionFeedbackRecorded. Audited. The confirmed share of a model version's
+        high-risk predictions is on GET /ml-models.
+      parameters:
+        - $ref: '#/components/parameters/PredictionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome]
+              properties:
+                outcome: { $ref: '#/components/schemas/PredictionOutcome' }
+                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null], description: Only for a confirmed issue. }
+                failure_event_id: { type: [string, 'null'], format: uuid, description: The failure record the issue led to; only for a confirmed issue. }
+                comment: { type: [string, 'null'], maxLength: 1000, description: Trimmed. }
+      responses:
+        '201':
+          description: Recorded. Location names the feedback.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PredictionFeedback' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a field that is not writable; component or failure_event_id only_for_confirmed_issue;
+            failure_event_id references_missing_record or failure_other_vehicle; component_mismatch) or
+            VALIDATION_INVALID_ENUM (an unknown outcome or component).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_DUPLICATE (reason already_recorded; record_id is the feedback already given, by anyone).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    patch:
+      tags: [Maintenance]
+      operationId: editPredictionFeedback
+      summary: Change feedback you gave, within 7 days (FMS-128)
+      description: >
+        Only the technician who gave the feedback, and only for 7 days after they gave it. Send the fields to
+        change, at least one; null clears a component, a failure link or a comment. Changing the outcome to
+        anything but a confirmed issue drops the component and the failure link. A request that changes nothing
+        writes and publishes nothing. Needs prediction:read and maintenance:write. Publishes
+        PredictionFeedbackRecorded with edited true. Audited.
+      parameters:
+        - $ref: '#/components/parameters/PredictionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                outcome: { $ref: '#/components/schemas/PredictionOutcome' }
+                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null] }
+                failure_event_id: { type: [string, 'null'], format: uuid }
+                comment: { type: [string, 'null'], maxLength: 1000 }
+      responses:
+        '200':
+          description: The feedback after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PredictionFeedback' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: As POST, or VALIDATION_FAILED reason empty_update.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission, or reason not_author).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '404':
+          description: NOT_FOUND (no such prediction in the caller's depots, or it has no feedback yet).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, reason edit_window_closed (more than 7 days since it was given).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /ml-models:
     get:
       tags: [Maintenance]
@@ -1315,7 +1417,8 @@ paths:
         Every predictive maintenance model version the ML service has served, newest first by when the scoring job
         first saw it, with its inputs, the SHA-256 of the feature spec it was trained on, metrics, training data and
         artefact checksum. features_match false means its inputs are not the ones the core computes: it can never
-        score. Registration is the scoring job's alone (docs/ml-model-registry.md). Needs prediction:read.
+        score. feedback is how its high-risk predictions fared when technicians inspected the vehicles (FMS-128).
+        Registration is the scoring job's alone (docs/ml-model-registry.md). Needs prediction:read.
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [registered, active, retired] } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
@@ -1540,6 +1643,12 @@ components:
       name: incident_id
       in: path
       required: true
+      schema: { type: string, format: uuid }
+    PredictionId:
+      name: prediction_id
+      in: path
+      required: true
+      description: A prediction's id, as GET /vehicles/{vehicle_id}/maintenance-risk returns it (prediction_id).
       schema: { type: string, format: uuid }
     MaintenanceRecordId:
       name: record_id
@@ -2325,10 +2434,10 @@ components:
     MaintenanceRisk:
       type: object
       description: A vehicle's latest prediction (FMS-55, FMS-56). Score fields are null for a vehicle never scored.
-      required: [vehicle_id, prediction_id, health_score, risk_level, failure_probability, prediction_horizon_days, factors, model_name, model_version, as_of, scored_at, stale]
+      required: [vehicle_id, prediction_id, health_score, risk_level, failure_probability, prediction_horizon_days, factors, model_name, model_version, as_of, scored_at, stale, feedback]
       properties:
         vehicle_id: { type: string, format: uuid }
-        prediction_id: { type: [string, 'null'], format: uuid }
+        prediction_id: { type: [string, 'null'], format: uuid, description: "The id that feedback on the prediction takes (POST /maintenance-predictions/{prediction_id}/feedback)." }
         health_score: { type: [integer, 'null'], minimum: 0, maximum: 100, description: 'round((1 - failure_probability) * 100)' }
         risk_level: { type: [string, 'null'], enum: [low, medium, high, null], description: 'low at 75 and up, high at 40 and below.' }
         failure_probability: { type: [number, 'null'], minimum: 0, maximum: 1, description: The chance of an unplanned failure within the horizon. }
@@ -2349,11 +2458,66 @@ components:
         as_of: { type: [string, 'null'], format: date-time, description: The scoring time the inputs were computed as of (the start of the day, Addis Ababa). }
         scored_at: { type: [string, 'null'], format: date-time }
         stale: { type: boolean, description: Scored more than 25 hours ago. }
+        feedback:
+          oneOf: [{ $ref: '#/components/schemas/PredictionFeedback' }, { type: 'null' }]
+          description: What a technician found when they inspected the vehicle for this prediction (FMS-128), or null. Last night's feedback is about last night's score, not this one.
+
+    PredictionOutcome:
+      type: string
+      enum: [confirmed_issue, no_issue_found, already_fixed, not_inspected]
+      description: >
+        confirmed_issue: the inspection found what the model feared. no_issue_found: nothing wrong.
+        already_fixed: it was a real problem, repaired before the inspection. not_inspected: nobody looked.
+
+    PredictionFeedback:
+      type: object
+      description: What a technician found on a flagged vehicle (FMS-128). One per prediction; never deleted.
+      required: [id, prediction_id, outcome, component, failure_event_id, comment, recorded_by, created_at, updated_at, editable_until, can_edit]
+      properties:
+        id: { type: string, format: uuid }
+        prediction_id: { type: string, format: uuid }
+        outcome: { $ref: '#/components/schemas/PredictionOutcome' }
+        component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null], description: What was found; confirmed issues only. }
+        failure_event_id: { type: [string, 'null'], format: uuid, description: The failure record (FMS-125) the confirmed issue led to. }
+        comment: { type: [string, 'null'] }
+        recorded_by: { type: [string, 'null'], format: uuid, description: The user who gave it. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        editable_until: { type: string, format: date-time, description: 7 days after created_at. }
+        can_edit: { type: boolean, description: The caller is the author and editable_until has not passed. }
+
+    MlModelFeedback:
+      type: object
+      description: >
+        How a model version's high-risk predictions fared (FMS-128). precision is confirmed_issue / reviewed, where
+        reviewed = confirmed_issue + no_issue_found + already_fixed: not_inspected judges nothing, and already_fixed
+        cannot be confirmed by an inspection, so it counts against.
+      required: [high_risk_predictions, with_feedback, confirmed_issue, no_issue_found, already_fixed, not_inspected, reviewed, precision, by_month]
+      properties:
+        high_risk_predictions: { type: integer, description: Scored predictions of this version at risk level high. }
+        with_feedback: { type: integer }
+        confirmed_issue: { type: integer }
+        no_issue_found: { type: integer }
+        already_fixed: { type: integer }
+        not_inspected: { type: integer }
+        reviewed: { type: integer }
+        precision: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'Three decimals; null when nothing is reviewed yet.' }
+        by_month:
+          type: array
+          description: Newest first; the last 12 months, only months with a judgement; the month feedback was given in (Addis Ababa).
+          items:
+            type: object
+            required: [month, reviewed, confirmed_issue, precision]
+            properties:
+              month: { type: string, pattern: '^\d{4}-\d{2}$', example: 2026-10 }
+              reviewed: { type: integer }
+              confirmed_issue: { type: integer }
+              precision: { type: [number, 'null'] }
 
     MlModel:
       type: object
       description: A registered predictive maintenance model version (FMS-127). Written once when first seen; only its status changes.
-      required: [id, name, version, status, algorithm, features, feature_spec_version, feature_spec_hash, features_match, metrics, training_data, trained_at, artefact_sha256, first_seen_at, activated_at, activated_by, retired_at]
+      required: [id, name, version, status, algorithm, features, feature_spec_version, feature_spec_hash, features_match, metrics, training_data, trained_at, artefact_sha256, first_seen_at, activated_at, activated_by, retired_at, feedback]
       properties:
         id: { type: string, format: uuid }
         name: { type: string, example: predictive-maintenance }
@@ -2372,6 +2536,7 @@ components:
         activated_at: { type: [string, 'null'], format: date-time }
         activated_by: { type: [string, 'null'], format: uuid, description: 'The administrator who last activated it.' }
         retired_at: { type: [string, 'null'], format: date-time }
+        feedback: { $ref: '#/components/schemas/MlModelFeedback' }
     MeterReading:
       type: object
       description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).

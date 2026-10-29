@@ -5,11 +5,14 @@ import { PREDICTION_TYPE, type MaintenanceRiskView } from '../domain/scoring';
 import type { FeatureSpec } from '../infrastructure/feature-spec';
 import type { ScoringRepository } from '../infrastructure/scoring.repository';
 import type { Caller } from './maintenance.service';
+import type { PredictionFeedbackService } from './prediction-feedback.service';
 
 export interface PredictionServiceDeps {
   predictions: ScoringRepository;
   vehicles: { findInScope(db: Queryable, by: { publicId: string }, scope: Scope): Promise<{ id: string; publicId: string } | null> };
   spec: () => FeatureSpec;
+  /** The feedback on a prediction (FMS-128). */
+  feedback: Pick<PredictionFeedbackService, 'forPrediction'>;
   /** A score older than this is stale (fleet's HEALTH_BANDS). */
   staleAfterHours: number;
   now?: () => Date;
@@ -40,6 +43,7 @@ export class PredictionService {
           as_of: null,
           scored_at: null,
           stale: false,
+          feedback: null,
         };
       }
       const units = new Map(this.deps.spec().inputs.map((i) => [i.name, i.unit]));
@@ -57,6 +61,7 @@ export class PredictionService {
         as_of: p.asOf,
         scored_at: p.scoredAt,
         stale: now.getTime() - p.scoredAt.getTime() > this.deps.staleAfterHours * 3_600_000,
+        feedback: await this.deps.feedback.forPrediction(client, caller, p.id),
       };
     });
   }

@@ -90,7 +90,7 @@ docker exec fms_backend npm run ml:model -- activate pm-2026.10 --by admin@examp
 
 ## API
 
-- `GET /ml-models` (`prediction:read`): newest first, `status` to filter, paged. `features_match` says whether the model's hash is the core's.
+- `GET /ml-models` (`prediction:read`): newest first, `status` to filter, paged. `features_match` says whether the model's hash is the core's. `feedback` is how the version's high-risk predictions fared when technicians inspected the vehicles (FMS-128): counts of each outcome and `precision`, the confirmed share of the ones judged, overall and by month ([ml-scoring.md](ml-scoring.md#feedback-from-technicians-fms-128)).
 - `GET /ml-models/{id}` (`prediction:read`).
 - `POST /ml-models/{id}/activate` (`ml-model:activate`, administrators).
 
