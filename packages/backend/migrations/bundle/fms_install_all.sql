@@ -2482,3 +2482,27 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_predictions_scoring
     ON maintenance.maintenance_predictions(vehicle_id, prediction_type, as_of, model_name, model_version)
     WHERE as_of IS NOT NULL;
+
+-- ===== 041_fuel_reconciliation.sql =====
+ALTER TABLE fuel.fuel_anomalies
+    ALTER COLUMN fuel_log_id DROP NOT NULL,
+    ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS period_end   TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS distance_km  NUMERIC(12,3),
+    ADD COLUMN IF NOT EXISTS expected_ml  BIGINT,
+    ADD COLUMN IF NOT EXISTS actual_ml    BIGINT;
+
+DO $$ BEGIN
+    ALTER TABLE fuel.fuel_anomalies
+        ADD CONSTRAINT chk_fuel_anomaly_period
+            CHECK ((period_start IS NULL) = (period_end IS NULL) AND (period_end IS NULL OR period_end > period_start)),
+        ADD CONSTRAINT chk_fuel_anomaly_subject
+            CHECK (fuel_log_id IS NOT NULL
+                OR (period_start IS NOT NULL AND distance_km IS NOT NULL AND expected_ml IS NOT NULL AND actual_ml IS NOT NULL)),
+        ADD CONSTRAINT chk_fuel_anomaly_amounts
+            CHECK ((distance_km IS NULL OR distance_km >= 0) AND (expected_ml IS NULL OR expected_ml >= 0) AND (actual_ml IS NULL OR actual_ml >= 0));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_fuel_anomalies_period
+    ON fuel.fuel_anomalies(vehicle_id, period_start, period_end)
+    WHERE period_start IS NOT NULL;

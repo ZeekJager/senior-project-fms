@@ -58,6 +58,8 @@ const appSchema = z
     TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
     // Alert engine (FMS-92): a critical alert unacknowledged this many minutes escalates to the next tier, and again after as many more.
     ALERT_ESCALATION_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+    // Fuel reconciliation (FMS-41): a month's fuel more than this many percent above or below what its trips needed is an anomaly.
+    FUEL_VARIANCE_THRESHOLD_PCT: z.coerce.number().int().min(1).max(100).default(20),
     // Predictive maintenance service (FMS-54/55/127): unset, nothing is scored.
     ML_SERVICE_URL: z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
     ML_SERVICE_TOKEN: z.string().optional(),
@@ -113,6 +115,8 @@ export interface AppConfig {
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number };
   alerts: { escalationMinutes: number };
+  /** Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly. */
+  fuel: { varianceThresholdPct: number };
   ml: MlConfig;
 }
 
@@ -239,6 +243,7 @@ export function loadAppConfig(env: Env): AppConfig {
     integrations: { secrets: integrations.secrets },
     tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
+    fuel: { varianceThresholdPct: e.FUEL_VARIANCE_THRESHOLD_PCT },
     ml: {
       service: e.ML_SERVICE_URL ? { url: e.ML_SERVICE_URL.replace(/\/+$/, ''), token: e.ML_SERVICE_TOKEN! } : null,
       featureSpecPath: e.ML_FEATURE_SPEC_PATH,

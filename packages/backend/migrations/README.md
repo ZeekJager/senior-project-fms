@@ -44,6 +44,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 038 | `fleet` | Meter readings (FMS-126): `meter_readings`, each odometer and engine-hour reading with its source (fuel log, repair, device, the nightly engine-hours job, manual) and source record, when it was true, and whether it is suspect (lower than a trusted earlier reading); unique per fuel log, repair and engine-hours day; every vehicle starts with a manual reading of its current odometer |
 | 039 | `maintenance`, `auth` | The model registry (FMS-127): `ml_models`, every predictive maintenance model version the ML service has served (inputs, feature spec version and SHA-256, metrics, training data, trained when, artefact checksum, first seen) with its status (`registered`, `active`, `retired`; one active per name); `maintenance_predictions` (model_name, model_version) must name a registered model; permission `ml-model:activate` (admin) |
 | 040 | `maintenance` | The nightly scoring (FMS-55): `maintenance_predictions` gets `health_score`, `risk_level`, `factors` (at most 3) and `as_of` (the scoring time), all set on a scored row; one prediction per vehicle, type, scoring time and model (`ux_predictions_scoring`) |
+| 041 | `fuel` | Fuel reconciliation (FMS-41): `fuel_anomalies.fuel_log_id` becomes optional; a reconciliation anomaly names its period (`period_start`, `period_end`) with the figures it was judged on (`distance_km`, `expected_ml`, `actual_ml`); one per vehicle and period (`ux_fuel_anomalies_period`) |
 
 ## Important
 

@@ -494,7 +494,7 @@ Document rules (FMS-17):
 | `POST /fuel-logs` | Record fuel event | `fuel:write` | `vehicle_id,quantity_ml,total_cost_cents,odometer_km`; optional `trip_id`, `driver_id`, `fuel_type` (defaults to the vehicle's), `unit_price_cents`, `station_name`, `fueled_at` (FMS-115) -> `201 FuelLog`; `Idempotency-Key`; integer ml and cents |
 | `GET /fuel-logs` | Search fuel history | `fuel:read` | `vehicle_id`, `driver_id`, `trip_id`, `from`, `to`, `sort_order` (`desc` default) -> paged `FuelLog[]` |
 | `GET /fuel-logs/{fuel_log_id}` | Get a fuel log | `fuel:read` | `FuelLog`; `404` outside your scope |
-| `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary | `fuel:read` | `FuelSummary` |
+| `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary (FMS-41) | `fuel:read` | `from`, `to` (default: the 30 days to now) -> `FuelSummary`; `404` outside your depots and for a driver |
 | `GET /fuel-anomalies` | List anomalies | `fuel-anomaly:read` | Paged `FuelAnomaly[]` |
 | `GET /fuel-anomalies/{anomaly_id}` | Anomaly detail | `fuel-anomaly:read` | `FuelAnomaly` |
 | `POST /fuel-anomalies/{anomaly_id}/resolve` | Resolve anomaly | `fuel-anomaly:write` | `FuelAnomaly` |
@@ -516,9 +516,19 @@ Fuel log rules (FMS-39):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /fuel-reconciliation` | Actual vs expected fuel usage | `analytics:read` / `fuel:read` | `vehicle_id,depot_id,from,to` -> reconciliation by vehicle |
+| `GET /fuel-reconciliation` | Actual vs expected fuel usage (FMS-41) | `analytics:read` and `fuel:read` | `vehicle_id`, `depot_id`, `from`, `to` (default: last calendar month), `status`, `page`, `page_size` -> paged `FuelReconciliation[]`, furthest from expected first; `meta` adds `from`, `to`, `threshold_pct` and `summary` |
 
 `fuel.fuel_logs` stores raw observations. `fuel.fuel_anomalies` stores derived findings. Reconciliation compares actual consumption with expected consumption using trip distance, vehicle efficiency and configured rules. The API must reject floating-point values in money paths; use integer minor units such as cents.
+
+Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
+
+- **Figures:** for each vehicle and period, the distance of its completed trips (`actual_distance_km`, by `actual_end`), the fuel that distance needs at the vehicle's `fuel_efficiency_ml_per_km` (`expected_ml`), the fuel logged (`actual_ml`, by `recorded_at`) and `variance_pct = (actual - expected) / expected`. Integers end to end: distance in metres, fuel in ml, money in cents, the variance in whole percent, each division rounded half away from zero. Nothing passes through a float.
+- **Judgement:** more than `FUEL_VARIANCE_THRESHOLD_PCT` (default 20) above expected is `above`; more than it below is `below`; otherwise `within` (exactly 20% is within). An electric vehicle, one without a rating, or under 100 km of trips is `not_judged`, with `reason` `electric`, `no_efficiency` or `too_little_distance`.
+- **Who:** `GET /fuel-reconciliation` needs both permissions: a driver (`fuel:read` only) and a dispatcher (`analytics:read` only) get `403`. Rows are the caller's depots' vehicles; a `vehicle_id` or `depot_id` outside them, or unknown, gives an empty page. `GET /vehicles/{vehicle_id}/fuel-summary` needs `fuel:read` in the depot scope; a driver gets `404` for every vehicle, as its totals include other drivers' fill-ups.
+- **Period:** `from` and `to` are instants, or dates meaning Addis Ababa days (`to` inclusive). One bound alone: `from` runs to now, `to` covers the 30 days before it. At most 366 days (`400`, `reason: "period_too_long"`); `to` must be after `from` (`reason: "before_from"`).
+- **`FuelReconciliation`:** `vehicle_id`, `depot_id`, `fuel_type`, `fuel_efficiency_ml_per_km`, `distance_km`, `trips`, `fuel_logs`, `expected_ml`, `actual_ml`, `variance_ml`, `variance_pct`, `total_cost_cents`, `status`, `reason`, `anomaly_id` (the anomaly the monthly job raised for exactly this period). `meta.summary`: `vehicles`, `judged`, `above`, `below`, `expected_ml` and `actual_ml` (judged vehicles), `variance_pct`, `total_cost_cents` (every vehicle).
+- **`FuelSummary`:** `vehicle_id`, `from`, `to`, `fuel_logs`, `actual_ml`, `total_cost_cents`, `trips`, `distance_km`, `rated_efficiency_ml_per_km`, `actual_efficiency_ml_per_km`, `expected_ml`, `variance_ml`, `variance_pct`, `status`, `reason`, `cost_per_km_cents`, `average_price_cents_per_litre`, `open_anomalies`, `threshold_pct`.
+- **The API only reads.** The monthly job `fuel-reconciliation` (04:30 daily, last calendar month) writes a `fuel.fuel_anomalies` row for each vehicle above or below (`consumption_above_expected` or `consumption_below_expected`; severity `high` beyond twice the threshold, else `medium`), once per vehicle and month, and publishes `FuelAnomalyDetected`.
 
 ## 10. Maintenance, Inventory and Predictive Maintenance API
 

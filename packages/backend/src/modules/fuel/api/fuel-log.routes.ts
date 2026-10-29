@@ -7,6 +7,7 @@ import { FLOAT_IN_MONEY_PATH, parseInput, rejectFractionalMoney } from '../../..
 import { authorize } from '../../auth';
 import type { Caller, FuelLogService } from '../application/fuel-log.service';
 import { FUEL_TYPES, fuelLogNotFound } from '../domain/fuel-log';
+import { bound, instantOrDate } from './dates';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,20 +52,6 @@ const createBody = rejectFractionalMoney(
       .optional(),
   }),
 );
-
-/** Addis Ababa is UTC+3 all year: a date filter means that local day (as in GET /audit-logs and /trips). */
-const ADDIS_OFFSET = '+03:00';
-
-/** A date `to` covers that whole day: the bound is the next local midnight. */
-function bound(value: string, end: boolean): Date {
-  if (value.includes('T')) return new Date(value);
-  if (!end) return new Date(`${value}T00:00:00${ADDIS_OFFSET}`);
-  const next = new Date(`${value}T00:00:00Z`);
-  next.setUTCDate(next.getUTCDate() + 1);
-  return new Date(`${next.toISOString().slice(0, 10)}T00:00:00${ADDIS_OFFSET}`);
-}
-
-const instantOrDate = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
 
 const listQuery = z
   .object({
