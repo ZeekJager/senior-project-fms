@@ -13,7 +13,9 @@ import {
   type ScoringCheck,
   type ServedModel,
 } from '../domain/ml-model';
+import { precisionOf, type ModelFeedbackStats } from '../domain/prediction-feedback';
 import type { FeatureSpec } from '../infrastructure/feature-spec';
+import type { PredictionFeedbackRepository } from '../infrastructure/prediction-feedback.repository';
 import type { MlModelListFilter, MlModelRepository, MlModelRow } from '../infrastructure/ml-model.repository';
 import { MlServiceError, type MlServiceClient } from '../infrastructure/ml-service.client';
 import type { Caller } from './maintenance.service';
@@ -37,6 +39,8 @@ export interface MlModelServiceDeps {
   /** The feature spec the core's extractor implements (feature_spec.json). */
   spec: () => FeatureSpec;
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
+  /** The feedback on each version's high-risk predictions (FMS-128), for the precision figure. */
+  feedback: Pick<PredictionFeedbackRepository, 'countsFor'>;
   events: EventBus;
   log: { warn(obj: object, msg: string): void; error(obj: object, msg: string): void };
   now?: () => Date;
@@ -170,6 +174,22 @@ export class MlModelService {
     const ids = [...new Set(rows.flatMap((r) => (r.activatedBy ? [r.activatedBy] : [])))];
     const users = new Map((await this.deps.users.findByIds(db, ids)).map((u) => [u.id, u.publicId]));
     const hash = this.deps.spec().hash;
+    const counts = await this.deps.feedback.countsFor(db, rows.map((r) => ({ name: r.name, version: r.version })));
+    const statsOf = (r: MlModelRow): ModelFeedbackStats => {
+      const c = counts.find((x) => x.modelName === r.name && x.modelVersion === r.version);
+      const reviewed = c ? c.confirmed + c.noIssue + c.alreadyFixed : 0;
+      return {
+        high_risk_predictions: c?.highRisk ?? 0,
+        with_feedback: c?.withFeedback ?? 0,
+        confirmed_issue: c?.confirmed ?? 0,
+        no_issue_found: c?.noIssue ?? 0,
+        already_fixed: c?.alreadyFixed ?? 0,
+        not_inspected: c?.notInspected ?? 0,
+        reviewed,
+        precision: precisionOf(c?.confirmed ?? 0, reviewed),
+        by_month: (c?.months ?? []).map((m) => ({ month: m.month, reviewed: m.reviewed, confirmed_issue: m.confirmed, precision: precisionOf(m.confirmed, m.reviewed) })),
+      };
+    };
     return rows.map((r) => ({
       id: r.publicId,
       name: r.name,
@@ -188,6 +208,7 @@ export class MlModelService {
       activated_at: r.activatedAt,
       activated_by: r.activatedBy ? (users.get(r.activatedBy) ?? null) : null,
       retired_at: r.retiredAt,
+      feedback: statsOf(r),
     }));
   }
 }

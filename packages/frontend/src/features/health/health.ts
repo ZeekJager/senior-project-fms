@@ -45,6 +45,27 @@ export interface RiskFactor {
   unit: string | null
 }
 
+/** What an inspection of a flagged vehicle found (FMS-128). */
+export type PredictionOutcome = 'confirmed_issue' | 'no_issue_found' | 'already_fixed' | 'not_inspected'
+
+/** GET /vehicles/{id}/maintenance-risk's `feedback`, and what POST/PATCH /maintenance-predictions/{id}/feedback return. */
+export interface PredictionFeedback {
+  id: string
+  prediction_id: string
+  outcome: PredictionOutcome
+  /** A failure component, for a confirmed issue (the catalogue is the repair log's). */
+  component: string | null
+  failure_event_id: string | null
+  comment: string | null
+  recorded_by: string | null
+  created_at: string
+  updated_at: string
+  /** Until when the author may change it (7 days). */
+  editable_until: string
+  /** The signed-in user is the author and the time has not passed. */
+  can_edit: boolean
+}
+
 export interface MaintenanceRisk {
   vehicle_id: string
   prediction_id: string | null
@@ -58,6 +79,8 @@ export interface MaintenanceRisk {
   as_of: string | null
   scored_at: string | null
   stale: boolean
+  /** What a technician found when they inspected the vehicle for this prediction, or null. */
+  feedback: PredictionFeedback | null
 }
 
 /** The model's inputs (packages/ai-service/feature_spec.json), as a technician reads them. */

@@ -76,6 +76,12 @@ export class FailureRepository extends Repository {
     return res.rows[0];
   }
 
+  /** A failure by public id (FMS-128: feedback names the failure a confirmed issue led to), or null. */
+  async findByPublicId(db: Queryable, publicId: string): Promise<FailureRow | null> {
+    const res = await db.query<FailureRow>(`${ROW_SQL} WHERE f.public_id = $1`, [publicId]);
+    return res.rows[0] ?? null;
+  }
+
   async forRecords(db: Queryable, recordIds: readonly string[]): Promise<(FailureRow & { recordId: string })[]> {
     if (recordIds.length === 0) return [];
     const res = await db.query<FailureRow & { recordId: string }>(

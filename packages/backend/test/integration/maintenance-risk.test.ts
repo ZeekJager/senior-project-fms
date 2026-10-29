@@ -100,6 +100,7 @@ describe('GET /vehicles/{vehicle_id}/maintenance-risk', () => {
       as_of: null,
       scored_at: null,
       stale: false,
+      feedback: null,
     });
   });
 

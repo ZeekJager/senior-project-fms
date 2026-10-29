@@ -1,10 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { currentUser, envelope, renderApp, signedInAs } from '@/test/auth'
+import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
-import type { MaintenanceRisk } from '@/features/health/health'
+import type { MaintenanceRisk, PredictionFeedback } from '@/features/health/health'
 import type { Vehicle } from '@/pages/Vehicles/types'
 
 const DEPOT = '11111111-1111-4111-8111-111111111111'
@@ -58,6 +58,7 @@ function risk(v: Vehicle, overrides: Partial<MaintenanceRisk> = {}): Maintenance
     as_of: '2026-10-25T21:00:00Z',
     scored_at: v.health_score_updated_at,
     stale: false,
+    feedback: null,
     ...overrides,
   }
 }
@@ -193,6 +194,209 @@ describe('Vehicle health (S-19)', () => {
     expect(within(form).getByRole('textbox', { name: 'Work done' })).toHaveValue(
       'Inspection: health score 60 (at risk), mostly time since last service, distance since oil change, faults reported, last 90 days.',
     )
+  })
+
+  describe('what the inspection found (FMS-128)', () => {
+    const reader = currentUser(['fleet_owner'], ['vehicle:read', 'depot:read', 'prediction:read', 'maintenance:read'])
+    const FAILURES = [
+      { id: 'fe-1', component: 'brakes', failure_mode: 'wear', occurred_at: '2026-10-20T08:00:00Z' },
+      { id: 'fe-2', component: 'cooling', failure_mode: 'leak', occurred_at: '2026-10-10T08:00:00Z' },
+    ]
+    const given = (overrides: Partial<PredictionFeedback> = {}): PredictionFeedback => ({
+      id: 'f-1',
+      prediction_id: 'p-1',
+      outcome: 'no_issue_found',
+      component: null,
+      failure_event_id: null,
+      comment: null,
+      recorded_by: 'u-1',
+      created_at: '2026-10-25T08:00:00Z',
+      updated_at: '2026-10-25T08:00:00Z',
+      editable_until: '2026-11-01T08:00:00Z',
+      can_edit: true,
+      ...overrides,
+    })
+
+    /** The fleet, the breakdown with the server's current feedback, and POST/PATCH /maintenance-predictions/{id}/feedback; records the calls. */
+    function serveFeedback(v: Vehicle, initial: PredictionFeedback | null = null, riskOverrides: Partial<MaintenanceRisk> = {}, refuse?: ReturnType<typeof errorEnvelope>) {
+      let feedback = initial
+      const calls: { method: string; id: string; body: Record<string, unknown> }[] = []
+      serveHealth([v])
+      const save = (method: 'POST' | 'PATCH') => async ({ request, params }: { request: Request; params: Record<string, unknown> }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        calls.push({ method, id: String(params.id), body })
+        if (refuse) return refuse
+        feedback = given({ ...(feedback ?? {}), ...body } as Partial<PredictionFeedback>)
+        return HttpResponse.json({ data: feedback, meta: { request_id: 'r-1' } }, { status: method === 'POST' ? 201 : 200 })
+      }
+      server.use(
+        http.get('/api/v1/vehicles/:id/maintenance-risk', () => envelope(risk(v, { risk_level: 'high', feedback, ...riskOverrides }))),
+        http.get('/api/v1/failure-events', () => envelope(FAILURES)),
+        http.post('/api/v1/maintenance-predictions/:id/feedback', save('POST')),
+        http.patch('/api/v1/maintenance-predictions/:id/feedback', save('PATCH')),
+      )
+      return { calls, setFeedback: (f: PredictionFeedback | null) => (feedback = f) }
+    }
+
+    async function openBreakdown(v: Vehicle, who = technician) {
+      const user = userEvent.setup()
+      signedInAs(who)
+      renderApp('/predictive-maintenance')
+      await user.click(await screen.findByText(v.registration_number))
+      const panel = await screen.findByRole('dialog', { name: `${v.registration_number} health` })
+      return { user, panel }
+    }
+
+    it('a technician says a high-risk vehicle had a problem, in which part, and what they saw: one POST, then it reads back', async () => {
+      const v = vehicle(35)
+      const { calls } = serveFeedback(v)
+      const { user, panel } = await openBreakdown(v)
+
+      expect(await within(panel).findByRole('heading', { name: 'What the inspection found' })).toBeInTheDocument()
+      await user.click(within(panel).getByRole('radio', { name: /Found a problem/ }))
+      await user.selectOptions(within(panel).getByRole('combobox', { name: /Part of the vehicle/ }), 'brakes')
+      await user.type(within(panel).getByRole('textbox', { name: /Notes/ }), 'Pads worn to the metal')
+      await user.click(within(panel).getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => expect(calls).toHaveLength(1))
+      expect(calls[0]).toEqual({ method: 'POST', id: 'p-1', body: { outcome: 'confirmed_issue', component: 'brakes', failure_event_id: null, comment: 'Pads worn to the metal' } })
+      // The breakdown is read again: what was found is shown, with the way to change it.
+      expect(await within(panel).findByText('Found a problem')).toBeInTheDocument()
+      expect(within(panel).getByText('Brakes')).toBeInTheDocument()
+      expect(within(panel).getByText('Pads worn to the metal')).toBeInTheDocument()
+      expect(within(panel).getByRole('button', { name: 'Change' })).toBeInTheDocument()
+      expect(within(panel).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    })
+
+    it('a confirmed issue can name the failure record it led to; the part follows the record', async () => {
+      const v = vehicle(35)
+      const { calls } = serveFeedback(v)
+      const { user, panel } = await openBreakdown(v)
+
+      await user.click(await within(panel).findByRole('radio', { name: /Found a problem/ }))
+      const records = await within(panel).findByRole('combobox', { name: /Failure record it led to/ })
+      expect(within(records).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'None yet',
+        expect.stringMatching(/^Brakes · Worn out · 20 Oct/),
+        expect.stringMatching(/^Cooling · Leak · 10 Oct/),
+      ])
+      await user.selectOptions(records, 'fe-1')
+      const part = within(panel).getByRole('combobox', { name: /Part of the vehicle/ })
+      expect(part).toHaveValue('brakes')
+      expect(part).toBeDisabled()
+      await user.click(within(panel).getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => expect(calls).toHaveLength(1))
+      expect(calls[0].body).toMatchObject({ outcome: 'confirmed_issue', failure_event_id: 'fe-1' })
+    })
+
+    it('says an outcome is needed and sends nothing until one is chosen; the other outcomes take no part and no record', async () => {
+      const v = vehicle(35)
+      const { calls } = serveFeedback(v)
+      const { user, panel } = await openBreakdown(v)
+
+      await user.click(await within(panel).findByRole('button', { name: 'Save' }))
+      expect(await within(panel).findByText('Choose what the inspection found.')).toBeInTheDocument()
+      expect(calls).toEqual([])
+
+      await user.click(within(panel).getByRole('radio', { name: /Found a problem/ }))
+      await user.selectOptions(within(panel).getByRole('combobox', { name: /Part of the vehicle/ }), 'engine')
+      await user.click(within(panel).getByRole('radio', { name: /Nothing wrong/ }))
+      expect(within(panel).queryByRole('combobox', { name: /Part of the vehicle/ })).not.toBeInTheDocument()
+      await user.click(within(panel).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(calls).toHaveLength(1))
+      expect(calls[0].body).toEqual({ outcome: 'no_issue_found', component: null, failure_event_id: null, comment: null })
+    })
+
+    it('only a high-risk prediction is asked about', async () => {
+      const [medium, low] = [vehicle(60), vehicle(90)]
+      serveHealth([medium, low], { [medium.id]: risk(medium, { risk_level: 'medium' }), [low.id]: risk(low, { risk_level: 'low', factors: [] }) })
+      const user = userEvent.setup()
+      signedInAs(technician)
+      renderApp('/predictive-maintenance')
+
+      await user.click(await screen.findByText(medium.registration_number))
+      let panel = await screen.findByRole('dialog')
+      await within(panel).findByText('Medium risk')
+      expect(within(panel).queryByRole('heading', { name: 'What the inspection found' })).not.toBeInTheDocument()
+      await user.keyboard('{Escape}')
+      await user.click(screen.getByText(low.registration_number))
+      panel = await screen.findByRole('dialog')
+      await within(panel).findByText('Low risk')
+      expect(within(panel).queryByRole('heading', { name: 'What the inspection found' })).not.toBeInTheDocument()
+    })
+
+    it('someone who may not record sees nothing to fill in, but reads what was found', async () => {
+      const v = vehicle(35)
+      serveFeedback(v)
+      let { panel } = await openBreakdown(v, reader)
+      await within(panel).findByText('High risk')
+      expect(within(panel).queryByRole('heading', { name: 'What the inspection found' })).not.toBeInTheDocument()
+      expect(within(panel).queryByRole('radio')).not.toBeInTheDocument()
+      cleanup()
+
+      const w = vehicle(30)
+      serveFeedback(w, given({ outcome: 'confirmed_issue', component: 'brakes', comment: 'Pads gone', can_edit: false }))
+      ;({ panel } = await openBreakdown(w, reader))
+      expect(await within(panel).findByText('Found a problem')).toBeInTheDocument()
+      expect(within(panel).getByText('Pads gone')).toBeInTheDocument()
+      expect(within(panel).queryByRole('button', { name: 'Change' })).not.toBeInTheDocument()
+    })
+
+    it('the author changes it within the week: the form comes back filled in, and the change is a PATCH', async () => {
+      const v = vehicle(35)
+      const { calls } = serveFeedback(v, given({ outcome: 'confirmed_issue', component: 'brakes', comment: 'Pads gone' }))
+      const { user, panel } = await openBreakdown(v)
+
+      expect(await within(panel).findByText(/You can change it until/)).toBeInTheDocument()
+      await user.click(within(panel).getByRole('button', { name: 'Change' }))
+      expect(within(panel).getByRole('radio', { name: /Found a problem/ })).toBeChecked()
+      expect(within(panel).getByRole('combobox', { name: /Part of the vehicle/ })).toHaveValue('brakes')
+      expect(within(panel).getByRole('textbox', { name: /Notes/ })).toHaveValue('Pads gone')
+      await user.click(within(panel).getByRole('radio', { name: /Already fixed/ }))
+      await user.click(within(panel).getByRole('button', { name: 'Save changes' }))
+
+      await waitFor(() => expect(calls).toHaveLength(1))
+      expect(calls[0]).toEqual({ method: 'PATCH', id: 'p-1', body: { outcome: 'already_fixed', component: null, failure_event_id: null, comment: 'Pads gone' } })
+      expect(await within(panel).findByText('Already fixed')).toBeInTheDocument()
+    })
+
+    it('Cancel leaves what was recorded as it was', async () => {
+      const v = vehicle(35)
+      const { calls } = serveFeedback(v, given({ comment: 'Checked twice' }))
+      const { user, panel } = await openBreakdown(v)
+      await user.click(await within(panel).findByRole('button', { name: 'Change' }))
+      await user.click(within(panel).getByRole('button', { name: 'Cancel' }))
+      expect(within(panel).getByText('Checked twice')).toBeInTheDocument()
+      expect(calls).toEqual([])
+    })
+
+    it("a second technician's answer already there is said, and shown instead of the form", async () => {
+      const v = vehicle(35)
+      const refused = errorEnvelope(409, 'CONFLICT_DUPLICATE', 'This prediction already has feedback.', [{ reason: 'already_recorded', record_id: 'f-9' }])
+      const { setFeedback } = serveFeedback(v, null, {}, refused)
+      const { user, panel } = await openBreakdown(v)
+
+      await user.click(await within(panel).findByRole('radio', { name: /Nothing wrong/ }))
+      setFeedback(given({ id: 'f-9', outcome: 'confirmed_issue', component: 'engine', can_edit: false }))
+      await user.click(within(panel).getByRole('button', { name: 'Save' }))
+
+      expect(await screen.findByText('Already recorded')).toBeInTheDocument()
+      expect(await within(panel).findByText('Found a problem')).toBeInTheDocument()
+      expect(within(panel).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    })
+
+    it('any other refusal is said in the form and keeps what was typed', async () => {
+      const v = vehicle(35)
+      serveFeedback(v, null, {}, errorEnvelope(500, 'INTERNAL_ERROR'))
+      const { user, panel } = await openBreakdown(v)
+      await user.click(await within(panel).findByRole('radio', { name: /Not inspected/ }))
+      await user.type(within(panel).getByRole('textbox', { name: /Notes/ }), 'Awaiting a slot')
+      await user.click(within(panel).getByRole('button', { name: 'Save' }))
+
+      expect(await within(panel).findByText(/could not be saved/, undefined, { timeout: 8000 })).toBeInTheDocument()
+      expect(within(panel).getByRole('textbox', { name: /Notes/ })).toHaveValue('Awaiting a slot')
+    }, 15000)
   })
 
   it('is in the menu for those with prediction:read, not for a dispatcher', async () => {

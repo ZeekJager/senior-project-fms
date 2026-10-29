@@ -22,6 +22,7 @@ export interface PredictionWrite {
 
 /** A stored prediction as the health score screen reads it (FMS-56). */
 export interface LatestPrediction {
+  id: string;
   publicId: string;
   healthScore: number;
   riskLevel: RiskLevel;
@@ -90,7 +91,7 @@ export class ScoringRepository extends Repository {
   /** The vehicle's latest active prediction of this type, as scored (FMS-56), or null. */
   async latest(db: Queryable, vehicleId: string, predictionType: string): Promise<LatestPrediction | null> {
     const res = await db.query<LatestPrediction>(
-      `SELECT public_id AS "publicId", health_score AS "healthScore", risk_level AS "riskLevel", risk_score::float8 AS "failureProbability",
+      `SELECT id, public_id AS "publicId", health_score AS "healthScore", risk_level AS "riskLevel", risk_score::float8 AS "failureProbability",
               prediction_horizon_days AS "horizonDays", factors, feature_snapshot AS features, model_name AS "modelName",
               model_version AS "modelVersion", as_of AS "asOf", generated_at AS "scoredAt"
          FROM maintenance.maintenance_predictions
