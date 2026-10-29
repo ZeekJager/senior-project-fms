@@ -576,7 +576,7 @@ paths:
       summary: Ingest GPS pings (FMS-88)
       description: >
         A batch of positions. A device (bearer token) reports for its own vehicle; a driver's phone (trip:execute)
-        for the vehicle of the driver's trip under way; a user with tracking:ingest names the vehicle on each ping.
+        for the vehicle of a trip the driver drove, each ping in the trip it was recorded in, however late it arrives (FMS-124: a ping in no trip of the driver is refused alone as no_trip_at_time); a user with tracking:ingest names the vehicle on each ping.
         Naming any other vehicle refuses the whole batch (403). A ping already stored (same vehicle, same instant) is
         a duplicate and stored once. Readable pings that cannot be used are listed in rejected; the rest are stored.
         Each vehicle's newest position is announced as VehicleLocationUpdated at most once per 5 s.
@@ -619,7 +619,7 @@ paths:
                           required: [index, reason]
                           properties:
                             index: { type: integer }
-                            reason: { type: string, enum: [future_timestamp, too_old, low_accuracy, unknown_vehicle, unknown_device, vehicle_retired] }
+                            reason: { type: string, enum: [future_timestamp, too_old, low_accuracy, unknown_vehicle, unknown_device, vehicle_retired, no_trip_at_time] }
                   meta: { $ref: '#/components/schemas/Meta' }
         '400':
           description: VALIDATION_FAILED (a field out of range or unknown, details name pings.<i>.<field>; a user's ping without vehicle_id).
@@ -628,7 +628,7 @@ paths:
         '403':
           description: >
             FORBIDDEN_INSUFFICIENT_ROLE: no tracking:ingest or trip:execute; or a device or phone naming a vehicle that is
-            not its own (reason not_your_vehicle); or a phone with no trip under way (no_trip_under_way). Nothing is stored.
+            not its own (reason not_your_vehicle); or a phone with no trip started in the last 7 days (no_trip_under_way). Nothing is stored.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /vehicles/{vehicle_id}/telemetry-flags:
