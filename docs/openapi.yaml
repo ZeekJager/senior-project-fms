@@ -941,6 +941,102 @@ paths:
             CONFLICT_IDEMPOTENCY_IN_PROGRESS.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /fuel-reconciliation:
+    get:
+      tags: [Fuel]
+      operationId: reconcileFuel
+      summary: Fuel logged against what the trips needed, by vehicle (FMS-41)
+      description: >
+        For each vehicle in the caller's depots: the completed trips' distance in the period (by actual_end), the fuel
+        it needed at the vehicle's fuel_efficiency_ml_per_km, the fuel logged (by recorded_at) and the variance,
+        integers throughout (ml, cents, whole percent, rounded half away from zero). Beyond FUEL_VARIANCE_THRESHOLD_PCT
+        (default 20) either way is above or below; electric vehicles, vehicles without a rating and under 100 km of
+        trips are not_judged. Furthest from expected first. The period defaults to last calendar month (Addis Ababa);
+        at most 366 days. Only reads: the monthly job writes anomalies (docs/fuel-reconciliation.md). Needs both
+        analytics:read and fuel:read.
+      parameters:
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [above, below, within, not_judged] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of vehicles, with the period, the threshold and a summary of every vehicle in it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FuelReconciliation' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages, from, to, threshold_pct, summary]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+                      from: { type: string, format: date-time }
+                      to: { type: string, format: date-time, description: Exclusive. }
+                      threshold_pct: { type: integer }
+                      summary:
+                        type: object
+                        required: [vehicles, judged, above, below, expected_ml, actual_ml, variance_pct, total_cost_cents]
+                        properties:
+                          vehicles: { type: integer }
+                          judged: { type: integer }
+                          above: { type: integer }
+                          below: { type: integer }
+                          expected_ml: { type: integer, description: Over the judged vehicles. }
+                          actual_ml: { type: integer, description: Over the judged vehicles. }
+                          variance_pct: { type: [integer, 'null'] }
+                          total_cost_cents: { type: integer, description: Every vehicle's. }
+        '400':
+          description: VALIDATION_FAILED (a bad date or status; to before_from; period_too_long; an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /vehicles/{vehicle_id}/fuel-summary:
+    get:
+      tags: [Fuel]
+      operationId: getVehicleFuelSummary
+      summary: A vehicle's fuel over a period (FMS-41)
+      description: >
+        The fuel logged and its cost, the completed trips' distance, the rated and the actual efficiency, the
+        variance against what the distance needed (as GET /fuel-reconciliation judges it), cost per km, average price
+        per litre and the vehicle's open fuel anomalies. The period defaults to the 30 days to now. Needs fuel:read,
+        in the caller's depot scope: a vehicle outside it, an id that is not a UUID, and any vehicle for a driver
+        (its totals include other drivers' fill-ups) are 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+      responses:
+        '200':
+          description: The summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelSummary' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; period_too_long).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /incidents:
     post:
       tags: [Incidents]
@@ -2098,6 +2194,52 @@ components:
         source: { type: string, enum: [pump, fuel_card, bulk, manual] }
         recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
         created_at: { type: string, format: date-time, description: When the server received it. }
+
+    FuelReconciliation:
+      type: object
+      description: One vehicle's period (FMS-41). Integers; distance in km to 3 decimals.
+      required: [vehicle_id, depot_id, fuel_type, fuel_efficiency_ml_per_km, distance_km, trips, fuel_logs, expected_ml, actual_ml, variance_ml, variance_pct, total_cost_cents, status, reason, anomaly_id]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        depot_id: { type: string, format: uuid }
+        fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other] }
+        fuel_efficiency_ml_per_km: { type: [integer, 'null'], description: The vehicle's rating. }
+        distance_km: { type: number, description: Completed trips' actual distance, actual_end in the period. }
+        trips: { type: integer }
+        fuel_logs: { type: integer }
+        expected_ml: { type: [integer, 'null'], description: 'distance x rating; null when not judged.' }
+        actual_ml: { type: integer, description: Fuel logged, recorded_at in the period. }
+        variance_ml: { type: [integer, 'null'] }
+        variance_pct: { type: [integer, 'null'], description: '(actual - expected) / expected, whole percent.' }
+        total_cost_cents: { type: integer }
+        status: { type: string, enum: [above, below, within, not_judged] }
+        reason: { type: [string, 'null'], enum: [electric, no_efficiency, too_little_distance, null], description: Why not judged. }
+        anomaly_id: { type: [string, 'null'], format: uuid, description: The anomaly the monthly job raised for exactly this period. }
+
+    FuelSummary:
+      type: object
+      description: A vehicle's fuel over a period (FMS-41). Integers; distance in km to 3 decimals.
+      required: [vehicle_id, from, to, fuel_logs, actual_ml, total_cost_cents, trips, distance_km, rated_efficiency_ml_per_km, actual_efficiency_ml_per_km, expected_ml, variance_ml, variance_pct, status, reason, cost_per_km_cents, average_price_cents_per_litre, open_anomalies, threshold_pct]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time, description: Exclusive. }
+        fuel_logs: { type: integer }
+        actual_ml: { type: integer }
+        total_cost_cents: { type: integer }
+        trips: { type: integer }
+        distance_km: { type: number }
+        rated_efficiency_ml_per_km: { type: [integer, 'null'] }
+        actual_efficiency_ml_per_km: { type: [integer, 'null'], description: ml logged per km driven; null without distance. }
+        expected_ml: { type: [integer, 'null'] }
+        variance_ml: { type: [integer, 'null'] }
+        variance_pct: { type: [integer, 'null'] }
+        status: { type: string, enum: [above, below, within, not_judged] }
+        reason: { type: [string, 'null'], enum: [electric, no_efficiency, too_little_distance, null] }
+        cost_per_km_cents: { type: [integer, 'null'] }
+        average_price_cents_per_litre: { type: [integer, 'null'] }
+        open_anomalies: { type: integer }
+        threshold_pct: { type: integer }
 
     Incident:
       type: object

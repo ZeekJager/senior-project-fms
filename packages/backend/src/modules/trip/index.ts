@@ -103,4 +103,4 @@ export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activ
 export { tripPartiesByIds, type TripParties } from './infrastructure/trip-activity.queries';
 
 /** For the nightly scoring (FMS-55): completed trips' kilometres and driving time over a window, and kilometres since a time. */
-export { completedDistanceAfter, completedTripUsage, type TripUsage } from './infrastructure/trip-usage.queries';
+export { completedDistanceAfter, completedTripMetres, completedTripUsage, type TripUsage } from './infrastructure/trip-usage.queries';

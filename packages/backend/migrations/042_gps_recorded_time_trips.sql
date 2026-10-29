@@ -1,5 +1,5 @@
 -- =====================================================================
--- 041_gps_recorded_time_trips.sql
+-- 042_gps_recorded_time_trips.sql
 -- Buffered pings belong to the trip they were recorded in (FMS-124).
 --
 -- * Ingestion finds a ping's trip from the ping's recorded_at (the trip

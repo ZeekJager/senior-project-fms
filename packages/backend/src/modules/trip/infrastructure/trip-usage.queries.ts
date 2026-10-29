@@ -40,3 +40,20 @@ export async function completedDistanceAfter(db: Queryable, since: readonly { ve
   );
   return res.rows.map((r) => r.km);
 }
+
+/**
+ * For the fuel reconciliation (FMS-41): each vehicle's completed trips whose actual_end is in [from, to), their
+ * actual distance summed in whole metres (the column holds km to 3 decimals, so this is exact) and their count.
+ * Read as text: no float on the way to the fuel figures. Vehicles (internal ids) with none are absent.
+ */
+export async function completedTripMetres(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<Map<string, { distanceM: number; trips: number }>> {
+  if (vehicleIds.length === 0) return new Map();
+  const res = await db.query<{ vehicleId: string; metres: string; trips: number }>(
+    `SELECT vehicle_id AS "vehicleId", round(coalesce(sum(actual_distance_km), 0) * 1000)::bigint::text AS metres, count(*)::int AS trips
+       FROM trip.trips
+      WHERE vehicle_id = ANY($1::bigint[]) AND status = 'completed' AND actual_end >= $2 AND actual_end < $3
+      GROUP BY vehicle_id`,
+    [vehicleIds, from, to],
+  );
+  return new Map(res.rows.map((r) => [r.vehicleId, { distanceM: Number(r.metres), trips: r.trips }]));
+}

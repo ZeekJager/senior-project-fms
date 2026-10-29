@@ -13,7 +13,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `VehicleFaultDetected` (DVIR, FMS-36) | `vehicle_fault` | `severity` if given, else high | vehicle | the vehicle (60 min) | technician, depot admin |
 | `DocumentExpiring` (FMS-26) | `document_expiring` | red: high, amber: medium | the vehicle or driver owning it | the document and expiry date (31 days) | depot admin |
 | `LicenceExpiring` (FMS-26) | `licence_expiring` | red: high, amber: medium | driver (`depot_id`) | the driver and expiry date (31 days) | depot admin |
-| `FuelAnomalyDetected` (FMS-82) | `fuel_anomaly` | `severity`, else high | vehicle | vehicle and anomaly type (24 h) | depot admin, fleet manager |
+| `FuelAnomalyDetected` (the monthly reconciliation, FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md); per fill-up, FMS-82) | `fuel_anomaly` | `severity`, else high | vehicle | vehicle and anomaly type (24 h) | depot admin, fleet manager |
 | `TelemetryFlagRaised` (FMS-46, docs/telemetry-rules.md) | `unsafe_driving`, or `geofence_violation` | `severity`: high for speeding, medium for idling | vehicle, or `depot_id` | vehicle and flag type (30 min) | dispatcher, depot admin |
 | `MaintenanceRiskDetected` (FMS-55, [ml-scoring.md](ml-scoring.md)): a health score falling below 75 | `maintenance_risk` | `risk_level` (medium or high), else medium | vehicle | vehicle (24 h) | technician, depot admin |
 | `MlScoringBlocked` (FMS-127, [ml-model-registry.md](ml-model-registry.md)) | `ml_scoring_blocked` | medium when the model is not active, high otherwise | none: fleet-wide | the model and reason (24 h) | admin |

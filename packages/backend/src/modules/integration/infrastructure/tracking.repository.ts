@@ -68,7 +68,7 @@ export class TrackingRepository {
    *
    * `historyOnly` stores pings of a trip that has already ended (FMS-124): they join the vehicle's history but
    * never become its current position. It is a transaction-local setting the current-location trigger reads
-   * (migration 041), set only around this one INSERT; if the INSERT fails the transaction ends and with it the setting.
+   * (migration 042), set only around this one INSERT; if the INSERT fails the transaction ends and with it the setting.
    */
   async insertPings(client: PoolClient, rows: readonly PingRow[], options: { historyOnly?: boolean } = {}): Promise<{ vehicleId: string; recordedAt: Date }[]> {
     if (rows.length === 0) return [];
