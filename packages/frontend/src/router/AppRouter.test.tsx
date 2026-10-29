@@ -116,7 +116,7 @@ describe('RoleGate on routes', () => {
     signedInAs(financeClerk)
     renderApp('/fuel-reconciliation')
 
-    expect(await screen.findByRole('heading', { name: 'Fuel Reconciliation' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Fuel reconciliation', level: 1 })).toBeInTheDocument()
   })
 })
 

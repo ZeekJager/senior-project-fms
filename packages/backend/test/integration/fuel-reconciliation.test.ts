@@ -256,7 +256,9 @@ describe('GET /fuel-reconciliation', () => {
     expect(res.body.data.map((r: { vehicle_id: string }) => r.vehicle_id)).toEqual([under.public_id, over.public_id, fine.public_id]);
     expect(res.body.data[1]).toEqual({
       vehicle_id: over.public_id,
+      registration_number: over.registration_number,
       depot_id: depot.public_id,
+      depot_name: depot.name,
       fuel_type: 'diesel',
       fuel_efficiency_ml_per_km: 320,
       distance_km: 1000,

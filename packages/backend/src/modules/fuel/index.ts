@@ -5,10 +5,13 @@ import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { JobContext } from '../../shared/jobs/job';
 import type { AppModule } from '../../shared/module';
+import { userDirectory } from '../auth';
 import { fuelRefs } from '../fleet';
 import { completedTripMetres, tripLookups } from '../trip';
+import { fuelAnomalyRouter } from './api/fuel-anomaly.routes';
 import { fuelLogRouter } from './api/fuel-log.routes';
 import { reconciliationRouter } from './api/reconciliation.routes';
+import { FuelAnomalyService } from './application/fuel-anomaly.service';
 import { FuelLogService } from './application/fuel-log.service';
 import { ReconciliationService } from './application/reconciliation.service';
 import { FuelAnomalyRepository } from './infrastructure/fuel-anomaly.repository';
@@ -22,19 +25,25 @@ const fuelLogService = new FuelLogService({
   events: eventBus,
 });
 
+const fuelAnomalies = new FuelAnomalyRepository(pool);
+
 const reconciliationService = new ReconciliationService({
   // The read replica when it is up and close enough (FMS-94), the primary otherwise.
   reads,
   logs: fuelLogs,
-  anomalies: new FuelAnomalyRepository(pool),
+  anomalies: fuelAnomalies,
   refs: { vehicles: fuelRefs.vehicles, depots: fuelRefs.depots, trips: { completedMetres: completedTripMetres } },
   events: eventBus,
   settings: config.fuel,
 });
 
+// FMS-42: the finance screen lists anomalies and closes them, so they are read on the primary.
+const fuelAnomalyService = new FuelAnomalyService({ db: pool, anomalies: fuelAnomalies, vehicles: fuelRefs.vehicles, users: userDirectory });
+
 const router = Router();
 router.use(fuelLogRouter(fuelLogService));
 router.use(reconciliationRouter(reconciliationService));
+router.use(fuelAnomalyRouter(fuelAnomalyService));
 
 export const fuelModule: AppModule = {
   name: 'fuel',

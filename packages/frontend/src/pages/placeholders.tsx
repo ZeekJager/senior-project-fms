@@ -1,4 +1,4 @@
-import { Compass, Fuel, LayoutDashboard, type LucideIcon } from 'lucide-react'
+import { Compass, LayoutDashboard, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
 import { Card } from '@/components/ui'
@@ -20,10 +20,6 @@ function Placeholder({ title, icon: Icon, description }: { title: string; icon: 
 
 export const DashboardPage = () => (
   <Placeholder title="Dashboard" icon={LayoutDashboard} description="Fleet KPIs arrive with the analytics dashboard (S-18). Use the menu to open your screens." />
-)
-
-export const FuelReconciliationPage = () => (
-  <Placeholder title="Fuel Reconciliation" icon={Fuel} description="Expected against actual fuel per vehicle arrives with S-15." />
 )
 
 export const NotFoundPage = () => (

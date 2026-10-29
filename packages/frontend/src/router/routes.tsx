@@ -10,7 +10,8 @@ import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
-import { DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
+import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
+import { DashboardPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
 import { VehicleHistoryPage } from '@/pages/VehicleHistory'
@@ -108,6 +109,8 @@ export const portals: Portal[] = [
         nav: { label: 'Routes', icon: Waypoints },
       },
       {
+        // S-15 (FMS-42). The anomalies need fuel-anomaly:read (admin, fleet manager, depot admin, finance clerk,
+        // compliance officer); the vehicle table also analytics:read and fuel:read, so a depot admin sees anomalies only.
         path: '/fuel-reconciliation',
         element: <FuelReconciliationPage />,
         permission: 'fuel-anomaly:read',
