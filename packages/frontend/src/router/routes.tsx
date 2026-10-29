@@ -1,5 +1,6 @@
 import { Activity, Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
+import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
 import { AuditLogPage } from '@/pages/AuditLog'
@@ -47,7 +48,9 @@ export const portals: Portal[] = [
     id: 'fleet',
     name: 'Fleet management',
     routes: [
+      // S-18 (FMS-51) is the dashboard for analytics:read; /analytics is the screen inventory's name for it.
       { path: '/dashboard', element: <DashboardPage />, nav: { label: 'Dashboard', icon: LayoutDashboard } },
+      { path: '/analytics', element: <Navigate to="/dashboard" replace /> },
       {
         // S-04. Drivers hold vehicle:read for their own vehicle but not
         // depot:read, so the fleet-wide view needs both (FMS-18).

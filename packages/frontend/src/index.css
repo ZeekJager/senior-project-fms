@@ -36,6 +36,9 @@
     --c-danger-solid: 205 40 28;
     --c-success-solid: 4 120 87;
     --c-info: 23 92 211;
+    /* Chart series (FMS-51): the reference palette's categorical slots 1 and 2, validated on this surface. */
+    --c-series-1: 42 120 214;
+    --c-series-2: 235 104 52;
     --c-info-soft: 239 248 255;
     --c-neutral: 52 60 84;
     --c-neutral-soft: 240 242 248;
@@ -72,6 +75,8 @@
     --c-danger-solid: 205 40 28;
     --c-success-solid: 4 120 87;
     --c-info: 83 177 253;
+    --c-series-1: 57 135 229;
+    --c-series-2: 217 89 38;
     --c-info-soft: 11 36 64;
     --c-neutral: 205 213 223;
     --c-neutral-soft: 30 35 48;
@@ -110,6 +115,8 @@
       --c-danger-solid: 205 40 28;
       --c-success-solid: 4 120 87;
       --c-info: 83 177 253;
+      --c-series-1: 57 135 229;
+      --c-series-2: 217 89 38;
       --c-info-soft: 11 36 64;
       --c-neutral: 205 213 223;
       --c-neutral-soft: 30 35 48;
