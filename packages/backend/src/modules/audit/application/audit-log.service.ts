@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import { decodeCursor, encodeCursor, withoutInternalIds, type AuditActor, type AuditLogView } from '../domain/audit-log';
+import { decodeCursor, encodeCursor, parseActions, withoutInternalIds, type AuditActor, type AuditLogView } from '../domain/audit-log';
 import type { AuditLogRepository, AuditLogRow } from '../infrastructure/audit-log.repository';
 
 export interface AuditLogQuery {
@@ -11,6 +11,7 @@ export interface AuditLogQuery {
   entity_type?: string;
   entity_id?: string;
   correlation_id?: string;
+  /** One or more actions, comma-separated, each exact or a prefix ending in `.*` (validated by the route). */
   action?: string;
   result?: string;
   /** ISO instants (the route turns a date into Addis Ababa midnight). */
@@ -61,7 +62,7 @@ export class AuditLogService {
       entityType: query.entity_type,
       entity,
       correlationId: query.correlation_id,
-      action: query.action,
+      actions: query.action ? (parseActions(query.action) ?? undefined) : undefined,
       result: query.result,
       from: query.from,
       to: query.to,

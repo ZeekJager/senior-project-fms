@@ -1,5 +1,5 @@
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import type { AuditCursor } from '../domain/audit-log';
+import type { ActionFilter, AuditCursor } from '../domain/audit-log';
 
 export interface AuditLogRow {
   id: string;
@@ -26,7 +26,7 @@ export interface AuditLogFilter {
   /** The entity's public id, and its internal id when it is a user account (auth events and role changes store that). */
   entity?: { publicId: string; userId?: string };
   correlationId?: string;
-  action?: string;
+  actions?: ActionFilter;
   result?: string;
   from?: string;
   to?: string;
@@ -37,6 +37,9 @@ export interface AuditLogFilter {
 
 /** The public id an audited mutation stored: the same expression as idx_audit_logs_entity_public. */
 const ENTITY_PUBLIC_ID = "COALESCE(a.new_values->>'public_id', a.old_values->>'public_id')";
+
+/** A LIKE pattern for actions starting with `prefix` (letters, `_` and `.` only): its `_` matches only itself. */
+const likePrefix = (prefix: string) => `${prefix.replace(/_/g, '\\_')}%`;
 
 /** Reads audit.audit_logs, newest first on (created_at, id). Never writes: the trail is append-only. */
 export class AuditLogRepository {
@@ -58,7 +61,13 @@ export class AuditLogRepository {
       );
     }
     if (f.correlationId) where.push(`a.correlation_id = ${add(f.correlationId)}`);
-    if (f.action) where.push(`a.action = ${add(f.action)}`);
+    if (f.actions) {
+      const { exact, prefixes } = f.actions;
+      const any: string[] = [];
+      if (exact.length) any.push(`a.action = ANY(${add(exact)}::text[])`);
+      if (prefixes.length) any.push(`a.action LIKE ANY(${add(prefixes.map(likePrefix))}::text[])`);
+      where.push(`(${any.join(' OR ')})`);
+    }
     if (f.result) where.push(`a.result = ${add(f.result)}`);
     if (f.from) where.push(`a.created_at >= ${add(f.from)}::timestamptz`);
     if (f.to) where.push(`a.created_at < ${add(f.to)}::timestamptz`);

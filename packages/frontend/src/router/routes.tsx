@@ -1,7 +1,8 @@
-import { Activity, Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
+import { AuditLogPage } from '@/pages/AuditLog'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
@@ -141,6 +142,13 @@ export const portals: Portal[] = [
         element: <UsersPage />,
         permission: 'users:read',
         nav: { label: 'Users & roles', icon: UserCog },
+      },
+      {
+        // S-10 (FMS-29). audit:read: admin, fleet owner, compliance officer (migration 025 took it from fleet managers).
+        path: '/audit',
+        element: <AuditLogPage />,
+        permission: 'audit:read',
+        nav: { label: 'Audit log', icon: ScrollText },
       },
     ],
   },

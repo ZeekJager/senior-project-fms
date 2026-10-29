@@ -32,7 +32,7 @@ describe('menus per role (seeded grants)', () => {
   })
 
   it.each([
-    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles'] }],
+    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles', 'Audit log'] }],
     ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles'] }],
     ['dispatcher', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes'], 'Command center': ['Dispatch', 'Live map'] }],
     ['depot_admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Live map'] }],
@@ -40,9 +40,9 @@ describe('menus per role (seeded grants)', () => {
     ['finance_clerk', { 'Fleet management': ['Dashboard', 'Fuel reconciliation'] }],
     [
       'compliance_officer',
-      { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Vehicle health', 'Routes', 'Fuel reconciliation'], Administration: ['Users & roles'] },
+      { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Vehicle health', 'Routes', 'Fuel reconciliation'], Administration: ['Users & roles', 'Audit log'] },
     ],
-    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Vehicle health', 'Routes'], 'Command center': ['Live map'] }],
+    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Vehicle health', 'Routes'], 'Command center': ['Live map'], Administration: ['Audit log'] }],
     ['driver', { Driver: ['My day', 'Inspection', 'Fuel', 'Incident'] }],
   ])('%s sees exactly the screens its permissions open', (role, expected) => {
     expect(menu(role)).toEqual(expected)
