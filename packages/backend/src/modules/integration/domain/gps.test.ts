@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { WebhookPayloadError } from './adapter';
-import { MAX_ACCURACY_M, MAX_FUTURE_SKEW_MS, MAX_PING_AGE_MS, pingProblem, roundSpeed } from './gps';
+import { MAX_ACCURACY_M, MAX_FUTURE_SKEW_MS, MAX_PING_AGE_MS, pingProblem, roundSpeed, tripAt } from './gps';
 import { apiPingBatch } from './ping-schema';
 import { fmsTelematicsAdapter } from '../infrastructure/fms-telematics.adapter';
 
@@ -18,6 +18,43 @@ describe('pingProblem', () => {
     expect(pingProblem({ recorded_at: at(MAX_FUTURE_SKEW_MS + 1000) }, NOW)).toBe('future_timestamp');
     expect(pingProblem({ recorded_at: at(-MAX_PING_AGE_MS - 1000) }, NOW)).toBe('too_old');
     expect(pingProblem({ recorded_at: at(0), accuracy_m: MAX_ACCURACY_M + 1 }, NOW)).toBe('low_accuracy');
+  });
+});
+
+describe('tripAt (FMS-124)', () => {
+  const trip = (name: string, startMin: number, endMin: number | null) => ({
+    name,
+    actualStart: new Date(NOW + startMin * 60_000),
+    actualEnd: endMin === null ? null : new Date(NOW + endMin * 60_000),
+  });
+  const find = (trips: ReturnType<typeof trip>[], atMin: number) => tripAt(trips, NOW + atMin * 60_000)?.name ?? null;
+
+  test('a ping is in the trip driven when it was recorded, ends included', () => {
+    const done = [trip('a', 0, 60)];
+    expect(find(done, 30)).toBe('a');
+    expect(find(done, 0)).toBe('a');
+    expect(find(done, 60)).toBe('a');
+  });
+
+  test('a ping before the trip began or after it ended is in no trip, by a millisecond', () => {
+    const done = [trip('a', 0, 60)];
+    expect(tripAt(done, NOW - 1)).toBeNull();
+    expect(tripAt(done, NOW + 60 * 60_000 + 1)).toBeNull();
+    expect(find([], 5)).toBeNull();
+  });
+
+  test('a trip still under way has no end', () => {
+    expect(find([trip('open', 0, null)], 10_000)).toBe('open');
+    expect(find([trip('open', 0, null)], -1)).toBeNull();
+  });
+
+  test('picks among several the trip that fits, and the later start when two overlap', () => {
+    const trips = [trip('first', 0, 60), trip('second', 120, 180), trip('third', 150, null)];
+    expect(find(trips, 30)).toBe('first');
+    expect(find(trips, 90)).toBeNull(); // between trips
+    expect(find(trips, 130)).toBe('second');
+    expect(find(trips, 160)).toBe('third'); // second ran on while third had begun
+    expect(find([trip('x', 0, 60), trip('y', 60, 120)], 60)).toBe('y'); // one closed as the next began
   });
 });
 

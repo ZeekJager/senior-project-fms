@@ -45,6 +45,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 039 | `maintenance`, `auth` | The model registry (FMS-127): `ml_models`, every predictive maintenance model version the ML service has served (inputs, feature spec version and SHA-256, metrics, training data, trained when, artefact checksum, first seen) with its status (`registered`, `active`, `retired`; one active per name); `maintenance_predictions` (model_name, model_version) must name a registered model; permission `ml-model:activate` (admin) |
 | 040 | `maintenance` | The nightly scoring (FMS-55): `maintenance_predictions` gets `health_score`, `risk_level`, `factors` (at most 3) and `as_of` (the scoring time), all set on a scored row; one prediction per vehicle, type, scoring time and model (`ux_predictions_scoring`) |
 | 041 | `fuel` | Fuel reconciliation (FMS-41): `fuel_anomalies.fuel_log_id` becomes optional; a reconciliation anomaly names its period (`period_start`, `period_end`) with the figures it was judged on (`distance_km`, `expected_ml`, `actual_ml`); one per vehicle and period (`ux_fuel_anomalies_period`) |
+| 042 | `trip`, `tracking` | Buffered pings belong to the trip they were recorded in (FMS-124): partial indexes on `trip.trips` by (driver, `actual_start`) and (vehicle, `actual_start`) for the per-ping trip lookup; the current-location trigger skips a ping inserted under `fms.ping_history_only` (a ping of a trip that has ended is history, not the vehicle's position) |
 
 ## Important
 

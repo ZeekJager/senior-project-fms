@@ -688,10 +688,11 @@ The ML service never directly updates fleet master data. The Node.js core valida
 - **`GPSPoint`** (in): `recorded_at` (ISO with offset), `lat`, `lng`, `speed_kmh` (0-300, rounded to whole km/h), and optionally `heading`, `accuracy_m`, `altitude_m`, `ignition_on`, `odometer_km`. A user with `tracking:ingest` adds `vehicle_id`; for a device or a phone it is implied.
 - **Who may report what.**
   - A device (`Authorization: Bearer fmsd_...`) reports for its own vehicle only.
-  - A driver's phone (`trip:execute`) reports for the vehicle of the driver's trip under way only.
-  - Naming another vehicle, or having no trip under way, refuses the whole batch: `403 FORBIDDEN_INSUFFICIENT_ROLE`, reason `not_your_vehicle` or `no_trip_under_way`.
+  - A driver's phone (`trip:execute`) reports for the vehicle of a trip the driver drove, each ping in the trip it was recorded in (`actual_start <= recorded_at <= actual_end`, or still under way), however late the phone delivers it (FMS-124).
+  - Naming another vehicle, or having no trip started in the last 7 days, refuses the whole batch: `403 FORBIDDEN_INSUFFICIENT_ROLE`, reason `not_your_vehicle` or `no_trip_under_way`. A ping in no trip of the driver is refused alone: `no_trip_at_time`.
+  - `gps_pings.trip_id` is the trip at `recorded_at` for every source. A ping of a trip that has ended is stored but never becomes the vehicle's current position or an event.
   - An unknown device token is `401 AUTH_TOKEN_INVALID`.
-- **Validation.** Out of range or unknown fields: `400`, the whole batch, naming `pings.<i>.<field>`. A readable ping that cannot be used is refused alone in `rejected[]`: `future_timestamp` (over 2 min ahead), `too_old` (over 7 days), `low_accuracy` (over 500 m), `vehicle_retired`, `unknown_vehicle`.
+- **Validation.** Out of range or unknown fields: `400`, the whole batch, naming `pings.<i>.<field>`. A readable ping that cannot be used is refused alone in `rejected[]`: `future_timestamp` (over 2 min ahead), `too_old` (over 7 days), `low_accuracy` (over 500 m), `vehicle_retired`, `unknown_vehicle`, `no_trip_at_time` (a phone, at a time with no trip of its driver).
 - **Duplicates.** A ping of a vehicle at an instant already stored is skipped (`(vehicle_id, recorded_at)`, §15), so a retried batch counts as `duplicates` and stores nothing.
 - **Event.** `VehicleLocationUpdated` announces each vehicle's newest position at most once per `TRACKING_EVENT_INTERVAL_SECONDS` (5) of its pings; it reaches clients as `vehicle.location.updated` (§11.2).
 

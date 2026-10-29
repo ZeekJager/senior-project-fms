@@ -9,7 +9,7 @@ Positions reach the system one way, whoever sends them: tracker devices, drivers
 | Caller | How it signs in | May report for |
 |---|---|---|
 | A tracker device | `Authorization: Bearer fmsd_...`, its own token | Its own vehicle only. A ping naming another `vehicle_id` gets the whole batch 403 (`not_your_vehicle`) |
-| A driver's phone | Session cookie; `trip:execute` | The vehicle of the driver's trip under way only. With no trip `en_route`, 403 (`no_trip_under_way`); another vehicle, 403 |
+| A driver's phone | Session cookie; `trip:execute` | The vehicle of a trip the driver drove, each ping in the trip it was recorded in (FMS-124). With no trip started in the last 7 days, 403 (`no_trip_under_way`); another vehicle, 403 |
 | A user with `tracking:ingest` (admin) | Session cookie | Any vehicle in their scope, named by `vehicle_id` on every ping (400 `required` when missing). An unknown one is refused alone (`unknown_vehicle`) |
 | A telematics provider | Signed webhook (integrations.md) | Its own devices, by the identifier it gives them. A device of another provider, or none, is `unknown_device` |
 
@@ -47,7 +47,10 @@ npm run device:register -- --vehicle <public id> --identifier GT-1001 --provider
   A phone that was offline sends what it buffered; anything within a week is kept.
 - **Speed** is stored as whole km/h, rounded to the nearest (42.6 becomes 43; api-contract §17).
 - **Duplicates.** A ping already stored (the same vehicle at the same instant, `uq_gps_ping_vehicle_time`) is skipped by the insert (`ON CONFLICT DO NOTHING`), so **a retried batch stores nothing twice**.
-- **Trip.** Each ping gets the vehicle's trip under way; a phone's is always its driver's.
+- **Trip (FMS-124).** Each ping gets the trip it was **recorded** in, not the one under way when it arrives: the trip whose `actual_start <= recorded_at` and whose `actual_end >= recorded_at` (or that is still under way). A phone that lost signal, finished the trip and reconnected afterwards keeps the whole buffered stretch under that trip. For a device or telematics ping, a time in no trip stores it without one.
+  - A phone's ping in no trip of its driver (before the trip began, after it ended, between trips) is refused alone: `no_trip_at_time` in `rejected[]`. A too-old or future ping says so instead. A phone with no trip started in the last 7 days is refused whole (403 `no_trip_under_way`), and naming a vehicle other than the one of the ping's trip refuses the whole batch (403 `not_your_vehicle`).
+  - **History, not position.** A ping of a trip that has ended is stored with its trip but never becomes the vehicle's current position and is never announced (`VehicleLocationUpdated`); the database trigger skips it when ingestion inserts it under `fms.ping_history_only` (migration 042). A ping recorded after the trip, or during one still under way, behaves as before.
+  - The legacy Socket.IO `location_update` is unchanged: one position of "now" for the trip under way that it names.
 - **Odometer.** A device's or telematics provider's `odometer_km` is a meter reading (FMS-126): the batch's newest per vehicle, at most one an hour per vehicle, recorded in the batch's transaction ([meter-readings.md](meter-readings.md)). An odometer from a phone or a signed-in user is stored on the ping only.
 - **Answer.** `202 { data: { accepted, duplicates, rejected: [{ index, reason }] } }`. One statement inserts the batch and one audit entry records it (`tracking.pings_ingested`, with the counts). An audit row per ping would double the telemetry.
 
@@ -97,5 +100,4 @@ npm run simulate:gps -- --speeding 0.2 --idling 0.1 --api http://localhost:3000/
 ## Not yet
 
 - **History:** `GET /vehicles/{id}/tracking` (api-contract §11.1) is not built yet. The current positions are read by the live map ([live-map.md](live-map.md)).
-- **Phone timing:** a phone's pings are refused once its trip has ended, even if they were recorded during the trip.
 - **Old pings:** `tracking.gps_pings` keeps its default partition; monthly partitions and a retention job come with the data volume.

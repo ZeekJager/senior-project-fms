@@ -65,10 +65,15 @@ export class TrackingRepository {
    * Inserts the pings in one statement. A ping already stored, the same vehicle at the same instant
    * (a retried batch, a provider redelivering), is skipped: `uq_gps_ping_vehicle_time` (api-contract §15).
    * Returns the pings actually inserted.
+   *
+   * `historyOnly` stores pings of a trip that has already ended (FMS-124): they join the vehicle's history but
+   * never become its current position. It is a transaction-local setting the current-location trigger reads
+   * (migration 042), set only around this one INSERT; if the INSERT fails the transaction ends and with it the setting.
    */
-  async insertPings(client: PoolClient, rows: readonly PingRow[]): Promise<{ vehicleId: string; recordedAt: Date }[]> {
+  async insertPings(client: PoolClient, rows: readonly PingRow[], options: { historyOnly?: boolean } = {}): Promise<{ vehicleId: string; recordedAt: Date }[]> {
     if (rows.length === 0) return [];
     const col = <K extends keyof PingRow>(key: K) => rows.map((r) => r[key]);
+    if (options.historyOnly) await client.query("SELECT set_config('fms.ping_history_only', 'on', true)");
     const res = await client.query<{ vehicleId: string; recordedAt: Date }>(
       `INSERT INTO tracking.gps_pings
               (vehicle_id, trip_id, gps_device_id, latitude, longitude, speed_kmh, heading_degrees, altitude_m,
@@ -93,6 +98,7 @@ export class TrackingRepository {
         col('recordedAt'),
       ],
     );
+    if (options.historyOnly) await client.query("SELECT set_config('fms.ping_history_only', 'off', true)");
     return res.rows;
   }
 

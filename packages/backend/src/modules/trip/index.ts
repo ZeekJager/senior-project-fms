@@ -90,8 +90,11 @@ export {
   type ActiveTrip,
 } from './infrastructure/trip-activity.queries';
 
-/** For GPS ingestion (FMS-88): the trips under way by vehicle, and a driver's own trip under way (their phone reports for it). */
-export { enRouteTripOfDriver, enRouteTripsForVehicles, type EnRouteTrip } from './infrastructure/trip-activity.queries';
+/**
+ * For GPS ingestion (FMS-88): the trips under way by vehicle, and a driver's own trip under way (their phone reports for it).
+ * FMS-124: the trips a driver or vehicles drove in a span of time, so a ping is placed in the trip it was recorded in.
+ */
+export { enRouteTripOfDriver, enRouteTripsForVehicles, tripSpansOfDriver, tripSpansOfVehicles, type EnRouteTrip, type TripSpan } from './infrastructure/trip-activity.queries';
 
 /** For the live map (FMS-45): each vehicle's trip under way, with its route and driver. */
 export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activity.queries';
