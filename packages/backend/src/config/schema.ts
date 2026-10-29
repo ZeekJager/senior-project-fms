@@ -27,6 +27,11 @@ const appSchema = z
     ...dbConnection,
     DB_USER: required,
     DB_PASSWORD: required,
+    // Read replica (FMS-94): reporting reads go here, as DB_USER, when set; to the primary otherwise.
+    DB_READ_HOST: z.string().trim().min(1).optional(),
+    DB_READ_PORT: port.optional(),
+    // Further behind than this, the replica is not read: the primary is.
+    READ_REPLICA_MAX_LAG_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
     JWT_SECRET: z.string({ error: 'is required' }).min(32, 'must be at least 32 characters'),
     // Document files (FMS-17): local disk in development, S3-compatible elsewhere.
     STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
@@ -106,6 +111,8 @@ export interface AppConfig {
   port: number;
   logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   db: DbConfig;
+  /** The read replica (FMS-94): null when DB_READ_HOST is not set, and reporting reads use the primary. */
+  readReplica: { db: DbConfig; maxLagSeconds: number } | null;
   jwtSecret: string;
   storage: StorageConfig;
   /** Null when REDIS_HOST is not set (development and tests may run without Redis). */
@@ -225,6 +232,12 @@ export function loadAppConfig(env: Env): AppConfig {
     port: e.PORT,
     logLevel: e.LOG_LEVEL,
     db: { host: e.DB_HOST, port: e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
+    readReplica: e.DB_READ_HOST
+      ? {
+          db: { host: e.DB_READ_HOST, port: e.DB_READ_PORT ?? e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
+          maxLagSeconds: e.READ_REPLICA_MAX_LAG_SECONDS,
+        }
+      : null,
     jwtSecret: e.JWT_SECRET,
     redis: e.REDIS_HOST ? { host: e.REDIS_HOST, port: e.REDIS_PORT, password: e.REDIS_PASSWORD!, keyPrefix: e.REDIS_KEY_PREFIX } : null,
     storage:

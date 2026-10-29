@@ -247,6 +247,11 @@ jobs:
             sleep 2
           done
           echo "Backend did not become healthy in 120 s"; exit 1
+      # FMS-94: the replica streams from the primary, a write on the primary
+      # reaches it, it refuses writes, the API reads it, and with it stopped
+      # readiness reports it degraded (still 200: reads use the primary).
+      - name: Read replica follows the primary
+        run: sh scripts/ci/check-replica.sh
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=200

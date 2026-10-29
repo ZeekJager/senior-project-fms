@@ -139,7 +139,7 @@ Unversioned and unauthenticated, for load balancers and container orchestration:
 | Endpoint | Returns |
 |---|---|
 | `GET /health/live` | `200` while the process is running; checks no dependencies |
-| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured) |
+| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`) |
 
 ## 4. HTTP Status Contract
 
@@ -206,6 +206,7 @@ The audit trail is read-only through the API. There is no create, update or dele
 Audit reader rules (FMS-28):
 
 - **Who:** `audit:read`, which admin, fleet owner and compliance officer hold. Migration 025 took it from fleet manager, who now gets `403`, as does a dispatcher.
+- **Read from the replica** when it is up (FMS-94): a row written a moment ago may appear a few seconds later. `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag).
 - **Order and paging:** newest first, on (`created_at`, row) so rows written in one transaction keep a stable order. `page_size` 1-200 (default 50). `meta.next_cursor` is the `cursor` for the next page, or `null` on the last. A row written while paging is newer than the cursor, so pages never shift, skip or repeat. A cursor that is not one the API issued is `400`, `reason: "invalid_cursor"`.
 - **Filters:**
   - `user_id`: the actor's public id.
@@ -528,6 +529,7 @@ Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
 - **Period:** `from` and `to` are instants, or dates meaning Addis Ababa days (`to` inclusive). One bound alone: `from` runs to now, `to` covers the 30 days before it. At most 366 days (`400`, `reason: "period_too_long"`); `to` must be after `from` (`reason: "before_from"`).
 - **`FuelReconciliation`:** `vehicle_id`, `depot_id`, `fuel_type`, `fuel_efficiency_ml_per_km`, `distance_km`, `trips`, `fuel_logs`, `expected_ml`, `actual_ml`, `variance_ml`, `variance_pct`, `total_cost_cents`, `status`, `reason`, `anomaly_id` (the anomaly the monthly job raised for exactly this period). `meta.summary`: `vehicles`, `judged`, `above`, `below`, `expected_ml` and `actual_ml` (judged vehicles), `variance_pct`, `total_cost_cents` (every vehicle).
 - **`FuelSummary`:** `vehicle_id`, `from`, `to`, `fuel_logs`, `actual_ml`, `total_cost_cents`, `trips`, `distance_km`, `rated_efficiency_ml_per_km`, `actual_efficiency_ml_per_km`, `expected_ml`, `variance_ml`, `variance_pct`, `status`, `reason`, `cost_per_km_cents`, `average_price_cents_per_litre`, `open_anomalies`, `threshold_pct`.
+- **Read from the replica** when it is up (FMS-94), the monthly job too. Both endpoints return `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag).
 - **The API only reads.** The monthly job `fuel-reconciliation` (04:30 daily, last calendar month) writes a `fuel.fuel_anomalies` row for each vehicle above or below (`consumption_above_expected` or `consumption_below_expected`; severity `high` beyond twice the threshold, else `medium`), once per vehicle and month, and publishes `FuelAnomalyDetected`.
 
 ## 10. Maintenance, Inventory and Predictive Maintenance API
@@ -799,7 +801,7 @@ Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The
 | `GET /analytics/trips` | Trip KPIs | `analytics:read` | `TripAnalytics` |
 | `GET /analytics/alerts` | Alert KPIs | `analytics:read` | `AlertAnalytics` |
 
-Analytics reads should prefer PostgreSQL read replicas or precomputed analytics views. Responses include the reporting period and, where useful, a `data_freshness` timestamp because replica lag is possible.
+Analytics and reporting reads go to the PostgreSQL read replica (FMS-94, [read-replica.md](read-replica.md)): today `GET /fuel-reconciliation`, `GET /vehicles/{vehicle_id}/fuel-summary` and `GET /audit-logs`. Their responses include the reporting period where they have one and `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag), because replica lag is possible. A replica that is down or too far behind is not read: the primary answers, and says so.
 
 ## 15. Integrations and Webhooks
 

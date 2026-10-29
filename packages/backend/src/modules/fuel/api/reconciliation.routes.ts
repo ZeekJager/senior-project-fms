@@ -38,7 +38,8 @@ function caller(req: Request): Caller {
 }
 
 /**
- * Fuel reconciliation (api-contract §9.2, FMS-41) and a vehicle's fuel summary (§9.1). Both only read.
+ * Fuel reconciliation (api-contract §9.2, FMS-41) and a vehicle's fuel summary (§9.1). Both only read, from the
+ * read replica when it is up (FMS-94), and say in `meta.data_freshness` which database answered and how far behind.
  *
  * GET /fuel-reconciliation needs `analytics:read` and `fuel:read`, both: it is fuel analytics, so a driver (fuel:read
  * only) and a dispatcher (analytics:read only) are refused. GET /vehicles/{id}/fuel-summary needs `fuel:read`, in the
@@ -53,10 +54,10 @@ export function reconciliationRouter(service: ReconciliationService): Router {
     authorize('fuel:read'),
     asyncHandler(async (req, res) => {
       const query = parseInput(reconciliationQuery, req.query);
-      const { items, total, summary, from, to, thresholdPct } = await service.reconcile(caller(req), query);
+      const { items, total, summary, from, to, thresholdPct, freshness } = await service.reconcile(caller(req), query);
       res.json({
         data: items,
-        meta: { ...pageMeta(query, total), from, to, threshold_pct: thresholdPct, summary, request_id: req.correlationId },
+        meta: { ...pageMeta(query, total), from, to, threshold_pct: thresholdPct, summary, data_freshness: freshness, request_id: req.correlationId },
       });
     }),
   );
@@ -66,8 +67,8 @@ export function reconciliationRouter(service: ReconciliationService): Router {
     authorize('fuel:read'),
     asyncHandler(async (req, res) => {
       if (!UUID.test(req.params.vehicleId)) throw vehicleNotFound();
-      const summary = await service.summary(caller(req), req.params.vehicleId, parseInput(summaryQuery, req.query));
-      res.json({ data: summary, meta: { request_id: req.correlationId } });
+      const { summary, freshness } = await service.summary(caller(req), req.params.vehicleId, parseInput(summaryQuery, req.query));
+      res.json({ data: summary, meta: { data_freshness: freshness, request_id: req.correlationId } });
     }),
   );
 

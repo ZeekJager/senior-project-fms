@@ -16,17 +16,49 @@ services:
       POSTGRES_DB: fms_db
       # Read by docker/postgres/init/01_app_role.sh on first boot only.
       DB_APP_PASSWORD: "${DB_APP_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+    # Client rules with the replica's replication login (FMS-94), applied to an
+    # existing volume too. The slot keeps at most 1 GB of WAL for a replica that
+    # is down, so a stopped replica cannot fill the disk.
+    command: ["postgres", "-c", "hba_file=/etc/fms/pg_hba.conf", "-c", "max_slot_wal_keep_size=1GB"]
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./docker/postgres/pg_hba.conf:/etc/fms/pg_hba.conf:ro
     healthcheck:
       # -h localhost forces TCP, which only answers once init scripts finish
       test: ["CMD-SHELL", "pg_isready -h localhost -U fms_admin -d fms_db"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # 1b. Read replica (FMS-94, docs/read-replica.md): a streaming hot standby of
+  # postgres for reporting reads (fuel reconciliation, the audit log). Not
+  # published to the host. The backend falls back to the primary when it is
+  # down or too far behind. Its entrypoint creates the replication role and
+  # slot on the primary, then copies it on first start.
+  postgres-replica:
+    image: postgres:16
+    container_name: fms_postgres_replica
+    entrypoint: ["sh", "/replica/entrypoint.sh"]
+    environment:
+      PRIMARY_HOST: postgres
+      DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      DB_REPLICATION_PASSWORD: "${DB_REPLICATION_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to add it to .env}"
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./docker/postgres/replica:/replica:ro
+      - ./docker/postgres/pg_hba.conf:/etc/fms/pg_hba.conf:ro
+    healthcheck:
+      # Answers once it accepts connections, as a standby.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U fms_admin -d fms_db && psql -h localhost -U fms_admin -d fms_db -Atc 'select pg_is_in_recovery()' | grep -q t"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # 2. Redis (FMS-72): cache, login throttle, job locks. Password-protected
   # and not published to the host: only containers on this network reach it.
@@ -75,6 +107,9 @@ services:
       DB_NAME: fms_db
       DB_USER: fms_app
       DB_PASSWORD: "${DB_APP_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      # Reporting reads (FMS-94): the replica, as the same fms_app role.
+      DB_READ_HOST: postgres-replica
+      DB_READ_PORT: "5432"
       # Used only by `make migrate`, which runs inside this container.
       DB_ADMIN_USER: fms_admin
       DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
@@ -101,6 +136,9 @@ services:
         condition: service_healthy
       # Started, not healthy: the API runs without Redis (direct reads).
       redis:
+        condition: service_started
+      # Started, not healthy: reporting reads use the primary until it is up.
+      postgres-replica:
         condition: service_started
 
   # 4. React Frontend (Vite)
@@ -143,4 +181,5 @@ services:
 
 volumes:
   postgres_data:
+  postgres_replica_data:
   document_files:

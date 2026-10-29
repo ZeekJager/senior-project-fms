@@ -952,7 +952,8 @@ paths:
         integers throughout (ml, cents, whole percent, rounded half away from zero). Beyond FUEL_VARIANCE_THRESHOLD_PCT
         (default 20) either way is above or below; electric vehicles, vehicles without a rating and under 100 km of
         trips are not_judged. Furthest from expected first. The period defaults to last calendar month (Addis Ababa);
-        at most 366 days. Only reads: the monthly job writes anomalies (docs/fuel-reconciliation.md). Needs both
+        at most 366 days. Only reads, from the read replica when it is up (meta.data_freshness); the monthly job writes
+        anomalies (docs/fuel-reconciliation.md). Needs both
         analytics:read and fuel:read.
       parameters:
         - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
@@ -976,9 +977,10 @@ paths:
                     items: { $ref: '#/components/schemas/FuelReconciliation' }
                   meta:
                     type: object
-                    required: [request_id, page, page_size, total_items, total_pages, from, to, threshold_pct, summary]
+                    required: [request_id, page, page_size, total_items, total_pages, from, to, threshold_pct, summary, data_freshness]
                     properties:
                       request_id: { type: string, format: uuid }
+                      data_freshness: { $ref: '#/components/schemas/DataFreshness' }
                       page: { type: integer }
                       page_size: { type: integer }
                       total_items: { type: integer }
@@ -1029,7 +1031,12 @@ paths:
                 required: [data, meta]
                 properties:
                   data: { $ref: '#/components/schemas/FuelSummary' }
-                  meta: { $ref: '#/components/schemas/Meta' }
+                  meta:
+                    type: object
+                    required: [request_id, data_freshness]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      data_freshness: { $ref: '#/components/schemas/DataFreshness' }
         '400':
           description: VALIDATION_FAILED (a bad date; to before_from; period_too_long).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
@@ -2303,6 +2310,15 @@ components:
         source: { type: string, enum: [pump, fuel_card, bulk, manual] }
         recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
         created_at: { type: string, format: date-time, description: When the server received it. }
+
+    DataFreshness:
+      type: object
+      description: Which database answered a reporting read, and how far behind the primary it was (FMS-94, docs/read-replica.md).
+      required: [source, lag_seconds, as_of]
+      properties:
+        source: { type: string, enum: [replica, primary], description: The primary when the replica is not configured, down, or too far behind. }
+        lag_seconds: { type: integer, minimum: 0, description: How far the data may be behind the primary; 0 from the primary. }
+        as_of: { type: string, format: date-time, description: The data is at least this current. }
 
     FuelReconciliation:
       type: object
