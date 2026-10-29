@@ -3,6 +3,7 @@ import { aggregateKey, createEvent, deterministicEventId, type DomainEvent } fro
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
+import type { DataFreshness, ReadSession } from '../../../shared/infrastructure/read-router';
 import type { JobContext } from '../../../shared/jobs/job';
 import { FUEL_EVENTS, type FuelType } from '../domain/fuel-log';
 import {
@@ -52,10 +53,11 @@ export interface ReconciliationRefs {
 
 export interface ReconciliationServiceDeps {
   /**
-   * Where the reads go: the read replica once FMS-94 (SE-138) provisions one (§10, §18, Scenario D); the
-   * primary until then. Writes (the anomalies) always go to the primary, through `anomalies`.
+   * Where the reads go (FMS-94, §18, Scenario D): one session per request or run, on the read replica when it is up
+   * and close enough, the primary otherwise (`db.reads`). Writes (the anomalies) always go to the primary, through
+   * `anomalies`.
    */
-  reads: Queryable;
+  reads: { session(): Promise<ReadSession> };
   logs: Pick<FuelLogRepository, 'usageBetween'>;
   anomalies: Pick<FuelAnomalyRepository, 'inTransaction' | 'forPeriod' | 'openCount' | 'insertReconciliation'>;
   refs: ReconciliationRefs;
@@ -146,12 +148,16 @@ interface Line {
 export class ReconciliationService {
   constructor(private readonly deps: ReconciliationServiceDeps) {}
 
-  async reconcile(caller: Caller, query: ReconciliationQuery): Promise<{ items: ReconciliationView[]; total: number; summary: ReconciliationSummary; from: Date; to: Date; thresholdPct: number }> {
-    const { reads, refs, anomalies } = this.deps;
+  async reconcile(
+    caller: Caller,
+    query: ReconciliationQuery,
+  ): Promise<{ items: ReconciliationView[]; total: number; summary: ReconciliationSummary; from: Date; to: Date; thresholdPct: number; freshness: DataFreshness }> {
+    const { refs, anomalies } = this.deps;
     const { from, to } = periodOf(query.from, query.to, () => previousMonth(addisDay(new Date())));
     const thresholdPct = this.deps.settings.varianceThresholdPct;
     const scope = staffScope(caller);
-    const empty = { items: [], total: 0, summary: summarise([]), from, to, thresholdPct };
+    const reads = await this.deps.reads.session();
+    const empty = { items: [], total: 0, summary: summarise([]), from, to, thresholdPct, freshness: reads.freshness() };
 
     // A filter naming something unknown, or outside the caller's depots, matches nothing: an empty page.
     let depotId: string | undefined;
@@ -168,24 +174,25 @@ export class ReconciliationService {
     const matching = lines.filter((l) => !query.status || l.judgement.status === query.status).sort(worstFirst);
     const start = (query.page - 1) * query.page_size;
     const items = matching.slice(start, start + query.page_size).map((l) => view(l, flagged.get(l.vehicle.id) ?? null));
-    return { items, total: matching.length, summary: summarise(lines), from, to, thresholdPct };
+    return { items, total: matching.length, summary: summarise(lines), from, to, thresholdPct, freshness: reads.freshness() };
   }
 
   /** A vehicle's fuel over a period (the 30 days to now by default). A vehicle outside the caller's depots is 404. */
-  async summary(caller: Caller, vehiclePublicId: string, query: { from?: Date; to?: Date }): Promise<FuelSummaryView> {
-    const { reads, refs, anomalies } = this.deps;
+  async summary(caller: Caller, vehiclePublicId: string, query: { from?: Date; to?: Date }): Promise<{ summary: FuelSummaryView; freshness: DataFreshness }> {
+    const { refs, anomalies } = this.deps;
     const { from, to } = periodOf(query.from, query.to, () => {
       const now = new Date();
       return { from: new Date(now.getTime() - SUMMARY_DAYS * DAY_MS), to: now };
     });
     // A vehicle's totals include every driver's fill-ups; a driver reads only their own logs (FMS-39).
     if (ownDriverScope(caller.user).kind !== 'all') throw vehicleNotFound();
+    const reads = await this.deps.reads.session();
     const [vehicle] = await refs.vehicles.forReconciliation(reads, depotScope(caller.user), { publicId: vehiclePublicId });
     if (!vehicle) throw vehicleNotFound();
     const thresholdPct = this.deps.settings.varianceThresholdPct;
     const [{ usage, judgement }] = await this.lines(reads, [vehicle], from, to, thresholdPct);
     const perKm = (amount: number) => (usage.distanceM > 0 ? roundDiv(amount * 1000, usage.distanceM) : null);
-    return {
+    const summary: FuelSummaryView = {
       vehicle_id: vehicle.publicId,
       from,
       to,
@@ -206,6 +213,7 @@ export class ReconciliationService {
       open_anomalies: await anomalies.openCount(reads, vehicle.id),
       threshold_pct: thresholdPct,
     };
+    return { summary, freshness: reads.freshness() };
   }
 
   /**
@@ -217,9 +225,10 @@ export class ReconciliationService {
    */
   async runMonthly(context: JobContext): Promise<Record<string, unknown>> {
     const started = Date.now();
-    const { reads, refs, anomalies, events } = this.deps;
+    const { refs, anomalies, events } = this.deps;
     const { from, to } = previousMonth(context.runKey);
     const thresholdPct = this.deps.settings.varianceThresholdPct;
+    const reads = await this.deps.reads.session();
 
     const vehicles = await refs.vehicles.forReconciliation(reads, { kind: 'all' });
     const lines = (await this.lines(reads, vehicles, from, to, thresholdPct)).filter((l) => l.vehicle.isActive || l.usage.trips > 0 || l.usage.fuelLogs > 0);
@@ -300,6 +309,9 @@ export class ReconciliationService {
       anomalies: created,
       already_flagged: already,
       threshold_pct: thresholdPct,
+      // Where the month was read (FMS-94), and how far behind the primary it was.
+      read_from: reads.freshness().source,
+      replica_lag_seconds: reads.freshness().lag_seconds,
       duration_ms: Date.now() - started,
     };
   }

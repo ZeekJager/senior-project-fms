@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { config } from '../../config';
-import { pool } from '../../db';
+import { pool, reads } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { JobContext } from '../../shared/jobs/job';
@@ -23,8 +23,8 @@ const fuelLogService = new FuelLogService({
 });
 
 const reconciliationService = new ReconciliationService({
-  // The read replica's pool once FMS-94 (SE-138) provisions it; the primary until then.
-  reads: pool,
+  // The read replica when it is up and close enough (FMS-94), the primary otherwise.
+  reads,
   logs: fuelLogs,
   anomalies: new FuelAnomalyRepository(pool),
   refs: { vehicles: fuelRefs.vehicles, depots: fuelRefs.depots, trips: { completedMetres: completedTripMetres } },

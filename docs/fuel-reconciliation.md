@@ -69,6 +69,8 @@ The run's history holds `period` (`YYYY-MM`) and these counts: `vehicles`, `with
 
 **The alert.** The alert engine raises a `fuel_anomaly` alert for the depot admin and the fleet manager ([alerts.md](alerts.md)). It reads, for example: "Fuel logged in September 2026 was 25% more than its 1,000 km of trips needed. Check its fill-ups against its trips."
 
+**Where it reads.** Every read, the job's and the API's, goes to the read replica when it is up (FMS-94, [read-replica.md](read-replica.md)): one session per request or run. The anomalies are written on the primary. No query takes a lock, which a replica refuses, so the depot filter uses a lookup that does not lock (`fuelDepotInScope`). The run's history adds `read_from` and `replica_lag_seconds`; the endpoints return `meta.data_freshness`.
+
 **Speed.** The card's budget is 200 vehicles over a month in under 60 seconds. The integration test does it in about 0.6 s, with 20 trips and 8 fill-ups per vehicle.
 
 ## The API
@@ -92,7 +94,6 @@ Both endpoints only read ([api-contract §9.1–9.2](api-contract.md#9-fuel-trac
 
 ## Not covered yet
 
-- **Read replica.** The architecture sends these reads to a read replica (§10, §18, Scenario D), which FMS-94 (SE-138) has not provisioned yet. The reads go through the service's `reads` connection, which is the primary for now. No query takes a lock, since a replica would refuse one. The depot filter therefore uses a lookup that does not lock (`fuelDepotInScope`).
 - **Distance comes from completed trips only.** Driving outside a trip is not counted, so fuel used on it reads as `above`. A vehicle with fill-ups and no trips is `too_little_distance`, so it is not judged at all.
 - **Fill-ups are counted when they happen, not by what they fuel.** A tank filled on the last day of a month is that month's, even though it fuels the next month's driving. Over a month of regular driving this evens out. The 100 km floor keeps out the periods where it does not.
 - **No screen yet.** The finance reconciliation screen is FMS-42. The per-fill-up anomaly rules are FMS-82 (SE-126).
