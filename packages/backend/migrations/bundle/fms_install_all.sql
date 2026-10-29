@@ -2482,3 +2482,45 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_predictions_scoring
     ON maintenance.maintenance_predictions(vehicle_id, prediction_type, as_of, model_name, model_version)
     WHERE as_of IS NOT NULL;
+
+-- ===== 041_gps_recorded_time_trips.sql =====
+CREATE INDEX IF NOT EXISTS idx_trips_driver_actual_start
+    ON trip.trips(driver_id, actual_start)
+    WHERE actual_start IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_trips_vehicle_actual_start
+    ON trip.trips(vehicle_id, actual_start)
+    WHERE actual_start IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION tracking.update_current_location_from_ping()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF current_setting('fms.ping_history_only', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO tracking.vehicle_current_location (
+        vehicle_id, latitude, longitude, speed_kmh, heading_degrees,
+        accuracy_m, ignition_on, odometer_km, source, recorded_at, updated_at
+    ) VALUES (
+        NEW.vehicle_id, NEW.latitude, NEW.longitude, NEW.speed_kmh, NEW.heading_degrees,
+        NEW.accuracy_m, NEW.ignition_on, NEW.odometer_km, NEW.source, NEW.recorded_at, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (vehicle_id) DO UPDATE
+    SET latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude,
+        speed_kmh = EXCLUDED.speed_kmh,
+        heading_degrees = EXCLUDED.heading_degrees,
+        accuracy_m = EXCLUDED.accuracy_m,
+        ignition_on = EXCLUDED.ignition_on,
+        odometer_km = EXCLUDED.odometer_km,
+        source = EXCLUDED.source,
+        recorded_at = EXCLUDED.recorded_at,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE EXCLUDED.recorded_at >= tracking.vehicle_current_location.recorded_at;
+
+    RETURN NEW;
+END;
+$$;

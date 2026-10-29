@@ -32,7 +32,37 @@ export interface PingInput {
 }
 
 /** Why one ping of a batch was not stored; the rest of the batch is. */
-export type PingRejection = 'future_timestamp' | 'too_old' | 'low_accuracy' | 'unknown_vehicle' | 'unknown_device' | 'vehicle_retired';
+export type PingRejection =
+  | 'future_timestamp'
+  | 'too_old'
+  | 'low_accuracy'
+  | 'unknown_vehicle'
+  | 'unknown_device'
+  | 'vehicle_retired'
+  /** A driver's phone, at a time when the driver had no trip under way (FMS-124). */
+  | 'no_trip_at_time';
+
+/** When a trip was driven: from its actual start to its actual end, or open-ended while it is under way. */
+export interface TripWindow {
+  actualStart: Date;
+  actualEnd: Date | null;
+}
+
+/**
+ * The trip a position recorded at `at` (ms) belongs to (FMS-124): the one driven then, from its actual start to
+ * its actual end, both included; one still under way has no end. If two overlap, the one that started last (a
+ * trip that began as the previous one was being closed). A ping before a trip began or after it ended is in no
+ * trip: nobody back-fills a position outside a trip they drove.
+ */
+export function tripAt<T extends TripWindow>(trips: readonly T[], at: number): T | null {
+  let found: T | null = null;
+  for (const trip of trips) {
+    if (trip.actualStart.getTime() > at) continue;
+    if (trip.actualEnd !== null && trip.actualEnd.getTime() < at) continue;
+    if (!found || trip.actualStart.getTime() >= found.actualStart.getTime()) found = trip;
+  }
+  return found;
+}
 
 /** Integer km/h, as stored: fractional provider values are rounded to the nearest (api-contract §17). */
 export const roundSpeed = (kmh: number) => Math.round(kmh);

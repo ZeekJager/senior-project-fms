@@ -10,12 +10,15 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestSource } from '../../../shared/infrastructure/request-source';
 import type { RequestUser } from '../../../types/express';
 import {
+  MAX_FUTURE_SKEW_MS,
+  MAX_PING_AGE_MS,
   TRACKING_EVENTS,
   notYourTrip,
   notYourVehicle,
   phoneNotOnTrip,
   pingProblem,
   roundSpeed,
+  tripAt,
   type PingInput,
   type PingRejection,
   type PingSource,
@@ -37,6 +40,18 @@ export interface EnRouteTrip {
   vehicleId: string | null;
 }
 
+/** A trip that has started, with when it was driven: what a ping recorded in it is placed by (FMS-124). */
+export interface IngestTripSpan {
+  id: string;
+  publicId: string;
+  vehicleId: string | null;
+  actualStart: Date;
+  /** Null while the trip is under way. */
+  actualEnd: Date | null;
+  /** The trip has finished since (it is completed now). */
+  ended: boolean;
+}
+
 /** What ingestion needs from fleet and trip (connected in integration/index.ts). */
 export interface IngestionRefs {
   vehicles: {
@@ -45,8 +60,11 @@ export interface IngestionRefs {
   };
   drivers: { idOfUser(db: Queryable, userId: string): Promise<string | null> };
   trips: {
-    enRouteForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, EnRouteTrip>>;
+    /** The legacy socket event's trip: the driver's trip under way now. */
     enRouteOfDriver(db: Queryable, driverId: string): Promise<EnRouteTrip | null>;
+    /** The trips driven in [from, to]: by a driver (internal id), or on these vehicles. */
+    spansOfDriver(db: Queryable, driverId: string, from: Date, to: Date): Promise<IngestTripSpan[]>;
+    spansOfVehicles(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<IngestTripSpan[]>;
   };
   /** A device's odometer becomes a meter reading (FMS-126); fleet samples it. */
   meters: {
@@ -88,8 +106,12 @@ export interface IngestionServiceDeps {
 const TOKEN_PREFIX = 'fmsd_';
 export const hashDeviceToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
-/** Where each ping goes: the vehicle (internal id) and the device that sent it (both ids), or why it was refused. */
-type Placement = { vehicle: IngestVehicle; deviceId: string | null; devicePublicId?: string } | { reason: PingRejection };
+/**
+ * Where each ping goes: the vehicle (internal id), the device that sent it (both ids) and, when the reporter
+ * already knows it (a driver's phone), the trip it was recorded in; or why it was refused. `trip` left out means
+ * "not looked up yet": ingestion finds it from the ping's time (FMS-124).
+ */
+type Placement = { vehicle: IngestVehicle; deviceId: string | null; devicePublicId?: string; trip?: IngestTripSpan } | { reason: PingRejection };
 
 /**
  * GPS ingestion (FMS-88): one path for devices, phones, users and telematics webhooks into
@@ -148,17 +170,20 @@ export class IngestionService {
 
   private async ingestIn(client: PoolClient, reporter: Reporter, pings: readonly PingInput[], correlationId: string): Promise<IngestResult> {
     const now = this.now();
-    const { placements, source, trip } = await this.place(client, reporter, pings);
+    const { placements, source } = await this.place(client, reporter, pings);
 
     const rejected: IngestResult['rejected'] = [];
     const rows: PingRow[] = [];
+    // The trip each row was recorded in (FMS-124); undefined until looked up from the ping's time.
+    const spans: (IngestTripSpan | null | undefined)[] = [];
     const vehicles = new Map<string, IngestVehicle>();
     // Each vehicle's newest odometer from its own device or telematics provider (phones and users are not meters).
     const odometers = new Map<string, { km: number; at: Date; deviceRef: string | null }>();
     pings.forEach((ping, index) => {
       const placed = placements[index];
       if ('reason' in placed) {
-        rejected.push({ index, reason: placed.reason });
+        // A time outside any trip is the reason, unless the ping is unusable for a plainer one (too old, in the future).
+        rejected.push({ index, reason: placed.reason === 'no_trip_at_time' ? (pingProblem(ping, now) ?? placed.reason) : placed.reason });
         return;
       }
       const reason = placed.vehicle.isActive ? pingProblem(ping, now) : 'vehicle_retired';
@@ -172,9 +197,10 @@ export class IngestionService {
         const seen = odometers.get(placed.vehicle.id);
         if (!seen || at > seen.at) odometers.set(placed.vehicle.id, { km: ping.odometer_km, at, deviceRef: placed.devicePublicId ?? null });
       }
+      spans.push(placed.trip);
       rows.push({
         vehicleId: placed.vehicle.id,
-        tripId: null,
+        tripId: placed.trip?.id ?? null,
         deviceId: placed.deviceId,
         lat: ping.lat,
         lng: ping.lng,
@@ -189,12 +215,17 @@ export class IngestionService {
       });
     });
 
-    // The trip under way: a phone's is its driver's; anyone else's is the vehicle's, if it has one.
-    const trips = trip ? new Map([[trip.vehicleId as string, trip]]) : await this.deps.refs.trips.enRouteForVehicles(client, [...vehicles.keys()]);
-    for (const row of rows) row.tripId = trips.get(row.vehicleId)?.id ?? null;
+    await this.placeInTrips(client, rows, spans);
 
-    const inserted = await this.deps.tracking.insertPings(client, rows);
-    await this.announce(client, inserted, vehicles, trips, reporter, correlationId);
+    // A ping of a trip that has ended is history: stored with its trip, never the vehicle's position (FMS-124).
+    const live: PingRow[] = [];
+    const history: PingRow[] = [];
+    rows.forEach((row, i) => (spans[i]?.ended ? history : live).push(row));
+    const insertedLive = await this.deps.tracking.insertPings(client, live);
+    const insertedHistory = await this.deps.tracking.insertPings(client, history, { historyOnly: true });
+    const inserted = [...insertedLive, ...insertedHistory];
+    const tripOf = new Map(rows.map((row, i) => [`${row.vehicleId}:${Date.parse(row.recordedAt)}`, spans[i]?.publicId ?? null]));
+    await this.announce(client, insertedLive, vehicles, (vehicleId, at) => tripOf.get(`${vehicleId}:${at.getTime()}`) ?? null, reporter, correlationId);
     for (const [vehicleId, { km, at, deviceRef }] of odometers) {
       await this.deps.refs.meters.telematicsOdometer(client, { userId: null, correlationId }, vehicleId, km, at, deviceRef);
     }
@@ -225,13 +256,13 @@ export class IngestionService {
   }
 
   /** Where each ping goes, by who reports. Throws 403 for a whole batch that names a vehicle it may not. */
-  private async place(client: PoolClient, reporter: Reporter, pings: readonly PingInput[]): Promise<{ placements: Placement[]; source: PingSource; trip: EnRouteTrip | null }> {
+  private async place(client: PoolClient, reporter: Reporter, pings: readonly PingInput[]): Promise<{ placements: Placement[]; source: PingSource }> {
     const { refs, devices } = this.deps;
 
     if (reporter.kind === 'device') {
       const [vehicle] = await refs.vehicles.byIds(client, [reporter.device.vehicleId]);
       if (pings.some((p) => p.vehicle_id !== undefined && p.vehicle_id !== vehicle.publicId)) throw notYourVehicle();
-      return { placements: pings.map(() => ({ vehicle, deviceId: reporter.device.id, devicePublicId: reporter.device.publicId })), source: 'device', trip: null };
+      return { placements: pings.map(() => ({ vehicle, deviceId: reporter.device.id, devicePublicId: reporter.device.publicId })), source: 'device' };
     }
 
     if (reporter.kind === 'provider') {
@@ -242,7 +273,7 @@ export class IngestionService {
         const vehicle = device && vehicles.get(device.vehicleId);
         return device && vehicle ? { vehicle, deviceId: device.id, devicePublicId: device.publicId } : { reason: 'unknown_device' };
       });
-      return { placements, source: 'telematics', trip: null };
+      return { placements, source: 'telematics' };
     }
 
     const { user } = reporter;
@@ -254,17 +285,66 @@ export class IngestionService {
         const vehicle = found.get(p.vehicle_id!);
         return vehicle ? { vehicle, deviceId: null } : { reason: 'unknown_vehicle' };
       });
-      return { placements, source: 'api', trip: null };
+      return { placements, source: 'api' };
     }
 
-    // A driver's phone (trip:execute): the vehicle of their trip under way, nothing else.
+    // A driver's phone (trip:execute): the vehicles of trips the driver drove, nothing else.
     const driverId = user.id ? await refs.drivers.idOfUser(client, user.id) : null;
-    const trip = driverId ? await refs.trips.enRouteOfDriver(client, driverId) : null;
-    if (!trip?.vehicleId) throw phoneNotOnTrip();
-    if (reporter.kind === 'phone' && reporter.tripId !== trip.publicId) throw notYourTrip();
-    const [vehicle] = await refs.vehicles.byIds(client, [trip.vehicleId]);
-    if (pings.some((p) => p.vehicle_id !== undefined && p.vehicle_id !== vehicle.publicId)) throw notYourVehicle();
-    return { placements: pings.map(() => ({ vehicle, deviceId: null })), source: 'phone', trip };
+
+    // The legacy socket event sends one position of "now" for the trip it names, which must be the one under way.
+    if (reporter.kind === 'phone') {
+      const trip = driverId ? await refs.trips.enRouteOfDriver(client, driverId) : null;
+      if (!trip?.vehicleId) throw phoneNotOnTrip();
+      if (reporter.tripId !== trip.publicId) throw notYourTrip();
+      const [vehicle] = await refs.vehicles.byIds(client, [trip.vehicleId]);
+      if (pings.some((p) => p.vehicle_id !== undefined && p.vehicle_id !== vehicle.publicId)) throw notYourVehicle();
+      const span: IngestTripSpan = { id: trip.id, publicId: trip.publicId, vehicleId: trip.vehicleId, actualStart: new Date(0), actualEnd: null, ended: false };
+      return { placements: pings.map(() => ({ vehicle, deviceId: null, trip: span })), source: 'phone' };
+    }
+
+    // A buffered batch (FMS-124): each ping belongs to the trip the driver was on when it was recorded, however
+    // late the phone delivers it, so a trip that ended before the phone found signal still gets its last stretch.
+    // A phone with no trip at all in the 7 days a ping may be old is refused whole; one ping outside every trip
+    // (before the trip began, after it ended) is refused alone.
+    const now = this.now();
+    const spans = driverId ? await refs.trips.spansOfDriver(client, driverId, new Date(now - MAX_PING_AGE_MS), new Date(now + MAX_FUTURE_SKEW_MS)) : [];
+    if (spans.length === 0) throw phoneNotOnTrip();
+    const vehicles = new Map((await refs.vehicles.byIds(client, [...new Set(spans.flatMap((s) => (s.vehicleId ? [s.vehicleId] : [])))])).map((v) => [v.id, v]));
+    const tripOf = (ping: PingInput) => tripAt(spans, Date.parse(ping.recorded_at));
+    // Naming a vehicle other than the one of the trip the ping falls in (or, outside every trip, any of the driver's) refuses the batch.
+    const own = new Set([...vehicles.values()].map((v) => v.publicId));
+    for (const ping of pings) {
+      if (ping.vehicle_id === undefined) continue;
+      const span = tripOf(ping);
+      const expected = span?.vehicleId ? vehicles.get(span.vehicleId)?.publicId : undefined;
+      if (span ? ping.vehicle_id !== expected : !own.has(ping.vehicle_id)) throw notYourVehicle();
+    }
+    const placements = pings.map((ping): Placement => {
+      const trip = tripOf(ping);
+      const vehicle = trip?.vehicleId ? vehicles.get(trip.vehicleId) : undefined;
+      return trip && vehicle ? { vehicle, deviceId: null, trip } : { reason: 'no_trip_at_time' };
+    });
+    return { placements, source: 'phone' };
+  }
+
+  /**
+   * The trip each row was recorded in, for the rows whose reporter did not name one (devices, providers, users):
+   * the vehicle's trip driven at the ping's time, or none (FMS-124). Fills `spans` and each row's `tripId`.
+   */
+  private async placeInTrips(client: PoolClient, rows: PingRow[], spans: (IngestTripSpan | null | undefined)[]): Promise<void> {
+    const open = rows.map((_, i) => i).filter((i) => spans[i] === undefined);
+    if (open.length === 0) return;
+    const times = open.map((i) => Date.parse(rows[i].recordedAt));
+    const found = await this.deps.refs.trips.spansOfVehicles(client, [...new Set(open.map((i) => rows[i].vehicleId))], new Date(Math.min(...times)), new Date(Math.max(...times)));
+    const byVehicle = new Map<string, IngestTripSpan[]>();
+    for (const span of found) {
+      if (span.vehicleId) byVehicle.set(span.vehicleId, [...(byVehicle.get(span.vehicleId) ?? []), span]);
+    }
+    for (const i of open) {
+      const span = tripAt(byVehicle.get(rows[i].vehicleId) ?? [], Date.parse(rows[i].recordedAt));
+      spans[i] = span;
+      rows[i].tripId = span?.id ?? null;
+    }
   }
 
   /** VehicleLocationUpdated for each vehicle whose newest stored ping became its position and is due (throttle). */
@@ -272,7 +352,8 @@ export class IngestionService {
     client: PoolClient,
     inserted: readonly { vehicleId: string; recordedAt: Date }[],
     vehicles: Map<string, IngestVehicle>,
-    trips: Map<string, EnRouteTrip>,
+    /** The public id of the trip a stored ping was recorded in. */
+    tripOf: (vehicleId: string, recordedAt: Date) => string | null,
     reporter: Reporter,
     correlationId: string,
   ): Promise<void> {
@@ -297,7 +378,7 @@ export class IngestionService {
           {
             vehicle_id: vehicle.publicId,
             depot_id: vehicle.depotPublicId,
-            trip_id: trips.get(p.vehicleId)?.publicId ?? null,
+            trip_id: tripOf(p.vehicleId, p.recordedAt),
             lat: p.lat,
             lng: p.lng,
             speed: p.speed,

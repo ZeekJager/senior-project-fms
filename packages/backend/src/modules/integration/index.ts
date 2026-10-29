@@ -11,7 +11,7 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
-import { enRouteTripOfDriver, enRouteTripsForVehicles, liveTripsForVehicles, tripPartiesByIds, TRIP_EVENTS } from '../trip';
+import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { trackingRouter } from './api/tracking.routes';
 import { IngestionService } from './application/ingestion.service';
@@ -49,7 +49,7 @@ const ingestion = new IngestionService({
   refs: {
     vehicles: trackingRefs.vehicles,
     drivers: trackingRefs.drivers,
-    trips: { enRouteForVehicles: enRouteTripsForVehicles, enRouteOfDriver: enRouteTripOfDriver },
+    trips: { enRouteOfDriver: enRouteTripOfDriver, spansOfDriver: tripSpansOfDriver, spansOfVehicles: tripSpansOfVehicles },
     meters: trackingRefs.meters,
   },
   events: eventBus,
