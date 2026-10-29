@@ -54,6 +54,7 @@ import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
 import { DvirRepository } from './infrastructure/dvir.repository';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
+import { fuelDepotInScope, fuelVehicles } from './infrastructure/fuel-reconciliation.queries';
 import { MeterRepository } from './infrastructure/meter.repository';
 import { engineHoursOver, faultyDvirCounts, setHealthScore, vehiclesToScore } from './infrastructure/scoring.queries';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
@@ -325,7 +326,11 @@ export const fuelRefs = {
     refInScope: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findRef(db, { publicId }, scope),
     idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
     publicIds: tripRefs.vehicles.publicIds,
+    /** For the reconciliation (FMS-41): a scope's vehicles with their fuel type, rated efficiency and depot. */
+    forReconciliation: fuelVehicles,
   },
+  /** The reconciliation's depot filter (FMS-41): a live depot's internal id if it is in the scope, without a lock. */
+  depots: { inScope: fuelDepotInScope },
   drivers: {
     idOfUser: tripRefs.drivers.idOfUser,
     publicIds: tripRefs.drivers.publicIds,
@@ -413,6 +418,7 @@ export const scoringRefs = {
   setHealthScore,
 };
 export type { ScoringVehicle } from './infrastructure/scoring.queries';
+export type { FuelVehicle } from './infrastructure/fuel-reconciliation.queries';
 
 export const fleetModule: AppModule = {
   name: 'fleet',

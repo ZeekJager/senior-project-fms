@@ -139,7 +139,20 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     }),
     windowMinutes: DAY,
     title: (_p, n) => `Unexpected fuel use on ${vehicleName(n)}`,
-    message: (p) => `${capitalize(humanize(str(p, 'anomaly_type') ?? 'fuel anomaly'))} detected. Check the fill-up against the trip.`,
+    message: (p) => {
+      // The monthly reconciliation (FMS-41): a month's fuel against what its trips needed.
+      const deviation = num(p, 'deviation_pct');
+      const km = num(p, 'distance_km');
+      const from = str(p, 'period_from');
+      if (deviation !== null && km !== null && from !== null) {
+        const month = new Date(from).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'Africa/Addis_Ababa' });
+        const driven = `${Math.round(km).toLocaleString('en-US')} km`;
+        return deviation > 0
+          ? `Fuel logged in ${month} was ${deviation}% more than its ${driven} of trips needed. Check its fill-ups against its trips.`
+          : `Fuel logged in ${month} was ${-deviation}% less than its ${driven} of trips needed: fill-ups may be missing. Check them against its trips.`;
+      }
+      return `${capitalize(humanize(str(p, 'anomaly_type') ?? 'fuel anomaly'))} detected. Check the fill-up against the trip.`;
+    },
     audience: ['depot_admin', 'fleet_manager'],
   },
 
