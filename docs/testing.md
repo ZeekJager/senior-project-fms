@@ -31,6 +31,10 @@ Settings come from your environment, or from the repo-root `.env` that `make env
 
 Uploaded documents go to local disk in a temporary folder (`STORAGE_DRIVER=local`), cleared before and after each run. The S3 adapter's own test, `test/integration/s3-storage.test.ts`, is skipped unless `S3_TEST_ENDPOINT` points at an S3-compatible server (MinIO, RustFS) with a bucket named `fms-test` (or `S3_TEST_BUCKET`); set `S3_TEST_ACCESS_KEY_ID` and `S3_TEST_SECRET_ACCESS_KEY` too. CI does not run it.
 
+### Access control is tested from the registry (FMS-59)
+
+`route-access.test.ts`, `data-scope.test.ts` and `realtime-scope.test.ts` call every route and every forwarded socket event, as every role, so a new route or event needs no access test of its own. They fail when a route without a permission is not on the reviewed lists, when a forwarded event has no sample, or when anything of depot B reaches a depot A user ([auth.md](auth.md#the-access-audit-fms-59)). `data-scope.test.ts` runs the small seed, about 25 seconds.
+
 ### Every test is rolled back
 
 Each integration test runs inside one database transaction that is rolled back when the test ends, so nothing it writes survives, audit rows included. The app's own transactions become savepoints inside it, so transactional code behaves as in production.

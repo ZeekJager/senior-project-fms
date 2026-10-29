@@ -129,7 +129,7 @@ A permission code is `resource:action`: `vehicle:write`, `fuel-anomaly:read`, `a
 - **A permission is not a scope.** Drivers hold `fuel:read` (they enter and review their own fuel), so `GET /fuel-logs` is allowed for them, and the repository must limit what they get. Any endpoint a driver can read returns only the driver's own records: filter with `ownDriverScope`, and answer another driver's record by id with `404`, not `403`.
 - **Hiding a button is not security.** The server enforces every permission; the frontend gate only decides what to render.
 
-Use `authorize('resource:action')` on every route, or `authenticated()` / `publicRoute()` on purpose; the app will not start with a route that declares none. Filter rows with `depotScope` / `ownDriverScope` and `scopeClause` inside the repository. How, and the role-to-permission table, are in [docs/auth.md](docs/auth.md#authorization) and [docs/permissions.md](docs/permissions.md).
+Use `authorize('resource:action')` on every route, or `authenticated()` / `publicRoute()` on purpose; the app will not start with a route that declares none, and a new `authenticated()` or `publicRoute()` route fails CI until it is added to the reviewed lists in `test/integration/route-access.test.ts` (FMS-59). A new event the socket gateway forwards needs a depot B sample in `test/integration/realtime-scope.test.ts`. Filter rows with `depotScope` / `ownDriverScope` and `scopeClause` inside the repository. How, and the role-to-permission table, are in [docs/auth.md](docs/auth.md#authorization) and [docs/permissions.md](docs/permissions.md).
 
 ## Errors
 
