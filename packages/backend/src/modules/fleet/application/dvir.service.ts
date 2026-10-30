@@ -30,7 +30,7 @@ import type { DvirRepository, DvirRow } from '../infrastructure/dvir.repository'
 import type { VehicleRepository } from '../infrastructure/vehicle.repository';
 import type { Caller } from './caller';
 
-/** POST /dvir-reports (and the /dvir alias). */
+/** POST /dvir-reports. */
 export interface DvirCreate {
   /** Public id of a live vehicle in the caller's depots. */
   vehicle_id: string;

@@ -360,7 +360,6 @@ Attendance rules (FMS-21):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /dvir` | Legacy-compatible DVIR command | `dvir:write` | Same body, behaviour and `Idempotency-Key` as `POST /dvir-reports` |
 | `POST /dvir-reports` | Canonical DVIR create | `dvir:write` | `vehicle_id,type,items`; optional `trip_id`, `driver_id`, `issues_found`, `submitted_at` -> `201 DVIRReport` (`meta.created: true`), or `200` with the original and `meta.created: false`; `Idempotency-Key` |
 | `GET /vehicles/{vehicle_id}/dvir-reports` | DVIR history | `dvir:read` | `type`, `issues_found`, `from`, `to`, `sort_order` (`desc` default) -> paged `DVIRReport[]` |
 
@@ -372,6 +371,7 @@ DVIR rules (FMS-36):
 - **Duplicates:** with a `trip_id`, an inspection of one type is recorded once per vehicle and trip. Submitting it again (an offline replay) answers `200` with the original report and `meta.created: false`, even if the second checklist differs, and changes nothing. Without a trip there is nothing to match on. `Idempotency-Key` (§19) additionally replays the exact stored response.
 - **Who:** `dvir:write` is held by admin, fleet manager, depot admin, technician and driver. A driver always submits as themselves (`driver_id` omitted or their own; another is `400`, `reason: "not_writable"`), for vehicles of their depot, and reads only their own reports. Everyone else names the driver the inspection is for (`400`, `reason: "required"`; a driver outside their depots is `references_missing_record`). A driver without a driver profile cannot submit.
 - **Vehicle and trip:** the vehicle must be a live vehicle in the caller's depots (`400`, `field: "vehicle_id"`, `references_missing_record` or `vehicle_retired`). `trip_id` must be a trip the caller may see (a driver's own; staff their depots') and, if it has a vehicle, this one (`reason: "trip_vehicle_mismatch"`).
+- **One path:** `POST /dvir-reports` is the only way to submit an inspection. The legacy `POST /dvir` alias was removed before the contract froze (FMS-122); it answers `404 NOT_FOUND` like any unknown path.
 - **History:** `GET /vehicles/{id}/dvir-reports` is `404` for a vehicle outside the caller's depots (the same body as a missing id); a driver gets their own reports of it. `from` and `to` are Addis Ababa days (as in §3), and `to` includes its whole day.
 
 ## 7. Trips and Routes API
@@ -984,9 +984,9 @@ Normal resources use `page`/`page_size`. Server page size is capped. Telemetry h
 
 ## 19. Idempotency and Concurrency
 
-Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. A retry with the same body gets the stored response again, with `Idempotent-Replayed: true`. Only a 2xx outcome is kept; any other response frees the key. Keys are per user and expire after 24 hours, except on the endpoints the driver's offline queue sends to (`POST /fuel-logs`, `/dvir-reports` and its `/dvir` alias, `/incidents`), which keep them 7 days, as long as the queue may hold a submission (FMS-116); the daily `idempotency-key-purge` job (02:00) deletes expired rows. The web client sends a UUID key with `api.request(path, { idempotencyKey: true })`, kept across its own token-refresh retry. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
+Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. A retry with the same body gets the stored response again, with `Idempotent-Replayed: true`. Only a 2xx outcome is kept; any other response frees the key. Keys are per user and expire after 24 hours, except on the endpoints the driver's offline queue sends to (`POST /fuel-logs`, `/dvir-reports`, `/incidents`), which keep them 7 days, as long as the queue may hold a submission (FMS-116); the daily `idempotency-key-purge` job (02:00) deletes expired rows. The web client sends a UUID key with `api.request(path, { idempotencyKey: true })`, kept across its own token-refresh retry. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
 
-`Idempotency-Key` is optional on the endpoints marked with it. The first request with a key runs; a `2xx` response is stored and replayed to any retry with the same key and body, with the header `Idempotent-Replayed: true`. An error response frees the key, so a corrected retry may reuse it. Keys are per user and kept 24 hours; on `POST /fuel-logs`, `/dvir-reports` (and `/dvir`) and `/incidents`, 7 days (a driver's phone may hold a queued submission that long, and a fill-up has no natural duplicate check).
+`Idempotency-Key` is optional on the endpoints marked with it. The first request with a key runs; a `2xx` response is stored and replayed to any retry with the same key and body, with the header `Idempotent-Replayed: true`. An error response frees the key, so a corrected retry may reuse it. Keys are per user and kept 24 hours; on `POST /fuel-logs`, `/dvir-reports` and `/incidents`, 7 days (a driver's phone may hold a queued submission that long, and a fill-up has no natural duplicate check).
 
 ## 20. Rate Limiting and Resilience
 
@@ -1108,7 +1108,7 @@ Driver / fuel card / provider
 | `GET/POST/PUT /attendance` | `/attendance` + `/attendance/{id}` | Retained and expanded |
 | `POST /documents`, `GET /documents/{id}` | `/documents` + `/documents/{id}` | Retained |
 | `POST /trips/{id}/assign` | `/trips/{trip_id}/assign` | Retained as canonical command |
-| `POST /dvir` | `/dvir-reports` | Retained as compatibility alias |
+| `POST /dvir` | `/dvir-reports` | Removed (FMS-122): `/dvir-reports` is the one path; `/dvir` is `404` |
 | `POST /incidents` | `/incidents` | Retained |
 | `POST /inventory/{id}/adjust` | `/inventory/{part_id}/adjust` | Retained as a command that creates an inventory movement |
 | `POST /fuel-logs` | `/fuel-logs` | Retained |
