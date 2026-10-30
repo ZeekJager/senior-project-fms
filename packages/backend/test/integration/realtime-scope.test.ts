@@ -47,6 +47,7 @@ const SAMPLES: Record<string, (w: World) => Record<string, unknown>> = {
   AlertEscalated: (w) => ({ alert_id: crypto.randomUUID(), depot_id: w.depot, escalation_level: 1 }),
   NotificationUnreadChanged: (w) => ({ user_id: w.user, unread_count: 3, reason: 'created' }),
   IncidentReported: (w) => ({ incident_id: crypto.randomUUID(), depot_id: w.depot, reported_by_driver_id: w.driver, vehicle_id: w.vehicle, severity: 'medium' }),
+  IncidentUpdated: (w) => ({ incident_id: crypto.randomUUID(), depot_id: w.depot, reported_by_driver_id: w.driver, vehicle_id: w.vehicle, status: 'investigating' }),
   ...Object.fromEntries(['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted'].map((t) => [t, (w: World) => ({ trip_id: w.trip, driver_id: w.driver })])),
 };
 
@@ -184,8 +185,8 @@ describe('depot B events on live sockets (FMS-59)', () => {
     // Driver B's colleague watches the depot's vehicles, as they may read them, and nothing of driver B's.
     expect(new Set(colleague)).toEqual(new Set(['vehicle.status.changed']));
     expect(new Set(atB)).toEqual(
-      new Set(['vehicle.status.changed', 'vehicle.location.updated', 'vehicle_position', 'vehicle.flag.changed', 'alert.created', 'alert_created', 'alert.updated', 'notifications.unread', 'incident.created', 'trip.updated']),
+      new Set(['vehicle.status.changed', 'vehicle.location.updated', 'vehicle_position', 'vehicle.flag.changed', 'alert.created', 'alert_created', 'alert.updated', 'notifications.unread', 'incident.created', 'incident.updated', 'trip.updated']),
     );
-    expect(new Set(atDriverB)).toEqual(new Set(['vehicle.status.changed', 'trip.updated', 'incident.created']));
+    expect(new Set(atDriverB)).toEqual(new Set(['vehicle.status.changed', 'trip.updated', 'incident.created', 'incident.updated']));
   });
 });

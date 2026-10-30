@@ -38,6 +38,7 @@ const api = {
     const req = request(app).post(`/api/v1${path}`).set('Cookie', cookie);
     return (key ? req.set('Idempotency-Key', key) : req).send(body);
   },
+  patch: (path: string, body: object, cookie: string) => request(app).patch(`/api/v1${path}`).set('Cookie', cookie).send(body),
 };
 
 const pub = (row: Record<string, unknown>) => row.public_id as string;
@@ -382,7 +383,7 @@ describe('GET /incidents', () => {
     const { cookie } = await signIn(['dispatcher'], depot);
     const at = (iso: string) => ({ depot_id: depot.id, occurred_at: iso });
     const a = await insertIncident(reporter, { ...at('2026-10-20T09:00:00Z'), severity: 'critical', incident_type: 'accident', vehicle_id: vehicle.id });
-    const b = await insertIncident(reporter, { ...at('2026-10-21T09:00:00Z'), severity: 'low', incident_type: 'tyre', status: 'resolved' });
+    const b = await insertIncident(reporter, { ...at('2026-10-21T09:00:00Z'), severity: 'low', incident_type: 'tyre', status: 'resolved', resolved_at: '2026-10-21T10:00:00Z' });
     const c = await insertIncident(reporter, { ...at('2026-10-22T09:00:00Z'), severity: 'high', incident_type: 'accident' });
 
     const q = async (query: string) => ids(await api.get(`/incidents?${query}`, cookie));
@@ -398,5 +399,129 @@ describe('GET /incidents', () => {
     for (const bad of ['severity=urgent', 'status=open,lost', 'incident_type=meteor', 'vehicle_id=1', 'sort=priority']) {
       expect((await api.get(`/incidents?${bad}`, cookie)).status, bad).toBe(400);
     }
+  });
+});
+
+describe('PATCH /incidents/{id} (FMS-89)', () => {
+  async function scene() {
+    const depot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const { user: reporter, driver, cookie: driverCookie } = await driverWithLogin(depot);
+    const incident = await insertIncident(reporter, { depot_id: depot.id, vehicle_id: vehicle.id, driver_id: driver.id, severity: 'high' });
+    const dispatcher = await signIn(['dispatcher'], depot);
+    return { depot, vehicle, driver, incident, dispatcher, driverCookie };
+  }
+  const path = (incident: { public_id: string }) => `/incidents/${incident.public_id}`;
+  const stored = async (incident: { id: string }) => (await pool.query('SELECT status FROM alert.incident_reports WHERE id = $1', [incident.id])).rows[0].status as string;
+
+  test('a dispatcher takes it on: investigating, assigned to themselves, one audited row, IncidentUpdated without the notes', async () => {
+    const { depot, driver, incident, dispatcher } = await scene();
+    const res = await api.patch(path(incident), { status: 'investigating', assigned_to: pub(dispatcher.user), notes: 'Calling the driver.' }, dispatcher.cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      id: incident.public_id,
+      status: 'investigating',
+      assigned_to: { id: pub(dispatcher.user), full_name: dispatcher.user.full_name },
+      notes: 'Calling the driver.',
+      resolved_at: null,
+      resolved_by: null,
+    });
+    expect(await auditRows(res)).toEqual(['UPDATE alert.incident_reports']);
+    const [event, ...rest] = await publishedEvents('IncidentUpdated');
+    expect(rest).toEqual([]);
+    expect(event.payload).toMatchObject({
+      incident_id: incident.public_id,
+      depot_id: pub(depot),
+      status: 'investigating',
+      previous_status: 'open',
+      assigned_to: pub(dispatcher.user),
+      changes: ['status', 'assigned_to', 'notes'],
+      // The driver reported it about themselves: their socket hears of it too.
+      reported_by_driver_id: pub(driver),
+    });
+    expect(event.payload).not.toHaveProperty('notes');
+  });
+
+  test('resolving needs notes; it records when and by whom; reopening clears that; closing is final', async () => {
+    const { incident, dispatcher } = await scene();
+
+    const bare = await api.patch(path(incident), { status: 'resolved' }, dispatcher.cookie);
+    expect(bare.status).toBe(400);
+    expect(bare.body.error.details).toEqual([expect.objectContaining({ field: 'notes', reason: 'required' })]);
+    expect(await stored(incident)).toBe('open');
+
+    const resolved = await api.patch(path(incident), { status: 'resolved', notes: 'Bumper replaced, driver unhurt.' }, dispatcher.cookie);
+    expect(resolved.status).toBe(200);
+    expect(resolved.body.data).toMatchObject({ status: 'resolved', resolved_by: pub(dispatcher.user) });
+    expect(resolved.body.data.resolved_at).not.toBeNull();
+
+    const reopened = await api.patch(path(incident), { status: 'investigating' }, dispatcher.cookie);
+    expect(reopened.body.data).toMatchObject({ status: 'investigating', resolved_at: null, resolved_by: null, notes: 'Bumper replaced, driver unhurt.' });
+
+    // The notes kept from before are enough to close.
+    expect((await api.patch(path(incident), { status: 'closed' }, dispatcher.cookie)).body.data).toMatchObject({ status: 'closed', resolved_by: pub(dispatcher.user) });
+    for (const body of [{ status: 'investigating' }, { notes: 'One more thing.' }, { assigned_to: null }]) {
+      const res = await api.patch(path(incident), body, dispatcher.cookie);
+      expect(res.status, JSON.stringify(body)).toBe(409);
+      expect(res.body.error).toMatchObject({ code: 'CONFLICT_INVALID_STATE_TRANSITION', details: [{ field: 'status', reason: 'incident_closed' }] });
+    }
+    expect((await publishedEvents('IncidentUpdated')).map((e) => e.payload.status)).toEqual(['resolved', 'investigating', 'closed']);
+  });
+
+  test('a transition that is not allowed is 409; a request that changes nothing writes and publishes nothing', async () => {
+    const { incident, dispatcher } = await scene();
+    expect((await api.patch(path(incident), { status: 'investigating' }, dispatcher.cookie)).status).toBe(200);
+
+    const back = await api.patch(path(incident), { status: 'open' }, dispatcher.cookie);
+    expect(back.status).toBe(409);
+    expect(back.body.error.details).toEqual([{ field: 'status', reason: 'incident_investigating' }]);
+
+    const same = await api.patch(path(incident), { status: 'investigating', notes: '' }, dispatcher.cookie);
+    expect(same.status).toBe(200);
+    expect(await auditRows(same)).toEqual([]);
+    expect(await publishedEvents('IncidentUpdated')).toHaveLength(1);
+  });
+
+  test('the assignee: someone who handles incidents in its depot, or sees every depot; anyone else is 400', async () => {
+    const { depot, incident, dispatcher } = await scene();
+    const colleague = await createUser({ roles: ['depot_admin'], depot });
+    const manager = await createUser({ roles: ['fleet_manager'] });
+    const elsewhere = await createUser({ roles: ['dispatcher'], depot: await createDepot() });
+    const technician = await createUser({ roles: ['technician'], depot });
+    const gone = await createUser({ roles: ['dispatcher'], depot, status: 'inactive' });
+
+    expect((await api.patch(path(incident), { assigned_to: pub(colleague) }, dispatcher.cookie)).body.data.assigned_to.id).toBe(pub(colleague));
+    expect((await api.patch(path(incident), { assigned_to: pub(manager) }, dispatcher.cookie)).body.data.assigned_to.id).toBe(pub(manager));
+    for (const who of [elsewhere, technician, gone, { public_id: randomUUID() }]) {
+      const res = await api.patch(path(incident), { assigned_to: pub(who) }, dispatcher.cookie);
+      expect(res.status).toBe(400);
+      expect(res.body.error.details).toEqual([expect.objectContaining({ field: 'assigned_to', reason: 'references_missing_record' })]);
+    }
+    expect((await api.patch(path(incident), { assigned_to: null }, dispatcher.cookie)).body.data.assigned_to).toBeNull();
+  });
+
+  test("a driver reports but does not handle (403, even their own); another depot's incident is 404; bad bodies are 400", async () => {
+    const { incident, dispatcher, driverCookie } = await scene();
+    const driverRes = await api.patch(path(incident), { status: 'closed', notes: 'Fine now.' }, driverCookie);
+    expect(driverRes.status).toBe(403);
+    expect(driverRes.body.error.code).toBe('FORBIDDEN_INSUFFICIENT_ROLE');
+
+    const other = await signIn(['dispatcher'], await createDepot());
+    expect((await api.patch(path(incident), { status: 'investigating' }, other.cookie)).status).toBe(404);
+    expect((await api.patch(`/incidents/${randomUUID()}`, { status: 'investigating' }, dispatcher.cookie)).status).toBe(404);
+
+    for (const body of [{}, { status: 'lost' }, { assigned_to: 'me' }, { notes: 'x'.repeat(4001) }, { severity: 'low' }]) {
+      expect((await api.patch(path(incident), body, dispatcher.cookie)).status, JSON.stringify(body)).toBe(400);
+    }
+    expect(await stored(incident)).toBe('open');
+  });
+
+  test('GET /incidents/{id} carries the handling fields', async () => {
+    const { incident, dispatcher } = await scene();
+    await api.patch(path(incident), { assigned_to: pub(dispatcher.user) }, dispatcher.cookie);
+    const res = await api.get(path(incident), dispatcher.cookie);
+    expect(res.body.data).toMatchObject({ assigned_to: { id: pub(dispatcher.user) }, notes: null, resolved_at: null, resolved_by: null });
+    expect(res.body.data.updated_at).toEqual(expect.any(String));
   });
 });

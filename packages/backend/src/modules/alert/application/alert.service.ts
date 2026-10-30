@@ -6,7 +6,7 @@ import type { MutationContext } from '../../../shared/infrastructure/audited-mut
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { limitOffset, pageMeta, type Page } from '../../../shared/http/pagination';
 import type { RequestUser } from '../../../types/express';
-import { ALERT_EVENTS, alertNotActive, alertNotFound, moreSevere, priorityOf, type AlertSeverity, type AlertStatus, type AlertView } from '../domain/alert';
+import { ACTIVE_STATUSES, ALERT_EVENTS, alertNotActive, alertNotFound, moreSevere, priorityOf, type AlertSeverity, type AlertStatus, type AlertView } from '../domain/alert';
 import { ALERT_RULES, ESCALATION_TIERS, tiersOf, type AlertRule } from '../domain/rules';
 import type { AlertRepository, AlertRow } from '../infrastructure/alert.repository';
 
@@ -165,6 +165,20 @@ export class AlertService {
         offset,
       });
       return { items: await this.views(client, rows), meta: pageMeta(query, total) };
+    });
+  }
+
+  /**
+   * The active alerts (open, acknowledged) of one depot (internal id, already in the caller's scope) or every depot
+   * (null), the most severe first, then the newest, with how many there are by status and severity: the command
+   * center's (FMS-89).
+   */
+  async active(depotId: string | null, limit: number): Promise<{ items: AlertView[]; counts: { status: AlertStatus; severity: AlertSeverity; n: number }[] }> {
+    const { repo } = this.deps;
+    return repo.inTransaction(async (client) => {
+      const { rows } = await repo.list(client, { scope: { kind: 'all' }, depotId: depotId ?? undefined, statuses: ACTIVE_STATUSES, sort: 'priority', limit, offset: 0 });
+      const counts = await repo.activeCounts(client, depotId);
+      return { items: await this.views(client, rows), counts };
     });
   }
 

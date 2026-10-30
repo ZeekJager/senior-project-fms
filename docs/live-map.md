@@ -12,6 +12,17 @@ Who: `command:read` and `tracking:read` (admin, fleet manager, dispatcher, depot
   - **Order and search:** cards keep plate order, so they do not jump while states change. Search matches plate, driver or route.
 - **Choosing.** A card flies the map to the vehicle (if it is off screen) and opens its popup: plate, state, speed, last seen, driver, route. A marker selects its card and scrolls it into view. The popup follows the vehicle as it moves. Its close button, Escape on the map or a click on the map closes it; nothing else does.
 
+## Alerts, incidents and counters
+
+Card FMS-89 (SE-133). What needs attention, beside the map. Code: `overview.ts` (the overview's types and the live patches), `StatusStrip.tsx`, `AlertsPanel.tsx`, `IncidentsPanel.tsx` and `IncidentDrawer.tsx`; the API is `GET /command-center/overview` in `packages/backend/src/modules/command-center/` (api-contract §11.1).
+
+- **Counters** above the map: vehicles on a trip, available, in the workshop and flagged; drivers on a trip, available, absent today and with an expired licence; the day's trips under way, overdue, still to start and completed; and what needs attention: active alerts (and how many are critical), active incidents and vehicles whose health is at risk. A count that should be zero is red when it is not. Alerts and Incidents open their panels.
+- **Panels.** The side panel switches between Fleet (the list above), Alerts and Incidents, kept in the address (`?panel=`). A user who may read neither has no switch.
+- **Alerts.** Every open and acknowledged alert, most severe first, with its plate, how long ago and how often. *Acknowledge* (`alert:ack`) and *Resolve* (`alert:resolve`) act at once; *Show on map* selects its vehicle. A new alert arrives over the socket (`alert.created`) in its place within the second it is raised, and a critical one is also announced; another console's acknowledgement shows here as it happens (`alert.updated`).
+- **Incidents.** Every open and investigating incident, most severe first, with its type, plate, description and who took it on. One opens a drawer with the report, the driver and where it happened. With `incident:manage`: *Take it on* (or take it over, or let it go), the status (only the moves the API allows), and what was found and done, which resolving or closing requires. A new incident is read in full when `incident.created` arrives; a change from another console (`incident.updated`) moves or removes it.
+- **On the map.** A vehicle with an active breakdown incident is drawn as broken down (red, with a ring). A card whose vehicle is at risk or to watch carries its health score.
+- **Freshness.** The overview is read with the snapshot (every 30 s) and cached 5 s on the server. Socket events change it at once, and it is re-read 6 s after the last one, past the cache, so a stale read cannot undo what an event changed.
+
 ## Where the data comes from
 
 ```

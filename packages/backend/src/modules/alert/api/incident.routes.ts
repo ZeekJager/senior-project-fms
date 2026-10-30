@@ -7,7 +7,7 @@ import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { Caller, IncidentService } from '../application/incident.service';
 import { SEVERITIES } from '../domain/alert';
-import { INCIDENT_STATUSES, INCIDENT_TYPES, incidentNotFound } from '../domain/incident';
+import { INCIDENT_MANAGE_PERMISSION, INCIDENT_STATUSES, INCIDENT_TYPES, MAX_INCIDENT_NOTES, incidentNotFound } from '../domain/incident';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -35,6 +35,24 @@ const createBody = z
     path: ['longitude'],
     params: { reason: 'location_incomplete' },
   });
+
+/**
+ * PATCH /incidents/{id} (api-contract §12.2, FMS-89): the status, who deals with it (a user's public id, or null),
+ * and notes (blank or null clears them). At least one. Anything else is `not_writable`.
+ */
+const updateBody = z
+  .strictObject({
+    status: z.enum(INCIDENT_STATUSES).optional(),
+    assigned_to: z.uuid().nullable().optional(),
+    notes: z
+      .string()
+      .trim()
+      .max(MAX_INCIDENT_NOTES)
+      .nullable()
+      .optional()
+      .transform((n) => (n === undefined ? undefined : n || null)),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'Send at least one field to change.', params: { reason: 'empty_update' } });
 
 /** One value or several, comma-separated: severity=high,critical. */
 const list = z.string().transform((s) => s.split(',').map((p) => p.trim()).filter(Boolean));
@@ -80,7 +98,8 @@ function incidentId(req: Request): string {
  * fleet managers, admins); incident:read reads, newest first. A driver sees only what they reported;
  * staff, their depots' incidents. POST takes an optional Idempotency-Key, so the offline queue's retries
  * record an incident once; a replay after the key expired, with the same `occurred_at` and description,
- * answers `200` with the original and `created: false`.
+ * answers `200` with the original and `created: false`. PATCH is incident:manage (dispatchers, depot admins,
+ * fleet managers, admins: not drivers): status, assignee and notes, in the caller's depots (FMS-89).
  */
 export function incidentRouter(service: IncidentService): Router {
   const router = Router();
@@ -113,6 +132,16 @@ export function incidentRouter(service: IncidentService): Router {
     authorize('incident:read'),
     asyncHandler(async (req, res) => {
       res.json({ data: await service.get(caller(req), incidentId(req)), meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  router.patch(
+    '/incidents/:incidentId',
+    authorize(INCIDENT_MANAGE_PERMISSION),
+    asyncHandler(async (req, res) => {
+      const id = incidentId(req);
+      const input = parseInput(updateBody, req.body ?? {});
+      res.json({ data: await service.update(caller(req), id, input), meta: { request_id: req.correlationId } });
     }),
   );
 
