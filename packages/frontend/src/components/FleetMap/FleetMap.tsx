@@ -2,7 +2,7 @@ import 'leaflet/dist/leaflet.css'
 import './FleetMap.css'
 import L from 'leaflet'
 import { MapPin, X } from 'lucide-react'
-import { forwardRef, Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AttributionControl, MapContainer, Marker, Popup, TileLayer, Tooltip, ZoomControl, useMap, useMapEvents } from 'react-leaflet'
 import { cn } from '@/components/ui'
 import { lastSeenLabel, markerState, STATE_LABELS, trackStops, type FleetMapVehicle, type MarkerState } from './markerState'
@@ -42,11 +42,15 @@ export interface FleetMapProps {
   selectedVehicleId?: string | null
   /** The user closed the selected vehicle's popup (its close button, Escape on the map, a click on the map). */
   onSelectionClose?: (vehicleId: string) => void
+  /** Shown over the map while no vehicle is given. */
+  emptyMessage?: string
+  /** Extra layers drawn inside the map (lines, a follower), under the markers' control of the parent. */
+  children?: ReactNode
 }
 
 /** The ref is the Leaflet map, once it exists, so the parent can pan to a vehicle (`flyTo`). */
 export const FleetMap = forwardRef<L.Map, FleetMapProps>(function FleetMap(
-  { vehicles, onVehicleClick, className, label = 'Fleet map', selectedVehicleId = null, onSelectionClose },
+  { vehicles, onVehicleClick, className, label = 'Fleet map', selectedVehicleId = null, onSelectionClose, emptyMessage = 'No vehicles reporting yet', children },
   ref,
 ) {
   const box = useRef<HTMLDivElement>(null)
@@ -85,6 +89,7 @@ export const FleetMap = forwardRef<L.Map, FleetMapProps>(function FleetMap(
           <AttributionControl position="bottomright" prefix='<a href="https://leafletjs.com">Leaflet</a>' />
           <FitOnFirstReport vehicles={vehicles} />
           <FollowSize />
+          {children}
           {vehicles.map((v, i) => (
             <VehicleMarker
               key={v.vehicleId}
@@ -106,7 +111,7 @@ export const FleetMap = forwardRef<L.Map, FleetMapProps>(function FleetMap(
       )}
       {vehicles.length === 0 && (
         <p className="pointer-events-none absolute left-1/2 top-3 z-[1000] -translate-x-1/2 rounded-control border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink-muted shadow-soft">
-          No vehicles reporting yet
+          {emptyMessage}
         </p>
       )}
       <Legend states={states} />

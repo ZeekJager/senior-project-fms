@@ -42,6 +42,32 @@ export function useLiveSnapshot(depotId: string) {
   })
 }
 
+/** GET /trips/{id} (trip:read): the route the focused driver's trip was planned on (FMS-140). */
+export function useTripRouteId(tripId: string | null) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['trips', 'detail', tripId ?? ''],
+    queryFn: () => api.request<{ route_id: string | null }>(`/trips/${tripId}`),
+    enabled: tripId !== null,
+    staleTime: 5 * 60_000,
+    select: (trip) => trip.route_id,
+  })
+}
+
+/**
+ * GET /drivers/{id} (driver:read): the focused driver when no vehicle of theirs is on the map. A 404,
+ * unknown or outside the caller's depots, is "not found" (FMS-140).
+ */
+export function useFocusDriver(driverId: string | null, enabled: boolean) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['drivers', 'detail', driverId ?? ''],
+    queryFn: () => api.request<{ id: string; full_name: string }>(`/drivers/${driverId}`),
+    enabled: enabled && driverId !== null,
+    retry: false,
+  })
+}
+
 /** The live fleet: the snapshot merged with the socket's positions, re-rendered once per batch of them. */
 export function useLiveFleet(depotId: string) {
   const snapshot = useLiveSnapshot(depotId)

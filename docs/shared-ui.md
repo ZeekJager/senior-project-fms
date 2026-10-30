@@ -102,6 +102,8 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 | `label` | The map region's accessible name; "Fleet map" by default |
 | `selectedVehicleId` | The vehicle whose popup is open (FMS-45): plate, state, speed, last seen and its `details`. The popup follows the vehicle and stays open while it is selected; the parent's choice decides. If the vehicle is off screen, the map flies to it (no animation with reduced motion). Its marker gets a focus ring, sits on top and shows no tooltip |
 | `onSelectionClose` | Called with the `vehicleId` when the user closes that popup: its close button, Escape on the map, or a click on the map |
+| `emptyMessage` | What the map says while it is given no vehicle (default "No vehicles reporting yet") |
+| `children` | Layers drawn inside the map (react-leaflet components, which can `useMap()`): the live map's planned route, track and follower for one driver in focus (FMS-140) |
 | `ref` | The Leaflet map once it exists, for anything else the page needs (`flyTo`, `fitBounds`) |
 
 **Marker colours.** Each marker is worked out from the vehicle's last ping, in this order:

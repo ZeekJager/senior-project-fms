@@ -1,7 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +9,7 @@ import { AuthProvider } from '@/context/AuthContext'
 import { createQueryClient } from '@/lib/query'
 import { RealtimeContext, type RealtimeHandler, type RealtimeValue } from '@/lib/realtime/context'
 import { AppRouter } from '@/router/AppRouter'
-import { currentUser, envelope, LocationProbe, signedInAs, testApi } from '@/test/auth'
+import { currentUser, envelope, errorEnvelope, LocationProbe, signedInAs, testApi } from '@/test/auth'
 import { server } from '@/test/msw/server'
 import type { Overview, OverviewAlert, OverviewIncident } from './overview'
 import type { LocationUpdate, VehicleLocation } from './types'
@@ -18,7 +18,7 @@ import type { LocationUpdate, VehicleLocation } from './types'
 // nothing out); the socket is a stand-in the test plays events through.
 
 const DEPOT = '11111111-1111-4111-8111-111111111111'
-const dispatcher = currentUser(['dispatcher'], ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'vehicle:read', 'driver:read'])
+const dispatcher = currentUser(['dispatcher'], ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'route:read', 'vehicle:read', 'driver:read'])
 const driverUser = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read'])
 
 const ago = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString()
@@ -125,6 +125,8 @@ const marker = (plate: string) => document.querySelector<HTMLElement>(`.fleet-ma
 const placed = (el: HTMLElement) => el.style.transform || `${el.style.left},${el.style.top}`
 const markerState = (plate: string) => marker(plate)?.querySelector('.fleet-marker')?.getAttribute('data-state')
 const card = (plate: string) => within(screen.getByRole('list', { name: 'Vehicles' })).getByText(plate, { selector: '.plate' }).closest('button')!
+/** The cards in the list: each is a pressed-or-not button (a driver's card also has its focus button). */
+const cards = () => within(screen.getByRole('list', { name: 'Vehicles' })).getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed'))
 
 const sizes = ['clientWidth', 'clientHeight'] as const
 const sizeProperties = sizes.map((name) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, name))
@@ -151,9 +153,8 @@ describe('Fleet Command Center (FMS-45)', () => {
     expect(await screen.findByRole('heading', { name: 'Live map', level: 1 })).toBeInTheDocument()
     await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(3))
 
-    const list = screen.getByRole('list', { name: 'Vehicles' })
     // "On trip" by default: the two with a trip, by plate.
-    expect(within(list).getAllByRole('button').map((b) => within(b).getByText(/^AA /).textContent)).toEqual(['AA 3-10001', 'AA 3-10002'])
+    expect(cards().map((b) => within(b).getByText(/^AA /).textContent)).toEqual(['AA 3-10001', 'AA 3-10002'])
     const first = card('AA 3-10001')
     expect(first).toHaveTextContent('Abebe Kebede')
     expect(first).toHaveTextContent('Bole - Adama')
@@ -256,8 +257,7 @@ describe('Fleet Command Center (FMS-45)', () => {
     open()
     await screen.findByText('AA 3-10001', { selector: '.plate' })
     await userEvent.type(screen.getByRole('searchbox', { name: 'Find a vehicle, driver or route' }), 'kality')
-    const list = screen.getByRole('list', { name: 'Vehicles' })
-    expect(within(list).getAllByRole('button')).toHaveLength(1)
+    expect(cards()).toHaveLength(1)
     expect(card('AA 3-10002')).toBeInTheDocument()
   })
 
@@ -422,5 +422,122 @@ describe('Command center overview: alerts, incidents and counters (FMS-89)', () 
     // Resolved: off the active list, the drawer closed.
     expect(await screen.findByText('No active incidents')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('Live map: one driver in focus (FMS-140)', () => {
+  const ROUTE = 'b0000000-0000-4000-8000-000000000001'
+
+  /** The focused trip's route and the vehicle's track today; records the track queries. */
+  function serveFocus() {
+    const trackQueries: URLSearchParams[] = []
+    server.use(
+      http.get('/api/v1/trips/t-1', () => envelope({ id: 't-1', route_id: ROUTE })),
+      http.get(`/api/v1/routes/${ROUTE}`, () =>
+        envelope({
+          id: ROUTE,
+          name: 'Bole - Adama',
+          origin: { latitude: 8.99, longitude: 38.79 },
+          destination: { latitude: 8.54, longitude: 39.27 },
+          stops: [{ name: 'Bishoftu', latitude: 8.75, longitude: 38.98 }],
+        }),
+      ),
+      http.get('/api/v1/vehicles/v-1/tracking', ({ request }) => {
+        trackQueries.push(new URL(request.url).searchParams)
+        return HttpResponse.json({
+          data: [
+            { recorded_at: ago(1200), lat: 8.99, lng: 38.79, speed_kmh: 40, trip_id: 't-1' },
+            { recorded_at: ago(600), lat: 8.995, lng: 38.77, speed_kmh: 45, trip_id: 't-1' },
+          ],
+          meta: { request_id: 'r-1', page_size: 1000, next_cursor: null },
+        })
+      }),
+    )
+    return trackQueries
+  }
+
+  it('focusing from the list shows only that vehicle with its planned route and today’s track; clearing brings back the fleet', async () => {
+    serve([onTrip, speeding, quiet])
+    const trackQueries = serveFocus()
+    signedInAs(dispatcher)
+    open('/command-center?view=all')
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(3))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Focus the map on Abebe Kebede' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/command-center?view=all&driver=dr-1')
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(1))
+    expect(marker('AA 3-10001')).not.toBeNull()
+
+    const panel = screen.getByRole('region', { name: 'Driver in focus' })
+    expect(within(panel).getByRole('heading', { name: 'Abebe Kebede' })).toBeInTheDocument()
+    expect(panel).toHaveTextContent('AA 3-10001')
+    expect(panel).toHaveTextContent('Bole - Adama')
+    expect(panel).toHaveTextContent('42 km/h')
+    expect(screen.queryByRole('list', { name: 'Vehicles' })).not.toBeInTheDocument()
+
+    // The route as planned (origin, its stop, destination) dashed; the track today solid, from midnight in Addis Ababa.
+    await waitFor(() => expect(document.querySelector('.fleet-focus-planned')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('.fleet-focus-track')).not.toBeNull())
+    expect(trackQueries[0].get('from')).toMatch(/T21:00:00\.000Z$/)
+    expect(within(panel).getByText('Driven today (GPS)')).toBeInTheDocument()
+    expect(within(panel).getByText('Planned route')).toBeInTheDocument()
+
+    await userEvent.click(within(panel).getByRole('button', { name: 'Whole fleet' }))
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(3))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/command-center\?view=all$/)
+    expect(document.querySelector('.fleet-focus-track')).toBeNull()
+  })
+
+  it('a link with ?driver= opens focused and follows the vehicle live; Esc returns to the whole fleet', async () => {
+    serve([onTrip, speeding])
+    serveFocus()
+    signedInAs(dispatcher)
+    const socket = open('/command-center?driver=dr-1')
+    const panel = await screen.findByRole('region', { name: 'Driver in focus' })
+    expect(await within(panel).findByRole('heading', { name: 'Abebe Kebede' })).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(1))
+
+    socket.emit('vehicle.location.updated', { vehicle_id: 'v-1', depot_id: DEPOT, trip_id: 't-1', lat: 9.01, lng: 38.76, speed: 63, heading: 90, recorded_at: new Date().toISOString() })
+    await waitFor(() => expect(panel).toHaveTextContent('63 km/h'))
+    // Another vehicle's position moves nothing here.
+    socket.emit('vehicle.location.updated', { vehicle_id: 'v-2', depot_id: DEPOT, trip_id: 't-2', lat: 9.03, lng: 38.78, speed: 20, heading: 90, recorded_at: new Date().toISOString() })
+    expect(document.querySelectorAll('.fleet-marker')).toHaveLength(1)
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(2))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/command-center$/)
+  })
+
+  it('choosing Alerts in the counters leaves the focus for the alerts panel', async () => {
+    serve([onTrip, speeding], overviewOf({ alerts: { active: 0, unacknowledged: 0, by_severity: { critical: 0, high: 0, medium: 0, low: 0 }, items: [] } }))
+    serveFocus()
+    signedInAs(currentUser(['dispatcher'], ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'route:read', 'vehicle:read', 'driver:read', 'alert:read']))
+    open('/command-center?driver=dr-1')
+    await screen.findByRole('region', { name: 'Driver in focus' })
+
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Needs attention' })).getByRole('button', { name: /Alerts/ }))
+    expect(await screen.findByText('No active alerts')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Driver in focus' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/command-center\?panel=alerts$/)
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(2))
+  })
+
+  it('a driver unknown or outside the depots shows not found; one not on a trip says so', async () => {
+    serve([onTrip])
+    server.use(
+      http.get('/api/v1/drivers/dr-9', () => errorEnvelope(404, 'NOT_FOUND', 'Driver not found.')),
+      http.get('/api/v1/drivers/dr-3', () => envelope({ id: 'dr-3', full_name: 'Sara Haile' })),
+    )
+    signedInAs(dispatcher)
+    open('/command-center?driver=dr-9')
+    const panel = await screen.findByRole('region', { name: 'Driver in focus' })
+    expect(await within(panel).findByRole('heading', { name: 'Driver not found' })).toBeInTheDocument()
+    expect(document.querySelectorAll('.fleet-marker')).toHaveLength(0)
+    expect(screen.getByText('Not on a trip now')).toBeInTheDocument()
+    cleanup()
+
+    open('/command-center?driver=dr-3')
+    expect(await screen.findByRole('heading', { name: 'Sara Haile is not on a trip' })).toBeInTheDocument()
+    expect(document.querySelectorAll('.fleet-marker')).toHaveLength(0)
   })
 })
