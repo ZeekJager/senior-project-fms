@@ -2033,7 +2033,7 @@ components:
       required: false
       description: >-
         Makes a retry safe: the same key and body replays the stored 2xx with Idempotent-Replayed: true.
-        Kept 24 hours, except on POST /fuel-logs, /dvir-reports, /dvir and /incidents (the driver's offline
+        Kept 24 hours, except on POST /fuel-logs, /dvir-reports and /incidents (the driver's offline
         queue), which keep it 7 days.
       schema: { type: string, format: uuid }
 

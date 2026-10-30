@@ -1,4 +1,4 @@
-import { Router, type Request, type RequestHandler } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { idempotent, OFFLINE_QUEUE_TTL_HOURS } from '../../../shared/http/idempotency';
@@ -28,7 +28,7 @@ const item = z.strictObject({
 const instant = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
 
 /**
- * POST /dvir-reports and /dvir (api-contract §6.4). `items` is the checklist,
+ * POST /dvir-reports (api-contract §6.4). `items` is the checklist,
  * one entry per thing checked; a failed one is a defect. Anything else is
  * `not_writable`; a `type` outside the list is VALIDATION_INVALID_ENUM.
  */
@@ -97,13 +97,16 @@ function vehicleId(req: Request): string {
 export function dvirRouter(service: DvirService): Router {
   const router = Router();
 
-  const submit: RequestHandler = asyncHandler(async (req, res) => {
-    const { report, created } = await service.create(caller(req), parseInput(createBody, req.body));
-    res.status(created ? 201 : 200).json({ data: report, meta: { created, request_id: req.correlationId } });
-  });
-
-  // The canonical path, and the legacy-compatible alias with the same behaviour.
-  for (const path of ['/dvir-reports', '/dvir']) router.post(path, authorize('dvir:write'), idempotent({ ttlHours: OFFLINE_QUEUE_TTL_HOURS }), submit);
+  // The one path for this command: the legacy POST /dvir alias was removed before the contract froze (FMS-122).
+  router.post(
+    '/dvir-reports',
+    authorize('dvir:write'),
+    idempotent({ ttlHours: OFFLINE_QUEUE_TTL_HOURS }),
+    asyncHandler(async (req, res) => {
+      const { report, created } = await service.create(caller(req), parseInput(createBody, req.body));
+      res.status(created ? 201 : 200).json({ data: report, meta: { created, request_id: req.correlationId } });
+    }),
+  );
 
   router.get(
     '/vehicles/:vehicleId/dvir-reports',
