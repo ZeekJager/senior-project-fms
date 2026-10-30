@@ -92,8 +92,40 @@ Both endpoints only read ([api-contract §9.1–9.2](api-contract.md#9-fuel-trac
   - the vehicle's open anomalies.
 - **Who:** it needs `fuel:read`, in the depot scope. A driver gets `404` for every vehicle: a vehicle's totals include other drivers' fill-ups, and a driver may read only their own (FMS-39).
 
+## The screen (S-15, FMS-42)
+
+`/fuel-reconciliation`, under Fleet management, for anyone with `fuel-anomaly:read`. Code: `packages/frontend/src/pages/FuelReconciliation/`.
+
+**Vehicles tab.** It needs `analytics:read` and `fuel:read` too, so a depot admin sees the anomalies only.
+- **The month:** a month stepper picks it (last month by default, never a month not yet begun). Administrators and fleet managers also get a depot filter.
+- **The summary band:**
+  - fuel logged (litres, fill-ups);
+  - fuel cost (ETB);
+  - the judged vehicles against what their trips needed;
+  - how many are flagged.
+- **The table:** every vehicle with trips or fill-ups that month, furthest from expected first, so a flag always tops the list. Each row shows trips driven, what the trips needed, what was logged, the variance (percent and litres), the cost, and a mark:
+
+| Mark | When (threshold 20%) |
+|---|---|
+| Flag (red, the row tinted) | More than the threshold off, either way: an anomaly |
+| Watch (amber) | More than half the threshold off |
+| OK (green) | Within half the threshold |
+| Not judged (grey) | Electric, no rated consumption, or under 100 km of trips, with the reason |
+
+- **Filtering:** the marks are views with their counts, worked out on the page from every row of the month, which it fetches in pages of 100.
+- **Review anomaly:** a flagged row whose month the job flagged links to its anomaly.
+- **Export CSV:** downloads every vehicle of the month from the rows already loaded, so there is no wait. Litres go to the millilitre and birr to the cent, both from the integers.
+- **Data freshness:** "Data as of 14:05". When the read replica is 5 s or more behind, it adds how far behind live the data is (FMS-94).
+
+**Anomalies tab.**
+- **The list:** "Needs review" (open and reviewed, the default) first, then Resolved, Dismissed and All, with counts. The tab itself shows how many need review.
+- **An anomaly** opens in a drawer: what the trips needed against what was logged, the period, the distance and when it was detected.
+- **Closing it** needs `fuel-anomaly:write`. Choose Resolved (it was real and dealt with) or Not a problem (dismissed, with a note saying why). Closing records the person and the time, and the drawer then shows "Resolved by …" with the note.
+- **Without the permission**, the anomaly can be read but not closed.
+- **A fuel-anomaly notification** opens the anomaly itself (`?tab=anomalies&anomaly=<id>`).
+
 ## Not covered yet
 
 - **Distance comes from completed trips only.** Driving outside a trip is not counted, so fuel used on it reads as `above`. A vehicle with fill-ups and no trips is `too_little_distance`, so it is not judged at all.
 - **Fill-ups are counted when they happen, not by what they fuel.** A tank filled on the last day of a month is that month's, even though it fuels the next month's driving. Over a month of regular driving this evens out. The 100 km floor keeps out the periods where it does not.
-- **No screen yet.** The finance reconciliation screen is FMS-42. The per-fill-up anomaly rules are FMS-82 (SE-126).
+- **The per-fill-up anomaly rules** are FMS-82 (SE-126). Their anomalies will show on the same screen, named by type.

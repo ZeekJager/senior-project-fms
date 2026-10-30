@@ -71,9 +71,6 @@ export function Brand({ compact, onDark, rail = false, collapsed = false }: { co
   )
 }
 
-/** Screens that are placeholders until their backend work lands. */
-const SOON = new Set(['/fuel-reconciliation'])
-
 export function NavItems({ routes, onNavigate, rail = false, collapsed = false }: { routes: AppRoute[]; onNavigate?: () => void; rail?: boolean; collapsed?: boolean }) {
   return (
     <ul className="space-y-1">
@@ -110,11 +107,6 @@ export function NavItems({ routes, onNavigate, rail = false, collapsed = false }
                     aria-hidden="true"
                   />
                   <span className={cn('truncate', labelClass(rail, collapsed))}>{nav!.label}</span>
-                  {SOON.has(path) && (
-                    <span aria-hidden="true" className={cn('ml-auto rounded-full px-1.5 py-px text-2xs font-semibold uppercase tracking-wider', rail ? 'bg-white/10 text-side-ink' : 'bg-surface-sunken text-ink-subtle', blockClass(rail, collapsed))}>
-                      Soon
-                    </span>
-                  )}
                 </>
               )}
             </NavLink>

@@ -118,10 +118,10 @@ The primary restarts with the new client rules and the replica copies it. The da
   - with it stopped, readiness is `degraded` and still 200;
   - started again, it is `ok` again.
 
+## On screen
+
+The fuel reconciliation screen (S-15, FMS-42, [fuel-reconciliation.md](fuel-reconciliation.md#the-screen-s-15-fms-42)) shows "Data as of 14:05" beside its tabs. When the replica is 5 s or more behind, it adds how far behind live the data is, for example "12 s behind live".
+
 ## Not covered yet
 
-**No screen shows `data_freshness` yet.** The card asks for the frontend to show it. The screens that read these endpoints are:
-- the audit log (S-10, SE-65), still on its own branch;
-- the finance reconciliation screen (FMS-42), not built yet.
-
-Each should show a line such as "Data as of 14:05, 3 s behind" when `source` is `replica` and the lag is more than a few seconds.
+**The audit log screen** (S-10, SE-65) is still on its own branch. It should show the same line from `meta.data_freshness` of `GET /audit-logs`.

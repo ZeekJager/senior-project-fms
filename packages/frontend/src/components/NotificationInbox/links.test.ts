@@ -29,9 +29,9 @@ describe('where a notification leads', () => {
     expect(notificationLink(note('document'), everything)).toBe('/vehicles')
   })
 
-  it('a licence opens the drivers; a fuel anomaly fuel reconciliation; telemetry and incidents the live map', () => {
+  it('a licence opens the drivers; a fuel anomaly itself on fuel reconciliation; telemetry and incidents the live map', () => {
     expect(notificationLink(note('driver', { driver_id: D }), everything)).toBe('/drivers')
-    expect(notificationLink(note('fuel_anomaly'), everything)).toBe('/fuel-reconciliation')
+    expect(notificationLink(note('fuel_anomaly'), everything)).toBe(`/fuel-reconciliation?tab=anomalies&anomaly=${E}`)
     expect(notificationLink(note('telemetry_flag', { vehicle_id: V }), everything)).toBe('/command-center?view=attention')
     expect(notificationLink(note('incident'), everything)).toBe('/command-center?view=attention')
     expect(notificationLink(note('vehicle', { vehicle_id: V }), everything)).toBe('/vehicles')

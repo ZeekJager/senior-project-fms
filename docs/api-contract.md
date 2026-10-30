@@ -496,9 +496,9 @@ Document rules (FMS-17):
 | `GET /fuel-logs` | Search fuel history | `fuel:read` | `vehicle_id`, `driver_id`, `trip_id`, `from`, `to`, `sort_order` (`desc` default) -> paged `FuelLog[]` |
 | `GET /fuel-logs/{fuel_log_id}` | Get a fuel log | `fuel:read` | `FuelLog`; `404` outside your scope |
 | `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary (FMS-41) | `fuel:read` | `from`, `to` (default: the 30 days to now) -> `FuelSummary`; `404` outside your depots and for a driver |
-| `GET /fuel-anomalies` | List anomalies | `fuel-anomaly:read` | Paged `FuelAnomaly[]` |
-| `GET /fuel-anomalies/{anomaly_id}` | Anomaly detail | `fuel-anomaly:read` | `FuelAnomaly` |
-| `POST /fuel-anomalies/{anomaly_id}/resolve` | Resolve anomaly | `fuel-anomaly:write` | `FuelAnomaly` |
+| `GET /fuel-anomalies` | List anomalies (FMS-42) | `fuel-anomaly:read` | `status` (one or several, comma-separated), `vehicle_id`, `anomaly_type`, `page`, `page_size` -> paged `FuelAnomaly[]`, newest detected first |
+| `GET /fuel-anomalies/{anomaly_id}` | Anomaly detail (FMS-42) | `fuel-anomaly:read` | `FuelAnomaly`; `404` outside your depots |
+| `POST /fuel-anomalies/{anomaly_id}/resolve` | Close an anomaly (FMS-42) | `fuel-anomaly:write` | `outcome` (`resolved` default, or `dismissed`), `notes` (required to dismiss, up to 2,000 characters) -> `FuelAnomaly` |
 
 Fuel log rules (FMS-39):
 
@@ -512,6 +512,13 @@ Fuel log rules (FMS-39):
 - **Retries:** `Idempotency-Key` (§19) makes a retried POST return the first log with `Idempotent-Replayed: true`; without a key two identical bodies are two fill-ups.
 - **Event:** `FuelLogged` (after commit, ordered per vehicle) carries `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km` (the highest reading before this one in time, null for a vehicle's first), `recorded_at` (when the fill-up happened) and `created_at` (when it was received). The anomaly rules (FMS-82) read it.
 - **Vehicle odometer:** a fuel log does not change `fleet.vehicles.odometer_km`; the vehicle's own odometer changes through the vehicle API.
+
+Fuel anomaly rules (FMS-42):
+
+- **Who:** reading needs `fuel-anomaly:read` (admin, fleet manager, depot admin, finance clerk, compliance officer), closing `fuel-anomaly:write` (admin, fleet manager, finance clerk). Rows are the anomalies of the caller's depots' vehicles; another depot's anomaly is `404`, and a driver sees none.
+- **`FuelAnomaly`:** `id`, `vehicle_id`, `registration_number`, `depot_id`, `depot_name` (named here: a finance clerk may not read vehicles or depots), `fuel_log_id` (the fill-up a per-event rule flagged, FMS-82; null for a month's reconciliation), `anomaly_type`, `severity`, `status` (`open`, `reviewed`, `dismissed`, `resolved`), `period_from` and `period_to` (a reconciliation's month), `distance_km`, `expected_ml`, `actual_ml`, `deviation_pct` (whole percent), `detected_at`, `reviewed_by` and `reviewed_by_name` (who closed it), `reviewed_at`, `notes`.
+- **Closing:** `resolved` means it was real and dealt with, `dismissed` that it was not a problem, which needs a `notes` saying why (`400`, `field: "notes"`, `reason: "required_to_dismiss"`). Closing records who and when (`reviewed_by`, `reviewed_at`) and is audited. Only an `open` or `reviewed` anomaly can be closed; one already closed is `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: "already_closed"`). The row is locked while it is closed, so two people closing it at once cannot both succeed.
+- **Read from the primary**, not the replica: the screen shows a resolution the moment it is saved.
 
 ### 9.2 Fuel reconciliation
 
@@ -527,7 +534,7 @@ Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
 - **Judgement:** more than `FUEL_VARIANCE_THRESHOLD_PCT` (default 20) above expected is `above`; more than it below is `below`; otherwise `within` (exactly 20% is within). An electric vehicle, one without a rating, or under 100 km of trips is `not_judged`, with `reason` `electric`, `no_efficiency` or `too_little_distance`.
 - **Who:** `GET /fuel-reconciliation` needs both permissions: a driver (`fuel:read` only) and a dispatcher (`analytics:read` only) get `403`. Rows are the caller's depots' vehicles; a `vehicle_id` or `depot_id` outside them, or unknown, gives an empty page. `GET /vehicles/{vehicle_id}/fuel-summary` needs `fuel:read` in the depot scope; a driver gets `404` for every vehicle, as its totals include other drivers' fill-ups.
 - **Period:** `from` and `to` are instants, or dates meaning Addis Ababa days (`to` inclusive). One bound alone: `from` runs to now, `to` covers the 30 days before it. At most 366 days (`400`, `reason: "period_too_long"`); `to` must be after `from` (`reason: "before_from"`).
-- **`FuelReconciliation`:** `vehicle_id`, `depot_id`, `fuel_type`, `fuel_efficiency_ml_per_km`, `distance_km`, `trips`, `fuel_logs`, `expected_ml`, `actual_ml`, `variance_ml`, `variance_pct`, `total_cost_cents`, `status`, `reason`, `anomaly_id` (the anomaly the monthly job raised for exactly this period). `meta.summary`: `vehicles`, `judged`, `above`, `below`, `expected_ml` and `actual_ml` (judged vehicles), `variance_pct`, `total_cost_cents` (every vehicle).
+- **`FuelReconciliation`:** `vehicle_id`, `registration_number`, `depot_id`, `depot_name`, `fuel_type`, `fuel_efficiency_ml_per_km`, `distance_km`, `trips`, `fuel_logs`, `expected_ml`, `actual_ml`, `variance_ml`, `variance_pct`, `total_cost_cents`, `status`, `reason`, `anomaly_id` (the anomaly the monthly job raised for exactly this period). `meta.summary`: `vehicles`, `judged`, `above`, `below`, `expected_ml` and `actual_ml` (judged vehicles), `variance_pct`, `total_cost_cents` (every vehicle).
 - **`FuelSummary`:** `vehicle_id`, `from`, `to`, `fuel_logs`, `actual_ml`, `total_cost_cents`, `trips`, `distance_km`, `rated_efficiency_ml_per_km`, `actual_efficiency_ml_per_km`, `expected_ml`, `variance_ml`, `variance_pct`, `status`, `reason`, `cost_per_km_cents`, `average_price_cents_per_litre`, `open_anomalies`, `threshold_pct`.
 - **Read from the replica** when it is up (FMS-94), the monthly job too. Both endpoints return `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag).
 - **The API only reads.** The monthly job `fuel-reconciliation` (04:30 daily, last calendar month) writes a `fuel.fuel_anomalies` row for each vehicle above or below (`consumption_above_expected` or `consumption_below_expected`; severity `high` beyond twice the threshold, else `medium`), once per vehicle and month, and publishes `FuelAnomalyDetected`.

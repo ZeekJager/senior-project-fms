@@ -35,7 +35,9 @@ const SUMMARY_DAYS = 30;
 interface ReconciledVehicle {
   id: string;
   publicId: string;
+  registrationNumber: string;
   depotPublicId: string;
+  depotName: string;
   fuelType: FuelType;
   fuelEfficiencyMlPerKm: number | null;
   isActive: boolean;
@@ -79,7 +81,10 @@ export interface ReconciliationQuery {
 /** One vehicle's period (GET /fuel-reconciliation, api-contract §9.2). Integers; km to 3 decimals. */
 export interface ReconciliationView {
   vehicle_id: string;
+  /** Named here: a finance clerk may not read vehicles or depots (FMS-42). */
+  registration_number: string;
   depot_id: string;
+  depot_name: string;
   fuel_type: FuelType;
   fuel_efficiency_ml_per_km: number | null;
   distance_km: number;
@@ -357,7 +362,9 @@ function worstFirst(a: Line, b: Line): number {
 function view({ vehicle, usage, judgement }: Line, anomalyId: string | null): ReconciliationView {
   return {
     vehicle_id: vehicle.publicId,
+    registration_number: vehicle.registrationNumber,
     depot_id: vehicle.depotPublicId,
+    depot_name: vehicle.depotName,
     fuel_type: vehicle.fuelType,
     fuel_efficiency_ml_per_km: vehicle.fuelEfficiencyMlPerKm,
     distance_km: kmOf(usage.distanceM),
