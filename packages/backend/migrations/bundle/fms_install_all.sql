@@ -2582,3 +2582,68 @@ CREATE INDEX IF NOT EXISTS idx_prediction_feedback_failure
 CREATE OR REPLACE TRIGGER trg_prediction_feedback_updated_at
     BEFORE UPDATE ON maintenance.prediction_feedback
     FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+-- ===== 044_analytics_kpis.sql =====
+ALTER TABLE analytics.analytics_cache
+    ADD COLUMN IF NOT EXISTS distance_m             BIGINT  NOT NULL DEFAULT 0 CHECK (distance_m >= 0),
+    ADD COLUMN IF NOT EXISTS trips_completed        INTEGER NOT NULL DEFAULT 0 CHECK (trips_completed >= 0),
+    ADD COLUMN IF NOT EXISTS trips_timed            INTEGER NOT NULL DEFAULT 0 CHECK (trips_timed >= 0),
+    ADD COLUMN IF NOT EXISTS trips_on_time          INTEGER NOT NULL DEFAULT 0 CHECK (trips_on_time >= 0),
+    ADD COLUMN IF NOT EXISTS fuel_ml                BIGINT  NOT NULL DEFAULT 0 CHECK (fuel_ml >= 0),
+    ADD COLUMN IF NOT EXISTS fuel_cost_cents        BIGINT  NOT NULL DEFAULT 0 CHECK (fuel_cost_cents >= 0),
+    ADD COLUMN IF NOT EXISTS maintenance_cost_cents BIGINT  NOT NULL DEFAULT 0 CHECK (maintenance_cost_cents >= 0);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_cache_period
+    ON analytics.analytics_cache(period_type, period_start);
+
+CREATE OR REPLACE VIEW analytics.vehicle_directory AS
+SELECT
+    v.id AS vehicle_id,
+    v.public_id,
+    v.registration_number,
+    v.make,
+    v.model,
+    v.status,
+    v.fuel_type,
+    v.fuel_efficiency_ml_per_km,
+    v.health_score,
+    v.maintenance_flag,
+    v.depot_id,
+    d.public_id AS depot_public_id,
+    d.name AS depot_name
+FROM fleet.vehicles v
+JOIN fleet.depots d ON d.id = v.depot_id;
+
+CREATE OR REPLACE VIEW analytics.trip_facts AS
+SELECT
+    t.id AS trip_id,
+    t.vehicle_id,
+    t.status,
+    t.scheduled_start,
+    t.scheduled_end,
+    t.actual_start,
+    t.actual_end,
+    t.actual_distance_km
+FROM trip.trips t;
+
+CREATE OR REPLACE VIEW analytics.fuel_facts AS
+SELECT f.vehicle_id, f.recorded_at, f.quantity_ml, f.total_cost_cents
+FROM fuel.fuel_logs f;
+
+CREATE OR REPLACE VIEW analytics.maintenance_cost_facts AS
+SELECT m.vehicle_id, m.completed_at, m.total_cost_cents
+FROM maintenance.maintenance_records m
+WHERE m.status = 'completed' AND m.completed_at IS NOT NULL;
+
+CREATE OR REPLACE VIEW analytics.alert_facts AS
+SELECT
+    a.id AS alert_id,
+    a.vehicle_id,
+    COALESCE(a.depot_id, v.depot_id) AS depot_id,
+    a.alert_type,
+    a.severity,
+    a.status,
+    a.created_at,
+    a.acknowledged_at
+FROM alert.alerts a
+LEFT JOIN fleet.vehicles v ON v.id = a.vehicle_id;

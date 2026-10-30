@@ -125,3 +125,5 @@ The fuel reconciliation screen (S-15, FMS-42, [fuel-reconciliation.md](fuel-reco
 ## Not covered yet
 
 **The audit log screen** (S-10, SE-65) is still on its own branch. It should show the same line from `meta.data_freshness` of `GET /audit-logs`.
+
+The analytics API (FMS-50, [analytics.md](analytics.md)) reads the replica too: its six endpoints, and the refreshes' aggregation (their writes go to the primary).

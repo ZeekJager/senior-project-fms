@@ -801,14 +801,19 @@ Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /analytics/fleet-summary` | Fleet utilization and status | `analytics:read` | `FleetSummary` |
-| `GET /analytics/utilisation` | Legacy-compatible utilization view | `analytics:read` | `UtilisationSummary`; same metrics exposed by fleet-summary |
-| `GET /analytics/fuel-efficiency` | Fuel KPIs | `analytics:read` | `FuelEfficiencySummary[]` |
-| `GET /analytics/maintenance-risk` | Maintenance risk KPIs | `analytics:read` | `MaintenanceRiskSummary[]` |
-| `GET /analytics/trips` | Trip KPIs | `analytics:read` | `TripAnalytics` |
-| `GET /analytics/alerts` | Alert KPIs | `analytics:read` | `AlertAnalytics` |
+| `GET /analytics/fleet-summary` | Fleet utilisation, cost and status (FMS-50) | `analytics:read` | `from`, `to`, `depot_id` -> `FleetSummary`: vehicles by status, flagged and average health score; utilisation, distance, completed trips, on-time, fuel, fuel and repair cost, cost per km; open alerts by severity; and the same KPIs per day (`daily`) |
+| `GET /analytics/utilisation` | Utilisation by vehicle | `analytics:read` | `from`, `to`, `depot_id` -> `UtilisationSummary`: the fleet's `utilisation_pct`, `vehicle_days`, `days_used`, and each vehicle's, highest first |
+| `GET /analytics/fuel-efficiency` | Fuel KPIs by vehicle | `analytics:read` | `from`, `to`, `depot_id` -> `FuelEfficiencySummary[]`: fuel (ml) and its cost, distance, `ml_per_km` against `rated_ml_per_km` (`variance_pct`), fuel cost per km; costliest first |
+| `GET /analytics/maintenance-risk` | Maintenance risk by vehicle | `analytics:read` | `from`, `to`, `depot_id` -> `MaintenanceRiskSummary[]`: health score, maintenance flag, the highest active prediction (`risk_pct`, type, failure, when) and the range's repair cost; riskiest first |
+| `GET /analytics/trips` | Trip KPIs | `analytics:read` | `from`, `to`, `depot_id` -> `TripAnalytics`: trips planned in the range by status, completed, on time (ended within 15 minutes of the scheduled end), distance, and per day |
+| `GET /analytics/alerts` | Alert KPIs | `analytics:read` | `from`, `to`, `depot_id` -> `AlertAnalytics`: open alerts by severity now; raised in the range by severity, by type and per day; mean minutes to acknowledge |
 
-Analytics and reporting reads go to the PostgreSQL read replica (FMS-94, [read-replica.md](read-replica.md)): today `GET /fuel-reconciliation`, `GET /vehicles/{vehicle_id}/fuel-summary` and `GET /audit-logs`. Their responses include the reporting period where they have one and `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag), because replica lag is possible. A replica that is down or too far behind is not read: the primary answers, and says so.
+- **Range:** `from` and `to` are Addis Ababa days, both included; the 30 days to today by default, never past today, at most 366 days (`400 VALIDATION_FAILED`, `before_from` or `range_too_long`).
+- **Who:** the caller's depots (admins, fleet managers, owners and compliance officers see every depot); `depot_id` narrows to one of them, and a depot that is unknown or not the caller's gives zeros. A driver has no `analytics:read` (`403`).
+- **Integers:** percentages are whole percent, fuel is ml, money is cents, cost per km is whole cents per km, all rounded half away from zero; a ratio with nothing to divide by is `null`.
+- **Cache:** the KPIs are summed from `analytics.analytics_cache`, one row per vehicle and day, refreshed hourly (today and yesterday) and nightly (35 days back) ([analytics.md](analytics.md)). `meta` gives `from`, `to`, `days`, `computed_at` (the last refresh) and `stale: true` when that is more than 25 hours ago or the cache was never filled. Answers are kept in Redis for 5 minutes per caller scope and range, and dropped by each refresh.
+
+Analytics and reporting reads go to the PostgreSQL read replica (FMS-94, [read-replica.md](read-replica.md)): today `GET /fuel-reconciliation`, `GET /vehicles/{vehicle_id}/fuel-summary`, `GET /audit-logs` and the analytics endpoints above. Their responses include the reporting period where they have one and `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag), because replica lag is possible. A replica that is down or too far behind is not read: the primary answers, and says so.
 
 ## 15. Integrations and Webhooks
 

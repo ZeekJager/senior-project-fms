@@ -27,6 +27,7 @@ tags:
   - name: Incidents
   - name: Maintenance
   - name: Notifications
+  - name: Analytics
 
 paths:
   /trips/{trip_id}/assign:
@@ -1110,6 +1111,227 @@ paths:
         '409':
           description: CONFLICT_INVALID_STATE_TRANSITION (already resolved or dismissed).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /analytics/fleet-summary:
+    get:
+      tags: [Analytics]
+      operationId: getFleetSummary
+      summary: Fleet KPIs for a range of days (FMS-50)
+      description: >
+        Vehicles by status, utilisation, distance, trips, on-time, fuel, repair cost, cost per km and open alerts, and the same KPIs per day. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [vehicles, utilisation_pct, distance_km, trips_completed, on_time_pct, fuel_ml, fuel_cost_cents, maintenance_cost_cents, total_cost_cents, cost_per_km_cents, open_alerts, daily]
+                    properties:
+                      vehicles: { type: object, description: 'total, by_status (active, inactive, maintenance, retired), maintenance_flagged, average_health_score.' }
+                      utilisation_pct: { type: [integer, 'null'], description: 'Vehicle-days used of vehicle-days in the range.' }
+                      distance_km: { type: integer }
+                      trips_completed: { type: integer }
+                      on_time_pct: { type: [integer, 'null'] }
+                      fuel_ml: { type: integer }
+                      fuel_cost_cents: { type: integer }
+                      maintenance_cost_cents: { type: integer }
+                      total_cost_cents: { type: integer }
+                      cost_per_km_cents: { type: [integer, 'null'], description: '(fuel + repair cost) over distance, whole cents.' }
+                      open_alerts: { type: object, description: 'low, medium, high, critical, total.' }
+                      daily: { type: array, items: { type: object, description: 'date, vehicles_used and the KPIs above for one day.' } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/utilisation:
+    get:
+      tags: [Analytics]
+      operationId: getUtilisation
+      summary: Utilisation by vehicle (FMS-50)
+      description: >
+        Days each vehicle was on a trip, of the days in the range, highest first. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [utilisation_pct, vehicle_days, days_used, vehicles]
+                    properties:
+                      utilisation_pct: { type: [integer, 'null'] }
+                      vehicle_days: { type: integer }
+                      days_used: { type: integer }
+                      vehicles: { type: array, items: { type: object, description: 'vehicle_id, registration_number, depot_id, depot_name, status, days_used, days, utilisation_pct, distance_km, trips_completed.' } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/fuel-efficiency:
+    get:
+      tags: [Analytics]
+      operationId: getFuelEfficiency
+      summary: Fuel KPIs by vehicle (FMS-50)
+      description: >
+        Fuel and its cost against distance, actual ml per km against the rating, costliest first. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { type: object, description: 'vehicle_id, registration_number, depot_id, depot_name, fuel_type, fuel_ml, fuel_cost_cents, distance_km, ml_per_km, rated_ml_per_km, variance_pct, fuel_cost_per_km_cents.' }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/maintenance-risk:
+    get:
+      tags: [Analytics]
+      operationId: getMaintenanceRisk
+      summary: Maintenance risk by vehicle (FMS-50)
+      description: >
+        Health score, the highest active prediction and the range repair cost, riskiest first. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { type: object, description: 'vehicle_id, registration_number, depot_id, depot_name, status, health_score, maintenance_flag, risk_pct, prediction_type, predicted_failure_type, predicted_at, maintenance_cost_cents.' }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/trips:
+    get:
+      tags: [Analytics]
+      operationId: getTripAnalytics
+      summary: Trip KPIs (FMS-50)
+      description: >
+        Trips planned by status, completed, on time (within 15 minutes of the scheduled end) and distance, per day too. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [planned, by_status, completed, on_time, timed, on_time_pct, distance_km, average_distance_km, daily]
+                    properties:
+                      planned: { type: integer }
+                      by_status: { type: object, description: 'Trips planned in the range, by status.' }
+                      completed: { type: integer }
+                      on_time: { type: integer }
+                      timed: { type: integer }
+                      on_time_pct: { type: [integer, 'null'] }
+                      distance_km: { type: integer }
+                      average_distance_km: { type: [integer, 'null'] }
+                      daily: { type: array, items: { type: object, description: 'date, completed, on_time_pct, distance_km.' } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/alerts:
+    get:
+      tags: [Analytics]
+      operationId: getAlertAnalytics
+      summary: Alert KPIs (FMS-50)
+      description: >
+        Open alerts by severity now; raised in the range by severity, type and day; mean minutes to acknowledge. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [open, raised, by_type, acknowledged, mean_minutes_to_acknowledge, daily]
+                    properties:
+                      open: { type: object, description: 'Open and acknowledged now: low, medium, high, critical, total.' }
+                      raised: { type: object, description: 'Raised in the range: low, medium, high, critical, total.' }
+                      by_type: { type: array, items: { type: object, properties: { alert_type: { type: string }, count: { type: integer } } } }
+                      acknowledged: { type: integer }
+                      mean_minutes_to_acknowledge: { type: [integer, 'null'] }
+                      daily: { type: array, items: { type: object, properties: { date: { type: string, format: date }, raised: { type: integer } } } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /vehicles/{vehicle_id}/fuel-summary:
     get:
@@ -2416,6 +2638,17 @@ components:
         recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
         created_at: { type: string, format: date-time, description: When the server received it. }
 
+    AnalyticsMeta:
+      type: object
+      required: [request_id, from, to, days, computed_at, stale, data_freshness]
+      properties:
+        request_id: { type: string, format: uuid }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        days: { type: integer }
+        computed_at: { type: [string, 'null'], format: date-time, description: "The cache's last refresh." }
+        stale: { type: boolean, description: 'True when the last refresh is more than 25 hours old, or the cache was never filled.' }
+        data_freshness: { $ref: '#/components/schemas/DataFreshness' }
     DataFreshness:
       type: object
       description: Which database answered a reporting read, and how far behind the primary it was (FMS-94, docs/read-replica.md).
