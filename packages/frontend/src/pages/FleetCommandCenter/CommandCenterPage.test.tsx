@@ -156,8 +156,15 @@ describe('Fleet Command Center (FMS-45)', () => {
     const sent = Date.now()
     const update: LocationUpdate = { vehicle_id: 'v-1', depot_id: DEPOT, trip_id: 't-1', lat: 9.01, lng: 38.76, speed: 63, heading: 45, recorded_at: new Date().toISOString() }
     socket.emit('vehicle.location.updated', update)
-    await waitFor(() => expect(card('AA 3-10001')).toHaveTextContent('63 km/h'), { timeout: 500 })
-    expect(placed(marker('AA 3-10001')!)).not.toBe(before)
+    // Both within the budget. The card renders the update at once; react-leaflet moves the marker in an effect
+    // after it, so checking the marker as soon as the card changed raced it (CI, 31 Oct 2026).
+    await waitFor(
+      () => {
+        expect(card('AA 3-10001')).toHaveTextContent('63 km/h')
+        expect(placed(marker('AA 3-10001')!)).not.toBe(before)
+      },
+      { timeout: 500 },
+    )
     expect(Date.now() - sent).toBeLessThan(500)
   })
 
