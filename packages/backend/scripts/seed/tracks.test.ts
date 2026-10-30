@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { buildPlan } from './plan';
+import { CITIES, DEPOT_SITES } from './catalog';
+import { seedRoad } from './roads';
 import { routeRoad, TRACK_INTERVAL_SECONDS, tripTrack } from './tracks';
 
 const ANCHOR = '2026-10-01';
@@ -45,20 +47,26 @@ describe('tripTrack (FMS-136)', () => {
     }
   });
 
-  test('every trip on a route follows the same road, a curve that starts and ends in the two cities', () => {
-    const route = budget.routes[0];
-    const road = routeRoad(budget.seed, 0, route.origin, route.destination);
-    expect(road).toEqual(routeRoad(budget.seed, 0, route.origin, route.destination));
-    expect(kmBetween(road[0], route.origin)).toBeLessThan(0.001);
-    expect(kmBetween(road.at(-1)!, route.destination)).toBeLessThan(0.001);
-    // Not a straight line: the middle of the road is off the midpoint between the cities.
-    const middle = { latitude: (route.origin.latitude + route.destination.latitude) / 2, longitude: (route.origin.longitude + route.destination.longitude) / 2 };
-    expect(kmBetween(road[road.length >> 1], middle)).toBeGreaterThan(0.5);
+  test('every trip on a route follows the same road, measured on OpenStreetMap, from one city to the other (FMS-84)', () => {
+    for (const route of budget.routes) {
+      const road = routeRoad(route.origin, route.destination);
+      expect(road).toEqual(routeRoad(route.origin, route.destination));
+      expect(kmBetween(road[0], route.origin)).toBeLessThan(0.001);
+      expect(kmBetween(road.at(-1)!, route.destination)).toBeLessThan(0.001);
+      // The line drawn is the road measured: as long as the route, give or take the simplification and the ends.
+      const length = road.slice(1).reduce((sum, p, k) => sum + kmBetween(road[k], p), 0);
+      expect(Math.abs(length - route.distance_km)).toBeLessThan(Math.max(2, route.distance_km * 0.03));
+    }
   });
 
-  test('the budget profile has about 55,000 pings', () => {
+  test('roads.json has a road from every depot to every other city, so any plan finds its routes', () => {
+    const missing = DEPOT_SITES.flatMap((d) => CITIES.filter((c) => c.city !== d.city && !seedRoad(d, c)).map((c) => `${d.city} → ${c.city}`));
+    expect(missing).toEqual([]);
+  });
+
+  test('the budget profile has about 71,000 pings (roads measured on OpenStreetMap, FMS-84)', () => {
     const total = completed.reduce((sum, { i }) => sum + tripTrack(budget, i).length, 0);
-    expect(total).toBeGreaterThan(45_000);
-    expect(total).toBeLessThan(65_000);
+    expect(total).toBeGreaterThan(60_000);
+    expect(total).toBeLessThan(80_000);
   });
 });

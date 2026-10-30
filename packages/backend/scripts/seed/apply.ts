@@ -10,7 +10,8 @@ import { SeedApi } from './api-client';
 import { fingerprint } from './fingerprint';
 import { assertNotProduction } from './guard';
 import { placeholderPdf } from './pdf';
-import { buildPlan, type ProfileName, type SeedPlan } from './plan';
+import { anchorMidnight, buildPlan, type ProfileName, type SeedPlan } from './plan';
+import { roadLine } from './roads';
 import { tripTrack } from './tracks';
 
 /** GPS pings written per statement (and per audit entry, as the ingestion audits a batch). */
@@ -251,6 +252,10 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
         destination_longitude: r.destination.longitude,
         distance_km: r.distance_km,
         estimated_duration_seconds: r.duration_seconds,
+        // The committed road (FMS-84), measured as of the plan's anchor day, so every run writes the same.
+        geometry: JSON.stringify(roadLine(r.origin, r.destination)),
+        measured_at: new Date(anchorMidnight(plan.anchor)),
+        distance_source: 'road',
       });
       routes.push(String(row.id));
     }

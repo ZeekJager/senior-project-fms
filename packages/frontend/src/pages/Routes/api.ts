@@ -25,13 +25,26 @@ export interface Route {
   destination_name: string | null
   destination: Coordinates | null
   stops: RouteStop[]
-  /** Entered by hand until the mapping adapter (FMS-84) measures it. */
+  /** Measured along the road (FMS-84) unless typed in: distance_source says which. */
   distance_km: number | null
   estimated_duration_seconds: number | null
+  /** 'road': measured along the road; 'manual': typed in; null: unknown. */
+  distance_source: 'road' | 'manual' | null
+  /** When the road was measured (its line: GET /routes/{id}/geometry); null while it is not. */
+  measured_at: string | null
   is_active: boolean
   version: number
   updated_at: string
 }
+
+/** A route's road (FMS-84): GeoJSON, so [longitude, latitude] pairs. */
+export interface RoadLine {
+  type: 'LineString'
+  coordinates: [number, number][]
+}
+
+/** The road as map points, [latitude, longitude] as Leaflet takes them. */
+export const roadPoints = (line: RoadLine | null | undefined): [number, number][] | null => (line ? line.coordinates.map(([lng, lat]) => [lat, lng]) : null)
 
 export type RouteInput = {
   name: string
@@ -61,6 +74,21 @@ const keys = {
   routes: ['routes'] as const,
   list: (filters: RouteFilters) => ['routes', 'list', filters] as const,
   counts: (depotId: string) => ['routes', 'counts', depotId] as const,
+  road: (id: string, measuredAt: string | null) => ['routes', 'road', id, measuredAt] as const,
+}
+
+/**
+ * GET /routes/{id}/geometry (route:read): the road the route follows, once measured. Keyed on when it was
+ * measured, so a road measured again is fetched again. Off for a route without a road.
+ */
+export function useRouteRoad(route: Pick<Route, 'id' | 'measured_at'> | null, enabled = true) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: keys.road(route?.id ?? '', route?.measured_at ?? null),
+    queryFn: () => api.request<RoadLine | null>(`/routes/${route!.id}/geometry`),
+    enabled: enabled && route !== null && route.measured_at !== null,
+    staleTime: Infinity,
+  })
 }
 
 function routeQuery(f: RouteFilters): string {

@@ -59,6 +59,7 @@ Each run writes `job.started`, then `job.succeeded` (with the result and duratio
 | `idempotency-key-purge` | 02:00 | Deletes expired `api.idempotency_keys` rows (FMS-87). Platform job (`src/shared/http/idempotency-purge.ts`), added in `src/server.ts` rather than on a module |
 | `event-outbox-cleanup` | 03:30 | Deletes domain events delivered more than 7 days ago, and consumers' records of them; dead letters stay (platform job, `src/shared/events`, FMS-73) |
 | `job-runs-cleanup` | 03:40 | Deletes interval jobs' runs (run key with a time) finished more than 7 days ago (platform job, `src/shared/jobs`, FMS-92) |
+| `route-roads` | every hour | Measures the road of up to 50 active routes that have both ends and none yet (saved while the routing engine was down or before it was set up); a typed distance stays. Stops at the first engine failure (FMS-84, [routing.md](routing.md)) |
 | `alert-escalation` | every minute | Escalates critical alerts left unacknowledged for `ALERT_ESCALATION_MINUTES` to the next tier (docs/alerts.md) |
 | `analytics-refresh-nightly` | 02:15 | Recomputes `analytics.analytics_cache` for the last 35 days (Addis Ababa), for fill-ups, trips and repair costs entered late; an empty cache is filled 400 days back. Aggregates on the read replica, writes the primary, then drops the cached analytics answers in Redis (FMS-50, [analytics.md](analytics.md)) |
 | `analytics-refresh-hourly` | every hour | The same for today and yesterday, so the KPIs are at most an hour behind (FMS-50) |

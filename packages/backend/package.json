@@ -18,6 +18,7 @@
     "device:register": "tsx scripts/gps-device.ts",
     "ml:model": "tsx scripts/ml-model.ts",
     "simulate:gps": "tsx scripts/simulate-gps.ts",
+    "routes:roads": "tsx scripts/build-roads.ts",
     "seed": "tsx scripts/seed.ts",
     "seed:reset": "tsx scripts/seed.ts --reset-only",
     "test": "vitest run",

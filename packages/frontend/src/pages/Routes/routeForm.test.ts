@@ -13,6 +13,8 @@ const base: Route = {
   stops: [{ name: 'Bishoftu', latitude: 8.75, longitude: 38.98 }],
   distance_km: 99.5,
   estimated_duration_seconds: 9000,
+  distance_source: 'manual',
+  measured_at: null,
   is_active: true,
   version: 1,
   updated_at: '2026-10-10T08:00:00Z',
@@ -77,6 +79,14 @@ describe('changedFields', () => {
     const fromServer = { ...base, stops: [{ longitude: 38.98, name: 'Bishoftu', latitude: 8.75 }] } as Route
     const { input } = validateRouteForm({ ...formFromRoute(fromServer), distance_km: '101' })
     expect(changedFields(input!, fromServer)).toEqual({ distance_km: 101 })
+  })
+
+  it("a road's time, to the second, shown in whole minutes, is unchanged until the minutes change (FMS-84)", () => {
+    const measured: Route = { ...base, distance_km: 91, estimated_duration_seconds: 4613, distance_source: 'road', measured_at: '2026-10-30T09:00:00Z' }
+    const form = formFromRoute(measured)
+    expect(changedFields(validateRouteForm(form).input!, measured)).toEqual({})
+    expect(changedFields(validateRouteForm({ ...form, destination: '8.5408, 39.2716' }).input!, measured)).toEqual({ destination: { latitude: 8.5408, longitude: 39.2716 } })
+    expect(changedFields(validateRouteForm({ ...form, minutes: '20' }).input!, measured)).toEqual({ estimated_duration_seconds: 4800 })
   })
 })
 

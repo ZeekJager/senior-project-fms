@@ -8,12 +8,14 @@ import { ADDIS_ABABA, TILE_ATTRIBUTION, TILE_URL, useInViewport } from '@/compon
 import { cn } from '@/components/ui'
 import { tripMapBounds, type LatLng } from './bounds'
 
-// A trip on a map (FMS-136): the route it was planned on, dashed from origin to destination, and the
-// GPS track it drove, solid. Tiles load only once the map is on screen, like the fleet map (FMS-44).
+// A trip on a map (FMS-136): the route it was planned on, dashed, along its road when measured (FMS-84) and
+// straight from origin to destination otherwise, and the GPS track it drove, solid. Tiles load only once the map is on screen, like the fleet map (FMS-44).
 
 export interface TripMapProps {
   /** The route's two ends; either may be unknown. */
   planned: { origin: LatLng | null; destination: LatLng | null }
+  /** The road the route follows (FMS-84), when measured: drawn instead of a straight line. */
+  road?: readonly LatLng[] | null
   /** The GPS points it reported, oldest first. */
   track: readonly LatLng[]
   /** The accessible name of the map region. */
@@ -21,13 +23,14 @@ export interface TripMapProps {
   className?: string
 }
 
-export function TripMap({ planned, track, label, className }: TripMapProps) {
+export function TripMap({ planned, road, track, label, className }: TripMapProps) {
   const box = useRef<HTMLDivElement>(null)
   const visible = useInViewport(box)
   const [opened, setOpened] = useState(false)
   if (visible && !opened) setOpened(true)
-  const bounds = tripMapBounds(planned, track)
-  const plannedLine: LatLng[] | null = planned.origin && planned.destination ? [planned.origin, planned.destination] : null
+  const onRoad = road && road.length > 1 ? road : null
+  const bounds = tripMapBounds(planned, onRoad ? [...track, ...onRoad] : track)
+  const plannedLine: LatLng[] | null = onRoad ? [...onRoad] : planned.origin && planned.destination ? [planned.origin, planned.destination] : null
   // Where it set off and where it got to: the track's ends, else the route's.
   const start = track[0] ?? planned.origin
   const end = track.at(-1) ?? planned.destination
@@ -70,7 +73,7 @@ export function TripMap({ planned, track, label, className }: TripMapProps) {
           {plannedLine && (
             <li className="flex items-center gap-2">
               <span className="trip-map-key trip-map-key--planned" aria-hidden />
-              Planned route
+              {onRoad ? 'Planned route (road)' : 'Planned route'}
             </li>
           )}
         </ul>

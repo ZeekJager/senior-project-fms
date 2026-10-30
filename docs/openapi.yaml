@@ -735,6 +735,39 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /routes/{route_id}/geometry:
+    get:
+      tags: [Trips]
+      operationId: getRouteGeometry
+      summary: The road a route follows (FMS-84)
+      description: >
+        Measured by the routing engine (OSRM) through the route's origin, stops with coordinates and destination
+        when the route is saved, simplified to within 15 m. Null while the route has no road (no ends, the engine
+        down or not set up). Needs route:read, in the caller's depot scope; another depot's route, or an id that
+        is not a UUID, is a 404. docs/routing.md.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The road, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/RoadLine'
+                      - type: 'null'
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /alerts:
     get:
       tags: [Alerts]
@@ -2486,6 +2519,20 @@ components:
             signal_lost), duration_seconds and, for speeding, max_speed_kmh.
           additionalProperties: true
 
+    RoadLine:
+      type: object
+      description: A GeoJSON LineString, [longitude, latitude] pairs at 5 decimals (FMS-84).
+      required: [type, coordinates]
+      properties:
+        type: { type: string, enum: [LineString] }
+        coordinates:
+          type: array
+          minItems: 2
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: { type: number }
     TrackPoint:
       type: object
       description: A stored position of a vehicle (FMS-136), as GET /vehicles/{vehicle_id}/tracking returns it.

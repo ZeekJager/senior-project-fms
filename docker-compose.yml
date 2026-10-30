@@ -123,6 +123,9 @@ services:
       # Predictive maintenance service (FMS-54), on this network only.
       ML_SERVICE_URL: http://ai-service:5000
       ML_SERVICE_TOKEN: "${ML_SERVICE_TOKEN:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      # Road routing (FMS-84, docs/routing.md): OSRM, started by `make routing`.
+      # Not running, routes save with the distance typed in; ROUTING_URL= (empty) in .env switches it off.
+      ROUTING_URL: "${ROUTING_URL-http://osrm:5000}"
     healthcheck:
       # 200 when the API can reach PostgreSQL (GET /health/ready); a Redis
       # outage shows as "degraded" but keeps it healthy.
@@ -179,7 +182,61 @@ services:
       timeout: 5s
       retries: 5
 
+  # 6. Road routing (FMS-84, docs/routing.md): OSRM on Ethiopia's OpenStreetMap
+  # roads. Optional: `make routing` downloads and prepares the map once (about
+  # 10 minutes) and starts it; COMPOSE_PROFILES=routing in .env starts it with
+  # `make dev`. Without it, routes keep the distance typed in.
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    container_name: fms_osrm
+    profiles: [routing]
+    command: ["osrm-routed", "--algorithm", "mld", "--max-viaroute-size", "30", "/data/ethiopia-latest.osrm"]
+    ports:
+      # Host access for `npm run routes:roads` and an API run outside Docker.
+      - "127.0.0.1:${OSRM_HOST_PORT:-5050}:5000"
+    volumes:
+      - osrm_data:/data:ro
+
+  # One-off steps of `make routing`: fetch the map (checked against Geofabrik's
+  # MD5), then build OSRM's car graph from it. Each skips work already done.
+  osrm-download:
+    image: curlimages/curl:8.10.1
+    profiles: [routing-setup]
+    user: "0:0"
+    volumes:
+      - osrm_data:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        cd /data
+        if [ -f ethiopia-latest.osrm.mldgr ]; then echo "map already prepared"; exit 0; fi
+        if [ -f ethiopia-latest.osm.pbf.md5 ] && md5sum -c ethiopia-latest.osm.pbf.md5 >/dev/null 2>&1; then echo "map already downloaded"; exit 0; fi
+        curl -fsSL --retry 3 -o ethiopia-latest.osm.pbf https://download.geofabrik.de/africa/ethiopia-latest.osm.pbf
+        curl -fsSL --retry 3 -o ethiopia-latest.osm.pbf.md5 https://download.geofabrik.de/africa/ethiopia-latest.osm.pbf.md5
+        md5sum -c ethiopia-latest.osm.pbf.md5
+
+  osrm-prepare:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles: [routing-setup]
+    volumes:
+      - osrm_data:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        cd /data
+        if [ -f ethiopia-latest.osrm.mldgr ]; then echo "road graph already built"; exit 0; fi
+        osrm-extract -p /opt/car.lua ethiopia-latest.osm.pbf
+        osrm-partition ethiopia-latest.osrm
+        osrm-customize ethiopia-latest.osrm
+
 volumes:
   postgres_data:
   postgres_replica_data:
   document_files:
+  # The prepared map (1-2 GB, minutes to build): shared by every checkout, created by
+  # `make routing`, and external so `make clean` (down -v) keeps it.
+  osrm_data:
+    name: fms_osrm_data
+    external: true

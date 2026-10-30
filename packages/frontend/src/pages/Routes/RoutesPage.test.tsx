@@ -1,10 +1,17 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { TripMapProps } from '@/components/TripMap'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
 import type { Route } from './api'
+
+// Leaflet does not draw in jsdom: the road map shows what it was given.
+vi.mock('@/components/TripMap', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/TripMap')>()),
+  TripMap: ({ road, label }: TripMapProps) => <div role="region" aria-label={label} data-road={road?.map((p) => p.join(',')).join(' ') ?? ''} />,
+}))
 
 const dispatcher = currentUser(['dispatcher'], ['route:read', 'route:write', 'depot:read', 'trip:assign'])
 const owner = currentUser(['fleet_owner'], ['route:read', 'depot:read'])
@@ -27,6 +34,8 @@ function route(overrides: Partial<Route> = {}): Route {
     stops: [],
     distance_km: 99.5,
     estimated_duration_seconds: 9000,
+    distance_source: 'manual',
+    measured_at: null,
     is_active: true,
     version: 3,
     updated_at: '2026-10-10T08:00:00Z',
@@ -180,6 +189,22 @@ describe('Routes (FMS-83)', () => {
     await user.type(name, 'Taken name')
     await user.click(within(again).getByRole('button', { name: 'Save changes' }))
     expect(await within(again).findByText('This depot already has an active route with this name.')).toBeInTheDocument()
+  })
+
+  it('a distance says whether it was measured by road or typed in; a measured route shows its road (FMS-84)', async () => {
+    const measured = route({ name: 'Addis Ababa - Adama', distance_km: 91, estimated_duration_seconds: 4613, distance_source: 'road', measured_at: '2026-10-30T09:00:00Z' })
+    serveRoutes([measured, route({ name: 'Bole - Kality', distance_km: 12, distance_source: 'manual' })])
+    server.use(http.get(`/api/v1/routes/${measured.id}/geometry`, () => envelope({ type: 'LineString', coordinates: [[38.7636, 9.0054], [39.27, 8.54]] })))
+    const user = userEvent.setup()
+    await openRoutes('Addis Ababa - Adama')
+    expect(within(rowOf('Addis Ababa - Adama')).getByText('by road')).toBeInTheDocument()
+    expect(within(rowOf('Bole - Kality')).getByText('typed in')).toBeInTheDocument()
+
+    await user.click(within(rowOf('Addis Ababa - Adama')).getByRole('button', { name: 'Edit Addis Ababa - Adama' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Edit Addis Ababa - Adama' })
+    expect(within(drawer).getByText('Measured along the road. Type a distance to use your own instead.')).toBeInTheDocument()
+    const map = await within(drawer).findByRole('region', { name: 'Road of Addis Ababa - Adama' })
+    expect(map).toHaveAttribute('data-road', '9.0054,38.7636 8.54,39.27')
   })
 
   it('retires a route from its panel after confirming, with a toast', async () => {

@@ -43,7 +43,7 @@ Counts that depend on the random draws are given for the default seed (20261007)
 | Trips: draft, scheduled, assigned, en route, completed, cancelled | 80 | 1,000 |
 | Fuel logs: one after each completed trip of a combustion vehicle, about 3% suspiciously high | 40 (27–43) | 526 (455–526) |
 | Maintenance records: mostly completed, some open or scheduled, with parts used | 20 | 150 |
-| GPS pings: a track for every completed trip, one every five minutes (below) | 5,090 | 55,951 |
+| GPS pings: a track for every completed trip, one every five minutes (below) | 6,184 | 70,800 |
 | Service history: completed preventive work since each vehicle joined the fleet (below) | 147 (143–158) | 1,305 (1,282–1,310) |
 | Spare parts: one shared catalogue; one low and one out of stock | 19 | 19 |
 | Attendance | 3 days | the anchor day |
@@ -84,7 +84,7 @@ On the budget profile, scored by the model `pm-2026.10`, combustion vehicles ave
 
 Every completed trip has the GPS track a driver's phone would have reported (FMS-136), so the vehicle page can show the route each trip drove (`GET /vehicles/{vehicle_id}/tracking`). `scripts/seed/tracks.ts` draws it from the plan:
 
-- **The road.** Each route gets a gentle curve between its two cities, the same for every trip on it.
+- **The road.** Each route follows its real road, measured with OSRM on OpenStreetMap and committed in `scripts/seed/roads.json` (FMS-84, [routing.md](routing.md)), the same for every trip on it. The route's distance is the road's length and its time that distance at 55 km/h; routes are saved with the road (`geometry`), so the maps draw it.
 - **The trip.** A ping every five minutes from the trip's actual start to its actual end, from origin to destination. The speed drifts between 75% and 125% of the trip's average, and a trip over three hours stops once on the way for 15 to 30 minutes. The speeds add up to the trip's `actual_distance_km`.
 - **As stored.** `source` is `phone` and there is no ignition reading, so the engine-hours job and the odometer readings ignore them. Each vehicle's current location (the live map) is where its last trip ended.
 - **Repeatable.** The tracks use their own random generator, seeded by route and by trip, so they do not change anything else the plan draws.

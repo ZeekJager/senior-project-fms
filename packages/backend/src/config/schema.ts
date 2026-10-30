@@ -68,6 +68,8 @@ const appSchema = z
     // Predictive maintenance service (FMS-54/55/127): unset, nothing is scored.
     ML_SERVICE_URL: z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
     ML_SERVICE_TOKEN: z.string().optional(),
+    // Road routing (FMS-84, docs/routing.md): OSRM's base URL. Unset or empty, routes keep the distance typed in.
+    ROUTING_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
     // The feature spec the core's extractor implements, shared with the ML service (FMS-127). Relative to the working directory.
     ML_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec.json'),
   })
@@ -125,6 +127,8 @@ export interface AppConfig {
   /** Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly. */
   fuel: { varianceThresholdPct: number };
   ml: MlConfig;
+  /** Road routing (FMS-84): OSRM's base URL, or null when ROUTING_URL is not set and routes keep the distance typed in. */
+  routing: { url: string } | null;
 }
 
 /** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
@@ -261,6 +265,7 @@ export function loadAppConfig(env: Env): AppConfig {
       service: e.ML_SERVICE_URL ? { url: e.ML_SERVICE_URL.replace(/\/+$/, ''), token: e.ML_SERVICE_TOKEN! } : null,
       featureSpecPath: e.ML_FEATURE_SPEC_PATH,
     },
+    routing: e.ROUTING_URL ? { url: e.ROUTING_URL.replace(/\/+$/, '') } : null,
   };
 }
 
