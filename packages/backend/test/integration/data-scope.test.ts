@@ -117,6 +117,14 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
   if (await none('alert.incident_reports WHERE depot_id = $1', [depotId])) {
     await pool.query("INSERT INTO alert.incident_reports (reported_by, description, severity, depot_id, vehicle_id) VALUES ($1, 'Depot B incident', 'medium', $2, $3)", [user, depotId, vehicle]);
   }
+  if (await none('fuel.fuel_anomalies WHERE vehicle_id = ANY($1::bigint[])', [ids.vehicles])) {
+    await pool.query(
+      `INSERT INTO fuel.fuel_anomalies (vehicle_id, anomaly_type, severity, status, period_start, period_end, distance_km, expected_ml, actual_ml,
+                                        expected_consumption_ml_100km, actual_consumption_ml_100km, deviation_percentage, detected_at)
+       VALUES ($1, 'consumption_above_expected', 'medium', 'open', '2026-09-01T00:00:00+03:00', '2026-10-01T00:00:00+03:00', 1000, 320000, 400000, 32000, 40000, 25, now())`,
+      [vehicle],
+    );
+  }
   if (await none('alert.notifications WHERE recipient_user_id = ANY($1::bigint[])', [ids.users])) {
     await pool.query("INSERT INTO alert.notifications (recipient_user_id, notification_type, title, message, channel, status) VALUES ($1, 'alert', 'Depot B', 'For depot B', 'in_app', 'delivered')", [user]);
   }
@@ -136,6 +144,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     attendanceId: await one('SELECT public_id::text AS id FROM fleet.driver_attendance WHERE driver_id = ANY($1::bigint[]) ORDER BY id', [ids.drivers]),
     documentId: await one("SELECT public_id::text AS id FROM document.documents WHERE owner_type = 'vehicle' AND owner_id = ANY($1::bigint[]) ORDER BY id", [ids.vehicles]),
     fuelLogId: await byVehicle('fuel.fuel_logs'),
+    anomalyId: await byVehicle('fuel.fuel_anomalies'),
     recordId: await byVehicle('maintenance.maintenance_records'),
     predictionId: await byVehicle('maintenance.maintenance_predictions'),
     partId: await one('SELECT public_id::text AS id FROM maintenance.inventory_parts WHERE depot_id = $1 ORDER BY id', [depotId]),
