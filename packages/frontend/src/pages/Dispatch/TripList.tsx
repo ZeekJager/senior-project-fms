@@ -9,7 +9,7 @@ interface TripListProps {
   isLoading: boolean
   selectedId: string | null
   onSelect: (trip: Trip) => void
-  /** Names for assigned trips, from the board (same depot). */
+  /** Names for assigned and under-way trips, from the board (same depot). */
   driverName: (id: string) => string | undefined
   plate: (id: string) => string | undefined
 }
@@ -60,7 +60,7 @@ export function TripList({ trips, isLoading, selectedId, onSelect, driverName, p
                 <CalendarClock className="h-3.5 w-3.5 text-ink-subtle" aria-hidden="true" />
                 {formatWindow(trip.scheduled_start, trip.scheduled_end)}
               </p>
-              {trip.status === 'assigned' && (
+              {(trip.status === 'assigned' || trip.status === 'en_route') && (
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
                   <span className="inline-flex items-center gap-1">
                     <UserRound className="h-3.5 w-3.5" aria-hidden="true" />

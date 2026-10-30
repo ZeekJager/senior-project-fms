@@ -2703,3 +2703,11 @@ INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM auth.roles r, auth.permissions p
  WHERE r.name IN ('admin', 'fleet_manager', 'dispatcher', 'depot_admin') AND p.code = 'incident:manage'
 ON CONFLICT DO NOTHING;
+
+-- ===== 048_adhoc_routes.sql =====
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS is_adhoc BOOLEAN NOT NULL DEFAULT FALSE;
+
+DROP INDEX IF EXISTS trip.ux_trip_routes_depot_name;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_trip_routes_depot_name
+    ON trip.routes (depot_id, lower(name))
+    WHERE is_active AND NOT is_adhoc;

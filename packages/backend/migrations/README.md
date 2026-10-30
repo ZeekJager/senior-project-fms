@@ -51,6 +51,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 044 | `analytics` | Fleet KPIs (FMS-50): `analytics_cache` keeps one row per vehicle and Addis Ababa day with its raw figures (`distance_m`, `trips_completed`, `trips_timed`, `trips_on_time`, `fuel_ml`, `fuel_cost_cents`, `maintenance_cost_cents`) beside the ratios, so any range is summed from the cache; read-only views `vehicle_directory`, `trip_facts`, `fuel_facts`, `maintenance_cost_facts` and `alert_facts`, so the analytics module reads its own schema only |
 | 045 | `trip` | Routes follow the road (FMS-84): `routes.measured_at` and `routes.distance_source` (`road` or `manual`); `geometry` must be a GeoJSON LineString, set exactly when `measured_at` is; existing typed distances become `manual`; a partial index on the active routes still to be measured (`idx_trip_routes_unmeasured`) |
 | 047 | `alert`, `auth` | Handling incidents (FMS-89): `incident_reports` gains `assigned_to`, `notes` (`chk_incident_notes`, up to 4,000 characters), `resolved_at` and `resolved_by` (`chk_incident_resolved`: set exactly when resolved or closed) and `idx_incidents_active`; `incident:manage` for admins, fleet managers, dispatchers and depot admins, while `incident:write` becomes reporting only |
+| 048 | `trip` | One-off trips (FMS-139): `routes.is_adhoc`, a route made for one unplanned trip, left out of the route lists; active route names unique per depot among planned routes only (`ux_trip_routes_depot_name` recreated with `NOT is_adhoc`) |
 
 ## Important
 

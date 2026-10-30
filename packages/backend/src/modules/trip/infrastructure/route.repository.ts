@@ -25,6 +25,8 @@ export interface RouteRow {
   distanceSource: DistanceSource | null;
   /** When the road (geometry) was measured; null while it is not. */
   measuredAt: Date | null;
+  /** Made for one unplanned trip (FMS-139): left out of the lists. */
+  isAdhoc: boolean;
   isActive: boolean;
   version: number;
   createdAt: Date;
@@ -48,6 +50,7 @@ export interface RouteWrite {
   /** GeoJSON text, as `stops`. */
   geometry?: string | null;
   measured_at?: Date | null;
+  is_adhoc?: boolean;
   is_active?: boolean;
 }
 
@@ -80,7 +83,7 @@ const ROW_SQL = `
          r.destination_longitude::float8 AS "destinationLongitude", r.stops,
          r.distance_km::float8 AS "distanceKm", r.estimated_duration_seconds AS "estimatedDurationSeconds",
          r.distance_source AS "distanceSource", r.measured_at AS "measuredAt",
-         r.is_active AS "isActive", r.version, r.created_at AS "createdAt", r.updated_at AS "updatedAt"
+         r.is_adhoc AS "isAdhoc", r.is_active AS "isActive", r.version, r.created_at AS "createdAt", r.updated_at AS "updatedAt"
     FROM trip.routes r`;
 
 const containsPattern = (term: string) => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -102,7 +105,8 @@ export class RouteRepository extends Repository {
       params.push(value);
       return `$${params.length}`;
     };
-    const where = [scope.sql];
+    // One-off routes (FMS-139) belong to their trip: never offered in the lists.
+    const where = [scope.sql, 'NOT r.is_adhoc'];
     if (f.status !== 'all') where.push(f.status === 'active' ? 'r.is_active' : 'NOT r.is_active');
     if (f.depotId) where.push(`r.depot_id = ${add(f.depotId)}`);
     if (f.search) {

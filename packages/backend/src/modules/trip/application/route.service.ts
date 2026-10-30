@@ -319,6 +319,7 @@ export class RouteService {
       estimated_duration_seconds: r.estimatedDurationSeconds,
       distance_source: r.distanceSource,
       measured_at: r.measuredAt,
+      is_adhoc: r.isAdhoc,
       is_active: r.isActive,
       version: r.version,
       created_at: r.createdAt,
@@ -399,6 +400,7 @@ function changes(row: RouteRow, data: RouteWrite): RouteWrite {
     distance_km: row.distanceKm,
     estimated_duration_seconds: row.estimatedDurationSeconds,
     distance_source: row.distanceSource,
+    is_adhoc: row.isAdhoc,
     is_active: row.isActive,
   };
   const out: Record<string, unknown> = {};

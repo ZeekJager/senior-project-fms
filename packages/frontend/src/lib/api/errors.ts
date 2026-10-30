@@ -6,6 +6,9 @@ export interface ApiErrorDetail {
   record_id?: string
   /** For a refused state change: where the record can move from here. */
   allowed_transitions?: string[]
+  /** For a trip overlap: whether the other trip can move later to make room, and by how many minutes (FMS-139). */
+  shiftable?: boolean
+  shift_minutes?: number
 }
 
 /** Thrown for every non-2xx response, shaped like the contract's error envelope. */

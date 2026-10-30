@@ -31,6 +31,8 @@ export interface RouteView {
   distance_source: DistanceSource | null;
   /** When the road was measured: its line is at GET /routes/{id}/geometry. Null while it is not. */
   measured_at: Date | null;
+  /** Made for one unplanned trip (FMS-139, POST /trips with a route): readable by id, never listed. */
+  is_adhoc: boolean;
   /** False once retired: kept for the trips that used it, not offered for new ones. */
   is_active: boolean;
   version: number;

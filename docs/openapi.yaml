@@ -10,7 +10,7 @@ info:
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
     status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38);
-    failure records on corrective repairs (FMS-125); each vehicle's part history (FMS-52); meter readings (FMS-126).
+    failure records on corrective repairs (FMS-125); each vehicle's part history (FMS-52); meter readings (FMS-126); trip creation and rescheduling with flexible dispatch (FMS-139).
 servers:
   - url: /api/v1
 security:
@@ -31,6 +31,146 @@ tags:
   - name: Analytics
 
 paths:
+  /trips:
+    post:
+      tags: [Trips]
+      operationId: createTrip
+      summary: Create a trip, from a saved route or a one-off route (FMS-30, FMS-139)
+      description: >
+        Needs trip:write. route_id names an active route in the caller's depots; or route describes a
+        one-off trip, saved as a route of its own (is_adhoc) in depot_id (default: a depot-scoped caller's
+        own depot). Without scheduled_end the trip ends the route's estimated time after its start. The trip
+        starts scheduled, without driver or vehicle, and copies the route's plan. Publishes TripCreated.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [scheduled_start]
+              description: Exactly one of route_id and route.
+              properties:
+                route_id: { type: string, format: uuid }
+                route:
+                  type: object
+                  additionalProperties: false
+                  required: [origin_name, destination_name]
+                  properties:
+                    origin_name: { type: string, minLength: 1, maxLength: 120 }
+                    origin: { $ref: '#/components/schemas/NullablePoint' }
+                    destination_name: { type: string, minLength: 1, maxLength: 120 }
+                    destination: { $ref: '#/components/schemas/NullablePoint' }
+                    stops:
+                      type: array
+                      maxItems: 25
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [name]
+                        properties:
+                          name: { type: string, minLength: 1, maxLength: 120 }
+                          latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+                          longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+                depot_id: { type: string, format: uuid, description: The depot a one-off trip leaves from. }
+                scheduled_start: { type: string, format: date-time }
+                scheduled_end: { type: string, format: date-time, description: Default the route's estimated time after the start. }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Trip' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (both or neither of route_id and route; an unknown or retired route; a depot
+            outside the caller's; no end and no estimated time) or VALIDATION_INVALID_DATE_RANGE.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /trips/{trip_id}:
+    patch:
+      tags: [Trips]
+      operationId: updateTrip
+      summary: Reschedule or cancel a trip (FMS-30, FMS-139)
+      description: >
+        Needs trip:write. Moves an open trip's times, or only the end of one en route; cancels with
+        status cancelled. Once assigned or en route a time change needs a reason (kept on TripUpdated) and
+        may not overlap the driver's or vehicle's other trips: 409 naming that trip, with shiftable and
+        shift_minutes; sent again with shift_following, that trip and any it then runs into move later
+        (at most 20), all in one transaction. Publishes TripUpdated (one per moved trip, with
+        shifted_by_trip_id) or TripCancelled.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                scheduled_start: { type: string, format: date-time }
+                scheduled_end: { type: string, format: date-time }
+                status: { const: cancelled }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+                shift_following:
+                  type: boolean
+                  description: Move the trips this change runs into later, instead of refusing.
+      responses:
+        '200':
+          description: Changed. meta.shifted lists the trips moved later to make room.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Trip' }
+                  meta:
+                    type: object
+                    required: [request_id, shifted]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      shifted:
+                        type: array
+                        items:
+                          type: object
+                          required: [trip_id, scheduled_start, scheduled_end]
+                          properties:
+                            trip_id: { type: string, format: uuid }
+                            scheduled_start: { type: string, format: date-time }
+                            scheduled_end: { type: string, format: date-time }
+        '400':
+          description: >
+            VALIDATION_FAILED (an empty change; a reason missing; a new start for a trip under way) or
+            VALIDATION_INVALID_DATE_RANGE (an end at or before the start, or before an en-route trip's
+            actual start).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >
+            CONFLICT_CONCURRENT_MODIFICATION, CONFLICT_INVALID_STATE_TRANSITION (a closed trip, or more than
+            20 trips to move), CONFLICT_DRIVER_OVERLAP or CONFLICT_VEHICLE_OVERLAP (record_id, shiftable,
+            shift_minutes).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /trips/{trip_id}/assign:
     post:
       tags: [Trips]
@@ -2215,6 +2355,14 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   schemas:
+    NullablePoint:
+      type: [object, 'null']
+      additionalProperties: false
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+
     Meta:
       type: object
       required: [request_id]
@@ -2243,6 +2391,12 @@ components:
                     type: string
                     format: uuid
                     description: The record the problem is about (the conflicting trip, the open maintenance record).
+                  shiftable:
+                    type: boolean
+                    description: For a trip overlap, whether the other trip can move later to make room (FMS-139).
+                  shift_minutes:
+                    type: integer
+                    description: How many minutes later it would move, when shiftable.
                   allowed_transitions:
                     type: array
                     items: { type: string }
