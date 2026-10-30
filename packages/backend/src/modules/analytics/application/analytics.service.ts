@@ -167,7 +167,7 @@ export class AnalyticsService {
   private async fleetSummary(db: Queryable, a: Audience, range: Range) {
     const { repo } = this.deps;
     const vehicles = await repo.vehicles(db, a);
-    const daily = await repo.totalsByDay(db, a, range.from, range.to);
+    const daily = await repo.totalsByDay(db, vehicles.map((v) => v.vehicleId), range.from, range.to);
     const open = await repo.openAlerts(db, a);
     const total = daily.reduce((t, d) => add(t, d.totals), EMPTY);
     const byStatus: Record<string, number> = {};
@@ -271,7 +271,8 @@ export class AnalyticsService {
     const { repo } = this.deps;
     const end = dayStart(shiftDay(range.to, 1));
     const statuses = await repo.tripsByStatus(db, a, dayStart(range.from), end);
-    const daily = await repo.totalsByDay(db, a, range.from, range.to);
+    const vehicles = await repo.vehicles(db, a);
+    const daily = await repo.totalsByDay(db, vehicles.map((v) => v.vehicleId), range.from, range.to);
     const total = daily.reduce((t, d) => add(t, d.totals), EMPTY);
     const byStatus = counts(TRIP_STATUSES, statuses);
     return {

@@ -238,15 +238,18 @@ export class AnalyticsRepository {
     return new Map(res.rows.map((r) => [String(r.vehicle_id), totalsOf(r)]));
   }
 
-  /** The cache summed per day over [from, to], every day present (zeros when nothing is cached). */
-  async totalsByDay(db: Queryable, a: Audience, from: string, to: string): Promise<{ day: string; totals: Totals }[]> {
-    const w = audience(a, 'v.depot_id', 3);
+  /**
+   * The cache summed per day over [from, to] for these vehicles (the caller's, from `vehicles`), every day present
+   * (zeros when nothing is cached). By id, not joined to the directory: with fresh rows and no statistics yet the
+   * planner loops the cache against the directory (200 vehicles for a month took 220 ms; this takes a few).
+   */
+  async totalsByDay(db: Queryable, vehicleIds: string[], from: string, to: string): Promise<{ day: string; totals: Totals }[]> {
     const res = await db.query(
       `SELECT to_char(c.period_start, 'YYYY-MM-DD') AS day, ${TOTALS_SQL}
-       FROM analytics.analytics_cache c JOIN analytics.vehicle_directory v ON v.vehicle_id = c.vehicle_id
-       WHERE c.period_type = 'day' AND c.period_start BETWEEN $1::date AND $2::date AND ${w.sql}
+       FROM analytics.analytics_cache c
+       WHERE c.period_type = 'day' AND c.period_start BETWEEN $1::date AND $2::date AND c.vehicle_id = ANY($3::bigint[])
        GROUP BY c.period_start`,
-      [from, to, ...w.params],
+      [from, to, vehicleIds],
     );
     const found = new Map(res.rows.map((r) => [r.day as string, totalsOf(r)]));
     const days: { day: string; totals: Totals }[] = [];
