@@ -35,7 +35,8 @@ export function publicRoute(): RequestHandler {
 interface Layer {
   name?: string;
   regexp?: RegExp;
-  route?: { path: string; methods: Record<string, boolean>; stack: { handle: unknown }[] };
+  /** Each handler in a route's stack carries its method; `router.route(path).get(...).patch(...)` shares one stack. */
+  route?: { path: string; methods: Record<string, boolean>; stack: { handle: unknown; method?: string }[] };
   handle?: { stack?: Layer[] };
 }
 
@@ -49,29 +50,52 @@ function mountPath(layer: Layer): string {
     .replace(/^\/?$/, '');
 }
 
-function collect(stack: Layer[], prefix: string, out: { route: string; ok: boolean }[]): void {
+/**
+ * One method of a route as the app registered it, with the policies it declared, in order. A caller must pass
+ * every one: `authorize('prediction:read'), authorize('maintenance:write')` needs both. Empty: none declared.
+ */
+export interface RegisteredRoute {
+  method: string;
+  path: string;
+  policies: RoutePolicy[];
+}
+
+function collect(stack: Layer[], prefix: string, out: RegisteredRoute[]): void {
   for (const layer of stack) {
     if (layer.route) {
-      const methods = Object.keys(layer.route.methods)
-        .filter((m) => layer.route!.methods[m])
-        .map((m) => m.toUpperCase())
-        .join(',');
-      out.push({
-        route: `${methods} ${prefix}${layer.route.path}`,
-        ok: layer.route.stack.some((s) => policyOf(s.handle) !== undefined),
-      });
+      const route = layer.route;
+      for (const method of Object.keys(route.methods).filter((m) => route.methods[m])) {
+        out.push({
+          method: method.toUpperCase(),
+          path: `${prefix}${route.path}`,
+          policies: route.stack
+            .filter((s) => s.method === undefined || s.method === method)
+            .map((s) => policyOf(s.handle))
+            .filter((p): p is RoutePolicy => p !== undefined),
+        });
+      }
     } else if (layer.name === 'router' && layer.handle?.stack) {
       collect(layer.handle.stack, prefix + mountPath(layer), out);
     }
   }
 }
 
+/**
+ * Every route the app serves, a method at a time in registration order, with its policies: what the startup guard
+ * checks, and what the generated access tests (FMS-59) call, so a route is tested the day it is added.
+ */
+export function routeRegistry(app: Express): RegisteredRoute[] {
+  const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack ?? [];
+  const routes: RegisteredRoute[] = [];
+  collect(stack, '', routes);
+  return routes;
+}
+
 /** Every route (method and path) that declares no policy. */
 export function routesWithoutPolicy(app: Express): string[] {
-  const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack ?? [];
-  const routes: { route: string; ok: boolean }[] = [];
-  collect(stack, '', routes);
-  return routes.filter((r) => !r.ok).map((r) => r.route);
+  return routeRegistry(app)
+    .filter((r) => r.policies.length === 0)
+    .map((r) => `${r.method} ${r.path}`);
 }
 
 /**

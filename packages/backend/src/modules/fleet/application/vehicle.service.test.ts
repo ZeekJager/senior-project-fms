@@ -35,6 +35,8 @@ function harness(
     ahead?: { tripId: string; start: Date }[];
     /** Who made the latest status change. */
     lastSource?: 'manual' | 'maintenance';
+    /** The vehicle the reads return is on this trip now (VehicleView.current_trip). */
+    onTrip?: VehicleView['current_trip'];
   } = {},
 ) {
   const calls: string[] = [];
@@ -45,12 +47,13 @@ function harness(
       ? null
       : { id: '7', depotId: '5', isActive: true, status: 'active' as const, fuelType: 'diesel' as const, fuelEfficiencyMlPerKm: 320, odometerKm: 1000, maintenanceFlag: false, version: 0, ...options.locked };
 
+  const shown = options.onTrip ? { ...view, current_trip: options.onTrip } : view;
   const vehicles: VehicleServiceDeps['vehicles'] = {
     inTransaction: (fn) => fn(tx),
-    findView: async () => view,
+    findView: async () => shown,
     findViewById: async () => view,
-    findViewWithDepot: async () => ({ view, depotId: '5' }),
-    list: async () => ({ items: [], total: 0 }),
+    findViewWithDepot: async () => ({ view: shown, depotId: '5' }),
+    list: async () => (options.onTrip ? { items: [shown], total: 1 } : { items: [], total: 0 }),
     resolveDepot: async (_db, publicId) => (publicId === DEPOT_PUBLIC ? '5' : null),
     lockForWrite: async () => locked,
     lockById: async () => locked,
@@ -309,5 +312,22 @@ describe('status follows workshop work (FMS-76)', () => {
     const { service, calls } = harness({ locked: { status: 'maintenance' }, lastSource: 'maintenance' });
     expect(await service.followWorkshop({} as PoolClient, caller, '7', true, 'rec-2')).toBeNull();
     expect(calls).toEqual([]);
+  });
+});
+
+describe("a driver reads the depot's vehicles, not where colleagues are going (§24.3, FMS-59)", () => {
+  const onTrip = { id: 'trip-1', status: 'en_route' as const, origin: 'Addis Ababa', destination: 'Adama', scheduled_start: new Date('2026-10-30T06:00:00Z') };
+  const as = (roles: string[]): Caller => ({ user: { ...depotAdmin, roles, permissions: ['vehicle:read'] }, correlationId: caller.correlationId });
+
+  test('a driver sees no current trip on a vehicle, listed or opened', async () => {
+    const { service } = harness({ onTrip });
+    expect((await service.list(as(['driver']), {} as never)).items.map((v) => v.current_trip)).toEqual([null]);
+    expect((await service.get(as(['driver']), VEHICLE)).current_trip).toBeNull();
+  });
+
+  test('staff do, and so does a driver who is also a dispatcher', async () => {
+    const { service } = harness({ onTrip });
+    expect((await service.get(as(['dispatcher']), VEHICLE)).current_trip).toEqual(onTrip);
+    expect((await service.list(as(['driver', 'dispatcher']), {} as never)).items[0].current_trip).toEqual(onTrip);
   });
 });
