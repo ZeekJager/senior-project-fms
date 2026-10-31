@@ -4,6 +4,7 @@ import { eventBus } from '../../shared/events/event-bus';
 import type { AppModule } from '../../shared/module';
 import { ALERT_EVENTS, commandCenterFeed, INCIDENT_EVENTS } from '../alert';
 import { ATTENDANCE_EVENTS, commandCenterRefs, HEALTH_BANDS, VEHICLE_EVENTS } from '../fleet';
+import { settings } from '../settings';
 import { TRIP_EVENTS, tripBoard } from '../trip';
 import { commandCenterRouter } from './api/command-center.routes';
 import { OverviewService } from './application/overview.service';
@@ -23,7 +24,7 @@ const overview = new OverviewService({
     incidents: commandCenterFeed.incidents,
   },
   cache,
-  bands: HEALTH_BANDS,
+  bands: async () => ({ ...HEALTH_BANDS, atRiskBelow: await settings.value('health_alert_below') }),
 });
 
 // Anything the overview counts drops it after commit, so a console re-reading on the socket's event sees the change.

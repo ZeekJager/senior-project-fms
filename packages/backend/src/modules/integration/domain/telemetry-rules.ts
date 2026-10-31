@@ -16,6 +16,14 @@ export interface RuleThresholds {
 /** The fleet row's starting values (migration 035), used if it is missing. */
 export const DEFAULT_THRESHOLDS: RuleThresholds = { speedLimitKmh: 80, speedingPings: 3, clearPings: 3, idleMinutes: 5 };
 
+/** Each threshold's range, as tracking.rule_thresholds' checks have it (migration 035). */
+export const THRESHOLD_LIMITS: Record<keyof RuleThresholds, { min: number; max: number }> = {
+  speedLimitKmh: { min: 20, max: 200 },
+  speedingPings: { min: 1, max: 20 },
+  clearPings: { min: 1, max: 20 },
+  idleMinutes: { min: 1, max: 120 },
+};
+
 /**
  * Pings further apart than this are not consecutive: counting restarts after the gap (a device that was
  * off, a tunnel), and an idling flag ends at the last ping before it, since the stop cannot be vouched for.

@@ -33,8 +33,18 @@ const REVIEWED_PUBLIC = [
   'POST /api/v1/webhooks/ev/:provider',
 ];
 
-/** The routes any signed-in user may call with no permission, reviewed: each answers only with the caller's own data or depots. */
-const REVIEWED_AUTHENTICATED = ['GET /api/v1/auth/me', 'GET /api/v1/depots', 'GET /api/v1/depots/:depotId', 'GET /api/v1/drivers/me'];
+/**
+ * The routes any signed-in user may call with no permission, reviewed: each answers only with the caller's own data
+ * or depots, or with the settings' thresholds (FMS-80), which screens draw their lines from and which hold no record.
+ */
+const REVIEWED_AUTHENTICATED = [
+  'GET /api/v1/auth/me',
+  'GET /api/v1/depots',
+  'GET /api/v1/depots/:depotId',
+  'GET /api/v1/drivers/me',
+  'GET /api/v1/settings/telemetry-rules',
+  'GET /api/v1/settings',
+];
 
 interface Endpoint {
   method: string;

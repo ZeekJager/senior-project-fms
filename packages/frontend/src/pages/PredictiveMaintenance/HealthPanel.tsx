@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { HealthDrawer, type HealthVehicle } from '@/features/health/HealthDrawer'
+import { useSetting } from '@/features/settings'
 import { BAND_LABELS, bandOf, featureLabel, type MaintenanceRisk } from '@/features/health/health'
 import { LogRepairDrawer, type RepairPreset } from '@/pages/Maintenance'
 import { FeedbackSection } from './FeedbackSection'
 
 /** The repair form's description for an inspection a health score asked for: the score and what drives it. */
-export function inspectionDescription(risk: MaintenanceRisk): string {
+export function inspectionDescription(risk: MaintenanceRisk, alertBelow?: number): string {
   const score = risk.health_score ?? 0
   const drivers = risk.factors.map((f) => featureLabel(f.feature).toLowerCase())
-  return `Inspection: health score ${score} (${BAND_LABELS[bandOf(score)].toLowerCase()})${drivers.length ? `, mostly ${drivers.join(', ')}` : ''}.`
+  return `Inspection: health score ${score} (${BAND_LABELS[bandOf(score, alertBelow)].toLowerCase()})${drivers.length ? `, mostly ${drivers.join(', ')}` : ''}.`
 }
 
 /**
@@ -19,6 +20,7 @@ export function inspectionDescription(risk: MaintenanceRisk): string {
  */
 export function HealthPanel({ vehicle, onClose }: { vehicle: HealthVehicle | null; onClose: () => void }) {
   const { hasPermission } = useAuth()
+  const line = useSetting('health_alert_below')
   const [preset, setPreset] = useState<RepairPreset | null>(null)
   return (
     <>
@@ -28,7 +30,7 @@ export function HealthPanel({ vehicle, onClose }: { vehicle: HealthVehicle | nul
         below={(v, risk) => <FeedbackSection vehicle={v} risk={risk} />}
         onSchedule={
           hasPermission('maintenance:write')
-            ? (v, risk) => setPreset({ vehicle: v, type: 'inspection', description: inspectionDescription(risk) })
+            ? (v, risk) => setPreset({ vehicle: v, type: 'inspection', description: inspectionDescription(risk, line) })
             : undefined
         }
       />

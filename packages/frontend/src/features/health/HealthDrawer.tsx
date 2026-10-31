@@ -3,9 +3,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
 import { Badge, Button, cn, Drawer, Skeleton, type BadgeTone } from '@/components/ui'
+import { useSetting } from '@/features/settings'
 import { useMaintenanceRisk } from './api'
 import {
-  AT_RISK_BELOW,
   BAND_LABELS,
   bandOf,
   featureLabel,
@@ -100,12 +100,13 @@ export function HealthDrawer({ vehicle, onClose, onSchedule, below }: HealthDraw
 
 export function HealthDetail({ view }: { view: MaintenanceRisk }) {
   const score = view.health_score!
-  const band = bandOf(score)
+  const line = useSetting('health_alert_below')
+  const band = bandOf(score, line)
   const chance = view.failure_probability === null ? null : Math.round(view.failure_probability * 100)
   return (
     <div className="space-y-8">
       <section aria-label="Health score" className="space-y-5">
-        <ScoreGauge score={score} band={view.stale ? null : band} />
+        <ScoreGauge score={score} band={view.stale ? null : band} line={line} />
         {view.stale && (
           <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2.5 text-sm text-warning">
             <Clock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -180,8 +181,8 @@ export function HealthDetail({ view }: { view: MaintenanceRisk }) {
   )
 }
 
-/** A semicircle from 0 to 100, filled to the score in its band's colour, with a tick at the alert line (75). Grey when stale. */
-function ScoreGauge({ score, band }: { score: number; band: HealthBand | null }) {
+/** A semicircle from 0 to 100, filled to the score in its band's colour, with a tick at the alert line. Grey when stale. */
+function ScoreGauge({ score, band, line }: { score: number; band: HealthBand | null; line: number }) {
   // Draws in from empty once, on open: the panel's one moment of motion. Reduced motion shows it at once.
   const [shown, setShown] = useState(0)
   useEffect(() => {
@@ -189,7 +190,7 @@ function ScoreGauge({ score, band }: { score: number; band: HealthBand | null })
     return () => cancelAnimationFrame(id)
   }, [score])
   const tick = (r: number) => {
-    const angle = Math.PI * (1 - AT_RISK_BELOW / 100)
+    const angle = Math.PI * (1 - line / 100)
     return { x: 100 + r * Math.cos(angle), y: 100 - r * Math.sin(angle) }
   }
   const [inner, outer] = [tick(66), tick(94)]
@@ -219,7 +220,7 @@ function ScoreGauge({ score, band }: { score: number; band: HealthBand | null })
           <span className={cn('mt-2 text-sm font-medium', band ? ARC_TONE[band] : 'text-neutral')}>{band ? BAND_LABELS[band] : 'Stale'}</span>
         </div>
       </div>
-      <figcaption className="mt-3 text-xs text-ink-subtle">Out of 100 · the tick marks {AT_RISK_BELOW}, below which a technician is alerted</figcaption>
+      <figcaption className="mt-3 text-xs text-ink-subtle">Out of 100 · the tick marks {line}, below which a technician is alerted</figcaption>
     </figure>
   )
 }

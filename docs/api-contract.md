@@ -393,6 +393,25 @@ DVIR rules (FMS-36):
 - **One path:** `POST /dvir-reports` is the only way to submit an inspection. The legacy `POST /dvir` alias was removed before the contract froze (FMS-122); it answers `404 NOT_FOUND` like any unknown path.
 - **History:** `GET /vehicles/{id}/dvir-reports` is `404` for a vehicle outside the caller's depots (the same body as a missing id); a driver gets their own reports of it. `from` and `to` are Addis Ababa days (as in §3), and `to` includes its whole day.
 
+### 6.5 Settings and rule thresholds
+
+| Method + path | Purpose | Auth / permission | Request / response |
+|---|---|---|---|
+| `GET /settings` | Every setting's value, default and range | Authenticated | `Setting[]` |
+| `PATCH /settings` | Change settings | `settings:write` | `{ "<key>": integer or null }` -> `Setting[]` |
+| `GET /settings/telemetry-rules` | Speeding and idling thresholds | Authenticated | `{ fleet, depots[] }` |
+| `PUT /settings/telemetry-rules/fleet` | Set the fleet's | `settings:write` | `RuleThresholds` -> `{ fleet, depots[] }` |
+| `PUT /settings/telemetry-rules/depots/{depot_id}` | Set a depot's own | `settings:write` | `RuleThresholds` -> `{ fleet, depots[] }` |
+| `DELETE /settings/telemetry-rules/depots/{depot_id}` | The depot follows the fleet's again | `settings:write` | `204`; `404` when it had none |
+
+Settings rules (FMS-80, [settings.md](settings.md)):
+
+- **Who:** anyone signed in reads them (screens draw their lines from them). `settings:write`, admin only, changes them. Every change is audited.
+- **`Setting`:** `key`, `value`, `default_value`, `is_default`, `unit` (`percent`, `score`, `days`), `min`, `max`, `updated_by`, `updated_by_name`, `updated_at` (null while never changed). The keys: `fuel_variance_threshold_pct` (1-100, default `FUEL_VARIANCE_THRESHOLD_PCT`, 20), `health_alert_below` (50-84, default 75), `expiry_warning_days` (8-180, default 30).
+- **`PATCH /settings`:** one or more keys, each a whole number or `null` (back to the default; sending the default does the same). Every value is checked before any is written: out of range is `400` with `reason: "out_of_range"` per field; an unknown key, a fraction or an empty body is `400`.
+- **`RuleThresholds`:** `speed_limit_kmh` (20-200), `speeding_pings` (1-20), `clear_pings` (1-20), `idle_minutes` (1-120), all four required. Each row in the answer adds `updated_by`, `updated_by_name` and `updated_at`; a depot's adds `depot_id`. An unknown or deactivated depot is `404`.
+- **Taking effect:** within a minute on every instance (each caches for 30 s), at once on the one that saved it.
+
 ## 7. Trips and Routes API
 
 ### 7.1 Routes
@@ -560,7 +579,7 @@ Fuel anomaly rules (FMS-42):
 Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
 
 - **Figures:** for each vehicle and period, the distance of its completed trips (`actual_distance_km`, by `actual_end`), the fuel that distance needs at the vehicle's `fuel_efficiency_ml_per_km` (`expected_ml`), the fuel logged (`actual_ml`, by `recorded_at`) and `variance_pct = (actual - expected) / expected`. Integers end to end: distance in metres, fuel in ml, money in cents, the variance in whole percent, each division rounded half away from zero. Nothing passes through a float.
-- **Judgement:** more than `FUEL_VARIANCE_THRESHOLD_PCT` (default 20) above expected is `above`; more than it below is `below`; otherwise `within` (exactly 20% is within). An electric vehicle, one without a rating, or under 100 km of trips is `not_judged`, with `reason` `electric`, `no_efficiency` or `too_little_distance`.
+- **Judgement:** more than the `fuel_variance_threshold_pct` setting (§6.5; default `FUEL_VARIANCE_THRESHOLD_PCT`, 20) above expected is `above`; more than it below is `below`; otherwise `within` (exactly 20% is within). An electric vehicle, one without a rating, or under 100 km of trips is `not_judged`, with `reason` `electric`, `no_efficiency` or `too_little_distance`.
 - **Who:** `GET /fuel-reconciliation` needs both permissions: a driver (`fuel:read` only) and a dispatcher (`analytics:read` only) get `403`. Rows are the caller's depots' vehicles; a `vehicle_id` or `depot_id` outside them, or unknown, gives an empty page. `GET /vehicles/{vehicle_id}/fuel-summary` needs `fuel:read` in the depot scope; a driver gets `404` for every vehicle, as its totals include other drivers' fill-ups.
 - **Period:** `from` and `to` are instants, or dates meaning Addis Ababa days (`to` inclusive). One bound alone: `from` runs to now, `to` covers the 30 days before it. At most 366 days (`400`, `reason: "period_too_long"`); `to` must be after `from` (`reason: "before_from"`).
 - **`FuelReconciliation`:** `vehicle_id`, `registration_number`, `depot_id`, `depot_name`, `fuel_type`, `fuel_efficiency_ml_per_km`, `distance_km`, `trips`, `fuel_logs`, `expected_ml`, `actual_ml`, `variance_ml`, `variance_pct`, `total_cost_cents`, `status`, `reason`, `anomaly_id` (the anomaly the monthly job raised for exactly this period). `meta.summary`: `vehicles`, `judged`, `above`, `below`, `expected_ml` and `actual_ml` (judged vehicles), `variance_pct`, `total_cost_cents` (every vehicle).

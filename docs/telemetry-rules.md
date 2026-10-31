@@ -28,7 +28,7 @@ Code: `integration/domain/telemetry-rules.ts` (the rules, pure), `integration/ap
 | `clear_pings` | 3 | 1-20 |
 | `idle_minutes` | 5 | 1-120 |
 
-A depot's row replaces the whole fleet row for its vehicles. Each instance re-reads thresholds at most once a minute per depot, so a change takes effect within a minute. There is no screen or API to change them yet. Use SQL as the admin role:
+A depot's row replaces the whole fleet row for its vehicles. An administrator changes them on the Settings screen (S-27) or with `PUT /settings/telemetry-rules/fleet` and `/depots/{depot_id}` (FMS-80, [settings.md](settings.md)), audited. Each instance re-reads thresholds at most every 30 seconds per depot (`THRESHOLDS_TTL_MS`), and the instance that saved a change at once, so a change takes effect within a minute. By SQL, as the admin role, a change is not audited and waits for the cache:
 
 ```sql
 -- Adama: 60 km/h, flagged after 2 pings

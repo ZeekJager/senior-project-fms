@@ -5,6 +5,7 @@ import { Button } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useMaintenanceRisk } from '@/features/health/api'
 import { HealthDetail, HealthSkeleton } from '@/features/health/HealthDrawer'
+import { useSetting } from '@/features/settings'
 import { LogRepairDrawer, type RepairPreset } from '@/pages/Maintenance'
 import { inspectionDescription } from '@/pages/PredictiveMaintenance/HealthPanel'
 import type { Vehicle } from '@/pages/Vehicles/types'
@@ -16,6 +17,7 @@ import type { Vehicle } from '@/pages/Vehicles/types'
 export function HealthSection({ vehicle }: { vehicle: Vehicle }) {
   const { hasPermission } = useAuth()
   const risk = useMaintenanceRisk(vehicle.id)
+  const line = useSetting('health_alert_below')
   const [preset, setPreset] = useState<RepairPreset | null>(null)
   const view = risk.data
   const scored = view?.health_score != null
@@ -33,7 +35,7 @@ export function HealthSection({ vehicle }: { vehicle: Vehicle }) {
           <Button
             variant="secondary"
             leadingIcon={<ClipboardCheck className="h-4 w-4" />}
-            onClick={() => setPreset({ vehicle: { id: vehicle.id, registration_number: vehicle.registration_number }, type: 'inspection', description: inspectionDescription(view) })}
+            onClick={() => setPreset({ vehicle: { id: vehicle.id, registration_number: vehicle.registration_number }, type: 'inspection', description: inspectionDescription(view, line) })}
           >
             Schedule inspection
           </Button>
