@@ -36,6 +36,10 @@ Each run aggregates on the read replica (FMS-94), upserts the rows on the primar
 - **Freshness:** `meta.data_freshness` says which database answered and how far behind it was (read-replica.md).
 - **Live parts:** vehicles by status, health scores, open alerts, maintenance risk and alerts raised are read from the views at request time (still through Redis), not from the cache.
 
+## Downtime
+
+`GET /analytics/downtime` (FMS-131) is not from the cache: availability, MTBF and MTTR for a month are computed live from fleet's downtime periods (`analytics.downtime_facts`) and when each vehicle joined the fleet and was retired (`analytics.vehicle_service_spans`), on the read replica. See [downtime.md](downtime.md).
+
 ## Not covered
 
 - Weekly and monthly rows (`period_type` `week`, `month`): a range is summed from days instead.

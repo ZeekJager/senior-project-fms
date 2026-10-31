@@ -27,6 +27,7 @@ import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
 import { dispatchRouter } from './api/dispatch.routes';
 import { documentRouter } from './api/document.routes';
+import { downtimeRouter } from './api/downtime.routes';
 import { driverRouter } from './api/driver.routes';
 import { meterRouter } from './api/meter.routes';
 import { dvirRouter } from './api/dvir.routes';
@@ -37,11 +38,13 @@ import { DepotService } from './application/depot.service';
 import { DispatchService } from './application/dispatch.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
+import { DowntimeService, type DowntimeSourceLookup } from './application/downtime.service';
 import { DriverService } from './application/driver.service';
 import { DvirService } from './application/dvir.service';
 import { ExpiryService } from './application/expiry.service';
 import { MeterService, type MeterSources } from './application/meter.service';
 import { DOCUMENT_EVENTS } from './domain/document';
+import { VEHICLE_EVENTS } from './domain/vehicle';
 import type { OpenWorkSummary, ServiceDueSummary } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
@@ -51,6 +54,7 @@ import { availabilityStore } from './infrastructure/availability.repository';
 import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
+import { DowntimeRepository } from './infrastructure/downtime.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
 import { commandCenterDrivers, commandCenterVehicles } from './infrastructure/command-center.queries';
 import { DvirRepository } from './infrastructure/dvir.repository';
@@ -74,6 +78,8 @@ type MaintenanceLookup = {
   openRecordFor(db: Queryable, vehicleId: string): Promise<string | null>;
   openRecordSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, OpenWorkSummary>>;
   serviceDueSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceDueSummary>>;
+  /** The repairs and failures behind each vehicle's downtime (FMS-131). */
+  downtimeSources: DowntimeSourceLookup;
 };
 let maintenanceLookup: MaintenanceLookup | null = null;
 
@@ -126,6 +132,30 @@ for (const type of Object.values(TRIP_EVENTS)) {
   eventBus.project(type, 'fleet.trip-assignments', async (event, tx) => {
     if (typeof event.payload.trip_id === 'string') await availabilityService.onTripEvent(tx, event.payload.trip_id);
   });
+}
+
+// Each vehicle's downtime (FMS-131): a projection, re-deriving the vehicle's periods from its status history and
+// breakdowns on the transaction of any change to them, so the periods are never behind. Failure and repair
+// events by name: fleet cannot import the maintenance module, which imports fleet.
+const downtimeService = new DowntimeService({
+  periods: new DowntimeRepository(pool),
+  vehicles: vehicleRepository,
+  users: userDirectory,
+  sources: () => maintenanceLookup?.downtimeSources ?? null,
+});
+for (const type of [VEHICLE_EVENTS.statusChanged, 'FailureRecorded', 'MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted']) {
+  eventBus.project(type, 'fleet.downtime', async (event, tx) => {
+    if (typeof event.payload.vehicle_id === 'string') await downtimeService.onVehicleEvent(tx, event.payload.vehicle_id);
+  });
+}
+
+/** The downtime rebuild, logging drift: a period added, corrected or removed is a change that came without its event. */
+async function rebuildDowntime(): Promise<Record<string, unknown>> {
+  const result = await downtimeService.rebuild();
+  if (result.added > 0 || result.repaired > 0 || result.removed > 0) {
+    logger.warn({ ...result }, 'fleet.downtime_periods had drifted from the status history and failures: a change came without its event');
+  }
+  return { ...result };
 }
 
 /** The trip-assignment rebuild, logging drift: a repaired or removed row is a trip that changed without its event. */
@@ -255,6 +285,7 @@ router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));
 router.use(dvirRouter(dvirService));
 router.use(meterRouter(meterService));
+router.use(downtimeRouter(downtimeService));
 
 /**
  * For the maintenance module (FMS-22): find a vehicle in the caller's scope
@@ -470,6 +501,12 @@ export const fleetModule: AppModule = {
       run: () => rebuildTripAssignments(),
     },
     {
+      // Re-derives every vehicle's downtime periods, repairing and logging any drift (FMS-131).
+      name: 'downtime-sync',
+      at: '03:25',
+      run: () => rebuildDowntime(),
+    },
+    {
       // Engine hours for each day before today, from the ignition-on time in the day's device pings (FMS-126).
       name: 'engine-hours',
       at: '01:00',
@@ -485,6 +522,7 @@ export const fleetModule: AppModule = {
   readModels: [
     { name: 'fleet.driver_accounts', rebuild: async () => ({ synced: await driverService.syncAccounts() }) },
     { name: 'fleet.trip_assignments', rebuild: () => rebuildTripAssignments() },
+    { name: 'fleet.downtime_periods', rebuild: () => rebuildDowntime() },
     // The readings of fuel logs and repairs (FMS-126); device and engine-hour readings come from pings, not from a rebuild.
     { name: 'fleet.meter_readings', rebuild: () => meterService.sync({ userId: null, correlationId: randomUUID() }, null) },
   ],
@@ -523,6 +561,7 @@ export type { Availability, AvailabilityReason, AvailabilityResult, Availability
 export { ATTENDANCE_EVENTS } from './domain/attendance';
 export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
+export { DOWNTIME_REASONS, isUnplanned, UNPLANNED_REASONS, type DowntimeFailure, type DowntimeReason, type DowntimeRecord } from './domain/downtime';
 export { DOCUMENT_EVENTS } from './domain/document';
 export { EXPIRY_EVENTS } from './domain/expiry';
 export { HEALTH_BANDS, HEALTH_FILTERS, VEHICLE_EVENTS, type HealthFilter } from './domain/vehicle';

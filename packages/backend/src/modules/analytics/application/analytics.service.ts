@@ -4,6 +4,8 @@ import type { DataFreshness, ReadSession } from '../../../shared/infrastructure/
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { JobContext } from '../../../shared/jobs/job';
 import type { RequestUser } from '../../../types/express';
+import { DOWNTIME_REASONS, isUnplanned, type DowntimeReason } from '../../fleet';
+import { addTotals, downtimeKpis, monthWindow, NO_TOTALS, vehicleTotals, type DowntimeTotals } from '../domain/downtime';
 import {
   ALERT_SEVERITIES,
   BACKFILL_DAYS,
@@ -52,6 +54,13 @@ export interface AnalyticsMeta {
   /** True when the cache was not refreshed for 25 hours (or never). */
   stale: boolean;
   data_freshness: DataFreshness;
+}
+
+/** GET /analytics/downtime (FMS-131): a month in Addis Ababa, a depot and a vehicle by public id. */
+export interface DowntimeQuery {
+  month?: string;
+  depot_id?: string;
+  vehicle_id?: string;
 }
 
 export type Report = 'fleet-summary' | 'utilisation' | 'fuel-efficiency' | 'maintenance-risk' | 'trips' | 'alerts';
@@ -145,6 +154,53 @@ export class AnalyticsService {
         },
       };
     });
+  }
+
+  /**
+   * GET /analytics/downtime (FMS-131, docs/downtime.md): availability, MTBF and MTTR for a month, for the fleet, each
+   * depot and each vehicle in the caller's scope, worst availability first. Live from fleet's downtime periods on
+   * the read replica, not from the cache: `meta.data_freshness` says how far behind it may be.
+   */
+  async downtime(user: RequestUser | undefined, query: DowntimeQuery) {
+    const w = monthWindow(query.month, this.now());
+    const db = await this.deps.reads.session();
+    const a: Audience = { scope: staffScope(user) };
+    if (query.depot_id) {
+      const depotId = await this.deps.repo.depotInScope(db, query.depot_id, a.scope);
+      if (depotId) a.depotId = depotId;
+      else a.scope = { kind: 'none' };
+    }
+    const vehicles = (await this.deps.repo.vehicles(db, a)).filter((v) => !query.vehicle_id || v.publicId === query.vehicle_id);
+    const ids = vehicles.map((v) => v.vehicleId);
+    const spans = await this.deps.repo.serviceSpans(db, ids);
+    const facts = await this.deps.repo.downtimeFacts(db, ids, w.start, w.end);
+    const reasons: readonly DowntimeReason[] = DOWNTIME_REASONS;
+
+    let fleet = NO_TOTALS;
+    const depots = new Map<string, { name: string; totals: DowntimeTotals }>();
+    const rows = [];
+    for (const v of vehicles) {
+      const span = spans.get(v.vehicleId);
+      const periods = (facts.get(v.vehicleId) ?? []).map((f) => ({ ...f, unplanned: isUnplanned(f.reason as DowntimeReason) }));
+      const t = span ? vehicleTotals(span, periods, w) : null;
+      if (!t) continue;
+      fleet = addTotals(fleet, t);
+      const depot = depots.get(v.depotPublicId) ?? { name: v.depotName, totals: NO_TOTALS };
+      depots.set(v.depotPublicId, { name: depot.name, totals: addTotals(depot.totals, t) });
+      rows.push({ vehicle_id: v.publicId, registration_number: v.registrationNumber, depot_id: v.depotPublicId, depot_name: v.depotName, status: v.status, ...downtimeKpis(t, reasons) });
+    }
+    rows.sort((x, y) => (x.availability_pct ?? 101) - (y.availability_pct ?? 101) || x.registration_number.localeCompare(y.registration_number));
+    return {
+      data: {
+        month: w.month,
+        fleet: { vehicles: fleet.vehicles, ...downtimeKpis(fleet, reasons) },
+        depots: [...depots.entries()]
+          .map(([id, d]) => ({ depot_id: id, depot_name: d.name, vehicles: d.totals.vehicles, ...downtimeKpis(d.totals, reasons) }))
+          .sort((x, y) => x.depot_name.localeCompare(y.depot_name)),
+        vehicles: rows,
+      },
+      meta: { month: w.month, from: w.start.toISOString(), to: w.end.toISOString(), data_freshness: db.freshness() },
+    };
   }
 
   private build(report: Report, db: Queryable, a: Audience, range: Range): Promise<unknown> {

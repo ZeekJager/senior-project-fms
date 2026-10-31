@@ -175,6 +175,9 @@ export const maintenanceRefs = {
   completedOdometers: (db: Queryable, since: Date | null) => maintenanceRepository.completedOdometers(db, since),
   /** For the dispatcher's board (FMS-129): each vehicle's service programs due or overdue, by internal vehicle id. */
   serviceDueSummaries: (db: Queryable, vehicleIds: readonly string[]) => serviceProgramService.boardSummaries(db, vehicleIds),
+  /** For downtime (FMS-131, fleet): the repairs (public ids, and those with a failure) and failures behind it. */
+  downtimeSources: (db: Queryable, vehicleIds: readonly string[], recordIds: readonly string[]) =>
+    maintenanceRepository.downtimeSources(db, vehicleIds, recordIds),
 };
 
 /** For tests and scripts: one run of the service-due job (FMS-129), as the scheduler runs it. */
