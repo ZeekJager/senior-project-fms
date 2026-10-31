@@ -4,7 +4,7 @@
 
 Status: canonical architecture and implementation contract, combining the previous API contract with the expanded API specification.
 
-API version: `v1` · Base path: `/api/v1` · Machine-readable companion: OpenAPI 3.1, `docs/openapi.yaml` (endpoints are added as their cards are built; it uses 3.1 for nullable fields as `type: [string, 'null']`)
+API version: `v1` · Base path: `/api/v1` · Machine-readable companion: OpenAPI 3.1, `docs/openapi.yaml` (endpoints are added as their cards are built, and CI fails on a route that is mounted but not described; it uses 3.1 for nullable fields as `type: [string, 'null']`)
 
 | Item | Decision |
 |---|---|
