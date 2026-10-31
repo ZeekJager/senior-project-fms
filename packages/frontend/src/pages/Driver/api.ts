@@ -115,6 +115,10 @@ export function useTripCommand(command: 'start' | 'end') {
       })
       return { trip: data, warnings: (meta.warnings as TripWarning[] | undefined) ?? [] }
     },
+    onSuccess: (_, trip) => {
+      // An ended trip leaves the list at once, so the phone stops reporting its position now, not at the refetch (FMS-57).
+      if (command === 'end') queryClient.setQueriesData<DriverTrip[]>({ queryKey: ['driver', 'today'] }, (trips) => trips?.filter((t) => t.id !== trip.id))
+    },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['driver', 'today'] }),
   })
 }

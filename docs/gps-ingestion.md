@@ -9,7 +9,7 @@ Positions reach the system one way, whoever sends them: tracker devices, drivers
 | Caller | How it signs in | May report for |
 |---|---|---|
 | A tracker device | `Authorization: Bearer fmsd_...`, its own token | Its own vehicle only. A ping naming another `vehicle_id` gets the whole batch 403 (`not_your_vehicle`) |
-| A driver's phone | Session cookie; `trip:execute` | The vehicle of a trip the driver drove, each ping in the trip it was recorded in (FMS-124). With no trip started in the last 7 days, 403 (`no_trip_under_way`); another vehicle, 403 |
+| A driver's phone | Session cookie; `trip:execute` | The vehicle of a trip the driver drove, each ping in the trip it was recorded in (FMS-124). With no trip started in the last 7 days, 403 (`no_trip_under_way`); another vehicle, 403. The driver app sends them during the trip under way (FMS-57, [phone-gps.md](phone-gps.md)) |
 | A user with `tracking:ingest` (admin) | Session cookie | Any vehicle in their scope, named by `vehicle_id` on every ping (400 `required` when missing). An unknown one is refused alone (`unknown_vehicle`) |
 | A telematics provider | Signed webhook (integrations.md) | Its own devices, by the identifier it gives them. A device of another provider, or none, is `unknown_device` |
 

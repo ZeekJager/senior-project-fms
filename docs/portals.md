@@ -46,6 +46,10 @@ The driver portal installs to the home screen and opens without a connection, be
 - **No framework.** `build/pwa.ts` lists the built files with a content hash after `vite build`, then bundles `src/service-worker.ts` with that list into `/sw.js`; a changed file changes the worker, so phones pick up each release. The routing rules live in `src/pwa/routing.ts`, unit-tested.
 - **Hosting.** Whatever serves the built app in production must send `/sw.js` (and `/manifest.json`) with `Cache-Control: no-cache`, or phones keep an old worker for up to a day. Nothing in the repo serves the build yet (only the dev servers).
 
+### The phone as the vehicle's GPS
+
+FMS-57, [phone-gps.md](phone-gps.md): while the driver's trip is under way, the driver portal reports the phone's position to `POST /tracking/gps-pings`, on every tab, at most 6 requests a minute. Imprecise readings (over `VITE_GPS_MAX_ACCURACY_M`, 100 m) are dropped. Positions wait on the phone in their own IndexedDB store (`fms-phone-gps`), not in the queue below, whose 50 places they would fill. A banner says when location is blocked.
+
 ### Offline submissions (the queue)
 
 Card: FMS-81 (SE-125). Code: `packages/frontend/src/lib/offlineQueue/` (shared by the page and the worker), `src/pwa/{OfflineQueue.tsx,PendingSubmissions.tsx,queueRunner.ts}`, the `sync` handler in `src/service-worker.ts`.
