@@ -687,7 +687,7 @@ The ML service never directly updates fleet master data. The Node.js core valida
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
 | `GET /vehicles/{vehicle_id}/tracking` | Historical GPS (FMS-136) | `tracking:read` | `from`, `to` (both included), `limit` (1-1000, default 500), `cursor` -> `TrackPoint[]` oldest first, `meta.next_cursor` for the next page or `null`; depot scope, another depot's vehicle is `404` |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
-| `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
+| `GET /command-center/overview` | Operational overview (FMS-89) | `command:read` | `depot_id?` -> `CommandCenterOverview`: vehicles by state and health, drivers, the day's trips, active alerts and incidents; cached 5 s |
 
 **Live map snapshot (FMS-45).** `GET /tracking/vehicles/current` lists the caller's vehicles (depot scope; `depot_id` narrows it, and a depot outside the scope gives `[]`) that are not retired and have a position or a trip under way, by plate. How the command center uses it: [docs/live-map.md](live-map.md).
 
@@ -717,6 +717,16 @@ The ML service never directly updates fleet master data. The Node.js core valida
 - **`GET /vehicles/{vehicle_id}/telemetry-flags`:** `flag_type` (comma-separated), `from`/`to` (ISO with offset, on `observed_at`), `ongoing` (`true`/`false`), `limit` (1-200, default 50). Behavioural data (§24.3): `tracking:read` only, never drivers; a vehicle outside the caller's depot scope is `404`. Names the trip, not the driver.
 - **Events.** `TelemetryFlagRaised` (an `unsafe_driving` alert, docs/alerts.md) and `TelemetryFlagResolved`; both reach clients as `vehicle.flag.changed` (§11.2).
 
+**Command center overview (FMS-89).** `GET /command-center/overview` counts what needs attention for the caller's depot, or every depot for a fleet-wide user (`depot_id` narrows it; a depot outside the scope is `404`). How the live map shows it: [docs/live-map.md](live-map.md).
+
+- **`vehicles`** (every vehicle but retired ones): `total`, `on_trip` (a trip under way), `available` (in service, not flagged, not on a trip), `in_maintenance`, `inactive`, `flagged` (maintenance flag), `health` (vehicles per band of the health score: `at_risk` under 75, `watch` under 85, `healthy`, `stale` when not rescored for 25 hours, `unscored`) and `health_watch` (the at-risk and watch vehicles with their score, lowest first).
+- **`drivers`** (active drivers): `total`, `on_trip`, `available` (not on a trip, not marked absent, licence valid), `absent` (marked absent, on leave or sick today), `licence_expired`.
+- **`trips`**: `today`, the trips scheduled to start today (Addis Ababa) by status; `under_way`; `overdue`, under way past their scheduled end.
+- **`alerts`** (open and acknowledged): `active`, `unacknowledged` (open), `by_severity`, and `items`, most severe then newest, up to 50, each with its vehicle's `registration_number`.
+- **`incidents`** (open and investigating): `active`, `by_status`, `by_severity`, `items` (up to 50, with `registration_number` and `driver_name`).
+- **Permissions.** `command:read` for the vehicles; the `drivers`, `trips`, `alerts` and `incidents` sections need `driver:read`, `trip:read`, `alert:read` and `incident:read` as well, and are `null` without them (a fleet owner has no incidents).
+- **Freshness.** Cached in Redis for 5 s, one per depot shown (`command-center:overview:<depot public id>`, or `all`); alert, incident, trip, vehicle and attendance events drop it after commit.
+
 The previous contract defined a client-to-server Socket.IO `location_update` event. In the canonical contract, high-volume telemetry ingestion is REST/webhook based and Socket.IO is used for server-to-client fan-out. This is a deliberate replacement, not a loss of the capability.
 
 ### 11.2 Real-time Socket.IO event contract
@@ -728,6 +738,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `alert.created` | Server -> client | `Alert` | New alert |
 | `alert.updated` | Server -> client | Alert patch | Acknowledge/resolve update |
 | `incident.created` | Server -> client | `Incident` | New active incident |
+| `incident.updated` | Server -> client | `incident_id,depot_id,status,previous_status,assigned_to,resolved_at,updated_at,changes` | An incident's status, assignee or notes changed (FMS-89); never the notes |
 | `notifications.unread` | Server -> client | `unread_count,reason,changed_at` | The user's unread in-app count changed (`reason`: `delivered`, `read`, `read_all`). Sent to that user's own sockets only |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
 | `vehicle.flag.changed` | Server -> client | `flag_id,vehicle_id,trip_id,flag_type,severity,observed_at,resolved_at,change` | A speeding or idling flag opened (`raised`) or closed (`resolved`); the live map re-reads (FMS-46) |
@@ -738,7 +749,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 Real-time rules (FMS-43; details in docs/realtime.md):
 
 - **Connection:** Socket.IO at `/api/v1/socket.io` on the API's server. The handshake carries the session cookie and is checked like any API call (`connect_error` message `AUTH_TOKEN_INVALID`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_REVOKED` or `AUTH_ACCOUNT_DISABLED`). A browser `Origin` must be the API's own or listed in `REALTIME_ALLOWED_ORIGINS`. The server closes the socket when the access token expires and when the account is deactivated or its roles or account change; the client renews the session and reconnects.
-- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` and `vehicle.flag.changed` need `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
+- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` and `vehicle.flag.changed` need `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` and `incident.updated` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
 - **Notifications:** `notifications.unread` is not a channel anyone subscribes to: it goes to the room of the one user it is about, which only that user's own sockets join, so no permission or role (an admin's included) receives another user's count.
 - **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, version, updated_at` and `change` (the domain event). `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
 - **Client -> server:** only the legacy `location_update`, off unless `REALTIME_LEGACY_LOCATION=true`, acknowledged `{ok}` or `{ok: false, error: {code, message}}`. Every client event is rate limited (5 at once, then 1 per second; `RATE_LIMITED`); a socket that keeps exceeding it is closed.
@@ -777,11 +788,19 @@ An alert is a business event requiring attention. A notification is a delivery a
 | `POST /incidents` | Create incident | `incident:write` | `description`, `severity`; optional `vehicle_id`, `trip_id`, `driver_id` (staff), `latitude` with `longitude`, `incident_type` (default `other`), `occurred_at` (default now) -> `201 Incident`; Idempotency-Key; a late replay of the same report -> `200` with `meta.created: false` |
 | `GET /incidents` | List incidents | `incident:read` | `status`, `severity`, `incident_type` (comma-separated), `vehicle_id`, `from`, `to`, `page`, `page_size` -> Paged `Incident[]`, newest first; a driver sees only what they reported, staff their depots' |
 | `GET /incidents/{incident_id}` | Incident detail | `incident:read` | `Incident` |
-| `PATCH /incidents/{incident_id}` | Update incident | `incident:write` | `IncidentUpdate` -> `Incident` |
+| `PATCH /incidents/{incident_id}` | Handle incident (FMS-89) | `incident:manage` | `IncidentUpdate` (`status`, `assigned_to`, `notes`; at least one) -> `Incident` |
 
 Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The reporter is the authenticated user.
 
-**Incident reports (FMS-38).** An incident belongs to its vehicle's depot, or the reporter's. A critical one sets the vehicle's maintenance flag in its transaction and becomes an alert; every one publishes `IncidentReported` (`incident.created` on the socket). `PATCH` is not built yet. Fields, refusals and the offline replay: [docs/incidents.md](incidents.md).
+**Incident reports (FMS-38).** An incident belongs to its vehicle's depot, or the reporter's. A critical one sets the vehicle's maintenance flag in its transaction and becomes an alert; every one publishes `IncidentReported` (`incident.created` on the socket). Fields, refusals and the offline replay: [docs/incidents.md](incidents.md).
+
+**Handling an incident (FMS-89).** `PATCH /incidents/{id}` is `incident:manage` (admin, fleet manager, dispatcher, depot admin): drivers report incidents (`incident:write`) but do not close them. Depot scope; another depot's incident is `404`.
+
+- **Status:** `open` to `investigating`, `resolved` or `closed`; `investigating` to `resolved` or `closed`; `resolved` back to `investigating` or on to `closed`. `closed` is final: any change is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `incident_closed`; another move not listed is `409` with `incident_<status>`.
+- **Notes:** what was found and done, up to 4,000 characters; blank or `null` clears them. Resolving or closing needs notes, given now or kept from before (`400`, `field: "notes"`, `reason: "required"`).
+- **Assignee:** `assigned_to` is a user's public id, or `null` to unassign. The user must be active, hold `incident:manage` and see the incident's depot (their home depot, or every depot); anyone else is `400` `references_missing_record`.
+- **`Incident`** carries `assigned_to` (`{id, full_name}` or null), `notes`, `resolved_at` and `resolved_by` (set on resolving or closing, cleared on reopening) and `updated_at`.
+- **Audit and events:** one audited `UPDATE` of the row with who changed it; `IncidentUpdated` reaches every console of the depot, and the driver who reported it, as `incident.updated`. A request that changes nothing writes and publishes nothing.
 
 ## 13. EV Fleet Management API
 

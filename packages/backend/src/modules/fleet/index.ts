@@ -52,6 +52,7 @@ import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
+import { commandCenterDrivers, commandCenterVehicles } from './infrastructure/command-center.queries';
 import { DvirRepository } from './infrastructure/dvir.repository';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
 import { fuelDepotInScope, fuelVehicles } from './infrastructure/fuel-reconciliation.queries';
@@ -406,6 +407,14 @@ export const incidentRefs = {
   drivers: fuelRefs.drivers,
   depots: depotRefs,
 };
+
+/** For the command center's overview (FMS-89): a depot's (or every depot's) vehicles and drivers as it counts them, and depots. */
+export const commandCenterRefs = {
+  vehicles: commandCenterVehicles,
+  drivers: commandCenterDrivers,
+  depots: depotRefs,
+};
+export type { CommandCenterDriver, CommandCenterVehicle } from './infrastructure/command-center.queries';
 
 /**
  * For the nightly scoring (FMS-55, maintenance module): the vehicles in service, what their features read

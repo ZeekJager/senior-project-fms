@@ -59,7 +59,10 @@ const incidentService = new IncidentService({
   refs: {
     ...incidentRefs,
     trips: { find: tripLookups.find, publicIds: tripLookups.publicIds },
-    users: { publicIds: userPublicIds },
+    users: {
+      accounts: async (db, ids) => new Map((await userDirectory.findByIds(db, ids)).map((u) => [u.id, { publicId: u.publicId, fullName: u.fullName }])),
+      activeHolder: (db, publicId, permission) => userDirectory.activeHolder(db, publicId, permission),
+    },
   },
   events: eventBus,
 });
@@ -94,6 +97,12 @@ export const alertModule: AppModule = {
 /** For tests and the escalation job's callers: run escalation as of `now`. */
 export const alertEngine = {
   escalate: (now: Date, correlationId: string) => service.escalate({ now, correlationId }),
+};
+
+/** For the command center's overview (FMS-89): a depot's (internal id) or every depot's (null) active alerts and incidents. */
+export const commandCenterFeed = {
+  alerts: (depotId: string | null, limit: number) => service.active(depotId, limit),
+  incidents: (depotId: string | null, limit: number) => incidentService.active(depotId, limit),
 };
 
 /**

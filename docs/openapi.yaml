@@ -22,6 +22,7 @@ tags:
   - name: Dispatch
   - name: Integrations
   - name: Tracking
+  - name: Command center
   - name: Fuel
   - name: Alerts
   - name: Incidents
@@ -569,6 +570,43 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /command-center/overview:
+    get:
+      tags: [Command center]
+      operationId: getCommandCenterOverview
+      summary: What needs attention on the live map (FMS-89)
+      description: >
+        command:read, depot scope: the caller's depot, or every depot for a fleet-wide user (depot_id narrows it; a
+        depot outside the scope is 404). Vehicles by state and health band, the at-risk and watch vehicles' scores,
+        drivers on a trip, available, absent today and with an expired licence, the day's trips (Addis Ababa) by
+        status with those under way and overdue, and the active alerts and incidents, most severe first (up to 50 of
+        each, counted in full). The drivers, trips, alerts and incidents sections need driver:read, trip:read,
+        alert:read and incident:read as well, and are null without them. Cached for 5 s per depot shown; alert,
+        incident, trip, vehicle and attendance events drop it (docs/live-map.md).
+      parameters:
+        - name: depot_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The overview.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/CommandCenterOverview' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (depot_id not a UUID, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (depot_id outside the caller's depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /tracking/gps-pings:
     post:
@@ -1522,6 +1560,49 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: NOT_FOUND (no such incident, or not yours to see).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    patch:
+      tags: [Incidents]
+      operationId: updateIncident
+      summary: Handle an incident (FMS-89)
+      description: >
+        incident:manage (admin, fleet manager, dispatcher, depot admin; not drivers, who report with incident:write),
+        in the caller's depots. Status moves open to investigating, resolved or closed; investigating to resolved or
+        closed; resolved back to investigating or to closed; closed is final (409 incident_closed). Resolving or
+        closing needs notes, given now or kept from before. The assignee is an active user who holds incident:manage
+        and sees the incident's depot. Row-locked; one audited UPDATE; publishes IncidentUpdated (incident.updated on
+        the socket, never the notes). A request that changes nothing writes and publishes nothing.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncidentUpdate' }
+      responses:
+        '200':
+          description: The incident as it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Incident' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED: empty_update, an unknown field (not_writable), notes required to resolve or close
+            (field notes, reason required), or an assignee who cannot handle this depot's incidents (field
+            assigned_to, references_missing_record).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such incident, or outside your depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (reason incident_closed, or incident_<status> for a move the status does not allow).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /maintenance-records/{record_id}/failures:
@@ -2781,7 +2862,7 @@ components:
 
     Incident:
       type: object
-      required: [id, incident_type, severity, status, description, vehicle_id, driver_id, trip_id, depot_id, reported_by, latitude, longitude, occurred_at, created_at]
+      required: [id, incident_type, severity, status, description, vehicle_id, driver_id, trip_id, depot_id, reported_by, latitude, longitude, occurred_at, created_at, assigned_to, notes, resolved_at, resolved_by, updated_at]
       properties:
         id: { type: string, format: uuid }
         incident_type: { type: string, description: 'accident, breakdown, tyre, theft, vandalism, injury, road_hazard, other.' }
@@ -2797,6 +2878,104 @@ components:
         longitude: { type: [number, 'null'] }
         occurred_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
+        assigned_to:
+          description: Who is dealing with it (FMS-89).
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, full_name]
+              properties:
+                id: { type: string, format: uuid }
+                full_name: { type: string }
+        notes: { type: [string, 'null'], description: What was found and done. }
+        resolved_at: { type: [string, 'null'], format: date-time, description: When it was resolved or closed; null while active. }
+        resolved_by: { type: [string, 'null'], format: uuid }
+        updated_at: { type: string, format: date-time }
+
+    IncidentUpdate:
+      type: object
+      description: At least one field (FMS-89).
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: { type: string, enum: [open, investigating, resolved, closed] }
+        assigned_to: { type: [string, 'null'], format: uuid, description: "A user's public id; null unassigns." }
+        notes: { type: [string, 'null'], maxLength: 4000, description: Blank or null clears them. }
+
+    CommandCenterOverview:
+      type: object
+      required: [depot_id, generated_at, vehicles, drivers, trips, alerts, incidents]
+      properties:
+        depot_id: { type: [string, 'null'], format: uuid, description: The depot shown; null for every depot in scope. }
+        generated_at: { type: string, format: date-time }
+        vehicles:
+          type: object
+          description: Every vehicle but retired ones. available is in service, not flagged and not on a trip.
+          properties:
+            total: { type: integer }
+            on_trip: { type: integer }
+            available: { type: integer }
+            in_maintenance: { type: integer }
+            inactive: { type: integer }
+            flagged: { type: integer }
+            health:
+              type: object
+              properties:
+                at_risk: { type: integer }
+                watch: { type: integer }
+                healthy: { type: integer }
+                stale: { type: integer }
+                unscored: { type: integer }
+            health_watch:
+              type: array
+              description: Vehicles at risk or to watch, lowest score first.
+              items:
+                type: object
+                properties:
+                  vehicle_id: { type: string, format: uuid }
+                  registration_number: { type: string }
+                  health_score: { type: integer }
+                  band: { type: string, enum: [at_risk, watch] }
+        drivers:
+          type: [object, 'null']
+          description: Null without driver:read.
+          properties:
+            total: { type: integer }
+            on_trip: { type: integer }
+            available: { type: integer }
+            absent: { type: integer, description: 'Marked absent, on leave or sick today.' }
+            licence_expired: { type: integer }
+        trips:
+          type: [object, 'null']
+          description: Null without trip:read.
+          properties:
+            today: { type: object, description: "Trips scheduled to start today (Addis Ababa), by status.", additionalProperties: { type: integer } }
+            under_way: { type: integer }
+            overdue: { type: integer, description: Under way past their scheduled end. }
+        alerts:
+          type: [object, 'null']
+          description: Null without alert:read. Active is open or acknowledged; unacknowledged is open.
+          properties:
+            active: { type: integer }
+            unacknowledged: { type: integer }
+            by_severity: { $ref: '#/components/schemas/SeverityCounts' }
+            items: { type: array, description: "Most severe first, then newest; each with the vehicle's registration_number.", items: { type: object } }
+        incidents:
+          type: [object, 'null']
+          description: Null without incident:read. Active is open or investigating.
+          properties:
+            active: { type: integer }
+            by_status: { type: object, properties: { open: { type: integer }, investigating: { type: integer } } }
+            by_severity: { $ref: '#/components/schemas/SeverityCounts' }
+            items: { type: array, description: "Incident fields plus registration_number and driver_name.", items: { type: object } }
+
+    SeverityCounts:
+      type: object
+      properties:
+        critical: { type: integer }
+        high: { type: integer }
+        medium: { type: integer }
+        low: { type: integer }
 
     IncidentEnvelope:
       type: object

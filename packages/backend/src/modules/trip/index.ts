@@ -130,6 +130,9 @@ export { enRouteTripOfDriver, enRouteTripsForVehicles, tripSpansOfDriver, tripSp
 /** For the live map (FMS-45): each vehicle's trip under way, with its route and driver. */
 export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activity.queries';
 
+/** For the command center's overview (FMS-89): a depot's trips of the day by status, and those under way. */
+export { tripBoard, type TripBoard } from './infrastructure/command-center.queries';
+
 /** For the telemetry rules (FMS-46): a flag's trip, by the internal id its pings carry, with its driver. */
 export { tripPartiesByIds, type TripParties } from './infrastructure/trip-activity.queries';
 

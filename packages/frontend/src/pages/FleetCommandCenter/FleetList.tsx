@@ -1,4 +1,4 @@
-import { Gauge, MapPinOff, Route as RouteIcon, Search, UserRound } from 'lucide-react'
+import { Gauge, HeartPulse, MapPinOff, Route as RouteIcon, Search, UserRound } from 'lucide-react'
 import { memo, useEffect, useRef } from 'react'
 import { lastSeenLabel } from '@/components/FleetMap'
 import { EmptyState } from '@/components/shared'
@@ -36,9 +36,11 @@ interface VehicleCardProps {
   seen: string
   selected: boolean
   onSelect: (vehicleId: string) => void
+  /** Its health score when at risk or to watch (FMS-89); nothing for a healthy or unscored vehicle. */
+  health?: { score: number; band: 'at_risk' | 'watch' }
 }
 
-const VehicleCard = memo(function VehicleCard({ vehicle, state, seen, selected, onSelect }: VehicleCardProps) {
+const VehicleCard = memo(function VehicleCard({ vehicle, state, seen, selected, onSelect, health }: VehicleCardProps) {
   const ref = useRef<HTMLButtonElement>(null)
   // Chosen on the map: bring the card into view in the list.
   useEffect(() => {
@@ -59,7 +61,15 @@ const VehicleCard = memo(function VehicleCard({ vehicle, state, seen, selected, 
       )}
     >
       <span className="flex items-center justify-between gap-2">
-        <span className="plate truncate text-sm text-ink">{vehicle.registration_number}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="plate truncate text-sm text-ink">{vehicle.registration_number}</span>
+          {health && (
+            <Badge tone={health.band === 'at_risk' ? 'danger' : 'warning'} className="shrink-0" icon={<HeartPulse aria-hidden="true" />}>
+              <span className="sr-only">{health.band === 'at_risk' ? 'Health at risk: ' : 'Health to watch: '}</span>
+              <span className="tabular">{health.score}</span>
+            </Badge>
+          )}
+        </span>
         <LiveBadge state={state} />
       </span>
       {vehicle.trip ? (
@@ -94,6 +104,8 @@ interface FleetListProps {
   now: number
   selectedId: string | null
   onSelect: (vehicleId: string) => void
+  /** Health scores of the vehicles at risk or to watch, by vehicle id (FMS-89). */
+  health?: ReadonlyMap<string, { score: number; band: 'at_risk' | 'watch' }>
   isLoading: boolean
   search: string
   onSearch: (value: string) => void
@@ -101,7 +113,7 @@ interface FleetListProps {
   empty: { heading: string; description: string }
 }
 
-export function FleetList({ vehicles, states, now, selectedId, onSelect, isLoading, search, onSearch, empty }: FleetListProps) {
+export function FleetList({ vehicles, states, now, selectedId, onSelect, health, isLoading, search, onSearch, empty }: FleetListProps) {
   return (
     <>
       <div className="relative px-4 pb-3">
@@ -134,6 +146,7 @@ export function FleetList({ vehicles, states, now, selectedId, onSelect, isLoadi
                   seen={v.position ? lastSeenLabel(v.position.recorded_at, now) : ''}
                   selected={v.vehicle_id === selectedId}
                   onSelect={onSelect}
+                  health={health?.get(v.vehicle_id)}
                 />
               </li>
             ))}

@@ -4,7 +4,7 @@ import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { AlertSeverity, AlertStatus } from '../domain/alert';
+import { ACTIVE_STATUSES, type AlertSeverity, type AlertStatus } from '../domain/alert';
 
 /** How early an escalation may come: the scheduler's jitter, not a policy. */
 export const ESCALATION_GRACE_SECONDS = 5;
@@ -146,6 +146,17 @@ export class AlertRepository extends Repository {
       await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM alert.alerts a WHERE ${condition}`, params.slice(0, params.length - 2)),
     ];
     return { rows: rows.rows, total: count.rows[0].n };
+  }
+
+  /** How many active alerts (open, acknowledged) one depot (internal id) or every depot (null) has, by status and severity (FMS-89). */
+  async activeCounts(db: Queryable, depotId: string | null): Promise<{ status: AlertStatus; severity: AlertSeverity; n: number }[]> {
+    const res = await db.query<{ status: AlertStatus; severity: AlertSeverity; n: number }>(
+      `SELECT a.status::text AS status, a.severity::text AS severity, count(*)::int AS n FROM alert.alerts a
+        WHERE a.status = ANY($1::alert.alert_status[]) AND ($2::bigint IS NULL OR a.depot_id = $2)
+        GROUP BY a.status, a.severity`,
+      [ACTIVE_STATUSES, depotId],
+    );
+    return res.rows;
   }
 
   /**

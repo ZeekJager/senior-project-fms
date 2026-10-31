@@ -2672,3 +2672,34 @@ UPDATE trip.routes SET distance_source = 'manual' WHERE distance_km IS NOT NULL 
 CREATE INDEX IF NOT EXISTS idx_trip_routes_unmeasured
     ON trip.routes (id)
     WHERE is_active AND geometry IS NULL AND origin_latitude IS NOT NULL AND destination_latitude IS NOT NULL;
+
+-- ===== 047_incident_handling.sql =====
+ALTER TABLE alert.incident_reports
+    ADD COLUMN IF NOT EXISTS assigned_to BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    ADD COLUMN IF NOT EXISTS notes       TEXT,
+    ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS resolved_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- An incident resolved or closed before this migration has no resolution time: its last change stands in.
+UPDATE alert.incident_reports SET resolved_at = updated_at WHERE status IN ('resolved', 'closed') AND resolved_at IS NULL;
+
+DO $$ BEGIN
+    ALTER TABLE alert.incident_reports
+        ADD CONSTRAINT chk_incident_notes CHECK (notes IS NULL OR char_length(notes) BETWEEN 1 AND 4000),
+        ADD CONSTRAINT chk_incident_resolved CHECK ((status IN ('resolved', 'closed')) = (resolved_at IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_incidents_active
+    ON alert.incident_reports(depot_id, occurred_at DESC)
+    WHERE status IN ('open', 'investigating');
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('incident:manage', 'Handle incidents: status, assignee and notes')
+ON CONFLICT (code) DO NOTHING;
+
+UPDATE auth.permissions SET description = 'Report incidents' WHERE code = 'incident:write';
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE r.name IN ('admin', 'fleet_manager', 'dispatcher', 'depot_admin') AND p.code = 'incident:manage'
+ON CONFLICT DO NOTHING;
