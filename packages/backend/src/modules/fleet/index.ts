@@ -42,7 +42,7 @@ import { DvirService } from './application/dvir.service';
 import { ExpiryService } from './application/expiry.service';
 import { MeterService, type MeterSources } from './application/meter.service';
 import { DOCUMENT_EVENTS } from './domain/document';
-import type { OpenWorkSummary } from './domain/dispatch';
+import type { OpenWorkSummary, ServiceDueSummary } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
 import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
@@ -58,6 +58,7 @@ import { ExpiryRepository } from './infrastructure/expiry.repository';
 import { fuelDepotInScope, fuelVehicles } from './infrastructure/fuel-reconciliation.queries';
 import { MeterRepository } from './infrastructure/meter.repository';
 import { engineHoursOver, faultyDvirCounts, setHealthScore, vehiclesToScore } from './infrastructure/scoring.queries';
+import { metersAt, serviceVehicles } from './infrastructure/service-due.queries';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
 const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles, vehicleOnActiveTripSql);
@@ -72,6 +73,7 @@ const availabilityService = new AvailabilityService({
 type MaintenanceLookup = {
   openRecordFor(db: Queryable, vehicleId: string): Promise<string | null>;
   openRecordSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, OpenWorkSummary>>;
+  serviceDueSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceDueSummary>>;
 };
 let maintenanceLookup: MaintenanceLookup | null = null;
 
@@ -427,6 +429,16 @@ export const scoringRefs = {
   setHealthScore,
 };
 export type { ScoringVehicle } from './infrastructure/scoring.queries';
+
+/**
+ * For preventive service programs (FMS-129, maintenance module): the vehicles in service with what a
+ * program matches on and their meters now, and their meters at a past service.
+ */
+export const serviceRefs = {
+  vehicles: serviceVehicles,
+  metersAt,
+};
+export type { ServiceVehicle } from './infrastructure/service-due.queries';
 export type { FuelVehicle } from './infrastructure/fuel-reconciliation.queries';
 
 export const fleetModule: AppModule = {

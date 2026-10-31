@@ -45,6 +45,8 @@ export interface MaintenanceRecordView {
   workshop: string | null;
   notes: string | null;
   completed_by: string | null;
+  /** The preventive service program this work carries out (FMS-129); completing it starts the program's count again. */
+  service_program: { id: string; name: string } | null;
   parts: MaintenancePartLine[];
   /** What failed (FMS-125), oldest first. */
   failures: FailureEventView[];

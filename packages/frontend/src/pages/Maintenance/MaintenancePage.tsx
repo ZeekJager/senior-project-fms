@@ -2,23 +2,41 @@ import { ArrowUpRight, ClipboardCheck, Eye, Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RoleGate } from '@/components/RoleGate'
-import { DataTable, EmptyState, ListToolbar, MoneyDisplay, StatusBadge, type Column } from '@/components/shared'
+import { DataTable, EmptyState, ListToolbar, MoneyDisplay, StatusBadge, type Column, type ListToolbarViews } from '@/components/shared'
 import { Badge, Button, Combobox, Dialog, type ComboboxOption } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import { useDepots } from '@/features/depots'
 import { formatDate } from '@/features/documents/expiry'
+import { useServiceDueCount, type DueFilters } from '@/features/service-due'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import type { Vehicle } from '@/pages/Vehicles/types'
 import { TYPE_LABELS, useBelowReorder, useRecords, useVehicleSearch, useWorkshopCounts, type MaintenanceRecord, type RecordFilters } from './api'
-import { LogRepairDrawer, type CorrectionOf } from './LogRepairDrawer'
+import { LogRepairDrawer, type CorrectionOf, type RepairPreset } from './LogRepairDrawer'
 import { RecordDrawer } from './RecordDrawer'
+import { ServiceDueList } from './ServiceDueList'
 
-function readFilters(params: URLSearchParams): RecordFilters {
+/** The repair views, and Service due (FMS-129): the vehicles due under their service programs. */
+type View = RecordFilters['view'] | 'service'
+
+interface PageFilters {
+  view: View
+  vehicleId: string
+  page: number
+  /** Service due: which statuses, and which depot. */
+  due: DueFilters['status']
+  depotId: string
+}
+
+function readFilters(params: URLSearchParams): PageFilters {
   const view = params.get('view')
+  const due = params.get('due')
   const page = Number.parseInt(params.get('page') ?? '', 10)
   return {
-    view: view === 'completed' || view === 'all' ? view : 'open',
+    view: view === 'completed' || view === 'all' || view === 'service' ? view : 'open',
     vehicleId: params.get('vehicle') ?? '',
     page: Number.isInteger(page) && page > 0 ? page : 1,
+    due: due === 'overdue' || due === 'due' ? due : 'attention',
+    depotId: params.get('depot') ?? '',
   }
 }
 
@@ -37,16 +55,24 @@ export function MaintenancePage() {
   const canWrite = hasPermission('maintenance:write')
   const canInventory = hasPermission('inventory:read')
 
-  function update(patch: Partial<RecordFilters>) {
+  function update(patch: Partial<PageFilters>) {
     const next = { ...filters, page: 1, ...patch }
     const p = new URLSearchParams()
     if (next.view !== 'open') p.set('view', next.view)
-    if (next.vehicleId) p.set('vehicle', next.vehicleId)
+    if (next.view === 'service') {
+      if (next.due !== 'attention') p.set('due', next.due)
+      if (next.depotId) p.set('depot', next.depotId)
+    } else if (next.vehicleId) p.set('vehicle', next.vehicleId)
     if (next.page > 1) p.set('page', String(next.page))
     setParams(p, { replace: true })
   }
 
-  const list = useRecords(filters)
+  const serviceView = filters.view === 'service'
+  const list = useRecords({ view: serviceView ? 'open' : (filters.view as RecordFilters['view']), vehicleId: filters.vehicleId, page: filters.page }, !serviceView)
+  const canSeeDue = hasPermission('vehicle:read')
+  const dueCount = useServiceDueCount(canSeeDue)
+  const depots = useDepots()
+  const [preset, setPreset] = useState<RepairPreset | null>(null)
   const workshop = useWorkshopCounts(canInventory)
   const [logging, setLogging] = useState(false)
   const [correctionOf, setCorrectionOf] = useState<CorrectionOf | null>(null)
@@ -102,6 +128,24 @@ export function MaintenancePage() {
     },
   ]
 
+  const views: ListToolbarViews<View> = {
+    label: 'Repair views',
+    value: filters.view,
+    options: [
+      { value: 'open', label: 'Open work', count: workshop.counts.open, isLoading: workshop.isLoading },
+      { value: 'completed', label: 'Completed', count: workshop.counts.completed, isLoading: workshop.isLoading },
+      {
+        value: 'all',
+        label: 'All',
+        count: workshop.counts.open === undefined || workshop.counts.completed === undefined ? undefined : workshop.counts.open + workshop.counts.completed,
+        isLoading: workshop.isLoading,
+      },
+      ...(canSeeDue
+        ? [{ value: 'service' as const, label: 'Service due', count: dueCount.data, isLoading: dueCount.isPending, hint: 'Vehicles due or overdue under their service programs' }]
+        : []),
+    ],
+    onChange: (view) => update({ view }),
+  }
 
   return (
     <div className="space-y-6">
@@ -115,6 +159,7 @@ export function MaintenancePage() {
             leadingIcon={<Plus className="h-4 w-4" />}
             onClick={() => {
               setCorrectionOf(null)
+              setPreset(null)
               setLogging(true)
             }}
             className="self-start sm:self-auto"
@@ -124,27 +169,31 @@ export function MaintenancePage() {
         </RoleGate>
       </header>
 
-      <section aria-label="Repairs" className="space-y-0">
-
+      <section aria-label={serviceView ? 'Service due' : 'Repairs'} className="space-y-0">
+        {serviceView ? (
+          <ServiceDueList
+            views={views}
+            filters={{ status: filters.due, depotId: filters.depotId, page: filters.page }}
+            onFilters={(patch) =>
+              update({ ...(patch.status !== undefined ? { due: patch.status } : {}), ...(patch.depotId !== undefined ? { depotId: patch.depotId } : {}), ...(patch.page !== undefined ? { page: patch.page } : {}) })
+            }
+            depots={depots.data ?? []}
+            onLog={
+              canWrite
+                ? (p) => {
+                    setCorrectionOf(null)
+                    setPreset(p)
+                    setLogging(true)
+                  }
+                : undefined
+            }
+          />
+        ) : (
         <DataTable
 
           toolbar={
             <ListToolbar
-              views={{
-                label: 'Repair views',
-                value: filters.view,
-                options: [
-                  { value: 'open', label: 'Open work', count: workshop.counts.open, isLoading: workshop.isLoading },
-                  { value: 'completed', label: 'Completed', count: workshop.counts.completed, isLoading: workshop.isLoading },
-                  {
-                    value: 'all',
-                    label: 'All',
-                    count: workshop.counts.open === undefined || workshop.counts.completed === undefined ? undefined : workshop.counts.open + workshop.counts.completed,
-                    isLoading: workshop.isLoading,
-                  },
-                ],
-                onChange: (view) => update({ view }),
-              }}
+              views={views}
               onClear={
                 filters.vehicleId
                   ? () => {
@@ -202,6 +251,7 @@ export function MaintenancePage() {
             />
           }
         />
+        )}
       </section>
 
       <LogRepairDrawer
@@ -209,9 +259,11 @@ export function MaintenancePage() {
         onClose={() => {
           setLogging(false)
           setCorrectionOf(null)
+          setPreset(null)
         }}
         canInventory={canInventory}
         correctionOf={correctionOf}
+        preset={preset}
       />
       <RecordDrawer
         record={viewing}

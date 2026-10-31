@@ -2,6 +2,7 @@ import { AlertCircle, AlertTriangle, PackagePlus, Trash2 } from 'lucide-react'
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { ConfirmDialog, MoneyDisplay, MoneyInput } from '@/components/shared'
 import { Badge, Button, Combobox, Drawer, IconButton, SelectField, TextAreaField, TextField, useToast, type ComboboxOption } from '@/components/ui'
+import { STATUS_LABELS, useVehicleServiceDue } from '@/features/service-due'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { ApiError } from '@/lib/api/errors'
 import type { Vehicle } from '@/pages/Vehicles/types'
@@ -34,11 +35,13 @@ export interface CorrectionOf {
   vehicle: ComboboxOption<Pick<Vehicle, 'id' | 'registration_number'>>
 }
 
-/** Work started from elsewhere (the health score screen, FMS-56): the vehicle, the kind of work and what it is for. */
+/** Work started from elsewhere (the health score screen, FMS-56; service due, FMS-129): the vehicle, the kind of work and what it is for. */
 export interface RepairPreset {
   vehicle: Pick<Vehicle, 'id' | 'registration_number'>
   type: MaintenanceType
   description: string
+  /** The service program it carries out (preventive work). */
+  programId?: string
 }
 
 interface LogRepairDrawerProps {
@@ -78,6 +81,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
   const [totalCost, setTotalCost] = useState<number | null>(null)
   const [parts, setParts] = useState<PartRowState[]>([])
   const [failures, setFailures] = useState<FailureDraft[]>([])
+  const [programId, setProgramId] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -98,6 +102,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
     setTotalCost(null)
     setParts([])
     setFailures([emptyFailure()])
+    setProgramId(preset?.programId ?? '')
     setErrors({})
     setFormError(null)
   }, [open, correctionOf, preset])
@@ -130,6 +135,11 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
   const openWork = useOpenWorkFor(vehicle?.value.id ?? null)
   const otherOpen = (openWork.data ?? []).length
 
+  // Preventive work can carry out one of the vehicle's service programs (FMS-129): completing it starts the count again.
+  const programs = useVehicleServiceDue(vehicle?.value.id ?? null, type === 'preventive')
+  const programOptions = (programs.data ?? []).map((d) => ({ value: d.program.id, label: `${d.program.name} · ${STATUS_LABELS[d.status].toLowerCase()}` }))
+  const program = type === 'preventive' ? (programs.data ?? []).find((d) => d.program.id === programId) : undefined
+
   function updatePart(key: number, patch: Partial<PartRowState>) {
     setParts((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
   }
@@ -161,6 +171,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
       notes: notes.trim() || null,
       parts: parts.map((p) => ({ part_id: p.part!.value.id, quantity: Number.parseInt(p.quantity, 10), unit_cost_cents: p.unitCost! })),
       ...(failed.failures.length ? { failures: failed.failures } : {}),
+      ...(program ? { service_program_id: program.program.id } : {}),
     }
   }
 
@@ -188,6 +199,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
             const [, i] = d.field.split('.')
             found[`part.${i}`] = d.reason === 'part_in_other_depot' ? "This part is in another depot's stock." : 'This part is no longer stocked.'
           } else if (d.field === 'total_cost_cents') found.totalCost = 'Enter the total cost in whole cents.'
+          else if (d.field === 'service_program_id') found.program = d.reason === 'program_not_applicable' ? 'This program does not cover this vehicle.' : 'This program is retired or no longer exists.'
           else if (d.reason === 'failure_required') found.failures = 'Say what failed: a repair can be completed only with at least one failure.'
           else if (d.field?.startsWith('failures.')) {
             const [, i, name] = d.field.split('.')
@@ -246,7 +258,10 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
             <Combobox
               label="Vehicle"
               value={vehicle}
-              onChange={setVehicle}
+              onChange={(option) => {
+                setVehicle(option)
+                if (option?.key !== vehicle?.key) setProgramId('')
+              }}
               query={vehicleQuery}
               onQueryChange={setVehicleQuery}
               options={vehicleOptions}
@@ -264,6 +279,18 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
               />
               <TextField label="Labour" inputMode="decimal" value={hours} onChange={(e) => setHours(e.target.value)} error={errors.hours} trailing={<span className="text-xs">hours</span>} />
             </div>
+            {type === 'preventive' && vehicle && (programs.isPending || programOptions.length > 0) && (
+              <SelectField
+                label="Service program"
+                optional
+                value={programId}
+                onChange={(e) => setProgramId(e.target.value)}
+                options={[{ value: '', label: 'None: other preventive work' }, ...programOptions]}
+                error={errors.program}
+                disabled={programs.isPending}
+                hint={program ? `Completing this work starts ${program.program.name}'s count again.${program.program.tasks.length ? ` Checklist: ${program.program.tasks.join(', ')}.` : ''}` : 'The scheduled service this work carries out, if any.'}
+              />
+            )}
             <TextAreaField label="Work done" value={description} onChange={(e) => setDescription(e.target.value)} error={errors.description} maxLength={2000} />
             <TextField
               label="Odometer"

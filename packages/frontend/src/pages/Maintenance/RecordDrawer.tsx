@@ -126,6 +126,15 @@ export function RecordDrawer({
               <p className="whitespace-pre-line text-sm text-ink">{record.description || '—'}</p>
             </Block>
 
+            {record.service_program && (
+              <Block title="Service program">
+                <p className="text-sm text-ink">{record.service_program.name}</p>
+                <p className="mt-0.5 text-xs text-ink-subtle">
+                  {isOpen ? 'Completing this work starts the program’s count again on this vehicle.' : 'The program’s count on this vehicle started again from this work.'}
+                </p>
+              </Block>
+            )}
+
             {(record.failures ?? []).length > 0 ? (
               <Block title="What failed">
                 <ul className="space-y-2">

@@ -24,6 +24,7 @@ export interface RecordRow {
   workshop: string | null;
   notes: string | null;
   completedBy: string | null;
+  serviceProgramId: string | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -84,13 +85,15 @@ export interface RecordWrite {
   workshop?: string | null;
   notes?: string | null;
   completed_by?: string | null;
+  service_program_id?: string | null;
 }
 
 const ROW_SQL = `
   SELECT r.id, r.public_id AS "publicId", r.vehicle_id AS "vehicleId", r.maintenance_type AS "maintenanceType",
          r.description, r.status, r.priority, r.scheduled_at AS "scheduledAt", r.started_at AS "startedAt",
          r.completed_at AS "completedAt", r.odometer_km::float8 AS "odometerKm", r.labor_hours::float8 AS "labourHours",
-         r.total_cost_cents AS "totalCostCents", r.workshop, r.notes, r.completed_by AS "completedBy", r.version,
+         r.total_cost_cents AS "totalCostCents", r.workshop, r.notes, r.completed_by AS "completedBy",
+         r.service_program_id AS "serviceProgramId", r.version,
          r.created_at AS "createdAt", r.updated_at AS "updatedAt"
     FROM maintenance.maintenance_records r`;
 

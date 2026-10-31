@@ -1,4 +1,4 @@
-import { Activity, Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, CalendarCheck, CalendarClock, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -14,6 +14,7 @@ import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
 import { DashboardPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
+import { ServiceProgramsPage } from '@/pages/ServicePrograms'
 import { UsersPage } from '@/pages/Users'
 import { VehicleHistoryPage } from '@/pages/VehicleHistory'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -86,6 +87,13 @@ export const portals: Portal[] = [
         element: <MaintenancePage />,
         permission: 'maintenance:read',
         nav: { label: 'Repair log', icon: Wrench },
+      },
+      {
+        // S-23 (FMS-129). Read with maintenance:read; defined with service-program:write (admin, fleet manager, depot admin).
+        path: '/service-programs',
+        element: <ServiceProgramsPage />,
+        permission: 'maintenance:read',
+        nav: { label: 'Service programs', icon: CalendarClock },
       },
       {
         // S-19 (FMS-56). prediction:read: admin, fleet manager, depot admin, technician, compliance officer, fleet owner.

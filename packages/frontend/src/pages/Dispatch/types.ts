@@ -1,3 +1,5 @@
+import type { ServiceDueSummary } from '@/features/service-due'
+
 // Shapes of the trip (api-contract §7.2) and dispatch board (FMS-33)
 // resources the console reads. Public ids only.
 
@@ -75,6 +77,8 @@ export interface BoardVehicle {
   state: VehicleState
   availability: AvailabilityResult
   open_work: OpenWork | null
+  /** Preventive service due or overdue (FMS-129): a warning, never a block. */
+  service_due: ServiceDueSummary | null
   current_trip: { trip_id: string; end: string } | null
 }
 

@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { currentUser, envelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
+import type { ServiceDue } from '@/features/service-due'
 import type { Vehicle } from '@/pages/Vehicles/types'
 import type { InventoryPart, MaintenanceRecord } from './api'
 import type { FailureEvent } from './failures'
@@ -29,11 +30,29 @@ function record(overrides: Partial<MaintenanceRecord> = {}): MaintenanceRecord {
   return {
     id: 'r-1', vehicle_id: 'v-1', registration_number: 'AA 3-41207', maintenance_type: 'corrective', description: 'Replace front brake pads',
     status: 'open', priority: 'normal', scheduled_at: null, started_at: null, completed_at: null, odometer_km: null, labour_hours: 2.5,
-    total_cost_cents: 250_000, parts_cost_cents: 18_000, workshop: null, notes: null, completed_by: null,
+    total_cost_cents: 250_000, parts_cost_cents: 18_000, workshop: null, notes: null, completed_by: null, service_program: null,
     parts: [{ part_id: 'p-1', part_number: 'BRK-PAD-01', name: 'Brake pad set', quantity: 4, unit_cost_cents: 4500, line_cost_cents: 18_000 }],
     failures: [wornPads], version: 0, created_at: '2026-10-10T07:00:00Z', updated_at: '2026-10-10T07:00:00Z', ...overrides,
   }
 }
+
+/** Under their service programs (FMS-129): the flagged truck's A-service is overdue, another's B-service due. */
+function serviceDue(overrides: Partial<ServiceDue> = {}): ServiceDue {
+  return {
+    vehicle_id: 'v-1', registration_number: 'AA 3-41207', depot_id: 'd-1',
+    program: { id: 'sp-1', name: 'A-service', tasks: ['Engine oil', 'Oil filter'] },
+    status: 'overdue', due_by: ['km'], last_service: null,
+    since: { at: '2026-01-05T08:00:00Z', odometer_km: 75_000, engine_hours: null },
+    next_due: { odometer_km: 85_000, at: null, engine_hours: null },
+    readings: { odometer_km: 87_200, engine_hours: null },
+    remaining: { km: -2200, days: null, engine_hours: null },
+    open_record: null, status_changed_at: '2026-10-20T22:30:00Z', computed_at: '2026-10-30T22:30:00Z', ...overrides,
+  }
+}
+const dueRows = [
+  serviceDue(),
+  serviceDue({ vehicle_id: 'v-2', registration_number: 'AA 3-50110', program: { id: 'sp-2', name: 'B-service', tasks: [] }, status: 'due', remaining: { km: 400, days: null, engine_hours: null } }),
+]
 
 const page = (data: unknown[]) => HttpResponse.json({ data, meta: { page: 1, page_size: 25, total_items: data.length, total_pages: 1 } })
 
@@ -50,6 +69,11 @@ function serveWorkshop(records: MaintenanceRecord[] = [record()]) {
       return page(rows)
     }),
     http.get('/api/v1/vehicles', () => page([flagged])),
+    http.get('/api/v1/service-due', ({ request }) => {
+      const statuses = (new URL(request.url).searchParams.get('status') ?? 'due,overdue').split(',')
+      return page(dueRows.filter((d) => statuses.includes(d.status)))
+    }),
+    http.get('/api/v1/vehicles/v-1/service-due', () => envelope([dueRows[0]])),
     http.get('/api/v1/inventory', ({ request }) => {
       const search = (new URL(request.url).searchParams.get('search') ?? '').toLowerCase()
       return page([outOfStock, filter].filter((p) => p.name.toLowerCase().includes(search)))
@@ -299,6 +323,33 @@ describe('Technician repair log (S-08)', () => {
     const details = await screen.findByRole('dialog', { name: /AA 3-41207/ })
     expect(within(details).queryByRole('button', { name: 'Mark as complete' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Log a repair' })).not.toBeInTheDocument()
+  })
+
+  it('Service due lists the vehicles due and overdue, filters by status, and logs the service as preventive work under its program (FMS-129)', async () => {
+    const writes = serveWorkshop()
+    signedInAs(technician)
+    renderApp('/maintenance?view=service')
+    const user = userEvent.setup()
+    const table = await screen.findByRole('table', { name: 'Service due' })
+    await within(table).findByText('AA 3-50110')
+    expect(within(table).getByText('A-service')).toBeInTheDocument()
+    expect(within(table).getByText('2,200 km over')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Status: Due and overdue' }))
+    await user.click(within(screen.getByRole('listbox', { name: 'Status' })).getByRole('option', { name: 'Overdue' }))
+    await waitFor(() => expect(within(table).queryByText('AA 3-50110')).not.toBeInTheDocument())
+    expect(within(table).getByText('AA 3-41207')).toBeInTheDocument()
+
+    await user.click(within(table).getByRole('button', { name: 'Log A-service on AA 3-41207' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Log a repair' })
+    expect(within(drawer).getByLabelText('Type of work')).toHaveValue('preventive')
+    await waitFor(() => expect(within(drawer).getByLabelText(/Service program/)).toHaveValue('sp-1'))
+    expect(within(drawer).getByLabelText('Work done')).toHaveValue('A-service: Engine oil, Oil filter')
+    await user.type(within(drawer).getByLabelText('Labour'), '1.5')
+    await user.type(within(drawer).getByLabelText('Total cost'), '120')
+    await user.click(within(drawer).getByRole('button', { name: 'Save as open work' }))
+    await waitFor(() => expect(writes).toHaveLength(1))
+    expect(writes[0].body).toMatchObject({ vehicle_id: 'v-1', maintenance_type: 'preventive', service_program_id: 'sp-1' })
   })
 
   it('renders nothing for a driver', async () => {

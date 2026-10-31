@@ -4,7 +4,7 @@ import { AppError } from '../../../shared/errors/app-error';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { operatingToday, type AttendanceStatus } from '../domain/attendance';
 import type { AvailabilityWindow } from '../domain/availability';
-import { drivableTypes, driverBoardState, vehicleBoardState, type DispatchBoard, type OpenWorkSummary } from '../domain/dispatch';
+import { drivableTypes, driverBoardState, vehicleBoardState, type DispatchBoard, type OpenWorkSummary, type ServiceDueSummary } from '../domain/dispatch';
 import type { availabilityStore } from '../infrastructure/availability.repository';
 import type { AvailabilityService } from './availability.service';
 import type { Caller } from './caller';
@@ -18,8 +18,11 @@ export interface DispatchServiceDeps {
     resolveInScope(db: Queryable, publicId: string, scope: Scope): Promise<string | null>;
     publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>>;
   };
-  /** The maintenance module's open-work summaries, connected by src/modules/index.ts. */
-  maintenance: () => { openRecordSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, OpenWorkSummary>> } | null;
+  /** The maintenance module's open-work and service-due summaries, connected by src/modules/index.ts. */
+  maintenance: () => {
+    openRecordSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, OpenWorkSummary>>;
+    serviceDueSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceDueSummary>>;
+  } | null;
   inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
   now?: () => Date;
 }
@@ -70,6 +73,7 @@ export class DispatchService {
       const attendance = await this.deps.attendance.statusOn(client, drivers.map((d) => d.id), operatingToday(window.start));
       const flagged = vehicles.filter((v) => v.maintenanceFlag).map((v) => v.id);
       const openWork = flagged.length > 0 ? ((await this.deps.maintenance()?.openRecordSummaries(client, flagged)) ?? new Map()) : new Map<string, OpenWorkSummary>();
+      const serviceDue = (await this.deps.maintenance()?.serviceDueSummaries(client, vehicles.map((v) => v.id))) ?? new Map<string, ServiceDueSummary>();
       const trip = (t: { tripId: string; end: Date } | undefined) => (t ? { trip_id: t.tripId, end: t.end } : null);
 
       return {
@@ -103,6 +107,7 @@ export class DispatchService {
             state: vehicleBoardState({ status: v.status, maintenanceFlag: v.maintenanceFlag, underWay, availability: result }),
             availability: result,
             open_work: openWork.get(v.id) ?? null,
+            service_due: serviceDue.get(v.id) ?? null,
             current_trip: trip(underWay ?? undefined),
           };
         }),

@@ -66,6 +66,15 @@ export interface OpenWorkSummary {
   opened_at: Date;
 }
 
+/**
+ * A vehicle's preventive service due or overdue (FMS-129): a warning on the board, never a block. The
+ * vehicle's most urgent status, and each program at it or below.
+ */
+export interface ServiceDueSummary {
+  status: 'due' | 'overdue';
+  programs: { program_id: string; name: string; status: 'due' | 'overdue'; due_by: string[] }[];
+}
+
 export interface BoardDriver {
   driver_id: string;
   full_name: string;
@@ -91,6 +100,8 @@ export interface BoardVehicle {
   availability: AvailabilityResult;
   /** The open work behind the flag, when flagged. */
   open_work: OpenWorkSummary | null;
+  /** Preventive service due or overdue (FMS-129); null when none is. */
+  service_due: ServiceDueSummary | null;
   current_trip: { trip_id: string; end: Date } | null;
 }
 

@@ -1,4 +1,4 @@
-import { Check, Clock, Truck, UserRound, Wrench } from 'lucide-react'
+import { CalendarClock, Check, Clock, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Badge, cn, Skeleton } from '@/components/ui'
 import { driverLook, formatTime, reasonText, VEHICLE_TYPE_LABELS, vehicleLook } from './format'
@@ -122,6 +122,12 @@ export function VehicleList({ vehicles, selectedId, onSelect }: { vehicles: Boar
             detail={
               <>
                 {v.open_work && <Detail icon={<Wrench />}>{v.open_work.description}</Detail>}
+                {v.service_due && (
+                  <span className={cn('mt-1 flex items-center gap-1 text-xs font-medium [&_svg]:h-3.5 [&_svg]:w-3.5', v.service_due.status === 'overdue' ? 'text-danger' : 'text-warning')}>
+                    <CalendarClock aria-hidden="true" />
+                    {v.service_due.status === 'overdue' ? 'Service overdue' : 'Service due'}: {v.service_due.programs.map((p) => p.name).join(', ')}
+                  </span>
+                )}
                 {v.current_trip && <Detail icon={<Clock />}>On a trip until {formatTime(v.current_trip.end)}</Detail>}
                 {reasons && <Detail>{reasons}</Detail>}
               </>

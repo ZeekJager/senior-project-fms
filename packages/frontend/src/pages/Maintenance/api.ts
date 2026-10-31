@@ -45,6 +45,8 @@ export interface MaintenanceRecord {
   workshop: string | null
   notes: string | null
   completed_by: string | null
+  /** The preventive service program this work carries out (FMS-129). */
+  service_program: { id: string; name: string } | null
   parts: PartLine[]
   /** What failed (FMS-125), oldest first. */
   failures: FailureEvent[]
@@ -77,9 +79,10 @@ export interface RecordFilters {
   byWorkDate?: boolean
 }
 
-export function useRecords(filters: RecordFilters) {
+export function useRecords(filters: RecordFilters, enabled = true) {
   const { api } = useAuth()
   return useQuery({
+    enabled,
     queryKey: ['maintenance', 'list', filters],
     queryFn: async () => {
       const q = new URLSearchParams({ page: String(filters.page), page_size: '25' })
@@ -170,12 +173,14 @@ export interface RecordInput {
   parts: { part_id: string; quantity: number; unit_cost_cents: number }[]
   /** What failed (FMS-125): recorded with the repair. */
   failures?: FailureInput[]
+  /** The service program this preventive work carries out (FMS-129). */
+  service_program_id?: string
 }
 
 function useInvalidate() {
   const queryClient = useQueryClient()
   return () =>
-    Promise.all(['maintenance', 'vehicles', 'inventory'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })))
+    Promise.all(['maintenance', 'vehicles', 'inventory', 'service-programs'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })))
 }
 
 /** POST /maintenance; returns the record and the server's warnings (LOW_STOCK, COST_BELOW_PARTS). */
