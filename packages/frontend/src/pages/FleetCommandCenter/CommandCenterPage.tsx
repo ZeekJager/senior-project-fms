@@ -1,14 +1,18 @@
 import { RefreshCw } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { FleetMap, useNow, type FleetMapVehicle } from '@/components/FleetMap'
+import type { LatLng } from '@/components/TripMap'
 import { Card, FilterSelect, useToast, ViewTabs } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useRealtimeEvent, useRealtimeStatus } from '@/lib/realtime/context'
+import { useRoute, useTrack, type TrackPoint } from '@/pages/VehicleHistory/api'
 import { AlertsPanel } from './AlertsPanel'
-import { POLL_MS, useAlertAction, useLiveFleet, useLiveOverview, useOverview, type Names } from './api'
+import { POLL_MS, useAlertAction, useFocusDriver, useLiveFleet, useLiveOverview, useOverview, useTripRouteId, type Names } from './api'
+import { FocusLayers, FocusPanel } from './DriverFocus'
 import { FleetList } from './FleetList'
+import { addisDayStart, extendTrack, focusedVehicle, plannedLine } from './focus'
 import { IncidentDrawer } from './IncidentDrawer'
 import { IncidentsPanel } from './IncidentsPanel'
 import { byPlate, liveState, needsAttention, routeLabel, toMapVehicle, type LiveState } from './liveFleet'
@@ -41,12 +45,16 @@ export function CommandCenterPage() {
   const depotId = params.get('depot') ?? ''
   const view: View = params.get('view') === 'attention' ? 'attention' : params.get('view') === 'all' ? 'all' : 'trips'
   const asked = params.get('panel')
-  const setParam = (key: string, value: string | null) => {
+  const setParam = (changes: Record<string, string | null>) => {
     const next = new URLSearchParams(params)
-    if (value) next.set(key, value)
-    else next.delete(key)
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) next.set(key, value)
+      else next.delete(key)
+    }
     setParams(next, { replace: true })
   }
+  // One driver in focus (FMS-140): kept in the address, so a link opens on them.
+  const focusDriverId = params.get('driver')
 
   const { vehicles, snapshot, live } = useLiveFleet(depotId)
   const status = useRealtimeStatus()
@@ -129,6 +137,51 @@ export function CommandCenterPage() {
   const closed = useCallback((vehicleId: string) => setSelectedId((current) => (current === vehicleId ? null : current)), [])
   const depotOptions = [{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]
 
+  // Focus: the driver's vehicle alone on the map, followed, with the trip's planned route and today's track.
+  // It spans every depot in scope, so the depot filter steps aside while it lasts.
+  const paramsRef = useRef(params)
+  paramsRef.current = params
+  const focusOn = useCallback(
+    (driverId: string) => {
+      const next = new URLSearchParams(paramsRef.current)
+      next.set('driver', driverId)
+      next.delete('depot')
+      setSelectedId(null)
+      setParams(next, { replace: true })
+    },
+    [setParams],
+  )
+  const clearFocus = useCallback(() => {
+    const next = new URLSearchParams(paramsRef.current)
+    next.delete('driver')
+    setParams(next, { replace: true })
+  }, [setParams])
+  useEffect(() => {
+    if (!focusDriverId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) clearFocus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focusDriverId, clearFocus])
+
+  const focused = focusDriverId ? focusedVehicle(vehicles, focusDriverId) : null
+  const focusedId = focused?.vehicle_id ?? null
+  const driver = useFocusDriver(focusDriverId, focusDriverId !== null && !snapshot.isPending && focused === null)
+  const routeId = useTripRouteId(hasPermission('trip:read') ? (focused?.trip?.trip_id ?? null) : null)
+  const route = useRoute(routeId.data ?? null, hasPermission('route:read'))
+  // Today's points up to when the focus began, read once; live positions extend the line from there.
+  const trackWindow = useMemo(() => (focusedId ? { from: addisDayStart(), to: new Date().toISOString() } : null), [focusedId])
+  const history = useTrack(focusedId ?? '', trackWindow?.from ?? null, trackWindow?.to ?? null, focusedId !== null)
+  const [track, setTrack] = useState<readonly TrackPoint[]>([])
+  useEffect(() => setTrack(history.data ?? []), [history.data])
+  const position = focused?.position ?? null
+  useEffect(() => setTrack((current) => extendTrack(current, position)), [position])
+  const trackLine = useMemo(() => track.map((p) => [p.lat, p.lng] as LatLng), [track])
+  const planned = useMemo(() => plannedLine(route.data), [route.data])
+  const shownOnMap = focusDriverId ? mapVehicles.filter((m) => m.vehicleId === focusedId) : mapVehicles
+  const driverStatus = driver.isError ? 'missing' : driver.data ? 'found' : 'pending'
+
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
@@ -148,14 +201,14 @@ export function CommandCenterPage() {
             )}
             {live ? 'Live' : status === 'down' ? `Reconnecting · refreshes every ${POLL_MS / 1000} s` : `Refreshes every ${POLL_MS / 1000} s`}
           </p>
-          {(depots.data?.length ?? 0) > 1 && (
+          {!focusDriverId && (depots.data?.length ?? 0) > 1 && (
             <FilterSelect
               label="Depot"
               value={depotId}
               emptyValue=""
               onChange={(value) => {
                 setSelectedId(null)
-                setParam('depot', value || null)
+                setParam({ depot: value || null })
               }}
               options={depotOptions}
             />
@@ -166,89 +219,109 @@ export function CommandCenterPage() {
       <StatusStrip
         overview={overview.data}
         isLoading={overview.isPending}
-        onShowAlerts={() => setParam('panel', 'alerts')}
-        onShowIncidents={() => setParam('panel', 'incidents')}
+        onShowAlerts={() => setParam({ panel: 'alerts', driver: null })}
+        onShowIncidents={() => setParam({ panel: 'incidents', driver: null })}
       />
 
       <div className="grid gap-4 lg:h-[calc(100dvh-20rem)] lg:min-h-[560px] lg:grid-cols-[minmax(0,7fr)_minmax(360px,3fr)]">
         <FleetMap
-          vehicles={mapVehicles}
+          vehicles={shownOnMap}
           onVehicleClick={select}
           selectedVehicleId={selectedId}
           onSelectionClose={closed}
-          label="Live fleet map"
+          label={focusDriverId ? 'Live map, one driver in focus' : 'Live fleet map'}
+          emptyMessage={focusDriverId ? (snapshot.isPending ? 'Finding the driver…' : focused ? 'Not reported yet' : 'Not on a trip now') : undefined}
           className="h-[55vh] min-h-[360px] shadow-soft lg:h-full"
-        />
+        >
+          {focusDriverId && <FocusLayers focusKey={focusDriverId} vehicle={shownOnMap[0] ?? null} planned={planned} track={trackLine} />}
+        </FleetMap>
 
         <Card className="flex max-h-[70vh] min-h-0 flex-col overflow-hidden p-0 lg:max-h-none">
-          {(alerts || incidents) && (
-            <div className="border-b border-line px-4 pb-3 pt-4">
-              <ViewTabs
-                label="Panel"
-                value={panel}
-                onChange={(p) => setParam('panel', p === 'fleet' ? null : p)}
-                options={[
-                  { value: 'fleet', label: 'Fleet', count: vehicles.length, isLoading: snapshot.isPending },
-                  ...(alerts ? [{ value: 'alerts' as const, label: 'Alerts', count: alerts.active, hint: 'Open and acknowledged alerts' }] : []),
-                  ...(incidents ? [{ value: 'incidents' as const, label: 'Incidents', count: incidents.active, hint: 'Open incidents and those being investigated' }] : []),
-                ]}
-              />
-            </div>
-          )}
-          {panel === 'alerts' && alerts ? (
-            <AlertsPanel
-              alerts={alerts.items}
+          {focusDriverId ? (
+            <FocusPanel
+              vehicle={focused}
+              state={focused ? (states.get(focused.vehicle_id) ?? null) : null}
               now={now}
-              canAck={hasPermission('alert:ack')}
-              canResolve={hasPermission('alert:resolve')}
-              pending={alertAction.isPending && alertAction.variables ? alertAction.variables : null}
-              errors={alertErrors}
-              onAction={actOnAlert}
-              onShowVehicle={select}
-              onMap={onMap}
+              loading={snapshot.isPending}
+              driver={{ status: driverStatus, name: driver.data?.full_name ?? null }}
+              planned={planned.length > 1}
+              track={trackLine.length > 1}
+              trackFailed={history.isError}
+              onClear={clearFocus}
             />
-          ) : panel === 'incidents' && incidents ? (
-            <IncidentsPanel incidents={incidents.items} now={now} onOpen={setIncidentId} />
           ) : (
             <>
-          <div className="px-4 pb-3 pt-4">
-            <h2 className="flex items-baseline justify-between text-sm font-semibold text-ink">
-              Fleet
-              <span className="text-xs font-normal text-ink-subtle">
-                {snapshot.isPending ? '' : `${mapVehicles.length} of ${vehicles.length} reporting`}
-              </span>
-            </h2>
-            <div className="mt-3">
-              <ViewTabs
-                label="Vehicles"
-                value={view}
-                onChange={(v) => setParam('view', v === 'trips' ? null : v)}
-                options={[
-                  { value: 'trips', label: 'On trip', count: onTrip.length, isLoading: snapshot.isPending },
-                  { value: 'attention', label: 'Attention', count: attention.length, isLoading: snapshot.isPending, hint: 'Speeding, idling, offline or not reported yet' },
-                  { value: 'all', label: 'All', count: vehicles.length, isLoading: snapshot.isPending },
-                ]}
-              />
-            </div>
-          </div>
-          {snapshot.isError && !snapshot.data ? (
-            <p className="border-t border-line px-4 py-6 text-sm text-danger">
-              Live positions could not be loaded. The map tries again every {POLL_MS / 1000} seconds.
-            </p>
-          ) : (
-            <FleetList
-              vehicles={shown}
-              states={states}
-              now={now}
-              selectedId={selectedId}
-              onSelect={select}
-              health={health}
-              isLoading={snapshot.isPending}
-              search={search}
-              onSearch={setSearch}
-              empty={needle ? { heading: 'No match', description: 'No vehicle, driver or route here matches your search.' } : EMPTY[view]}
-            />
-          )}
+              {(alerts || incidents) && (
+                <div className="border-b border-line px-4 pb-3 pt-4">
+                  <ViewTabs
+                    label="Panel"
+                    value={panel}
+                    onChange={(p) => setParam({ panel: p === 'fleet' ? null : p })}
+                    options={[
+                      { value: 'fleet', label: 'Fleet', count: vehicles.length, isLoading: snapshot.isPending },
+                      ...(alerts ? [{ value: 'alerts' as const, label: 'Alerts', count: alerts.active, hint: 'Open and acknowledged alerts' }] : []),
+                      ...(incidents ? [{ value: 'incidents' as const, label: 'Incidents', count: incidents.active, hint: 'Open incidents and those being investigated' }] : []),
+                    ]}
+                  />
+                </div>
+              )}
+              {panel === 'alerts' && alerts ? (
+                <AlertsPanel
+                  alerts={alerts.items}
+                  now={now}
+                  canAck={hasPermission('alert:ack')}
+                  canResolve={hasPermission('alert:resolve')}
+                  pending={alertAction.isPending && alertAction.variables ? alertAction.variables : null}
+                  errors={alertErrors}
+                  onAction={actOnAlert}
+                  onShowVehicle={select}
+                  onMap={onMap}
+                />
+              ) : panel === 'incidents' && incidents ? (
+                <IncidentsPanel incidents={incidents.items} now={now} onOpen={setIncidentId} />
+              ) : (
+                <>
+              <div className="px-4 pb-3 pt-4">
+                <h2 className="flex items-baseline justify-between text-sm font-semibold text-ink">
+                  Fleet
+                  <span className="text-xs font-normal text-ink-subtle">
+                    {snapshot.isPending ? '' : `${mapVehicles.length} of ${vehicles.length} reporting`}
+                  </span>
+                </h2>
+                <div className="mt-3">
+                  <ViewTabs
+                    label="Vehicles"
+                    value={view}
+                    onChange={(v) => setParam({ view: v === 'trips' ? null : v })}
+                    options={[
+                      { value: 'trips', label: 'On trip', count: onTrip.length, isLoading: snapshot.isPending },
+                      { value: 'attention', label: 'Attention', count: attention.length, isLoading: snapshot.isPending, hint: 'Speeding, idling, offline or not reported yet' },
+                      { value: 'all', label: 'All', count: vehicles.length, isLoading: snapshot.isPending },
+                    ]}
+                  />
+                </div>
+              </div>
+              {snapshot.isError && !snapshot.data ? (
+                <p className="border-t border-line px-4 py-6 text-sm text-danger">
+                  Live positions could not be loaded. The map tries again every {POLL_MS / 1000} seconds.
+                </p>
+              ) : (
+                <FleetList
+                  vehicles={shown}
+                  states={states}
+                  now={now}
+                  selectedId={selectedId}
+                  onSelect={select}
+                  onFocusDriver={focusOn}
+                  health={health}
+                  isLoading={snapshot.isPending}
+                  search={search}
+                  onSearch={setSearch}
+                  empty={needle ? { heading: 'No match', description: 'No vehicle, driver or route here matches your search.' } : EMPTY[view]}
+                />
+              )}
+                </>
+              )}
             </>
           )}
         </Card>
