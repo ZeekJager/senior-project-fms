@@ -1,19 +1,29 @@
-import { MousePointerClick, RefreshCw, Route as RouteIcon, Search } from 'lucide-react'
+import { MousePointerClick, Plus, RefreshCw, Route as RouteIcon, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
-import { Card, FilterSelect, useToast, ViewTabs } from '@/components/ui'
+import { Button, Card, FilterSelect, useToast, ViewTabs } from '@/components/ui'
+import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { ApiError } from '@/lib/api/errors'
 import { useRealtimeStatus } from '@/lib/realtime/context'
-import { POLL_MS, useAssignTrip, useDispatchBoard, useDispatchTrips } from './api'
-import { AssignmentPanel } from './AssignmentPanel'
+import { POLL_MS, useAssignTrip, useDispatchBoard, useDispatchTrips, useUnderWayTrips } from './api'
+import { AssignmentPanel, UnderWayPanel } from './AssignmentPanel'
 import { CandidatesSkeleton, DriverList, VehicleList } from './Candidates'
 import { formatTime, tripTitle } from './format'
+import { NewTripDrawer } from './NewTripDrawer'
 import { TripList } from './TripList'
+import { TripTimesDrawer } from './TripTimesDrawer'
 import type { AssignmentWarning, Trip } from './types'
 
-type View = 'unassigned' | 'assigned'
+type View = 'unassigned' | 'assigned' | 'under-way'
+const VIEWS: readonly View[] = ['unassigned', 'assigned', 'under-way']
+
+const EMPTY: Record<View, { heading: string; description: string }> = {
+  unassigned: { heading: 'Every trip is assigned', description: 'New scheduled trips from today on appear here.' },
+  assigned: { heading: 'No assigned trips', description: 'Trips you assign appear here until they start.' },
+  'under-way': { heading: 'No trips under way', description: 'Trips appear here once their driver starts them. Their end can still move.' },
+}
 
 /**
  * Dispatcher trip console (FMS-33, S-07): the depot's trips on the left, its
@@ -25,7 +35,11 @@ export function DispatchPage() {
   const [params, setParams] = useSearchParams()
   const depots = useDepots()
   const depotId = params.get('depot') ?? depots.data?.[0]?.id ?? ''
-  const view: View = params.get('view') === 'assigned' ? 'assigned' : 'unassigned'
+  const view: View = VIEWS.find((v) => v === params.get('view')) ?? 'unassigned'
+  const { hasPermission } = useAuth()
+  const canWrite = hasPermission('trip:write')
+  const [newTripOpen, setNewTripOpen] = useState(false)
+  const [timesOpen, setTimesOpen] = useState(false)
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
@@ -36,10 +50,15 @@ export function DispatchPage() {
   // trip.updated and vehicle.status.changed refresh the board at once (FMS-43); polling stays the fallback.
   const live = useRealtimeStatus() === 'live'
   const trips = useDispatchTrips(depotId)
+  const underWay = useUnderWayTrips(depotId)
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null)
   const allTrips = trips.data ?? []
-  const shown = allTrips.filter((t) => (view === 'assigned' ? t.status === 'assigned' : t.status === 'scheduled'))
-  const trip = allTrips.find((t) => t.id === selectedTripId) ?? null
+  const underWayTrips = underWay.data ?? []
+  const listed = view === 'under-way' ? underWay : trips
+  const shown = view === 'under-way' ? underWayTrips : allTrips.filter((t) => (view === 'assigned' ? t.status === 'assigned' : t.status === 'scheduled'))
+  const trip = allTrips.find((t) => t.id === selectedTripId) ?? underWayTrips.find((t) => t.id === selectedTripId) ?? null
+  // A trip under way keeps its driver and vehicle: the lists show who is where, nothing to choose.
+  const assignable = trip !== null && trip.status !== 'en_route'
   const board = useDispatchBoard(depotId, trip)
 
   const [search, setSearch] = useState('')
@@ -93,6 +112,11 @@ export function DispatchPage() {
   const unassignedCount = allTrips.filter((t) => t.status === 'scheduled').length
   const assignedCount = allTrips.filter((t) => t.status === 'assigned').length
   const updatedAt = Math.max(trips.dataUpdatedAt, board.dataUpdatedAt)
+  const titleOf = (id: string) => {
+    const t = allTrips.find((x) => x.id === id) ?? underWayTrips.find((x) => x.id === id)
+    return t ? tripTitle(t) : undefined
+  }
+  const depot = depots.data?.find((d) => d.id === depotId)
 
   return (
     <div className="space-y-6">
@@ -129,6 +153,11 @@ export function DispatchPage() {
               options={(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
             />
           )}
+          {canWrite && depot && (
+            <Button leadingIcon={<Plus className="h-4 w-4" />} onClick={() => setNewTripOpen(true)}>
+              New trip
+            </Button>
+          )}
         </div>
       </header>
 
@@ -140,29 +169,26 @@ export function DispatchPage() {
           <ViewTabs
             label="Trips"
             value={view}
-            onChange={(v) => setParam('view', v === 'assigned' ? 'assigned' : null)}
+            onChange={(v) => setParam('view', v === 'unassigned' ? null : v)}
             options={[
               { value: 'unassigned', label: 'Unassigned', count: unassignedCount, isLoading: trips.isPending },
               { value: 'assigned', label: 'Assigned', count: assignedCount, isLoading: trips.isPending },
+              { value: 'under-way', label: 'Under way', count: underWayTrips.length, isLoading: underWay.isPending, hint: 'Started, whenever that was' },
             ]}
           />
-          {trips.isError ? (
+          {listed.isError ? (
             <Card>
               <EmptyState icon={<RouteIcon />} heading="Trips could not be loaded" description="Check your connection; the console tries again every 30 seconds." />
             </Card>
-          ) : !trips.isPending && shown.length === 0 ? (
+          ) : !listed.isPending && shown.length === 0 ? (
             <Card>
-              <EmptyState
-                icon={<RouteIcon />}
-                heading={view === 'assigned' ? 'No assigned trips' : 'Every trip is assigned'}
-                description={view === 'assigned' ? 'Trips you assign appear here until they start.' : 'New scheduled trips from today on appear here.'}
-              />
+              <EmptyState icon={<RouteIcon />} heading={EMPTY[view].heading} description={EMPTY[view].description} />
             </Card>
           ) : (
             <div className="max-h-[50vh] overflow-y-auto overscroll-contain rounded-control p-0.5 lg:max-h-[calc(100vh-16rem)]">
             <TripList
               trips={shown}
-              isLoading={trips.isPending}
+              isLoading={listed.isPending}
               selectedId={selectedTripId}
               onSelect={(t: Trip) => setSelectedTripId(t.id)}
               driverName={(id) => names.get(id)}
@@ -174,8 +200,24 @@ export function DispatchPage() {
 
         <section aria-label="Drivers and vehicles" className="min-w-0 space-y-4">
           <div ref={panelRef} className="scroll-mt-6">
-          {trip ? (
-            <AssignmentPanel trip={trip} driver={driver} vehicle={vehicle} busy={assign.isPending} error={assign.error} warnings={warnings} onAssign={submit} />
+          {trip && !assignable ? (
+            <UnderWayPanel
+              trip={trip}
+              driverName={trip.driver_id ? names.get(trip.driver_id) : undefined}
+              plate={trip.vehicle_id ? plates.get(trip.vehicle_id) : undefined}
+              onChangeTimes={canWrite ? () => setTimesOpen(true) : undefined}
+            />
+          ) : trip ? (
+            <AssignmentPanel
+              trip={trip}
+              driver={driver}
+              vehicle={vehicle}
+              busy={assign.isPending}
+              error={assign.error}
+              warnings={warnings}
+              onAssign={submit}
+              onChangeTimes={canWrite ? () => setTimesOpen(true) : undefined}
+            />
           ) : (
             <Card>
               <EmptyState icon={<MousePointerClick />} heading="Choose a trip" description="Pick a trip on the left to see who is free for it, then choose a driver and a vehicle." />
@@ -201,7 +243,7 @@ export function DispatchPage() {
                   Drivers <span className="text-xs font-normal text-ink-subtle">{drivers.filter((d) => d.state === 'idle').length} available</span>
                 </h2>
                 <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
-                  {board.isPending ? <CandidatesSkeleton /> : <DriverList drivers={shownDrivers} selectedId={trip ? driverId : null} onSelect={(d) => trip && choose('driver', d.driver_id)} />}
+                  {board.isPending ? <CandidatesSkeleton /> : <DriverList drivers={shownDrivers} selectedId={assignable ? driverId : null} onSelect={(d) => assignable && choose('driver', d.driver_id)} />}
                 </div>
               </div>
               <div className="min-w-0">
@@ -209,7 +251,7 @@ export function DispatchPage() {
                   Vehicles <span className="text-xs font-normal text-ink-subtle">{vehicles.filter((v) => v.state === 'idle').length} available</span>
                 </h2>
                 <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
-                  {board.isPending ? <CandidatesSkeleton /> : <VehicleList vehicles={shownVehicles} selectedId={trip ? vehicleId : null} onSelect={(v) => trip && choose('vehicle', v.vehicle_id)} />}
+                  {board.isPending ? <CandidatesSkeleton /> : <VehicleList vehicles={shownVehicles} selectedId={assignable ? vehicleId : null} onSelect={(v) => assignable && choose('vehicle', v.vehicle_id)} />}
                 </div>
               </div>
             </div>
@@ -217,6 +259,19 @@ export function DispatchPage() {
           </Card>
         </section>
       </div>
+
+      {canWrite && depot && (
+        <NewTripDrawer
+          open={newTripOpen}
+          onClose={() => setNewTripOpen(false)}
+          depot={depot}
+          onCreated={(created) => {
+            setParam('view', null)
+            setSelectedTripId(created.id)
+          }}
+        />
+      )}
+      {canWrite && <TripTimesDrawer open={timesOpen} onClose={() => setTimesOpen(false)} trip={trip} titleOf={titleOf} />}
     </div>
   )
 }

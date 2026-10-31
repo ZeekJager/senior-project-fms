@@ -52,8 +52,9 @@ function maintenance(): MaintenanceRefs {
   return maintenanceRefs;
 }
 
+const routeRepository = new RouteRepository(pool);
 const routeService = new RouteService({
-  routes: new RouteRepository(pool),
+  routes: routeRepository,
   fleet,
   events: eventBus,
   roads: () => roadPlanner,
@@ -62,6 +63,7 @@ const routeService = new RouteService({
 const tripRepository = new TripRepository(pool);
 const tripService = new TripService({
   trips: tripRepository,
+  routes: routeRepository,
   fleet,
   maintenance,
   events: eventBus,

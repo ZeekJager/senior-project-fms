@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
+import type { Slot } from '../domain/schedule';
 import { Repository } from '../../../shared/infrastructure/repository';
 import type { TripCursor, TripStatus } from '../domain/trip';
 import type { RouteStop } from '../domain/route';
@@ -222,6 +223,25 @@ export class TripRepository extends Repository {
       [id, exceptTripId, start, end],
     );
     return res.rows[0]?.public_id ?? null;
+  }
+
+  /**
+   * Assigned and en-route trips of this driver or this vehicle whose window touches [start, end], except
+   * `exceptIds`, earliest first and locked: the trips a time change runs into (FMS-139).
+   */
+  async clashing(db: Queryable, driverId: string | null, vehicleId: string | null, start: Date, end: Date, exceptIds: readonly string[]): Promise<Slot[]> {
+    if (!driverId && !vehicleId) return [];
+    const res = await db.query<Slot>(
+      `SELECT id, public_id AS "publicId", driver_id AS "driverId", vehicle_id AS "vehicleId", status,
+              scheduled_start AS start, scheduled_end AS "end"
+         FROM trip.trips
+        WHERE (driver_id = $1 OR vehicle_id = $2) AND status IN ('assigned', 'en_route') AND NOT (id = ANY($5::bigint[]))
+          AND tstzrange(scheduled_start, scheduled_end, '[]') && tstzrange($3, $4, '[]')
+        ORDER BY scheduled_start, id
+          FOR UPDATE`,
+      [driverId, vehicleId, start, end, exceptIds],
+    );
+    return res.rows.map((r) => ({ ...r, id: String(r.id), driverId: r.driverId === null ? null : String(r.driverId), vehicleId: r.vehicleId === null ? null : String(r.vehicleId) }));
   }
 
   /** En-route trips of this driver or vehicle other than `exceptTripId`, for the overrun warning. */

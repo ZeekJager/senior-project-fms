@@ -28,18 +28,62 @@ function bound(value: string, end: boolean): Date {
 const instantOrDate = z.union([z.iso.datetime({ offset: true }), z.iso.date()]);
 const instant = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
 
-/** POST /trips: a route and a time window. Ends before or at the start are 400 VALIDATION_INVALID_DATE_RANGE (in the service). */
-const createBody = z.strictObject({
-  route_id: z.uuid(),
-  scheduled_start: instant,
-  scheduled_end: instant,
+const latitude = z.number().min(-90).max(90);
+const longitude = z.number().min(-180).max(180);
+const point = z.strictObject({ latitude, longitude });
+const placeName = z.string().trim().min(1).max(120);
+
+/** A trip nobody planned (FMS-139): where it goes; saved as a one-off route. */
+const adhocRoute = z.strictObject({
+  origin_name: placeName,
+  origin: point.nullable().optional(),
+  destination_name: placeName,
+  destination: point.nullable().optional(),
+  stops: z
+    .array(
+      z
+        .strictObject({ name: placeName, latitude: latitude.nullable().optional(), longitude: longitude.nullable().optional() })
+        .transform((s) => ({ name: s.name, latitude: s.latitude ?? null, longitude: s.longitude ?? null })),
+    )
+    .max(25)
+    .optional(),
 });
 
-/** PATCH /trips/{id}: reschedule, or cancel. Driver and vehicle come with assignment (FMS-31). */
+/**
+ * POST /trips: a route (`route_id`, or a one-off `route` in `depot_id`, FMS-139) and a time window; without an end,
+ * the route's estimated time. Ends before or at the start are 400 VALIDATION_INVALID_DATE_RANGE (in the service).
+ */
+const createBody = z
+  .strictObject({
+    route_id: z.uuid().optional(),
+    route: adhocRoute.optional(),
+    depot_id: z.uuid().optional(),
+    scheduled_start: instant,
+    scheduled_end: instant.optional(),
+  })
+  .refine((v) => (v.route_id === undefined) !== (v.route === undefined), {
+    message: 'Give route_id, or a route for a one-off trip, not both.',
+    params: { reason: 'route_id_or_route' },
+    path: ['route_id'],
+  });
+
+/**
+ * PATCH /trips/{id}: reschedule, or cancel. Driver and vehicle come with assignment (FMS-31). Once assigned or en
+ * route, a time change needs a `reason`; `shift_following` moves the trips it runs into later (FMS-139).
+ */
 const updateBody = z
-  .strictObject({ scheduled_start: instant, scheduled_end: instant, status: z.literal('cancelled') })
+  .strictObject({
+    scheduled_start: instant,
+    scheduled_end: instant,
+    status: z.literal('cancelled'),
+    reason: z.string().trim().min(1).max(500),
+    shift_following: z.boolean(),
+  })
   .partial()
-  .refine((v) => Object.keys(v).length > 0, { message: 'Send at least one field to change.', params: { reason: 'empty_update' } });
+  .refine((v) => v.scheduled_start !== undefined || v.scheduled_end !== undefined || v.status !== undefined, {
+    message: 'Send at least one field to change.',
+    params: { reason: 'empty_update' },
+  });
 
 /** POST /trips/{id}/assign: the version the dispatcher saw is required, so two dispatchers never overwrite each other. */
 const assignBody = z.strictObject({
@@ -135,8 +179,9 @@ export function tripRouter(service: TripService): Router {
     authorize('trip:write'),
     asyncHandler(async (req, res) => {
       const id = tripId(req);
-      const trip = await service.update(caller(req), id, parseInput(updateBody, req.body), ifMatchVersion(req.get('If-Match')));
-      res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { request_id: req.correlationId } });
+      const { trip, shifted } = await service.update(caller(req), id, parseInput(updateBody, req.body), ifMatchVersion(req.get('If-Match')));
+      // meta.shifted: the trips moved later to make room (FMS-139), so the console can say which.
+      res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { request_id: req.correlationId, shifted } });
     }),
   );
 

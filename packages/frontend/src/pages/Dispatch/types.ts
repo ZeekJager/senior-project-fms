@@ -16,7 +16,16 @@ export interface Trip {
   planned_distance_km: number | null
   scheduled_start: string | null
   scheduled_end: string | null
+  /** Set when the driver starts the trip: an en-route trip keeps its start (FMS-139). */
+  actual_start: string | null
   version: number
+}
+
+/** A trip moved later to make room for a change (PATCH /trips/{id} meta.shifted, FMS-139). */
+export interface ShiftedTrip {
+  trip_id: string
+  scheduled_start: string
+  scheduled_end: string
 }
 
 export type Availability = 'available' | 'unavailable' | 'available_with_warning'

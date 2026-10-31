@@ -240,7 +240,7 @@ describe("read model kept in the trip change's transaction (projection)", () => 
     const depot = await createDepot();
     const vehicle = await createVehicle({ depot });
     const trip = await createTrip({ vehicle, driver: (await createDriver({ depot })).driver, scheduled_start: '2099-05-01T06:00:00Z', scheduled_end: '2099-05-01T08:00:00Z' });
-    const res = await request(app).patch(`/api/v1/trips/${trip.public_id}`).set('Cookie', await fleetManager()).send({ scheduled_end: '2099-05-01T10:00:00Z' });
+    const res = await request(app).patch(`/api/v1/trips/${trip.public_id}`).set('Cookie', await fleetManager()).send({ scheduled_end: '2099-05-01T10:00:00Z', reason: 'Loading runs late' });
     expect(res.status).toBe(200);
     // No deliverEvents(): the row was written by the PATCH's own transaction.
     expect(await readModel(trip.public_id as string)).toEqual([{ status: 'assigned', start: new Date('2099-05-01T06:00:00Z'), end: new Date('2099-05-01T10:00:00Z') }]);

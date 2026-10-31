@@ -7,6 +7,7 @@ import { maintenanceRefs } from '../../src/modules/maintenance';
 import { tripRefs } from '../../src/modules/fleet';
 import { TripService } from '../../src/modules/trip/application/trip.service';
 import { TripRepository } from '../../src/modules/trip/infrastructure/trip.repository';
+import { RouteRepository } from '../../src/modules/trip/infrastructure/route.repository';
 import { RecordingEventBus } from '../../src/shared/events/recording-event-bus';
 import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 import { publishedEvents } from '../support/events';
@@ -259,7 +260,7 @@ describe('overrun warning', () => {
     const now = new Date('2026-10-01T06:00:00Z');
     const early = await scheduled(s.depot, '2026-10-01T05:00:00Z', '2026-10-01T07:00:00Z');
     const service = (grace: number) =>
-      new TripService({ trips: new TripRepository(pool), fleet: () => tripRefs, maintenance: () => maintenanceRefs, events: new RecordingEventBus(), overrunGraceMinutes: grace, now: () => now });
+      new TripService({ trips: new TripRepository(pool), routes: new RouteRepository(pool), fleet: () => tripRefs, maintenance: () => maintenanceRefs, events: new RecordingEventBus(), overrunGraceMinutes: grace, now: () => now });
     const admin = await createUser({ roles: ['admin'] });
     const caller = { user: { id: admin.id, publicId: admin.public_id as string, roles: ['admin'], permissions: [], depotId: null }, correlationId: randomUUID() };
 

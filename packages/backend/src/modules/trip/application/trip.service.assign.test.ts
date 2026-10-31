@@ -126,6 +126,7 @@ function harness(options: Options = {}) {
 
   const trips: TripServiceDeps['trips'] = {
     inTransaction: (fn) => fn(tx),
+    clashing: async () => [],
     findVisible: async () => {
       calls.push('trip');
       return row;
@@ -151,6 +152,7 @@ function harness(options: Options = {}) {
 
   const service = new TripService({
     trips,
+    routes: { insert: async () => { throw new Error('no routes here'); } },
     fleet: () => fleet,
     maintenance: () => ({ openRecordFor: async () => (options.openRecord === undefined ? RECORD : options.openRecord) }),
     events,
