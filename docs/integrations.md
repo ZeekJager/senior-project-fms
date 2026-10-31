@@ -52,6 +52,14 @@ Another module that calls a provider directly (the mapping adapter, FMS-84) gets
 - **Per instance:** each API instance has its own breakers, which is what a breaker protects (its own threads and time). `GET /integrations/providers` shows the instance that answered; `/health/ready` reports this instance's `metrics.integrations` (`providers_called`, `circuits_open`, `circuits_half_open`).
 - **Messages are ours:** stored and shown failures read like `GET /sync timed out after 5000 ms.` or `GET /sync answered 503.`. A provider's response body, a query string or a credential is never kept.
 
+## Services of the stack
+
+A service of the stack itself, set up from the environment rather than as a provider row, is called through `integrationGateway.internalClient({ code, baseUrl, timeoutMs }, correlationId)`. It gets the same client: a timeout on each attempt, retries for idempotent calls, and a breaker of its own, kept across calls on each instance and counted in `/health/ready`.
+
+| Service | Code | Used by | Timeout |
+|---|---|---|---|
+| The ML service (FMS-54) | `ml-service` | the nightly scoring and the model registry (FMS-55, FMS-127; [ml-scoring.md](ml-scoring.md)) | 10 s per attempt; predictions are retried like a GET, since they change nothing |
+
 ## Webhooks
 
 `POST /api/v1/webhooks/telematics/{code}`, `/fuel-card/{code}` and `/ev/{code}` (api-contract §15.1). The provider signs each delivery:

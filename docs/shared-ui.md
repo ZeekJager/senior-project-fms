@@ -102,6 +102,8 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 | `label` | The map region's accessible name; "Fleet map" by default |
 | `selectedVehicleId` | The vehicle whose popup is open (FMS-45): plate, state, speed, last seen and its `details`. The popup follows the vehicle and stays open while it is selected; the parent's choice decides. If the vehicle is off screen, the map flies to it (no animation with reduced motion). Its marker gets a focus ring, sits on top and shows no tooltip |
 | `onSelectionClose` | Called with the `vehicleId` when the user closes that popup: its close button, Escape on the map, or a click on the map |
+| `emptyMessage` | What the map says while it is given no vehicle (default "No vehicles reporting yet") |
+| `children` | Layers drawn inside the map (react-leaflet components, which can `useMap()`): the live map's planned route, track and follower for one driver in focus (FMS-140) |
 | `ref` | The Leaflet map once it exists, for anything else the page needs (`flyTo`, `fitBounds`) |
 
 **Marker colours.** Each marker is worked out from the vehicle's last ping, in this order:
@@ -124,3 +126,18 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 **View.** The map opens on Addis Ababa at zoom 12. It fits the view to the vehicles the first time any are given, and never again, so a dispatcher's own panning wins.
 
 **Tile server.** OpenStreetMap's tiles need no key, but their usage policy is for light use. A production deployment points `VITE_MAP_TILE_URL` (and `VITE_MAP_TILE_ATTRIBUTION`) at its own tile server or a provider. Tile requests are cross-origin, so the driver app's service worker never caches them.
+
+## Trip map
+
+Card: FMS-136 (SE-180). Code: `packages/frontend/src/components/TripMap/`. Import from `@/components/TripMap`. One trip on a map, on the vehicle page (S-22), and a route's road in the route panel (S-21): the route it was planned on as a dashed line, along its road when measured (FMS-84) and straight from origin to destination otherwise, the GPS track it drove as a solid line in the brand colour, a ring where it set off and a dot where it got to, and a legend for the lines it shows.
+
+| Prop | Notes |
+|---|---|
+| `planned` | `{origin, destination}`, each `[lat, lng]` or null: the route's ends (`GET /routes/{id}`) |
+| `road` | Optional `[lat, lng][]`: the route's road (`GET /routes/{id}/geometry`, `roadPoints` from `@/pages/Routes/api`), drawn instead of the straight line; the legend says "Planned route (road)" |
+| `track` | `[lat, lng][]`, oldest first: the trip's points from `GET /vehicles/{id}/tracking` between its actual start and end |
+| `label` | The map region's accessible name |
+| `className` | Size the map here; a height is required |
+
+It shares the fleet map's tiles, controls and dark theme (`.fleet-map`), creates the map only once it is on screen, and frames every point once they are known (`tripMapBounds`). With nothing to draw it says so.
+

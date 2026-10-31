@@ -11,15 +11,16 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
-import { enRouteTripOfDriver, enRouteTripsForVehicles, liveTripsForVehicles, tripPartiesByIds, TRIP_EVENTS } from '../trip';
+import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { trackingRouter } from './api/tracking.routes';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
-import { ProviderRegistry } from './application/provider-registry';
-import type { AdapterContext, ProviderAdapter } from './domain/adapter';
+import { TrackHistoryService } from './application/track-history.service';
+import { ProviderRegistry, type InternalService } from './application/provider-registry';
+import type { AdapterContext, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
 import { INTEGRATION_EVENTS } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
@@ -48,7 +49,8 @@ const ingestion = new IngestionService({
   refs: {
     vehicles: trackingRefs.vehicles,
     drivers: trackingRefs.drivers,
-    trips: { enRouteForVehicles: enRouteTripsForVehicles, enRouteOfDriver: enRouteTripOfDriver },
+    trips: { enRouteOfDriver: enRouteTripOfDriver, spansOfDriver: tripSpansOfDriver, spansOfVehicles: tripSpansOfVehicles },
+    meters: trackingRefs.meters,
   },
   events: eventBus,
   eventIntervalSeconds: config.tracking.eventIntervalSeconds,
@@ -98,6 +100,13 @@ const telemetryRules = new TelemetryRulesService({
 });
 eventBus.subscribe(TRACKING_EVENTS.locationUpdated, 'integration.telemetry-rules', (event, tx) => telemetryRules.onLocationUpdated(tx, event));
 
+// A vehicle's GPS history (FMS-136): its stored pings, a page at a time, for the vehicle page's trip map.
+const trackHistory = new TrackHistoryService({
+  db: pool,
+  tracking,
+  refs: { vehicles: { byPublicIds: trackingRefs.vehicles.byPublicIds }, trips: { partiesByIds: tripPartiesByIds } },
+});
+
 // A flag opening or closing also drops the live map's snapshot, so its legend counts it at once.
 for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVENTS), TRACKING_EVENTS.flagRaised, TRACKING_EVENTS.flagResolved]) {
   eventBus.subscribe(type, 'integration.live-map-cache', () => liveMap.invalidate());
@@ -106,7 +115,7 @@ for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVEN
 const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
-router.use(trackingRouter(ingestion, liveMap, telemetryRules));
+router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
 
 export const integrationModule: AppModule = { name: 'integration', router };
 
@@ -116,6 +125,11 @@ export const integrationGateway = {
   register: (adapter: ProviderAdapter): void => registry.register(adapter),
   /** A provider's client and API key, to call it from another module. 404 if unknown, 400 if switched off. */
   contextFor: (code: string, correlationId: string): Promise<AdapterContext> => service.contextFor(code, correlationId),
+  /**
+   * A client for a service of the stack itself, set up from the environment (the ML service, FMS-55):
+   * a timeout on each attempt, retries for idempotent calls, and a breaker per service on this instance.
+   */
+  internalClient: (service: InternalService, correlationId: string): ProviderClient => registry.internalClient(service, correlationId),
   /** Resolves when the manual syncs started so far have finished (tests, shutdown). */
   settled: (): Promise<void> => service.settled(),
   /** Counts for /health/ready: providers called, circuits open and half-open on this instance. */
@@ -141,6 +155,11 @@ export async function legacyLocationIngest(
 }
 
 /** GPS devices (FMS-88): install one in a vehicle and get its token, shown once (scripts/gps-device.ts, the simulator). */
+/** For the engine-hours job (FMS-126, fleet): each vehicle's ignition-on seconds in a window, from its devices' pings. */
+export const ignitionTime = {
+  seconds: (db: Queryable, start: Date, end: Date, maxGapSeconds: number) => tracking.ignitionSeconds(db, start, end, maxGapSeconds),
+};
+
 export const gpsDevices = {
   register: (input: { vehicleId: string; identifier: string; providerId?: string | null; model?: string | null }, ctx: MutationContext) =>
     ingestion.registerDevice(input, ctx),
@@ -176,6 +195,7 @@ export {
   type ProviderType,
   type SyncOutcome,
 } from './domain/adapter';
+export type { InternalService } from './application/provider-registry';
 export { INTEGRATION_EVENTS } from './domain/provider';
 export { MAX_PINGS_PER_BATCH, TRACKING_EVENTS, type PingInput } from './domain/gps';
 export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-map';

@@ -40,7 +40,20 @@ The driver form submits through the offline queue (FMS-81), so a report made in 
 - **Who sees what.** A driver sees only the incidents they reported, never one staff reported about them. Staff see their depot's. An incident no depot owns is seen by those who see every depot. Anyone else's incident by id is `404`, as a missing one is.
 - **Filters.** `status`, `severity` and `incident_type` (comma-separated), `vehicle_id`, `from` and `to` (an instant, or an Addis Ababa date: `to` covers that whole day). An unknown vehicle is an empty page.
 
-Updating an incident (`PATCH /incidents/{id}`: investigating, resolved, closed) is not built yet.
+## Handling: `PATCH /incidents/{id}` (FMS-89)
+
+`incident:manage`: admins, fleet managers, dispatchers and depot admins. A driver reports an incident but does not close it, so `incident:write` is reporting only (migration 047). In the web app it is the incident drawer on the live map ([live-map.md](live-map.md#alerts-incidents-and-counters)).
+
+| Field | |
+|---|---|
+| `status` | `open` -> `investigating`, `resolved`, `closed`; `investigating` -> `resolved`, `closed`; `resolved` -> `investigating` (reopened), `closed`. `closed` is final. |
+| `assigned_to` | Who is dealing with it: an active user who holds `incident:manage` and sees the incident's depot (their home depot, or every depot). `null` lets it go. |
+| `notes` | What was found and done, up to 4,000 characters. Required to resolve or close (given now, or kept from before). |
+
+- **Refusals.** A closed incident: `409` `incident_closed`. A move the status does not allow: `409` `incident_<status>`. Resolving without notes: `400` (`notes`, `required`). An assignee who cannot handle this depot's incidents: `400` (`assigned_to`, `references_missing_record`). An empty body: `400` `empty_update`. Another depot's incident: `404`.
+- **When and who.** Resolving or closing sets `resolved_at` and `resolved_by`; reopening clears them (`chk_incident_resolved`).
+- **Once at a time.** The row is locked for the change, so two consoles saving at once are applied one after the other, the second against the first's result.
+- **Audit and event.** One audited `UPDATE` of the row (before and after, who, the request), and `IncidentUpdated`: the real-time gateway sends `incident.updated` to the depot's consoles and to the driver who reported it, and the command center's overview cache is dropped. Never the notes. A request that changes nothing writes and publishes nothing.
 
 ## The driver form (S-13)
 

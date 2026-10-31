@@ -1,7 +1,9 @@
-import { Compass, Fuel, LayoutDashboard, type LucideIcon } from 'lucide-react'
+import { Compass, LayoutDashboard, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared'
 import { Card } from '@/components/ui'
+import { useAuth } from '@/context/AuthContext'
+import { AnalyticsDashboardPage } from '@/pages/Analytics'
 
 // Stand-ins so every portal home and menu link resolves to a real page
 // (FMS-114: no dead links). Each is replaced by its own card's screen.
@@ -18,13 +20,12 @@ function Placeholder({ title, icon: Icon, description }: { title: string; icon: 
   )
 }
 
-export const DashboardPage = () => (
-  <Placeholder title="Dashboard" icon={LayoutDashboard} description="Fleet KPIs arrive with the analytics dashboard (S-18). Use the menu to open your screens." />
-)
-
-export const FuelReconciliationPage = () => (
-  <Placeholder title="Fuel Reconciliation" icon={Fuel} description="Expected against actual fuel per vehicle arrives with S-15." />
-)
+/** Everyone's home. With analytics:read it is S-18, the analytics dashboard (FMS-51); others keep the menu. */
+export function DashboardPage() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('analytics:read')) return <AnalyticsDashboardPage />
+  return <Placeholder title="Dashboard" icon={LayoutDashboard} description="Use the menu to open your screens." />
+}
 
 export const NotFoundPage = () => (
   <div className="space-y-6">

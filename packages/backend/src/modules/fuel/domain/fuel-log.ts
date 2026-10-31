@@ -37,6 +37,8 @@ export interface FuelLogView {
 export const FUEL_EVENTS = {
   /** A purchase was recorded; the anomaly rules (FMS-82) read it. */
   logged: 'FuelLogged',
+  /** A vehicle's fuel was outside what it should be: a month's reconciliation (FMS-41) or a fill-up's rules (FMS-82). */
+  anomalyDetected: 'FuelAnomalyDetected',
 } as const;
 
 export const fuelLogNotFound = () => new AppError(404, 'NOT_FOUND', 'Fuel log not found.');

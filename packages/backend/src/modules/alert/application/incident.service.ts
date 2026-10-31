@@ -11,12 +11,19 @@ import {
   CLOCK_SKEW_MS,
   CRITICAL,
   INCIDENT_EVENTS,
+  INCIDENT_MANAGE_PERMISSION,
+  INCIDENT_TRANSITIONS,
   MAX_REPORT_AGE_DAYS,
+  RESOLVED_INCIDENT_STATUSES,
+  incidentAssigneeNotFound,
+  incidentClosed,
   incidentDriverNotFound,
   incidentDriverNotWritable,
   incidentInFuture,
   incidentNotFound,
+  incidentNotesRequired,
   incidentTooOld,
+  incidentTransitionNotAllowed,
   incidentTripNotFound,
   incidentTripVehicleMismatch,
   incidentVehicleNotFound,
@@ -25,7 +32,7 @@ import {
   type IncidentType,
   type IncidentView,
 } from '../domain/incident';
-import type { IncidentRepository, IncidentRow, IncidentVisibility } from '../infrastructure/incident.repository';
+import type { IncidentChanges, IncidentRepository, IncidentRow, IncidentVisibility } from '../infrastructure/incident.repository';
 
 export interface Caller {
   user: RequestUser;
@@ -49,6 +56,15 @@ export interface IncidentCreate {
   longitude?: number;
   /** When it happened: an offline queue may deliver it late. Defaults to now. */
   occurred_at?: Date;
+}
+
+/** PATCH /incidents/{id} (FMS-89): at least one field (checked by the route). */
+export interface IncidentUpdate {
+  status?: IncidentStatus;
+  /** A user's public id, or null to unassign. */
+  assigned_to?: string | null;
+  /** What was found and done; null clears it. */
+  notes?: string | null;
 }
 
 export interface IncidentQuery extends Page {
@@ -89,7 +105,16 @@ export interface IncidentRefs {
     find(db: Queryable, user: RequestUser, publicId: string): Promise<{ id: string; vehicleId: string | null; driverId: string | null } | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
   };
-  users: { publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> };
+  users: {
+    /** Public id and name of users by internal id. */
+    accounts(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; fullName: string }>>;
+    /** An active user holding the permission, by public id, with their home depot and whether they see every depot. */
+    activeHolder(
+      db: Queryable,
+      publicId: string,
+      permission: string,
+    ): Promise<{ id: string; depotId: string | null; unscoped: boolean } | null>;
+  };
 }
 
 export interface IncidentServiceDeps {
@@ -212,6 +237,86 @@ export class IncidentService {
     });
   }
 
+  /**
+   * Handling an incident (FMS-89): its status (INCIDENT_TRANSITIONS), who deals with it, and notes, which resolving
+   * or closing requires. Row-locked, so two consoles' changes apply one after the other. Each change is one audited
+   * row and publishes IncidentUpdated; a request that changes nothing writes and publishes nothing.
+   */
+  async update(caller: Caller, incidentId: string, input: IncidentUpdate): Promise<IncidentView> {
+    const { incidents, refs } = this.deps;
+    return incidents.inTransaction(async (client) => {
+      const row = await incidents.lockVisible(client, incidentId, visibilityOf(caller.user));
+      if (!row) throw incidentNotFound();
+      if (row.status === 'closed') throw incidentClosed();
+
+      const status = input.status ?? row.status;
+      if (status !== row.status && !INCIDENT_TRANSITIONS[row.status].includes(status)) throw incidentTransitionNotAllowed(row.status, status);
+      const notes = input.notes === undefined ? row.notes : input.notes;
+      const done = RESOLVED_INCIDENT_STATUSES.includes(status);
+      if (done && !notes) throw incidentNotesRequired(status);
+
+      let assignedTo = row.assignedTo;
+      if (input.assigned_to === null) assignedTo = null;
+      else if (input.assigned_to !== undefined) {
+        const assignee = await refs.users.activeHolder(client, input.assigned_to, INCIDENT_MANAGE_PERMISSION);
+        // Someone who sees every depot, or whose home depot is the incident's.
+        if (!assignee || !(assignee.unscoped || (row.depotId !== null && assignee.depotId === row.depotId))) throw incidentAssigneeNotFound();
+        assignedTo = assignee.id;
+      }
+
+      // authorize() let a signed-in user through: a person, never a device token.
+      const actor = caller.user.id as string;
+      const changes: IncidentChanges = {};
+      if (status !== row.status) changes.status = status;
+      if (assignedTo !== row.assignedTo) changes.assigned_to = assignedTo;
+      if (notes !== row.notes) changes.notes = notes;
+      if (done && !row.resolvedAt) Object.assign(changes, { resolved_at: new Date(), resolved_by: actor });
+      if (!done && row.resolvedAt) Object.assign(changes, { resolved_at: null, resolved_by: null });
+      if (Object.keys(changes).length === 0) return (await this.views(client, [row]))[0];
+
+      const updated = await incidents.update(client, { userId: actor, correlationId: caller.correlationId }, row.id, changes);
+      const [view] = await this.views(client, [updated]);
+      // The driver who reported it is told too, as of its creation.
+      const reporterDriver = updated.driverId && (await refs.drivers.idOfUser(client, updated.reportedBy)) === updated.driverId ? view.driver_id : null;
+      await this.deps.events.publish(client, [
+        createEvent(
+          INCIDENT_EVENTS.updated,
+          {
+            incident_id: view.id,
+            depot_id: view.depot_id,
+            vehicle_id: view.vehicle_id,
+            trip_id: view.trip_id,
+            severity: view.severity,
+            incident_type: view.incident_type,
+            status: view.status,
+            previous_status: row.status,
+            assigned_to: view.assigned_to?.id ?? null,
+            resolved_at: view.resolved_at?.toISOString() ?? null,
+            updated_at: view.updated_at.toISOString(),
+            changes: (['status', 'assigned_to', 'notes'] as const).filter((field) => field in changes),
+            reported_by_driver_id: reporterDriver,
+          },
+          { actor: caller.user.publicId, correlationId: caller.correlationId },
+          { aggregate: aggregateKey('incident', view.id) },
+        ),
+      ]);
+      return view;
+    });
+  }
+
+  /**
+   * The active incidents (open, investigating) of one depot (internal id, already in the caller's scope) or of every
+   * depot (null), most severe then newest, with how many there are by status and severity: the command center's (FMS-89).
+   */
+  async active(depotId: string | null, limit: number): Promise<{ items: IncidentView[]; counts: { status: IncidentStatus; severity: AlertSeverity; n: number }[] }> {
+    const { incidents } = this.deps;
+    return incidents.inTransaction(async (client) => {
+      const rows = await incidents.active(client, depotId, limit);
+      const counts = await incidents.activeCounts(client, depotId);
+      return { items: await this.views(client, rows), counts };
+    });
+  }
+
   /** Who was involved: a driver is themselves (if they have a driver profile); staff may name a driver in their depots, else the trip's. */
   private async driverFor(db: Queryable, caller: Caller, scope: Scope, named: string | undefined, tripDriverId: string | null): Promise<string | null> {
     const { refs } = this.deps;
@@ -235,7 +340,7 @@ export class IncidentService {
       refs.drivers.publicIds(db, ids((r) => r.driverId)),
       refs.trips.publicIds(db, ids((r) => r.tripId)),
       refs.depots.publicIds(db, ids((r) => r.depotId)),
-      refs.users.publicIds(db, ids((r) => r.reportedBy)),
+      refs.users.accounts(db, [...new Set([...ids((r) => r.reportedBy), ...ids((r) => r.assignedTo), ...ids((r) => r.resolvedBy)])]),
     ]);
     const publicOf = (map: Map<string, string>, id: string | null) => (id ? (map.get(id) ?? null) : null);
     return rows.map((r) => ({
@@ -248,11 +353,16 @@ export class IncidentService {
       driver_id: publicOf(drivers, r.driverId),
       trip_id: publicOf(trips, r.tripId),
       depot_id: publicOf(depots, r.depotId),
-      reported_by: users.get(r.reportedBy) as string,
+      reported_by: users.get(r.reportedBy)?.publicId as string,
       latitude: r.latitude,
       longitude: r.longitude,
       occurred_at: r.occurredAt,
       created_at: r.createdAt,
+      assigned_to: r.assignedTo && users.has(r.assignedTo) ? { id: users.get(r.assignedTo)!.publicId, full_name: users.get(r.assignedTo)!.fullName } : null,
+      notes: r.notes,
+      resolved_at: r.resolvedAt,
+      resolved_by: r.resolvedBy ? (users.get(r.resolvedBy)?.publicId ?? null) : null,
+      updated_at: r.updatedAt,
     }));
   }
 }

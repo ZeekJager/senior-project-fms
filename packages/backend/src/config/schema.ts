@@ -3,6 +3,9 @@ import { z } from 'zod';
 /** Placeholder used in `.env.example`; never valid outside development. */
 export const PLACEHOLDER = 'change-me';
 
+/** The ML service refuses a shorter token (FMS-54), so the core does too. */
+export const MIN_ML_SERVICE_TOKEN_LENGTH = 32;
+
 const port = z.coerce
   .number({ error: 'must be a port number (1-65535)' })
   .int('must be a port number (1-65535)')
@@ -24,6 +27,11 @@ const appSchema = z
     ...dbConnection,
     DB_USER: required,
     DB_PASSWORD: required,
+    // Read replica (FMS-94): reporting reads go here, as DB_USER, when set; to the primary otherwise.
+    DB_READ_HOST: z.string().trim().min(1).optional(),
+    DB_READ_PORT: port.optional(),
+    // Further behind than this, the replica is not read: the primary is.
+    READ_REPLICA_MAX_LAG_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
     JWT_SECRET: z.string({ error: 'is required' }).min(32, 'must be at least 32 characters'),
     // Document files (FMS-17): local disk in development, S3-compatible elsewhere.
     STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
@@ -55,6 +63,15 @@ const appSchema = z
     TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
     // Alert engine (FMS-92): a critical alert unacknowledged this many minutes escalates to the next tier, and again after as many more.
     ALERT_ESCALATION_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+    // Fuel reconciliation (FMS-41): a month's fuel more than this many percent above or below what its trips needed is an anomaly.
+    FUEL_VARIANCE_THRESHOLD_PCT: z.coerce.number().int().min(1).max(100).default(20),
+    // Predictive maintenance service (FMS-54/55/127): unset, nothing is scored.
+    ML_SERVICE_URL: z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
+    ML_SERVICE_TOKEN: z.string().optional(),
+    // Road routing (FMS-84, docs/routing.md): OSRM's base URL. Unset or empty, routes keep the distance typed in.
+    ROUTING_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
+    // The feature spec the core's extractor implements, shared with the ML service (FMS-127). Relative to the working directory.
+    ML_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec.json'),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -64,6 +81,9 @@ const appSchema = z
     }
     if (env.REDIS_HOST && !env.REDIS_PASSWORD) {
       ctx.addIssue({ code: 'custom', path: ['REDIS_PASSWORD'], message: 'is required when REDIS_HOST is set' });
+    }
+    if (env.ML_SERVICE_URL && (env.ML_SERVICE_TOKEN ?? '').length < MIN_ML_SERVICE_TOKEN_LENGTH) {
+      ctx.addIssue({ code: 'custom', path: ['ML_SERVICE_TOKEN'], message: `must be at least ${MIN_ML_SERVICE_TOKEN_LENGTH} characters when ML_SERVICE_URL is set` });
     }
     if (env.NODE_ENV !== 'production') return;
     if (!env.REDIS_HOST) ctx.addIssue({ code: 'custom', path: ['REDIS_HOST'], message: 'is required in production' });
@@ -93,6 +113,8 @@ export interface AppConfig {
   port: number;
   logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   db: DbConfig;
+  /** The read replica (FMS-94): null when DB_READ_HOST is not set, and reporting reads use the primary. */
+  readReplica: { db: DbConfig; maxLagSeconds: number } | null;
   jwtSecret: string;
   storage: StorageConfig;
   /** Null when REDIS_HOST is not set (development and tests may run without Redis). */
@@ -102,6 +124,18 @@ export interface AppConfig {
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number };
   alerts: { escalationMinutes: number };
+  /** Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly. */
+  fuel: { varianceThresholdPct: number };
+  ml: MlConfig;
+  /** Road routing (FMS-84): OSRM's base URL, or null when ROUTING_URL is not set and routes keep the distance typed in. */
+  routing: { url: string } | null;
+}
+
+/** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
+export interface MlConfig {
+  /** Null when ML_SERVICE_URL is not set: nothing is scored. */
+  service: { url: string; token: string } | null;
+  featureSpecPath: string;
 }
 
 /** Provider secrets (FMS-85), by provider code. Never stored in the database, never returned by the API. */
@@ -202,6 +236,12 @@ export function loadAppConfig(env: Env): AppConfig {
     port: e.PORT,
     logLevel: e.LOG_LEVEL,
     db: { host: e.DB_HOST, port: e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
+    readReplica: e.DB_READ_HOST
+      ? {
+          db: { host: e.DB_READ_HOST, port: e.DB_READ_PORT ?? e.DB_PORT, database: e.DB_NAME, user: e.DB_USER, password: e.DB_PASSWORD },
+          maxLagSeconds: e.READ_REPLICA_MAX_LAG_SECONDS,
+        }
+      : null,
     jwtSecret: e.JWT_SECRET,
     redis: e.REDIS_HOST ? { host: e.REDIS_HOST, port: e.REDIS_PORT, password: e.REDIS_PASSWORD!, keyPrefix: e.REDIS_KEY_PREFIX } : null,
     storage:
@@ -220,6 +260,12 @@ export function loadAppConfig(env: Env): AppConfig {
     integrations: { secrets: integrations.secrets },
     tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
+    fuel: { varianceThresholdPct: e.FUEL_VARIANCE_THRESHOLD_PCT },
+    ml: {
+      service: e.ML_SERVICE_URL ? { url: e.ML_SERVICE_URL.replace(/\/+$/, ''), token: e.ML_SERVICE_TOKEN! } : null,
+      featureSpecPath: e.ML_FEATURE_SPEC_PATH,
+    },
+    routing: e.ROUTING_URL ? { url: e.ROUTING_URL.replace(/\/+$/, '') } : null,
   };
 }
 

@@ -1,6 +1,6 @@
-import type { Pool } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import { decodeCursor, encodeCursor, withoutInternalIds, type AuditActor, type AuditLogView } from '../domain/audit-log';
+import type { DataFreshness, ReadSession } from '../../../shared/infrastructure/read-router';
+import { decodeCursor, encodeCursor, parseActions, withoutInternalIds, type AuditActor, type AuditLogView } from '../domain/audit-log';
 import type { AuditLogRepository, AuditLogRow } from '../infrastructure/audit-log.repository';
 
 export interface AuditLogQuery {
@@ -11,6 +11,7 @@ export interface AuditLogQuery {
   entity_type?: string;
   entity_id?: string;
   correlation_id?: string;
+  /** One or more actions, comma-separated, each exact or a prefix ending in `.*` (validated by the route). */
   action?: string;
   result?: string;
   /** ISO instants (the route turns a date into Addis Ababa midnight). */
@@ -19,7 +20,8 @@ export interface AuditLogQuery {
 }
 
 export interface AuditLogServiceDeps {
-  db: Pool;
+  /** The trail is read from the read replica when it is up (FMS-94): one session per request. */
+  reads: { session(): Promise<ReadSession> };
   logs: AuditLogRepository;
   /** User accounts (auth module): the API speaks public ids, the trail stores internal ones. */
   users: {
@@ -39,14 +41,15 @@ const ACCOUNT_ENTITIES = new Set(['auth.users', 'auth.user_roles']);
 export class AuditLogService {
   constructor(private readonly deps: AuditLogServiceDeps) {}
 
-  async list(query: AuditLogQuery): Promise<{ items: AuditLogView[]; nextCursor: string | null }> {
-    const { db, logs, users } = this.deps;
+  async list(query: AuditLogQuery): Promise<{ items: AuditLogView[]; nextCursor: string | null; freshness: DataFreshness }> {
+    const { logs, users } = this.deps;
+    const db = await this.deps.reads.session();
     const after = query.cursor ? decodeCursor(query.cursor) : undefined;
 
     let userId: string | undefined;
     if (query.user_id) {
       const user = await users.findByPublicId(db, query.user_id);
-      if (!user) return { items: [], nextCursor: null };
+      if (!user) return { items: [], nextCursor: null, freshness: db.freshness() };
       userId = user.id;
     }
     let entity: { publicId: string; userId?: string } | undefined;
@@ -61,7 +64,7 @@ export class AuditLogService {
       entityType: query.entity_type,
       entity,
       correlationId: query.correlation_id,
-      action: query.action,
+      actions: query.action ? (parseActions(query.action) ?? undefined) : undefined,
       result: query.result,
       from: query.from,
       to: query.to,
@@ -69,18 +72,18 @@ export class AuditLogService {
       limit: query.page_size + 1,
     });
     const page = rows.slice(0, query.page_size);
-    const items = await this.views(page);
+    const items = await this.views(db, page);
     const last = page[page.length - 1];
-    return { items, nextCursor: rows.length > query.page_size && last ? encodeCursor({ at: last.at, id: last.id }) : null };
+    return { items, nextCursor: rows.length > query.page_size && last ? encodeCursor({ at: last.at, id: last.id }) : null, freshness: db.freshness() };
   }
 
-  private async views(rows: readonly AuditLogRow[]): Promise<AuditLogView[]> {
+  private async views(db: Queryable, rows: readonly AuditLogRow[]): Promise<AuditLogView[]> {
     const ids = new Set<string>();
     for (const r of rows) {
       if (r.userId) ids.add(r.userId);
       if (r.entityId && r.entityType && ACCOUNT_ENTITIES.has(r.entityType)) ids.add(r.entityId);
     }
-    const accounts = new Map((await this.deps.users.findByIds(this.deps.db, [...ids])).map((a) => [a.id, a]));
+    const accounts = new Map((await this.deps.users.findByIds(db, [...ids])).map((a) => [a.id, a]));
 
     return rows.map((r) => {
       const account = r.userId ? accounts.get(r.userId) : undefined;

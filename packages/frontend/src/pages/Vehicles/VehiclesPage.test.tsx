@@ -34,6 +34,7 @@ function vehicle(overrides: Partial<Vehicle> = {}): Vehicle {
     status: 'active',
     maintenance_flag: false,
     health_score: null,
+    health_score_updated_at: null,
     depot_id: DEPOT_A,
     odometer_km: 1000,
     current_trip: null,
@@ -523,6 +524,14 @@ describe('Vehicle Management (S-04)', () => {
       expect(await screen.findByRole('dialog', { name: `Edit ${v.registration_number}` })).toBeInTheDocument()
     })
 
+    it("each row links to the vehicle's history page (FMS-136)", async () => {
+      const v = vehicle()
+      serveFleet([v])
+      await openVehicles()
+      await within(table()).findByText(v.registration_number)
+      expect(within(rowFor(v.registration_number)).getByRole('link', { name: `History of ${v.registration_number}` })).toHaveAttribute('href', `/vehicles/${v.id}`)
+    })
+
     it('J, K and Enter open a vehicle from the keyboard', async () => {
       const v = vehicle()
       serveFleet([v])
@@ -865,5 +874,49 @@ describe('Vehicle status panel (FMS-76)', () => {
     expect(await within(panel).findByText('Available now')).toBeInTheDocument()
     expect(within(panel).queryByRole('button', { name: 'Change status' })).not.toBeInTheDocument()
     expect(within(panel).queryByRole('radio')).not.toBeInTheDocument()
+  })
+})
+
+describe('Health column (FMS-56)', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
+
+  it('shows every vehicle reader the score in its band colour, and a stale one as STALE', async () => {
+    const [risky, watch, stale] = [vehicle({ health_score: 60, health_score_updated_at: hoursAgo(3) }), vehicle({ health_score: 80, health_score_updated_at: hoursAgo(3) }), vehicle({ health_score: 91, health_score_updated_at: hoursAgo(26) })]
+    serveFleet([risky, watch, stale])
+    signedInAs(currentUser(['dispatcher'], ['vehicle:read', 'depot:read', 'trip:assign']))
+    renderApp('/vehicles')
+    await screen.findByText(risky.registration_number)
+
+    // A dispatcher has no prediction:read: the badge is not a button, and there is no breakdown to open.
+    const red = within(rowFor(risky.registration_number)).getByTitle(/Health score 60, at risk/)
+    expect(red).toHaveClass('bg-danger-soft')
+    expect(within(rowFor(risky.registration_number)).queryByRole('button', { name: /Health score/ })).not.toBeInTheDocument()
+    expect(within(rowFor(watch.registration_number)).getByTitle(/Health score 80, watch/)).toHaveClass('bg-warning-soft')
+    const grey = within(rowFor(stale.registration_number)).getByTitle(/Health score 91, stale/)
+    expect(grey).toHaveClass('bg-neutral-soft')
+    expect(grey).toHaveTextContent('Stale')
+  })
+
+  it('opens the breakdown from the badge for those with prediction:read', async () => {
+    const risky = vehicle({ health_score: 60, health_score_updated_at: hoursAgo(3) })
+    serveFleet([risky])
+    server.use(
+      http.get('/api/v1/vehicles/:id/maintenance-risk', () =>
+        envelope({
+          vehicle_id: risky.id, prediction_id: 'p-1', health_score: 60, risk_level: 'medium', failure_probability: 0.4, prediction_horizon_days: 30,
+          factors: [{ feature: 'days_since_last_service', value: 100, unit: 'd' }], model_name: 'predictive-maintenance', model_version: 'pm-2026.10',
+          as_of: hoursAgo(5), scored_at: hoursAgo(3), stale: false,
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    signedInAs(currentUser(['technician'], ['vehicle:read', 'depot:read', 'prediction:read']))
+    renderApp('/vehicles')
+
+    await user.click(await within(await waitFor(() => rowFor(risky.registration_number))).findByRole('button', { name: /Health score 60, at risk/ }))
+    const panel = await screen.findByRole('dialog', { name: `${risky.registration_number} health` })
+    expect(await within(panel).findByText('Time since last service')).toBeInTheDocument()
+    // No maintenance:write: nothing to schedule from here.
+    expect(within(panel).queryByRole('button', { name: 'Schedule inspection' })).not.toBeInTheDocument()
   })
 })

@@ -16,6 +16,8 @@ import {
   type RouteView,
 } from '../domain/route';
 import type { AvailabilityAnswer } from '../domain/assignment';
+import { waypointKey, waypointsOf, type LineString, type RoadPlan } from '../domain/road';
+import { RoutingError, type RoadPlanner } from '../infrastructure/osrm.planner';
 import type { RouteRepository, RouteRow, RouteWrite } from '../infrastructure/route.repository';
 
 export interface Caller {
@@ -96,10 +98,18 @@ export interface MaintenanceRefs {
 }
 
 export interface RouteServiceDeps {
-  routes: Pick<RouteRepository, 'inTransaction' | 'list' | 'findVisible' | 'findById' | 'insert' | 'update'>;
+  routes: Pick<RouteRepository, 'inTransaction' | 'list' | 'findVisible' | 'findById' | 'insert' | 'update' | 'geometryOf' | 'unmeasured'>;
   fleet: () => FleetRefs;
   events: EventBus;
+  /** The routing engine (FMS-84), or null when ROUTING_URL is not set: routes keep the distance typed in. */
+  roads: () => RoadPlanner | null;
+  /** Why a road could not be measured (the engine down or unreachable). */
+  warn: (fields: Record<string, unknown>, message: string) => void;
+  now?: () => Date;
 }
+
+/** Routes the route-roads job measures per run: OSRM answers each in milliseconds. */
+const MEASURE_BATCH = 50;
 
 /** The unique index that keeps active route names distinct within a depot (migration 027). */
 const UNIQUE_NAME = 'ux_trip_routes_depot_name';
@@ -149,6 +159,8 @@ export class RouteService {
 
   async create(caller: Caller, input: RouteCreate): Promise<RouteView> {
     const { routes } = this.deps;
+    // Measured before the transaction: the waypoints are all in the request.
+    const plan = await this.measure(waypointsOf(input.origin ?? null, input.stops ?? [], input.destination ?? null), caller.correlationId);
     return routes.inTransaction(async (client) => {
       const depotId = await this.depotFor(client, caller, input.depot_id);
       const row = await uniqueName(() =>
@@ -162,8 +174,7 @@ export class RouteService {
             destination_name: input.destination_name ?? null,
             ...coordinates('destination', input.destination ?? null),
             stops: stopsJson(input.stops ?? []),
-            distance_km: input.distance_km ?? null,
-            estimated_duration_seconds: input.estimated_duration_seconds ?? null,
+            ...roadWrite(plan, input, null, this.now()),
           },
           client,
         ),
@@ -194,9 +205,26 @@ export class RouteService {
       if (patch.stops !== undefined) data.stops = stopsJson(patch.stops);
       if (patch.distance_km !== undefined) data.distance_km = patch.distance_km;
       if (patch.estimated_duration_seconds !== undefined) data.estimated_duration_seconds = patch.estimated_duration_seconds;
+      if (patch.distance_km !== undefined) data.distance_source = patch.distance_km === null ? null : 'manual';
       if (patch.is_active !== undefined) data.is_active = patch.is_active;
 
-      const changed = changes(row, data);
+      // The road again when the waypoints moved, when it was never measured (the engine was down), or when the
+      // typed distance is cleared (the road's takes its place).
+      const before = waypointsOf(point(row.originLatitude, row.originLongitude), row.stops, point(row.destinationLatitude, row.destinationLongitude));
+      const after = waypointsOf(
+        patch.origin !== undefined ? patch.origin : point(row.originLatitude, row.originLongitude),
+        patch.stops ?? row.stops,
+        patch.destination !== undefined ? patch.destination : point(row.destinationLatitude, row.destinationLongitude),
+      );
+      const moved = (before && waypointKey(before)) !== (after && waypointKey(after));
+      let road: RouteWrite = {};
+      if (moved || (after && (row.measuredAt === null || patch.distance_km === null))) {
+        const plan = await this.measure(after, caller.correlationId);
+        // Not measured and not moved: nothing changes. Moved without a road: the old road goes.
+        if (plan || moved) road = roadWrite(plan, patch, row.distanceSource, this.now());
+      }
+
+      const changed = { ...changes(row, data), ...roadChanges(row, road) };
       if (Object.keys(changed).length > 0) await uniqueName(() => routes.update(mutationContext(caller), row.id, changed, client));
       const view = (await this.views(client, [await routes.findById(client, row.id)]))[0];
       const changedFields = [...new Set(Object.keys(changed).map(apiField))].sort();
@@ -207,6 +235,66 @@ export class RouteService {
       }
       return view;
     });
+  }
+
+  /** GET /routes/{id}/geometry: the road of a route in the caller's scope, null until it is measured; 404 otherwise. */
+  async geometry(caller: Caller, routeId: string): Promise<LineString | null> {
+    const { routes } = this.deps;
+    return routes.inTransaction(async (client) => {
+      const line = await routes.geometryOf(client, routeId, depotScope(caller.user));
+      if (line === undefined) throw routeNotFound();
+      return line;
+    });
+  }
+
+  /**
+   * The route-roads job (FMS-84): measures active routes that have both ends and no road yet, those saved while
+   * the engine was down or before it was set up. A typed distance stays; the road is added. Stops at the first
+   * failure: the engine is down, and the next run tries again.
+   */
+  async measureMissing(correlationId: string): Promise<{ measured: number; no_road: number; failed: number }> {
+    const counts = { measured: 0, no_road: 0, failed: 0 };
+    const planner = this.deps.roads();
+    if (!planner) return counts;
+    const { routes } = this.deps;
+    await routes.inTransaction(async (client) => {
+      for (const r of await routes.unmeasured(client, MEASURE_BATCH)) {
+        const points = waypointsOf({ latitude: r.originLatitude, longitude: r.originLongitude }, r.stops, { latitude: r.destinationLatitude, longitude: r.destinationLongitude })!;
+        let plan: RoadPlan | null;
+        try {
+          plan = await planner.plan(points, correlationId);
+        } catch (err) {
+          if (!(err instanceof RoutingError)) throw err;
+          this.deps.warn({ err: err.message }, 'route roads: the routing engine failed; the next run tries again');
+          counts.failed += 1;
+          return;
+        }
+        if (!plan) {
+          counts.no_road += 1;
+          continue;
+        }
+        await routes.update({ userId: null, correlationId }, r.id, roadWrite(plan, {}, r.distanceSource, this.now()), client);
+        counts.measured += 1;
+      }
+    });
+    return counts;
+  }
+
+  /** The road through the waypoints, or null when it cannot be measured now: no waypoints, no engine, no road, engine down. */
+  private async measure(points: Coordinates[] | null, correlationId: string): Promise<RoadPlan | null> {
+    const planner = this.deps.roads();
+    if (!points || !planner) return null;
+    try {
+      return await planner.plan(points, correlationId);
+    } catch (err) {
+      if (!(err instanceof RoutingError)) throw err;
+      this.deps.warn({ err: err.message }, 'route saved without its road: the routing engine failed');
+      return null;
+    }
+  }
+
+  private now(): Date {
+    return this.deps.now?.() ?? new Date();
   }
 
   /** A depot in the caller's scope, or 400: a route without a valid depot is not saved. */
@@ -229,6 +317,9 @@ export class RouteService {
       stops: r.stops,
       distance_km: r.distanceKm,
       estimated_duration_seconds: r.estimatedDurationSeconds,
+      distance_source: r.distanceSource,
+      measured_at: r.measuredAt,
+      is_adhoc: r.isAdhoc,
       is_active: r.isActive,
       version: r.version,
       created_at: r.createdAt,
@@ -245,6 +336,50 @@ function coordinates(prefix: 'origin' | 'destination', value: Coordinates | null
   return { [`${prefix}_latitude`]: value?.latitude ?? null, [`${prefix}_longitude`]: value?.longitude ?? null };
 }
 
+/**
+ * The road columns for a save. A distance typed in this request wins and is 'manual'; so does one typed before,
+ * unless this request clears it. Otherwise the road's distance and duration fill them ('road'). Without a road,
+ * the geometry is cleared and the distance left as it is.
+ */
+function roadWrite(
+  plan: RoadPlan | null,
+  sent: { distance_km?: number | null; estimated_duration_seconds?: number | null },
+  current: RouteRow['distanceSource'],
+  now: Date,
+): RouteWrite {
+  const typed = sent.distance_km != null || (sent.distance_km === undefined && current === 'manual');
+  const out: RouteWrite = { geometry: plan ? JSON.stringify(plan.geometry) : null, measured_at: plan ? now : null };
+  if (sent.distance_km != null) {
+    out.distance_km = sent.distance_km;
+    out.distance_source = 'manual';
+  } else if (plan && !typed) {
+    out.distance_km = plan.distanceKm;
+    out.distance_source = 'road';
+  } else if (sent.distance_km === null) {
+    out.distance_km = null;
+    out.distance_source = null;
+  }
+  if (sent.estimated_duration_seconds != null) out.estimated_duration_seconds = sent.estimated_duration_seconds;
+  else if (plan && !typed) out.estimated_duration_seconds = plan.durationSeconds;
+  else if (sent.estimated_duration_seconds === null) out.estimated_duration_seconds = null;
+  return out;
+}
+
+/** The road columns that differ from the row (a new road always counts: rows do not load the line). */
+function roadChanges(row: RouteRow, road: RouteWrite): RouteWrite {
+  const out: RouteWrite = {};
+  if (road.geometry !== undefined && (road.geometry !== null || row.measuredAt !== null)) {
+    out.geometry = road.geometry;
+    out.measured_at = road.measured_at;
+  }
+  if (road.distance_km !== undefined && road.distance_km !== row.distanceKm) out.distance_km = road.distance_km;
+  if (road.distance_source !== undefined && road.distance_source !== row.distanceSource) out.distance_source = road.distance_source;
+  if (road.estimated_duration_seconds !== undefined && road.estimated_duration_seconds !== row.estimatedDurationSeconds) {
+    out.estimated_duration_seconds = road.estimated_duration_seconds;
+  }
+  return out;
+}
+
 /** Stops as JSON with a fixed key order: jsonb reorders keys, so text compares need one. */
 function stopsJson(stops: RouteStop[]): string {
   return JSON.stringify(stops.map((s) => ({ name: s.name, latitude: s.latitude, longitude: s.longitude })));
@@ -252,7 +387,7 @@ function stopsJson(stops: RouteStop[]): string {
 
 /** Only the columns whose value differs from the row, so an unchanged PATCH writes and publishes nothing. */
 function changes(row: RouteRow, data: RouteWrite): RouteWrite {
-  const current: Record<keyof RouteWrite, unknown> = {
+  const current: Partial<Record<keyof RouteWrite, unknown>> = {
     name: row.name,
     depot_id: row.depotId,
     origin_name: row.originName,
@@ -264,6 +399,8 @@ function changes(row: RouteRow, data: RouteWrite): RouteWrite {
     stops: stopsJson(row.stops),
     distance_km: row.distanceKm,
     estimated_duration_seconds: row.estimatedDurationSeconds,
+    distance_source: row.distanceSource,
+    is_adhoc: row.isAdhoc,
     is_active: row.isActive,
   };
   const out: Record<string, unknown> = {};
@@ -275,7 +412,7 @@ function changes(row: RouteRow, data: RouteWrite): RouteWrite {
 
 /** Column name to the API field it belongs to (origin_latitude is part of origin). */
 function apiField(column: string): string {
-  return column.replace(/_(latitude|longitude)$/, '');
+  return column === 'measured_at' ? 'geometry' : column.replace(/_(latitude|longitude)$/, '');
 }
 
 /** The unique index on active names becomes 409 with field `name`, not a column list. */

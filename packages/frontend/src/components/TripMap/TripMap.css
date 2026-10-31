@@ -1,0 +1,38 @@
+/*
+ * A trip's map (FMS-136): the driven track in the brand colour, the planned route a quiet dashed line,
+ * start and end as rings. Leaflet draws SVG paths; the classes set their colours from the tokens.
+ */
+
+.trip-map .trip-map-track {
+  stroke: rgb(var(--c-brand));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.trip-map .trip-map-planned {
+  stroke: rgb(var(--c-ink-subtle));
+  stroke-dasharray: 6 8;
+  fill: none;
+}
+.trip-map .trip-map-start {
+  stroke: rgb(var(--c-brand));
+  fill: rgb(var(--c-surface));
+  fill-opacity: 1;
+}
+.trip-map .trip-map-end {
+  stroke: rgb(var(--c-surface));
+  fill: rgb(var(--c-ink));
+  fill-opacity: 1;
+}
+
+/* The legend's line samples. */
+.trip-map-key {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 3px solid rgb(var(--c-brand));
+  border-radius: 2px;
+}
+.trip-map-key--planned {
+  border-top: 2px dashed rgb(var(--c-ink-subtle));
+}

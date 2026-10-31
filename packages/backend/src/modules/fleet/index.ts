@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import type { PoolClient } from 'pg';
 import { config } from '../../config';
@@ -27,6 +28,7 @@ import { depotRouter } from './api/depot.routes';
 import { dispatchRouter } from './api/dispatch.routes';
 import { documentRouter } from './api/document.routes';
 import { driverRouter } from './api/driver.routes';
+import { meterRouter } from './api/meter.routes';
 import { dvirRouter } from './api/dvir.routes';
 import { vehicleRouter } from './api/vehicle.routes';
 import { AttendanceService } from './application/attendance.service';
@@ -38,6 +40,7 @@ import { DocumentUrlSigner } from './application/document-url';
 import { DriverService } from './application/driver.service';
 import { DvirService } from './application/dvir.service';
 import { ExpiryService } from './application/expiry.service';
+import { MeterService, type MeterSources } from './application/meter.service';
 import { DOCUMENT_EVENTS } from './domain/document';
 import type { OpenWorkSummary } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
@@ -49,8 +52,12 @@ import { DepotRepository } from './infrastructure/depot.repository';
 import { driverAccounts } from './infrastructure/driver-account.projection';
 import { DocumentRepository } from './infrastructure/document.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
+import { commandCenterDrivers, commandCenterVehicles } from './infrastructure/command-center.queries';
 import { DvirRepository } from './infrastructure/dvir.repository';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
+import { fuelDepotInScope, fuelVehicles } from './infrastructure/fuel-reconciliation.queries';
+import { MeterRepository } from './infrastructure/meter.repository';
+import { engineHoursOver, faultyDvirCounts, setHealthScore, vehiclesToScore } from './infrastructure/scoring.queries';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
 
 const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles, vehicleOnActiveTripSql);
@@ -73,7 +80,31 @@ export function provideMaintenanceLookup(lookup: MaintenanceLookup): void {
   maintenanceLookup = lookup;
 }
 
-const vehicleService = new VehicleService({
+let meterSources: MeterSources | null = null;
+
+/**
+ * Connects what meter readings are made from: fuel logs, completed repairs and the GPS pings' ignition
+ * time (FMS-126). Called once by src/modules/index.ts: fuel, maintenance and integration import fleet.
+ */
+export function provideMeterSources(sources: MeterSources): void {
+  meterSources = sources;
+}
+
+// Odometer and engine-hour readings over time (FMS-126, docs/meter-readings.md).
+const meterService: MeterService = new MeterService({
+  meters: new MeterRepository(pool),
+  vehicles: vehicleRepository,
+  sources: () => meterSources,
+  invalidate: (vehiclePublicId): Promise<void> => vehicleService.invalidate(vehiclePublicId),
+});
+
+// Each fill-up and each completed repair with an odometer is a reading, on the consumer's transaction
+// (at least once: a redelivered event finds its reading and adds nothing). By name: fleet cannot import
+// the fuel and maintenance modules, which import fleet.
+eventBus.subscribe('FuelLogged', 'fleet.meter-readings', (event, tx) => meterService.onFuelLogged(tx, event));
+eventBus.subscribe('MaintenanceRecordCompleted', 'fleet.meter-readings', (event, tx) => meterService.onRepairCompleted(tx, event));
+
+const vehicleService: VehicleService = new VehicleService({
   vehicles: vehicleRepository,
   trips: { vehicleHasActiveTrip, activeTripsForVehicles },
   events: eventBus,
@@ -82,6 +113,7 @@ const vehicleService = new VehicleService({
   assignments: availabilityStore,
   users: userDirectory,
   maintenance: () => maintenanceLookup,
+  meters: meterService,
 });
 
 // Fleet's read model of the trips holding a vehicle or driver (FMS-76): a
@@ -220,6 +252,7 @@ router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
 router.use(documentRouter(documentService));
 router.use(dvirRouter(dvirService));
+router.use(meterRouter(meterService));
 
 /**
  * For the maintenance module (FMS-22): find a vehicle in the caller's scope
@@ -294,7 +327,11 @@ export const fuelRefs = {
     refInScope: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findRef(db, { publicId }, scope),
     idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
     publicIds: tripRefs.vehicles.publicIds,
+    /** For the reconciliation (FMS-41): a scope's vehicles with their fuel type, rated efficiency and depot. */
+    forReconciliation: fuelVehicles,
   },
+  /** The reconciliation's depot filter (FMS-41): a live depot's internal id if it is in the scope, without a lock. */
+  depots: { inScope: fuelDepotInScope },
   drivers: {
     idOfUser: tripRefs.drivers.idOfUser,
     publicIds: tripRefs.drivers.publicIds,
@@ -327,6 +364,11 @@ export const trackingRefs = {
     publicIds: tripRefs.drivers.publicIds,
   },
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
+  /** A device's or provider's odometer (FMS-126), on the ingestion's transaction: sampled, at most hourly per vehicle. */
+  meters: {
+    telematicsOdometer: (client: PoolClient, ctx: MutationContext, vehicleId: string, odometerKm: number, at: Date, deviceRef: string | null) =>
+      meterService.telematicsOdometer(client, ctx, vehicleId, odometerKm, at, deviceRef),
+  },
 };
 export type { LiveMapVehicle, TrackingVehicle } from './infrastructure/vehicle.repository';
 
@@ -366,6 +408,27 @@ export const incidentRefs = {
   depots: depotRefs,
 };
 
+/** For the command center's overview (FMS-89): a depot's (or every depot's) vehicles and drivers as it counts them, and depots. */
+export const commandCenterRefs = {
+  vehicles: commandCenterVehicles,
+  drivers: commandCenterDrivers,
+  depots: depotRefs,
+};
+export type { CommandCenterDriver, CommandCenterVehicle } from './infrastructure/command-center.queries';
+
+/**
+ * For the nightly scoring (FMS-55, maintenance module): the vehicles in service, what their features read
+ * of fleet's tables over a window, and their health score snapshot, set on the scoring's transaction.
+ */
+export const scoringRefs = {
+  vehicles: vehiclesToScore,
+  faultyDvirs: faultyDvirCounts,
+  engineHours: engineHoursOver,
+  setHealthScore,
+};
+export type { ScoringVehicle } from './infrastructure/scoring.queries';
+export type { FuelVehicle } from './infrastructure/fuel-reconciliation.queries';
+
 export const fleetModule: AppModule = {
   name: 'fleet',
   router,
@@ -394,10 +457,24 @@ export const fleetModule: AppModule = {
       at: '03:20',
       run: () => rebuildTripAssignments(),
     },
+    {
+      // Engine hours for each day before today, from the ignition-on time in the day's device pings (FMS-126).
+      name: 'engine-hours',
+      at: '01:00',
+      run: (context) => meterService.recordEngineHours(context),
+    },
+    {
+      // Re-adds the last 30 days' fuel-log and repair readings whose event was missed (FMS-126).
+      name: 'meter-reading-sync',
+      at: '03:10',
+      run: (context) => meterService.syncRecent(context),
+    },
   ],
   readModels: [
     { name: 'fleet.driver_accounts', rebuild: async () => ({ synced: await driverService.syncAccounts() }) },
     { name: 'fleet.trip_assignments', rebuild: () => rebuildTripAssignments() },
+    // The readings of fuel logs and repairs (FMS-126); device and engine-hour readings come from pings, not from a rebuild.
+    { name: 'fleet.meter_readings', rebuild: () => meterService.sync({ userId: null, correlationId: randomUUID() }, null) },
   ],
 };
 
@@ -436,4 +513,4 @@ export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
 export { DOCUMENT_EVENTS } from './domain/document';
 export { EXPIRY_EVENTS } from './domain/expiry';
-export { VEHICLE_EVENTS } from './domain/vehicle';
+export { HEALTH_BANDS, HEALTH_FILTERS, VEHICLE_EVENTS, type HealthFilter } from './domain/vehicle';

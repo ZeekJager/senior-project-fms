@@ -57,7 +57,7 @@ async function auditRows(res: Response) {
 const ids = (res: Response) => (res.body.data as { id: string }[]).map((v) => v.id);
 
 describe('POST /vehicles', () => {
-  test('registers a vehicle: 201, contract fields, public ids only, one audit row', async () => {
+  test('registers a vehicle: 201, contract fields, public ids only, one audit row and its first odometer reading', async () => {
     const depot = await createDepot();
     const cookie = await signIn(['depot_admin'], depot);
 
@@ -82,11 +82,15 @@ describe('POST /vehicles', () => {
     expect(res.body.data.id).toMatch(UUID);
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
-        'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'id', 'maintenance_flag',
+        'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'health_score_updated_at', 'id', 'maintenance_flag',
         'make', 'model', 'odometer_km', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );
-    expect(await auditRows(res)).toEqual([{ action: 'INSERT', entity_type: 'fleet.vehicles' }]);
+    // The odometer it is registered with is its first meter reading (FMS-126).
+    expect(await auditRows(res)).toEqual([
+      { action: 'INSERT', entity_type: 'fleet.vehicles' },
+      { action: 'INSERT', entity_type: 'fleet.meter_readings' },
+    ]);
   });
 
   test('a duplicate registration returns 409 CONFLICT_DUPLICATE_PLATE, whatever its case and spacing', async () => {
@@ -411,13 +415,16 @@ describe('GET /vehicles/{id}', () => {
 });
 
 describe('PATCH /vehicles/{id}', () => {
-  test('updates writable fields with one audit row', async () => {
+  test('updates writable fields with one audit row, and a new odometer is a manual reading', async () => {
     const depot = await createDepot();
     const vehicle = await createVehicle({ depot });
     const res = await api.patch(`/vehicles/${vehicle.public_id}`, { model: 'FVR', odometer_km: 5000 }, await signIn(['depot_admin'], depot));
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({ id: vehicle.public_id, model: 'FVR', odometer_km: 5000 });
-    expect(await auditRows(res)).toEqual([{ action: 'UPDATE', entity_type: 'fleet.vehicles' }]);
+    expect(await auditRows(res)).toEqual([
+      { action: 'UPDATE', entity_type: 'fleet.vehicles' },
+      { action: 'INSERT', entity_type: 'fleet.meter_readings' },
+    ]);
   });
 
   test('a lower odometer reading returns 409 CONFLICT_ODOMETER_REGRESSION', async () => {

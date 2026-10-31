@@ -2335,3 +2335,379 @@ CREATE INDEX IF NOT EXISTS idx_failure_events_component_time
 CREATE INDEX IF NOT EXISTS idx_failure_events_record
     ON maintenance.failure_events(maintenance_record_id)
     WHERE maintenance_record_id IS NOT NULL;
+
+-- ===== 037_part_service_items.sql =====
+DO $$ BEGIN
+    CREATE TYPE maintenance.service_item AS ENUM
+        ('engine_oil', 'air_filter', 'fuel_filter', 'coolant', 'brake_pads', 'brake_fluid',
+         'clutch_fluid', 'tyres', 'battery', 'gearbox_oil', 'belts');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE maintenance.inventory_parts ADD COLUMN IF NOT EXISTS service_item maintenance.service_item;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_parts_service_item
+    ON maintenance.inventory_parts(service_item)
+    WHERE service_item IS NOT NULL;
+
+-- ===== 038_meter_readings.sql =====
+DO $$ BEGIN
+    CREATE TYPE fleet.meter_type AS ENUM ('odometer', 'engine_hours');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TYPE fleet.meter_source AS ENUM ('fuel_log', 'maintenance', 'telematics', 'gps_derived', 'manual');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS fleet.meter_readings (
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id    UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    vehicle_id   BIGINT NOT NULL REFERENCES fleet.vehicles(id)
+                 ON DELETE RESTRICT ON UPDATE CASCADE,
+    meter        fleet.meter_type NOT NULL,
+    -- km for the odometer, hours for engine hours.
+    value        NUMERIC(12,1) NOT NULL CHECK (value >= 0),
+    source       fleet.meter_source NOT NULL,
+    source_ref   TEXT,
+    -- When the reading was true (the fill-up, the repair's completion, the ping, the end of the day).
+    recorded_at  TIMESTAMPTZ NOT NULL,
+    -- Lower than a trusted reading recorded before it: kept, not trusted.
+    suspect      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- A vehicle's history of one meter, newest first (GET /vehicles/{id}/meter-readings, the floor check).
+CREATE INDEX IF NOT EXISTS idx_meter_readings_vehicle_meter_time
+    ON fleet.meter_readings(vehicle_id, meter, recorded_at DESC);
+
+-- One reading per fuel log, repair and engine-hours day.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_meter_readings_source_record
+    ON fleet.meter_readings(vehicle_id, meter, source, source_ref)
+    WHERE source IN ('fuel_log', 'maintenance', 'gps_derived');
+
+INSERT INTO fleet.meter_readings (vehicle_id, meter, value, source, recorded_at)
+SELECT v.id, 'odometer', v.odometer_km, 'manual', v.updated_at
+  FROM fleet.vehicles v
+ WHERE NOT EXISTS (SELECT 1 FROM fleet.meter_readings m WHERE m.vehicle_id = v.id AND m.meter = 'odometer');
+
+-- ===== 039_ml_models.sql =====
+DO $$ BEGIN
+    CREATE TYPE maintenance.ml_model_status AS ENUM ('registered', 'active', 'retired');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS maintenance.ml_models (
+    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id             UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    name                  VARCHAR(100) NOT NULL,
+    version               VARCHAR(100) NOT NULL,
+    algorithm             TEXT NOT NULL,
+    -- The model's inputs, in the order it takes them.
+    features              JSONB NOT NULL,
+    feature_spec_version  INTEGER NOT NULL CHECK (feature_spec_version > 0),
+    -- SHA-256 (hex) of the canonical feature definitions (feature_spec.json).
+    feature_spec_hash     CHAR(64) NOT NULL CHECK (feature_spec_hash ~ '^[0-9a-f]{64}$'),
+    -- Precision, recall, F1 at the alert line, ROC-AUC and the rest, measured on held-out vehicles.
+    metrics               JSONB NOT NULL,
+    -- Which data: file and its hash, rows, vehicles, dates, split.
+    training_data         JSONB NOT NULL,
+    trained_at            TIMESTAMPTZ NOT NULL,
+    artefact_sha256       CHAR(64) NOT NULL CHECK (artefact_sha256 ~ '^[0-9a-f]{64}$'),
+    status                maintenance.ml_model_status NOT NULL DEFAULT 'registered',
+    -- When the scoring job first saw the service serve it.
+    first_seen_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    activated_at          TIMESTAMPTZ,
+    activated_by          BIGINT REFERENCES auth.users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    retired_at            TIMESTAMPTZ,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ux_ml_models_name_version UNIQUE (name, version),
+    CONSTRAINT chk_ml_models_features CHECK (jsonb_typeof(features) = 'array' AND jsonb_array_length(features) > 0),
+    CONSTRAINT chk_ml_models_metrics CHECK (jsonb_typeof(metrics) = 'object'),
+    CONSTRAINT chk_ml_models_training_data CHECK (jsonb_typeof(training_data) = 'object'),
+    CONSTRAINT chk_ml_models_activated CHECK (status <> 'active' OR activated_at IS NOT NULL),
+    CONSTRAINT chk_ml_models_retired CHECK ((status = 'retired') = (retired_at IS NOT NULL))
+);
+
+-- One active model per name: the one that scores.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ml_models_active
+    ON maintenance.ml_models(name)
+    WHERE status = 'active';
+
+-- GET /ml-models: newest first.
+CREATE INDEX IF NOT EXISTS idx_ml_models_first_seen
+    ON maintenance.ml_models(first_seen_at DESC, id DESC);
+
+CREATE OR REPLACE TRIGGER trg_ml_models_updated_at
+    BEFORE UPDATE ON maintenance.ml_models
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+-- Nothing has stored a prediction yet (the nightly scoring is FMS-55), so every
+-- existing row, if any, would have to name a registered model already.
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_predictions
+        ADD CONSTRAINT fk_predictions_ml_model FOREIGN KEY (model_name, model_version)
+        REFERENCES maintenance.ml_models(name, version) ON DELETE RESTRICT ON UPDATE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_predictions_model
+    ON maintenance.maintenance_predictions(model_name, model_version);
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('ml-model:activate', 'Allow a registered predictive-maintenance model to score')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE r.name = 'admin' AND p.code = 'ml-model:activate'
+ON CONFLICT DO NOTHING;
+
+-- ===== 040_prediction_scores.sql =====
+ALTER TABLE maintenance.maintenance_predictions
+    ADD COLUMN IF NOT EXISTS health_score SMALLINT,
+    ADD COLUMN IF NOT EXISTS risk_level   VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS factors      JSONB,
+    ADD COLUMN IF NOT EXISTS as_of        TIMESTAMPTZ;
+
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_predictions
+        ADD CONSTRAINT chk_prediction_health_score CHECK (health_score IS NULL OR health_score BETWEEN 0 AND 100),
+        ADD CONSTRAINT chk_prediction_risk_level CHECK (risk_level IS NULL OR risk_level IN ('low', 'medium', 'high')),
+        ADD CONSTRAINT chk_prediction_factors
+            CHECK (factors IS NULL OR (jsonb_typeof(factors) = 'array' AND jsonb_array_length(factors) <= 3)),
+        ADD CONSTRAINT chk_prediction_scored
+            CHECK ((health_score IS NULL) = (risk_level IS NULL)
+               AND (health_score IS NULL) = (factors IS NULL)
+               AND (health_score IS NULL) = (as_of IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_predictions_scoring
+    ON maintenance.maintenance_predictions(vehicle_id, prediction_type, as_of, model_name, model_version)
+    WHERE as_of IS NOT NULL;
+
+-- ===== 041_fuel_reconciliation.sql =====
+ALTER TABLE fuel.fuel_anomalies
+    ALTER COLUMN fuel_log_id DROP NOT NULL,
+    ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS period_end   TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS distance_km  NUMERIC(12,3),
+    ADD COLUMN IF NOT EXISTS expected_ml  BIGINT,
+    ADD COLUMN IF NOT EXISTS actual_ml    BIGINT;
+
+DO $$ BEGIN
+    ALTER TABLE fuel.fuel_anomalies
+        ADD CONSTRAINT chk_fuel_anomaly_period
+            CHECK ((period_start IS NULL) = (period_end IS NULL) AND (period_end IS NULL OR period_end > period_start)),
+        ADD CONSTRAINT chk_fuel_anomaly_subject
+            CHECK (fuel_log_id IS NOT NULL
+                OR (period_start IS NOT NULL AND distance_km IS NOT NULL AND expected_ml IS NOT NULL AND actual_ml IS NOT NULL)),
+        ADD CONSTRAINT chk_fuel_anomaly_amounts
+            CHECK ((distance_km IS NULL OR distance_km >= 0) AND (expected_ml IS NULL OR expected_ml >= 0) AND (actual_ml IS NULL OR actual_ml >= 0));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_fuel_anomalies_period
+    ON fuel.fuel_anomalies(vehicle_id, period_start, period_end)
+    WHERE period_start IS NOT NULL;
+
+-- ===== 042_gps_recorded_time_trips.sql =====
+CREATE INDEX IF NOT EXISTS idx_trips_driver_actual_start
+    ON trip.trips(driver_id, actual_start)
+    WHERE actual_start IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_trips_vehicle_actual_start
+    ON trip.trips(vehicle_id, actual_start)
+    WHERE actual_start IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION tracking.update_current_location_from_ping()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF current_setting('fms.ping_history_only', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO tracking.vehicle_current_location (
+        vehicle_id, latitude, longitude, speed_kmh, heading_degrees,
+        accuracy_m, ignition_on, odometer_km, source, recorded_at, updated_at
+    ) VALUES (
+        NEW.vehicle_id, NEW.latitude, NEW.longitude, NEW.speed_kmh, NEW.heading_degrees,
+        NEW.accuracy_m, NEW.ignition_on, NEW.odometer_km, NEW.source, NEW.recorded_at, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (vehicle_id) DO UPDATE
+    SET latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude,
+        speed_kmh = EXCLUDED.speed_kmh,
+        heading_degrees = EXCLUDED.heading_degrees,
+        accuracy_m = EXCLUDED.accuracy_m,
+        ignition_on = EXCLUDED.ignition_on,
+        odometer_km = EXCLUDED.odometer_km,
+        source = EXCLUDED.source,
+        recorded_at = EXCLUDED.recorded_at,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE EXCLUDED.recorded_at >= tracking.vehicle_current_location.recorded_at;
+
+    RETURN NEW;
+END;
+$$;
+
+-- ===== 043_prediction_feedback.sql =====
+DO $$ BEGIN
+    CREATE TYPE maintenance.prediction_outcome AS ENUM
+        ('confirmed_issue', 'no_issue_found', 'already_fixed', 'not_inspected');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS maintenance.prediction_feedback (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    prediction_id    BIGINT NOT NULL REFERENCES maintenance.maintenance_predictions(id)
+                     ON DELETE RESTRICT ON UPDATE CASCADE,
+    user_id          BIGINT NOT NULL REFERENCES auth.users(id)
+                     ON DELETE RESTRICT ON UPDATE CASCADE,
+    outcome          maintenance.prediction_outcome NOT NULL,
+    component        maintenance.failure_component,
+    failure_event_id BIGINT REFERENCES maintenance.failure_events(id)
+                     ON DELETE RESTRICT ON UPDATE CASCADE,
+    comment          TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_prediction_feedback_prediction UNIQUE (prediction_id),
+    -- What was found, and the failure it led to, only mean something for a confirmed issue.
+    CONSTRAINT chk_prediction_feedback_found
+        CHECK (outcome = 'confirmed_issue' OR (component IS NULL AND failure_event_id IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_feedback_failure
+    ON maintenance.prediction_feedback(failure_event_id)
+    WHERE failure_event_id IS NOT NULL;
+
+CREATE OR REPLACE TRIGGER trg_prediction_feedback_updated_at
+    BEFORE UPDATE ON maintenance.prediction_feedback
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+-- ===== 044_analytics_kpis.sql =====
+ALTER TABLE analytics.analytics_cache
+    ADD COLUMN IF NOT EXISTS distance_m             BIGINT  NOT NULL DEFAULT 0 CHECK (distance_m >= 0),
+    ADD COLUMN IF NOT EXISTS trips_completed        INTEGER NOT NULL DEFAULT 0 CHECK (trips_completed >= 0),
+    ADD COLUMN IF NOT EXISTS trips_timed            INTEGER NOT NULL DEFAULT 0 CHECK (trips_timed >= 0),
+    ADD COLUMN IF NOT EXISTS trips_on_time          INTEGER NOT NULL DEFAULT 0 CHECK (trips_on_time >= 0),
+    ADD COLUMN IF NOT EXISTS fuel_ml                BIGINT  NOT NULL DEFAULT 0 CHECK (fuel_ml >= 0),
+    ADD COLUMN IF NOT EXISTS fuel_cost_cents        BIGINT  NOT NULL DEFAULT 0 CHECK (fuel_cost_cents >= 0),
+    ADD COLUMN IF NOT EXISTS maintenance_cost_cents BIGINT  NOT NULL DEFAULT 0 CHECK (maintenance_cost_cents >= 0);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_cache_period
+    ON analytics.analytics_cache(period_type, period_start);
+
+CREATE OR REPLACE VIEW analytics.vehicle_directory AS
+SELECT
+    v.id AS vehicle_id,
+    v.public_id,
+    v.registration_number,
+    v.make,
+    v.model,
+    v.status,
+    v.fuel_type,
+    v.fuel_efficiency_ml_per_km,
+    v.health_score,
+    v.maintenance_flag,
+    v.depot_id,
+    d.public_id AS depot_public_id,
+    d.name AS depot_name
+FROM fleet.vehicles v
+JOIN fleet.depots d ON d.id = v.depot_id;
+
+CREATE OR REPLACE VIEW analytics.trip_facts AS
+SELECT
+    t.id AS trip_id,
+    t.vehicle_id,
+    t.status,
+    t.scheduled_start,
+    t.scheduled_end,
+    t.actual_start,
+    t.actual_end,
+    t.actual_distance_km
+FROM trip.trips t;
+
+CREATE OR REPLACE VIEW analytics.fuel_facts AS
+SELECT f.vehicle_id, f.recorded_at, f.quantity_ml, f.total_cost_cents
+FROM fuel.fuel_logs f;
+
+CREATE OR REPLACE VIEW analytics.maintenance_cost_facts AS
+SELECT m.vehicle_id, m.completed_at, m.total_cost_cents
+FROM maintenance.maintenance_records m
+WHERE m.status = 'completed' AND m.completed_at IS NOT NULL;
+
+CREATE OR REPLACE VIEW analytics.alert_facts AS
+SELECT
+    a.id AS alert_id,
+    a.vehicle_id,
+    COALESCE(a.depot_id, v.depot_id) AS depot_id,
+    a.alert_type,
+    a.severity,
+    a.status,
+    a.created_at,
+    a.acknowledged_at
+FROM alert.alerts a
+LEFT JOIN fleet.vehicles v ON v.id = a.vehicle_id;
+
+-- ===== 045_route_roads.sql =====
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS measured_at TIMESTAMPTZ;
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS distance_source VARCHAR(10);
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_distance_source
+        CHECK (distance_source IS NULL OR distance_source IN ('road', 'manual'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_geometry_line
+        CHECK (geometry IS NULL OR (geometry->>'type' = 'LineString' AND jsonb_typeof(geometry->'coordinates') = 'array'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_measured
+        CHECK ((geometry IS NULL) = (measured_at IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+UPDATE trip.routes SET distance_source = 'manual' WHERE distance_km IS NOT NULL AND distance_source IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_trip_routes_unmeasured
+    ON trip.routes (id)
+    WHERE is_active AND geometry IS NULL AND origin_latitude IS NOT NULL AND destination_latitude IS NOT NULL;
+
+-- ===== 047_incident_handling.sql =====
+ALTER TABLE alert.incident_reports
+    ADD COLUMN IF NOT EXISTS assigned_to BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    ADD COLUMN IF NOT EXISTS notes       TEXT,
+    ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS resolved_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- An incident resolved or closed before this migration has no resolution time: its last change stands in.
+UPDATE alert.incident_reports SET resolved_at = updated_at WHERE status IN ('resolved', 'closed') AND resolved_at IS NULL;
+
+DO $$ BEGIN
+    ALTER TABLE alert.incident_reports
+        ADD CONSTRAINT chk_incident_notes CHECK (notes IS NULL OR char_length(notes) BETWEEN 1 AND 4000),
+        ADD CONSTRAINT chk_incident_resolved CHECK ((status IN ('resolved', 'closed')) = (resolved_at IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_incidents_active
+    ON alert.incident_reports(depot_id, occurred_at DESC)
+    WHERE status IN ('open', 'investigating');
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('incident:manage', 'Handle incidents: status, assignee and notes')
+ON CONFLICT (code) DO NOTHING;
+
+UPDATE auth.permissions SET description = 'Report incidents' WHERE code = 'incident:write';
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE r.name IN ('admin', 'fleet_manager', 'dispatcher', 'depot_admin') AND p.code = 'incident:manage'
+ON CONFLICT DO NOTHING;
+
+-- ===== 048_adhoc_routes.sql =====
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS is_adhoc BOOLEAN NOT NULL DEFAULT FALSE;
+
+DROP INDEX IF EXISTS trip.ux_trip_routes_depot_name;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_trip_routes_depot_name
+    ON trip.routes (depot_id, lower(name))
+    WHERE is_active AND NOT is_adhoc;

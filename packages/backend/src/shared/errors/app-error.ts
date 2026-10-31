@@ -45,6 +45,9 @@ export interface ErrorDetail {
   record_id?: string;
   /** For an invalid state transition: the states the record can move to from where it is. */
   allowed_transitions?: string[];
+  /** For a trip clash (FMS-139): whether `shift_following` can move the other trip, and by how many minutes. */
+  shiftable?: boolean;
+  shift_minutes?: number;
 }
 
 /** An error the API reports to the client as-is (status, code, message). */

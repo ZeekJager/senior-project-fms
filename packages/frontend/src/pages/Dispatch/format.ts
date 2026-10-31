@@ -25,6 +25,35 @@ export function tripEnds(trip: Pick<Trip, 'origin' | 'destination'>): string | n
 
 export const tripTitle = (trip: Trip) => trip.route_name ?? tripEnds(trip) ?? 'Trip'
 
+// Times are typed in Addis Ababa (UTC+3 all year, no daylight saving) into
+// datetime-local fields, whatever the browser's own zone.
+const ADDIS_OFFSET_MS = 3 * 3_600_000
+const LOCAL_INPUT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/
+
+/** An instant as a datetime-local value in Addis Ababa: "2026-11-02T09:00". */
+export const toAddisInput = (iso: string) => new Date(new Date(iso).getTime() + ADDIS_OFFSET_MS).toISOString().slice(0, 16)
+
+/** A datetime-local value read as Addis Ababa time, to an ISO instant; null if blank or malformed. */
+export function fromAddisInput(value: string): string | null {
+  if (!LOCAL_INPUT.test(value)) return null
+  const at = new Date(`${value}:00+03:00`)
+  return Number.isNaN(at.getTime()) ? null : at.toISOString()
+}
+
+/** The next quarter hour from now: where a new trip's start begins. */
+export function nextQuarterHour(now = new Date()): string {
+  const quarter = 15 * 60_000
+  return new Date(Math.ceil((now.getTime() + 1) / quarter) * quarter).toISOString()
+}
+
+/** "1 h 30 min", "45 min". */
+export function formatDuration(seconds: number): string {
+  const minutes = Math.round(seconds / 60)
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return h === 0 ? `${m} min` : m === 0 ? `${h} h` : `${h} h ${m} min`
+}
+
 interface StateLook {
   label: string
   tone: BadgeTone

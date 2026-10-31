@@ -182,7 +182,7 @@ describe('Login screen', () => {
     await fill(user, 'sam@fms.local', 'right')
     await submit(user)
 
-    expect(await screen.findByRole('heading', { name: 'Fuel Reconciliation' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Fuel reconciliation', level: 1 })).toBeInTheDocument()
     expect(location()).toBe('/fuel-reconciliation')
   })
 

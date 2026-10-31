@@ -34,11 +34,19 @@ export interface CorrectionOf {
   vehicle: ComboboxOption<Pick<Vehicle, 'id' | 'registration_number'>>
 }
 
+/** Work started from elsewhere (the health score screen, FMS-56): the vehicle, the kind of work and what it is for. */
+export interface RepairPreset {
+  vehicle: Pick<Vehicle, 'id' | 'registration_number'>
+  type: MaintenanceType
+  description: string
+}
+
 interface LogRepairDrawerProps {
   open: boolean
   onClose: () => void
   canInventory: boolean
   correctionOf?: CorrectionOf | null
+  preset?: RepairPreset | null
 }
 
 const HOURS = /^\d{1,6}(\.\d{1,2})?$/
@@ -54,7 +62,7 @@ let nextKey = 1
  * Saved as open work, or saved and completed after a confirmation that the
  * vehicle's maintenance flag will clear.
  */
-export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: LogRepairDrawerProps) {
+export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, preset }: LogRepairDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
   const create = useCreateRecord()
@@ -77,10 +85,13 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
 
   useEffect(() => {
     if (!open) return
-    setVehicle(correctionOf?.vehicle ?? null)
+    setVehicle(
+      correctionOf?.vehicle ??
+        (preset ? { value: preset.vehicle, key: preset.vehicle.id, label: preset.vehicle.registration_number } : null),
+    )
     setVehicleQuery('')
-    setType('corrective')
-    setDescription('')
+    setType(preset?.type ?? 'corrective')
+    setDescription(preset?.description ?? '')
     setHours('')
     setOdometer('')
     setNotes(correctionOf ? `Correction of record ${correctionOf.id}: ` : '')
@@ -89,7 +100,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
     setFailures([emptyFailure()])
     setErrors({})
     setFormError(null)
-  }, [open, correctionOf])
+  }, [open, correctionOf, preset])
 
   // Vehicle choices: the flagged ones first, then whatever matches the search.
   const flagged = useFlaggedVehicles()
@@ -201,7 +212,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf }: L
       <Drawer
         open={open && !confirming}
         onClose={onClose}
-        title={correctionOf ? 'Log a correction' : 'Log a repair'}
+        title={correctionOf ? 'Log a correction' : preset?.type === 'inspection' ? 'Schedule an inspection' : 'Log a repair'}
         description="Replaces the paper job card. Every save is kept in the audit log."
         footer={
           <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-end">

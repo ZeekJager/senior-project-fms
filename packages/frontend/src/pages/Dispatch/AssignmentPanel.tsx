@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CalendarClock, CheckCircle2, Truck, UserRound, Wrench } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CalendarClock, CheckCircle2, Clock, Navigation, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button, Card, cn } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
@@ -16,6 +16,8 @@ interface AssignmentPanelProps {
   /** Warnings from the last successful assignment. */
   warnings: AssignmentWarning[] | null
   onAssign: () => void
+  /** Given when the user may move the trip's times (trip:write, FMS-139). */
+  onChangeTimes?: () => void
 }
 
 /**
@@ -23,7 +25,7 @@ interface AssignmentPanelProps {
  * API's answer. Refusals (BR-1, BR-2, BR-3, eligibility) stay here, inline,
  * with what they are about: never a toast that disappears (FMS-33).
  */
-export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, onAssign }: AssignmentPanelProps) {
+export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, onAssign, onChangeTimes }: AssignmentPanelProps) {
   const sameAsNow = trip.status === 'assigned' && driver?.driver_id === trip.driver_id && vehicle?.vehicle_id === trip.vehicle_id
   const licenceGap = driver && vehicle && !driver.vehicle_types.includes(vehicle.vehicle_type)
   return (
@@ -34,10 +36,7 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
           <h2 className="mt-1 truncate text-base font-semibold text-ink">{tripTitle(trip)}</h2>
           {trip.route_name && tripEnds(trip) && <p className="truncate text-sm text-ink-muted">{tripEnds(trip)}</p>}
         </div>
-        <p className="flex items-center gap-1.5 rounded-full bg-surface-sunken px-3 py-1 text-xs font-medium text-ink">
-          <CalendarClock className="h-3.5 w-3.5 text-ink-subtle" aria-hidden="true" />
-          {formatWindow(trip.scheduled_start, trip.scheduled_end)}
-        </p>
+        <TripWindow trip={trip} onChangeTimes={onChangeTimes} />
       </div>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -87,6 +86,54 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
   )
 }
 
+/** The trip's window, and the way to move it. */
+function TripWindow({ trip, onChangeTimes, label = 'Change times' }: { trip: Trip; onChangeTimes?: () => void; label?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <p className="flex items-center gap-1.5 rounded-full bg-surface-sunken px-3 py-1 text-xs font-medium text-ink">
+        <CalendarClock className="h-3.5 w-3.5 text-ink-subtle" aria-hidden="true" />
+        {formatWindow(trip.scheduled_start, trip.scheduled_end)}
+      </p>
+      {onChangeTimes && (
+        <Button variant="secondary" size="sm" leadingIcon={<Clock className="h-4 w-4" />} onClick={onChangeTimes}>
+          {label}
+        </Button>
+      )}
+    </div>
+  )
+}
+
+interface UnderWayPanelProps {
+  trip: Trip
+  driverName: string | undefined
+  plate: string | undefined
+  onChangeTimes?: () => void
+}
+
+/** A trip under way: who is on it and since when. Only its end can move (FMS-139). */
+export function UnderWayPanel({ trip, driverName, plate, onChangeTimes }: UnderWayPanelProps) {
+  return (
+    <Card className="p-5" role="region" aria-label="Trip under way">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-ink-subtle">
+            <Navigation className="h-3.5 w-3.5" aria-hidden="true" />
+            Under way
+          </p>
+          <h2 className="mt-1 truncate text-base font-semibold text-ink">{tripTitle(trip)}</h2>
+          {trip.route_name && tripEnds(trip) && <p className="truncate text-sm text-ink-muted">{tripEnds(trip)}</p>}
+        </div>
+        <TripWindow trip={trip} onChangeTimes={onChangeTimes} label="Change end" />
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <Slot icon={<UserRound />} label="Driver" value={driverName} hint={trip.actual_start ? `Started ${formatDay(trip.actual_start)} at ${formatTime(trip.actual_start)}` : 'Started'} />
+        <Slot icon={<Truck />} label="Vehicle" value={plate} hint="On this trip until it ends" />
+      </div>
+      <p className="mt-4 text-sm text-ink-muted">Running late or finishing early? Move its end: the driver’s app shows it at once, and their next trip can move with it.</p>
+    </Card>
+  )
+}
+
 function warningText(w: AssignmentWarning, driver: BoardDriver | null): string {
   if (w.warning === 'DRIVER_ATTENDANCE') return `${driver?.full_name ?? 'The driver'} is marked ${w.attendance === 'on_leave' ? 'on leave' : w.attendance} that day.`
   return `The ${w.field === 'driver_id' ? 'driver' : 'vehicle'} is still on a trip expected to end ${formatDay(w.expected_end)} at ${formatTime(w.expected_end)}.`
@@ -107,7 +154,7 @@ function Slot({ icon, label, value, hint }: { icon: ReactNode; label: string; va
   )
 }
 
-function Note({ tone, icon, title, children }: { tone: 'danger' | 'warning' | 'success'; icon: ReactNode; title?: string; children?: ReactNode }) {
+export function Note({ tone, icon, title, children }: { tone: 'danger' | 'warning' | 'success'; icon: ReactNode; title?: string; children?: ReactNode }) {
   const tones = {
     danger: 'border-danger/25 bg-danger-soft text-danger',
     warning: 'border-warning/30 bg-warning-soft text-warning',
@@ -136,7 +183,7 @@ function WorkOrder({ work }: { work: OpenWork }) {
 }
 
 /** The trip a conflict names: route, ends and time, read with trip:read. */
-function ConflictingTrip({ id }: { id: string }) {
+export function ConflictingTrip({ id }: { id: string }) {
   const trip = useTrip(id)
   if (!trip.data) return <p className="mt-1 text-xs">Trip <span className="font-mono">{id.slice(0, 8)}</span></p>
   return (

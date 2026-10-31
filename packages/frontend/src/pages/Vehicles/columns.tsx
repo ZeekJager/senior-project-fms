@@ -1,8 +1,9 @@
-import { Activity, AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, MapPin, Paperclip, Pencil, Truck, type LucideIcon } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, History, MapPin, Paperclip, Pencil, Truck, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
-import { Badge, Button, cn, IconButton, Skeleton } from '@/components/ui'
+import { Badge, Button, cn, IconButton, iconButtonClass, Skeleton } from '@/components/ui'
 import type { DocumentHealth } from '@/features/documents/expiry'
+import { HealthBadge } from '@/features/health/HealthBadge'
 import { VEHICLE_TYPE_LABELS, type Depot, type Vehicle, type VehicleType } from './types'
 
 const TYPE_ICONS: Record<VehicleType, LucideIcon> = {
@@ -26,6 +27,8 @@ export interface ColumnContext {
   onOpenDocuments: (vehicle: Vehicle) => void
   /** Status and availability (FMS-76): everyone who sees the list may open it. */
   onStatus: (vehicle: Vehicle) => void
+  /** The health score's breakdown (FMS-56): given only with prediction:read; others see the badge alone. */
+  onHealth?: (vehicle: Vehicle) => void
 }
 
 /**
@@ -65,12 +68,12 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
             <p className="truncate text-xs text-ink-subtle md:hidden">
               {ctx.depots.get(v.depot_id)?.name ?? '—'} · {v.current_trip ? `${v.current_trip.origin ?? 'Origin'} to ${v.current_trip.destination ?? 'Destination'}` : 'No active trip'}
             </p>
-            <p className="hidden truncate text-xs text-ink-subtle md:block xl:hidden">{ctx.depots.get(v.depot_id)?.name ?? '—'}</p>
+            <p className="hidden truncate text-xs text-ink-subtle md:block 2xl:hidden">{ctx.depots.get(v.depot_id)?.name ?? '—'}</p>
             <PhoneDocumentState health={ctx.documents.health.get(v.id)} />
           </div>
-          {/* Below 1024px there is no Status column: only an exception earns the space, since "Active" is the normal state. */}
+          {/* Below 1280px there is no Status column: only an exception earns the space, since "Active" is the normal state. */}
           {v.status !== 'active' && (
-            <span className="ml-auto lg:hidden">
+            <span className="ml-auto xl:hidden">
               <StatusText status={v.status} />
             </span>
           )}
@@ -90,8 +93,9 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'type',
       header: 'Type',
       sortKey: 'vehicle_type',
-      width: 'w-[8%]',
-      hideBelow: 'xl',
+      width: 'w-[7%]',
+      // The type's icon leads the Vehicle cell; its name earns a column only on the widest screens.
+      hideBelow: '2xl',
       optional: true,
       cell: (v) => <span className="text-ink-muted">{VEHICLE_TYPE_LABELS[v.vehicle_type]}</span>,
     },
@@ -99,8 +103,9 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'depot',
       header: 'Depot',
       sortKey: 'depot',
-      width: 'w-[15%]',
-      hideBelow: 'xl',
+      width: 'w-[12%]',
+      // Below 1536px the depot rides under the vehicle's name instead.
+      hideBelow: '2xl',
       optional: true,
       cell: (v) => (
         <span className="flex min-w-0 items-center gap-1.5 text-ink-muted">
@@ -114,15 +119,26 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       header: 'Status',
       sortKey: 'status',
       width: 'w-[128px]',
-      hideBelow: 'lg',
+      hideBelow: 'xl',
       optional: true,
       cell: (v) => <StatusText status={v.status} />,
       skeleton: <Skeleton className="h-5 w-20 rounded-full" />,
     },
     {
+      key: 'health',
+      header: 'Health',
+      sortKey: 'health_score',
+      width: 'w-[128px]',
+      hideBelow: 'md',
+      optional: true,
+      label: 'Health score',
+      cell: (v) => <HealthBadge score={v.health_score} updatedAt={v.health_score_updated_at} onOpen={ctx.onHealth ? () => ctx.onHealth!(v) : undefined} />,
+      skeleton: <Skeleton className="h-6 w-14 rounded-full" />,
+    },
+    {
       key: 'trip',
       header: 'Current trip',
-      width: 'w-[26%] xl:w-[19%]',
+      width: 'w-[26%] xl:w-[18%]',
       hideBelow: 'md',
       optional: true,
       cell: (v) =>
@@ -159,7 +175,8 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       key: 'documents',
       header: 'Documents',
       width: 'w-[136px]',
-      hideBelow: 'md',
+      // Below 1280px an expired or expiring document is a line under the vehicle's name (PhoneDocumentState).
+      hideBelow: 'xl',
       optional: true,
       cell: (v) => <DocumentsCell vehicle={v} ctx={ctx} />,
       skeleton: <Skeleton className="h-5 w-16 rounded-full" />,
@@ -169,10 +186,13 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
   columns.push({
     key: 'actions',
     header: <span className="sr-only">Actions</span>,
-    width: ctx.canWrite ? 'w-[144px] coarse:w-[156px]' : 'w-[56px] coarse:w-[64px]',
+    width: ctx.canWrite ? 'w-[152px] coarse:w-[180px]' : 'w-[80px] coarse:w-[104px]',
     align: 'right',
     cell: (v) => (
       <div className="flex items-center justify-end gap-1.5">
+        <Link to={`/vehicles/${v.id}`} aria-label={`History of ${v.registration_number}`} title={`History of ${v.registration_number}`} className={iconButtonClass('ghost', 'sm')}>
+          <History aria-hidden="true" />
+        </Link>
         <IconButton size="sm" label={`Availability of ${v.registration_number}`} icon={<Activity className="h-4 w-4" />} onClick={() => ctx.onStatus(v)} />
         {ctx.canWrite && v.status !== 'retired' && (
           <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit ${v.registration_number}`} onClick={() => ctx.onEdit(v)}>

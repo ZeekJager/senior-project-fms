@@ -93,23 +93,37 @@ export const EV_MODELS: readonly VehicleModel[] = [
 /** The licence categories that cover each seeded vehicle type (LICENSE_CATEGORY_VEHICLE_TYPES). */
 export const CATEGORY_FOR: Readonly<Record<SeedVehicleType, string>> = { car: 'B', suv: 'B', van: 'B', truck: 'C', bus: 'D' };
 
-export const PARTS: readonly { number: string; name: string; costCents: number }[] = [
-  { number: 'FLT-OIL-200', name: 'Oil filter', costCents: 85_000 },
-  { number: 'FLT-AIR-310', name: 'Air filter', costCents: 120_000 },
-  { number: 'FLT-FUEL-115', name: 'Fuel filter', costCents: 95_000 },
-  { number: 'BRK-PAD-F40', name: 'Brake pad set (front)', costCents: 380_000 },
-  { number: 'BRK-PAD-R40', name: 'Brake pad set (rear)', costCents: 340_000 },
+/** What a part renews when a repair uses it (maintenance.service_item, FMS-52); none for the rest. */
+export type ServiceItem =
+  | 'engine_oil'
+  | 'air_filter'
+  | 'fuel_filter'
+  | 'coolant'
+  | 'brake_pads'
+  | 'brake_fluid'
+  | 'clutch_fluid'
+  | 'tyres'
+  | 'battery'
+  | 'gearbox_oil'
+  | 'belts';
+
+export const PARTS: readonly { number: string; name: string; costCents: number; renews?: ServiceItem }[] = [
+  { number: 'FLT-OIL-200', name: 'Oil filter', costCents: 85_000, renews: 'engine_oil' },
+  { number: 'FLT-AIR-310', name: 'Air filter', costCents: 120_000, renews: 'air_filter' },
+  { number: 'FLT-FUEL-115', name: 'Fuel filter', costCents: 95_000, renews: 'fuel_filter' },
+  { number: 'BRK-PAD-F40', name: 'Brake pad set (front)', costCents: 380_000, renews: 'brake_pads' },
+  { number: 'BRK-PAD-R40', name: 'Brake pad set (rear)', costCents: 340_000, renews: 'brake_pads' },
   { number: 'BRK-DSC-280', name: 'Brake disc', costCents: 610_000 },
-  { number: 'TYR-295-80', name: 'Tyre 295/80 R22.5', costCents: 2_450_000 },
-  { number: 'TYR-195-15', name: 'Tyre 195/70 R15', costCents: 980_000 },
-  { number: 'BAT-12V-100', name: 'Battery 12V 100Ah', costCents: 1_150_000 },
-  { number: 'BLT-ALT-06', name: 'Alternator belt', costCents: 145_000 },
+  { number: 'TYR-295-80', name: 'Tyre 295/80 R22.5', costCents: 2_450_000, renews: 'tyres' },
+  { number: 'TYR-195-15', name: 'Tyre 195/70 R15', costCents: 980_000, renews: 'tyres' },
+  { number: 'BAT-12V-100', name: 'Battery 12V 100Ah', costCents: 1_150_000, renews: 'battery' },
+  { number: 'BLT-ALT-06', name: 'Alternator belt', costCents: 145_000, renews: 'belts' },
   { number: 'WPR-BLD-24', name: 'Wiper blade 24"', costCents: 42_000 },
   { number: 'LMP-HDL-H4', name: 'Headlamp bulb H4', costCents: 28_000 },
   { number: 'CLT-KIT-430', name: 'Clutch kit', costCents: 3_800_000 },
   { number: 'SHK-ABS-F2', name: 'Shock absorber (front)', costCents: 720_000 },
-  { number: 'OIL-15W40-5', name: 'Engine oil 15W-40, 5 L', costCents: 310_000 },
-  { number: 'CLN-50-5L', name: 'Coolant, 5 L', costCents: 160_000 },
+  { number: 'OIL-15W40-5', name: 'Engine oil 15W-40, 5 L', costCents: 310_000, renews: 'engine_oil' },
+  { number: 'CLN-50-5L', name: 'Coolant, 5 L', costCents: 160_000, renews: 'coolant' },
 ];
 
 /**
@@ -158,6 +172,31 @@ export const REPAIRS: readonly {
     failure: { component: 'fuel_system', failure_mode: 'other', unplanned: 0.9 },
   },
   { description: 'Coolant top-up and leak check', type: 'preventive', parts: ['CLN-50-5L'], hours: 0.5 },
+];
+
+/** Fluids the service history renews (FMS-55): stocked after the parts above, so their draws come last. */
+export const FLUID_PARTS: readonly { number: string; name: string; costCents: number; renews: ServiceItem }[] = [
+  { number: 'FLD-BRK-DOT4', name: 'Brake fluid DOT 4, 1 L', costCents: 45_000, renews: 'brake_fluid' },
+  { number: 'FLD-CLT-1L', name: 'Clutch fluid, 1 L', costCents: 40_000, renews: 'clutch_fluid' },
+  { number: 'OIL-GBX-75W90', name: 'Gearbox oil 75W-90, 5 L', costCents: 420_000, renews: 'gearbox_oil' },
+];
+
+/** The tyre a vehicle type runs on: `TYRES` in a service's parts. */
+export const TYRE_FOR: Readonly<Record<SeedVehicleType, string>> = { car: 'TYR-195-15', suv: 'TYR-195-15', van: 'TYR-195-15', truck: 'TYR-295-80', bus: 'TYR-295-80' };
+
+/**
+ * Planned work that keeps a vehicle running (FMS-55): every wearing part and fluid the predictive model
+ * reads (feature_spec.json), grouped as a workshop does it, with the interval it is usually done at.
+ * The seed gives each vehicle the last time each was done, so its health score has a history to read.
+ */
+export const SERVICE_SCHEDULE: readonly { description: string; parts: string[]; intervalDays: number; hours: number; combustionOnly: boolean }[] = [
+  { description: 'Scheduled service: engine oil and filters', parts: ['OIL-15W40-5', 'FLT-OIL-200', 'FLT-AIR-310'], intervalDays: 120, hours: 2, combustionOnly: true },
+  { description: 'Fuel filter replaced at its interval', parts: ['FLT-FUEL-115'], intervalDays: 365, hours: 1, combustionOnly: true },
+  { description: 'Coolant and brake fluid changed', parts: ['CLN-50-5L', 'FLD-BRK-DOT4'], intervalDays: 730, hours: 1.5, combustionOnly: false },
+  { description: 'Brake pads replaced at the wear limit', parts: ['BRK-PAD-F40', 'BRK-PAD-R40'], intervalDays: 540, hours: 2, combustionOnly: false },
+  { description: 'Tyres replaced at the tread limit', parts: ['TYRES'], intervalDays: 1460, hours: 2, combustionOnly: false },
+  { description: 'Battery replaced at the end of its service life', parts: ['BAT-12V-100'], intervalDays: 1460, hours: 0.5, combustionOnly: false },
+  { description: 'Drive belt, gearbox oil and clutch fluid changed', parts: ['BLT-ALT-06', 'OIL-GBX-75W90', 'FLD-CLT-1L'], intervalDays: 1095, hours: 3, combustionOnly: true },
 ];
 
 export const WORKSHOPS: readonly string[] = ['Depot workshop', 'Moenco service centre', 'Nyala Motors workshop', 'Roadside repair'];

@@ -125,6 +125,47 @@ export class FuelLogRepository extends Repository {
     return res.rows[0];
   }
 
+  /** Every fuel log's odometer, recorded at or after `since` (null: all): meter readings (FMS-126). */
+  async odometerReadings(db: Queryable, since: Date | null): Promise<{ vehicleId: string; ref: string; odometerKm: number; at: Date }[]> {
+    const res = await db.query<{ vehicleId: string; ref: string; odometerKm: number; at: Date }>(
+      `SELECT vehicle_id AS "vehicleId", public_id::text AS ref, odometer_km::float8 AS "odometerKm", recorded_at AS at
+         FROM fuel.fuel_logs
+        WHERE odometer_km IS NOT NULL AND ($1::timestamptz IS NULL OR recorded_at >= $1)
+        ORDER BY recorded_at, id`,
+      [since],
+    );
+    return res.rows;
+  }
+
+  /** Each vehicle's fuel logged (ml) in [from, to). Vehicles (internal ids) with none are absent. */
+  async loggedMl(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<Map<string, number>> {
+    if (vehicleIds.length === 0) return new Map();
+    const res = await db.query<{ vehicleId: string; ml: number }>(
+      `SELECT vehicle_id AS "vehicleId", sum(quantity_ml)::float8 AS ml FROM fuel.fuel_logs
+        WHERE vehicle_id = ANY($1::bigint[]) AND recorded_at >= $2 AND recorded_at < $3
+        GROUP BY vehicle_id`,
+      [vehicleIds, from, to],
+    );
+    return new Map(res.rows.map((r) => [r.vehicleId, r.ml]));
+  }
+
+  /**
+   * Each vehicle's fuel logs recorded in [from, to), summed, for the reconciliation (FMS-41). Integers: sums of
+   * BIGINT and INTEGER columns come back as NUMERIC, read as text so nothing passes through a float. Vehicles
+   * (internal ids) with none are absent.
+   */
+  async usageBetween(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<Map<string, { actualMl: number; fuelLogs: number; costCents: number }>> {
+    if (vehicleIds.length === 0) return new Map();
+    const res = await db.query<{ vehicleId: string; ml: string; logs: number; cents: string }>(
+      `SELECT vehicle_id AS "vehicleId", sum(quantity_ml)::text AS ml, count(*)::int AS logs, sum(total_cost_cents)::text AS cents
+         FROM fuel.fuel_logs
+        WHERE vehicle_id = ANY($1::bigint[]) AND recorded_at >= $2 AND recorded_at < $3
+        GROUP BY vehicle_id`,
+      [vehicleIds, from, to],
+    );
+    return new Map(res.rows.map((r) => [r.vehicleId, { actualMl: Number(r.ml), fuelLogs: r.logs, costCents: Number(r.cents) }]));
+  }
+
   /** The highest odometer reading of a vehicle's fuel logs recorded at or before `at`, or null if none. */
   async lastOdometer(db: Queryable, vehicleId: string, at: Date): Promise<number | null> {
     const res = await db.query<{ km: number | null }>('SELECT max(odometer_km)::float8 AS km FROM fuel.fuel_logs WHERE vehicle_id = $1 AND recorded_at <= $2', [

@@ -11,6 +11,7 @@ import { useOwnerDocuments } from '@/features/documents/api'
 import { documentHealth, today } from '@/features/documents/expiry'
 import { downloadCsv, toCsv } from '@/lib/csv'
 import { describeFilters } from '@/lib/describeFilters'
+import { HealthPanel } from '@/pages/PredictiveMaintenance'
 import { useFleetCounts, useVehicles } from './api'
 import { vehicleColumns } from './columns'
 import { DecommissionDialog } from './DecommissionDialog'
@@ -58,6 +59,7 @@ export function VehiclesPage() {
   const canReadDocs = hasPermission('document:read')
   const canUploadDocs = hasPermission('document:write')
   const canDeleteDocs = hasPermission('document:delete')
+  const canReadHealth = hasPermission('prediction:read')
 
   function update(patch: Partial<VehicleFilters>, options: { keepPage?: boolean } = {}) {
     const next = { ...filters, ...patch, ...(options.keepPage ? {} : { page: 1 }) }
@@ -86,6 +88,7 @@ export function VehiclesPage() {
   const [decommissioning, setDecommissioning] = useState<Vehicle | null>(null)
   const [statusFor, setStatusFor] = useState<Vehicle | null>(null)
   const [docsFor, setDocsFor] = useState<Vehicle | null>(null)
+  const [healthFor, setHealthFor] = useState<Vehicle | null>(null)
   const { toast } = useToast()
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   // A selection is for the page on screen: new rows, new selection.
@@ -108,12 +111,13 @@ export function VehiclesPage() {
     },
     onOpenDocuments: setDocsFor,
     onStatus: setStatusFor,
+    onHealth: canReadHealth ? setHealthFor : undefined,
   })
 
   function exportSelected() {
     const chosen = (vehicles ?? []).filter((v) => selected.has(v.id))
     const csv = toCsv(
-      ['Plate', 'Make', 'Model', 'Year', 'Type', 'Status', 'Depot', 'Flagged for maintenance', 'Current trip', 'Documents expired', 'Documents expiring'],
+      ['Plate', 'Make', 'Model', 'Year', 'Type', 'Status', 'Depot', 'Flagged for maintenance', 'Health score', 'Current trip', 'Documents expired', 'Documents expiring'],
       chosen.map((v) => [
         v.registration_number,
         v.make,
@@ -123,6 +127,7 @@ export function VehiclesPage() {
         v.status,
         depotMap.get(v.depot_id)?.name,
         v.maintenance_flag,
+        v.health_score ?? '',
         v.current_trip ? `${v.current_trip.origin ?? ''} to ${v.current_trip.destination ?? ''}` : '',
         health.get(v.id)?.expired ?? 0,
         health.get(v.id)?.expiring ?? 0,
@@ -317,6 +322,7 @@ export function VehiclesPage() {
         canUpload={canUploadDocs}
         canDelete={canDeleteDocs}
       />
+      {canReadHealth && <HealthPanel vehicle={healthFor} onClose={() => setHealthFor(null)} />}
     </div>
   )
 }

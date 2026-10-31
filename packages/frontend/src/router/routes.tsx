@@ -1,16 +1,21 @@
-import { Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, CalendarCheck, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
+import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage } from '@/pages/Attendance'
+import { AuditLogPage } from '@/pages/AuditLog'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
+import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
-import { DashboardPage, FuelReconciliationPage } from '@/pages/placeholders'
+import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
+import { DashboardPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { UsersPage } from '@/pages/Users'
+import { VehicleHistoryPage } from '@/pages/VehicleHistory'
 import { VehiclesPage } from '@/pages/Vehicles'
 
 export interface AppRoute {
@@ -43,7 +48,9 @@ export const portals: Portal[] = [
     id: 'fleet',
     name: 'Fleet management',
     routes: [
+      // S-18 (FMS-51) is the dashboard for analytics:read; /analytics is the screen inventory's name for it.
       { path: '/dashboard', element: <DashboardPage />, nav: { label: 'Dashboard', icon: LayoutDashboard } },
+      { path: '/analytics', element: <Navigate to="/dashboard" replace /> },
       {
         // S-04. Drivers hold vehicle:read for their own vehicle but not
         // depot:read, so the fleet-wide view needs both (FMS-18).
@@ -51,6 +58,12 @@ export const portals: Portal[] = [
         element: <VehiclesPage />,
         permission: { all: ['vehicle:read', 'depot:read'] },
         nav: { label: 'Vehicles', icon: Truck },
+      },
+      {
+        // S-22. One vehicle's history (FMS-136), opened from the list; each section needs its own read permission.
+        path: '/vehicles/:vehicleId',
+        element: <VehicleHistoryPage />,
+        permission: { all: ['vehicle:read', 'depot:read'] },
       },
       {
         // S-05. driver:read is staff-only: drivers see their own profile at /drivers/me instead (FMS-19).
@@ -75,6 +88,14 @@ export const portals: Portal[] = [
         nav: { label: 'Repair log', icon: Wrench },
       },
       {
+        // S-19 (FMS-56). prediction:read: admin, fleet manager, depot admin, technician, compliance officer, fleet owner.
+        // Dispatchers see a vehicle's health badge on Vehicles, not this screen or the breakdown.
+        path: '/predictive-maintenance',
+        element: <PredictiveMaintenancePage />,
+        permission: 'prediction:read',
+        nav: { label: 'Vehicle health', icon: Activity },
+      },
+      {
         // S-09. inventory:read: admin, fleet manager, depot admin, technician (FMS-25).
         path: '/inventory',
         element: <InventoryPage />,
@@ -91,6 +112,8 @@ export const portals: Portal[] = [
         nav: { label: 'Routes', icon: Waypoints },
       },
       {
+        // S-15 (FMS-42). The anomalies need fuel-anomaly:read (admin, fleet manager, depot admin, finance clerk,
+        // compliance officer); the vehicle table also analytics:read and fuel:read, so a depot admin sees anomalies only.
         path: '/fuel-reconciliation',
         element: <FuelReconciliationPage />,
         permission: 'fuel-anomaly:read',
@@ -125,6 +148,13 @@ export const portals: Portal[] = [
         element: <UsersPage />,
         permission: 'users:read',
         nav: { label: 'Users & roles', icon: UserCog },
+      },
+      {
+        // S-10 (FMS-29). audit:read: admin, fleet owner, compliance officer (migration 025 took it from fleet managers).
+        path: '/audit',
+        element: <AuditLogPage />,
+        permission: 'audit:read',
+        nav: { label: 'Audit log', icon: ScrollText },
       },
     ],
   },

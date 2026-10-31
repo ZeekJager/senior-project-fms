@@ -18,6 +18,7 @@ import { tripRefs } from '../../src/modules/fleet';
 import { maintenanceRefs } from '../../src/modules/maintenance';
 import { TripService, type TripAssignment } from '../../src/modules/trip/application/trip.service';
 import { TripRepository } from '../../src/modules/trip/infrastructure/trip.repository';
+import { RouteRepository } from '../../src/modules/trip/infrastructure/route.repository';
 import { toAppError } from '../../src/shared/errors/to-app-error';
 import { eventBus } from '../../src/shared/events/event-bus';
 import { TEST_DB_NAME } from '../support/test-env';
@@ -54,7 +55,7 @@ beforeAll(async () => {
   }
   // The app's role and settings, on the race database.
   real = new Pool({ ...config.db, database: RACE_DB, max: 6 });
-  service = new TripService({ trips: new TripRepository(real), fleet: () => tripRefs, maintenance: () => maintenanceRefs, events: eventBus, overrunGraceMinutes: 0 });
+  service = new TripService({ trips: new TripRepository(real), routes: new RouteRepository(real), fleet: () => tripRefs, maintenance: () => maintenanceRefs, events: eventBus, overrunGraceMinutes: 0 });
 });
 
 afterAll(async () => {

@@ -231,3 +231,29 @@
     opacity: 0.45;
   }
 }
+
+/*
+ * One driver in focus (FMS-140): the vehicle's track today in the brand colour and its trip's planned
+ * route a quiet dashed line, as on a trip's own map (FMS-136, TripMap.css).
+ */
+.fleet-map .fleet-focus-track {
+  stroke: rgb(var(--c-brand));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.fleet-map .fleet-focus-planned {
+  stroke: rgb(var(--c-ink-subtle));
+  stroke-dasharray: 6 8;
+  fill: none;
+}
+.fleet-focus-key {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 3px solid rgb(var(--c-brand));
+  border-radius: 2px;
+}
+.fleet-focus-key--planned {
+  border-top: 2px dashed rgb(var(--c-ink-subtle));
+}

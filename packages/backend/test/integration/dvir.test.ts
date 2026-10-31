@@ -290,21 +290,21 @@ describe('POST /dvir-reports', () => {
     });
   });
 
-  test('POST /dvir is the same command under the legacy path, sharing the duplicate rule with /dvir-reports', async () => {
+  test('the legacy POST /dvir alias is gone: 404 NOT_FOUND, nothing recorded, the vehicle not flagged (FMS-122)', async () => {
     const depot = await createDepot();
     const vehicle = await createVehicle({ depot });
     const { driver, cookie } = await driverWithLogin(depot);
     const trip = await tripFor(vehicle, driver);
 
     const legacy = await api.post('/dvir', inspection(vehicle, { trip_id: pub(trip), items: [FAIL] }), cookie);
-    expect(legacy.status).toBe(201);
-    expect(legacy.body.meta.created).toBe(true);
-    expect(await flagOf(vehicle)).toBe(true);
+    expect(legacy.status).toBe(404);
+    expect(legacy.body.error.code).toBe('NOT_FOUND');
+    expect(await reportCount(vehicle)).toBe(0);
+    expect(await flagOf(vehicle)).toBe(false);
 
-    const canonical = await api.post('/dvir-reports', inspection(vehicle, { trip_id: pub(trip) }), cookie);
-    expect(canonical.status).toBe(200);
-    expect(canonical.body.data.id).toBe(legacy.body.data.id);
-    expect((await api.post('/dvir', inspection(vehicle, { type: 'post_trip' }), await signIn(['finance_clerk'], depot))).status).toBe(403);
+    const canonical = await api.post('/dvir-reports', inspection(vehicle, { trip_id: pub(trip), items: [FAIL] }), cookie);
+    expect(canonical.status).toBe(201);
+    expect(await flagOf(vehicle)).toBe(true);
   });
 
   describe('validation', () => {

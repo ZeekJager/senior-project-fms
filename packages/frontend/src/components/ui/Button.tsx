@@ -77,6 +77,16 @@ export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonEle
   size?: 'sm' | 'md'
 }
 
+/** IconButton's look, for a link that sits among icon buttons (a react-router `<Link>` to a page). */
+export function iconButtonClass(variant: IconButtonProps['variant'] = 'ghost', size: IconButtonProps['size'] = 'md'): string {
+  return cn(
+    BASE,
+    VARIANTS[variant],
+    size === 'sm' ? 'h-8 w-8 rounded-control coarse:h-11 coarse:w-11' : 'h-10 w-10 rounded-control coarse:h-11 coarse:w-11',
+    '[&_svg]:h-4 [&_svg]:w-4',
+  )
+}
+
 /** A square icon-only button with its name in aria-label and a native tooltip. */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
   { label, icon, variant = 'ghost', size = 'md', className, type = 'button', ...rest },
@@ -88,13 +98,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       type={type}
       aria-label={label}
       title={label}
-      className={cn(
-        BASE,
-        VARIANTS[variant],
-        size === 'sm' ? 'h-8 w-8 rounded-control coarse:h-11 coarse:w-11' : 'h-10 w-10 rounded-control coarse:h-11 coarse:w-11',
-        '[&_svg]:h-4 [&_svg]:w-4',
-        className,
-      )}
+      className={cn(iconButtonClass(variant, size), className)}
       {...rest}
     >
       {icon}

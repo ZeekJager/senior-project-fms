@@ -35,7 +35,8 @@ export function publicRoute(): RequestHandler {
 interface Layer {
   name?: string;
   regexp?: RegExp;
-  route?: { path: string | string[]; methods: Record<string, boolean>; stack: { handle: unknown }[] };
+  /** Each handler in a route's stack carries its method; `router.route(path).get(...).patch(...)` shares one stack. */
+  route?: { path: string; methods: Record<string, boolean>; stack: { handle: unknown; method?: string }[] };
   handle?: { stack?: Layer[] };
 }
 
@@ -49,20 +50,29 @@ function mountPath(layer: Layer): string {
     .replace(/^\/?$/, '');
 }
 
-/** One mounted route: an upper-case method, its full path (`/api/v1/trips/:tripId`), and whether it declares a policy. */
-export interface MountedRoute {
+/**
+ * One method of a route as the app registered it, with the policies it declared, in order. A caller must pass
+ * every one: `authorize('prediction:read'), authorize('maintenance:write')` needs both. Empty: none declared.
+ */
+export interface RegisteredRoute {
   method: string;
   path: string;
-  ok: boolean;
+  policies: RoutePolicy[];
 }
 
-function collect(stack: Layer[], prefix: string, out: MountedRoute[]): void {
+function collect(stack: Layer[], prefix: string, out: RegisteredRoute[]): void {
   for (const layer of stack) {
     if (layer.route) {
-      const ok = layer.route.stack.some((s) => policyOf(s.handle) !== undefined);
-      const methods = Object.keys(layer.route.methods).filter((m) => layer.route!.methods[m]);
-      for (const path of [layer.route.path].flat()) {
-        for (const method of methods) out.push({ method: method.toUpperCase(), path: `${prefix}${path}`, ok });
+      const route = layer.route;
+      for (const method of Object.keys(route.methods).filter((m) => route.methods[m])) {
+        out.push({
+          method: method.toUpperCase(),
+          path: `${prefix}${route.path}`,
+          policies: route.stack
+            .filter((s) => s.method === undefined || s.method === method)
+            .map((s) => policyOf(s.handle))
+            .filter((p): p is RoutePolicy => p !== undefined),
+        });
       }
     } else if (layer.name === 'router' && layer.handle?.stack) {
       collect(layer.handle.stack, prefix + mountPath(layer), out);
@@ -70,18 +80,21 @@ function collect(stack: Layer[], prefix: string, out: MountedRoute[]): void {
   }
 }
 
-/** Every route the app serves, one entry per method and path. */
-export function mountedRoutes(app: Express): MountedRoute[] {
+/**
+ * Every route the app serves, a method at a time in registration order, with its policies: what the startup guard
+ * checks, and what the generated access tests (FMS-59) call, so a route is tested the day it is added.
+ */
+export function routeRegistry(app: Express): RegisteredRoute[] {
   const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack ?? [];
-  const routes: MountedRoute[] = [];
+  const routes: RegisteredRoute[] = [];
   collect(stack, '', routes);
   return routes;
 }
 
 /** Every route (method and path) that declares no policy. */
 export function routesWithoutPolicy(app: Express): string[] {
-  return mountedRoutes(app)
-    .filter((r) => !r.ok)
+  return routeRegistry(app)
+    .filter((r) => r.policies.length === 0)
     .map((r) => `${r.method} ${r.path}`);
 }
 

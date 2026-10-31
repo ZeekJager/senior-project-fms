@@ -32,6 +32,33 @@ export interface AuditLogView {
 
 export const MAX_PAGE_SIZE = 200;
 
+/** The most actions one `action` filter may list. */
+export const MAX_ACTIONS = 10;
+
+/** One action (`UPDATE`, `auth.login_failed`), or a prefix of actions ending in `.*` (`auth.*`). */
+const ACTION = /^[A-Za-z_]+(\.[A-Za-z_]+)*(\.\*)?$/;
+
+/** The `action` filter: actions matched exactly, and prefixes (without their `*`) matched at the start. */
+export interface ActionFilter {
+  exact: string[];
+  prefixes: string[];
+}
+
+/**
+ * `action` as sent: one or more actions, comma-separated, each exact or a
+ * prefix (`INSERT,UPDATE,DELETE`, `auth.*`), so one view can show every data
+ * change or every sign-in event. Null when a part is malformed or there are
+ * more than MAX_ACTIONS.
+ */
+export function parseActions(value: string): ActionFilter | null {
+  const parts = value.split(',').map((p) => p.trim());
+  if (parts.length > MAX_ACTIONS || !parts.every((p) => ACTION.test(p))) return null;
+  return {
+    exact: parts.filter((p) => !p.endsWith('.*')),
+    prefixes: parts.filter((p) => p.endsWith('.*')).map((p) => p.slice(0, -1)),
+  };
+}
+
 /** Columns that hold internal numeric ids (a row's own `id`, or a reference to another row's). */
 const INTERNAL_REF = /^(id|.+_id|created_by|assigned_by|logged_by|uploaded_by|performed_by|deleted_by|completed_by)$/;
 const NUMERIC = /^\d+$/;

@@ -1,14 +1,15 @@
+import { config } from '../config';
 import type { AppModule } from '../shared/module';
 import { authModule, provideDepotDirectory } from './auth';
-import { depotDirectory, fleetModule, provideMaintenanceLookup, tripRefs } from './fleet';
-import { provideFleetRefs, provideMaintenanceRefs, tripModule } from './trip';
-import { fuelModule } from './fuel';
+import { depotDirectory, fleetModule, provideMaintenanceLookup, provideMeterSources, tripRefs } from './fleet';
+import { provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, ROUTING_TIMEOUT_MS, tripModule } from './trip';
+import { fuelMeterReadings, fuelModule } from './fuel';
 import { maintenanceModule, maintenanceRefs } from './maintenance';
 import { alertModule } from './alert';
 import { analyticsModule } from './analytics';
 import { commandCenterModule } from './command-center';
 import { evModule } from './ev';
-import { integrationModule } from './integration';
+import { ignitionTime, integrationGateway, integrationModule } from './integration';
 import { auditModule } from './audit';
 
 // Wiring between modules that cannot import each other: fleet imports auth's
@@ -19,6 +20,15 @@ provideDepotDirectory(depotDirectory);
 provideFleetRefs(tripRefs);
 provideMaintenanceLookup(maintenanceRefs);
 provideMaintenanceRefs(maintenanceRefs);
+// Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
+provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
+// Road routing (FMS-84): OSRM through the integration gateway (timeouts, a retry, its circuit breaker).
+const routing = config.routing;
+if (routing) {
+  provideRoutingClient((correlationId) =>
+    integrationGateway.internalClient({ code: 'osrm', baseUrl: routing.url, timeoutMs: ROUTING_TIMEOUT_MS, maxRetries: 1 }, correlationId),
+  );
+}
 
 /** Every module, in mount order. Add new modules here. */
 export const modules: AppModule[] = [

@@ -115,6 +115,33 @@ describe('event mapping (api-contract §11.2)', () => {
     expect(staff.driverIds).toBeUndefined();
   });
 
+  it('IncidentUpdated becomes incident.updated for the depot and the reporting driver, without the notes', async () => {
+    const [d, ...rest] = await deliveriesFor(
+      envelope('IncidentUpdated', {
+        incident_id: 'i1',
+        depot_id: DEPOT_A,
+        status: 'investigating',
+        previous_status: 'open',
+        assigned_to: 'u-7',
+        changes: ['status', 'assigned_to'],
+        reported_by_driver_id: 'd1',
+        notes: 'free text',
+      }),
+      noTrips,
+    );
+    expect(rest).toEqual([]);
+    expect(d).toMatchObject({
+      event: 'incident.updated',
+      channel: 'incidents',
+      depotId: DEPOT_A,
+      driverIds: ['d1'],
+      payload: { incident_id: 'i1', status: 'investigating', previous_status: 'open', assigned_to: 'u-7', changes: ['status', 'assigned_to'] },
+    });
+    expect(d.payload).not.toHaveProperty('notes');
+    const [staff] = await deliveriesFor(envelope('IncidentUpdated', { incident_id: 'i2', depot_id: DEPOT_A, reported_by_driver_id: null }), noTrips);
+    expect(staff.driverIds).toBeUndefined();
+  });
+
   it("NotificationUnreadChanged becomes notifications.unread for that user's own sockets and nobody else's", async () => {
     const [d, ...rest] = await deliveriesFor(
       envelope('NotificationUnreadChanged', { user_id: 'u-9', unread_count: 3, reason: 'delivered', changed_at: '2026-10-23T08:00:00.000Z', title: 'private', message: 'private' }),

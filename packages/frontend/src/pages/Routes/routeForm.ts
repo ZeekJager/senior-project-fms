@@ -155,7 +155,15 @@ export function changedFields(input: RouteInput, original: Route): Partial<Route
   // Key order fixed on both sides, so only values are compared.
   const stops = (list: RouteStop[]) => list.map((s) => ({ name: s.name, latitude: s.latitude, longitude: s.longitude }))
   const point = (c: Coordinates | null) => (c ? { latitude: c.latitude, longitude: c.longitude } : null)
-  const before: Record<keyof RouteInput, unknown> = { ...original, origin: point(original.origin), destination: point(original.destination), stops: stops(original.stops) }
+  // The form shows the time in whole minutes (a road's is to the second): unchanged when the minutes are.
+  const shown = (s: number | null) => (s === null ? null : Math.floor(s / 3600) * 3600 + Math.round((s % 3600) / 60) * 60)
+  const before: Record<keyof RouteInput, unknown> = {
+    ...original,
+    origin: point(original.origin),
+    destination: point(original.destination),
+    stops: stops(original.stops),
+    estimated_duration_seconds: shown(original.estimated_duration_seconds),
+  }
   const after: Record<keyof RouteInput, unknown> = { ...input, origin: point(input.origin), destination: point(input.destination), stops: stops(input.stops) }
   const patch: Partial<RouteInput> = {}
   for (const key of Object.keys(input) as (keyof RouteInput)[]) {

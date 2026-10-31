@@ -132,17 +132,12 @@ describe('Idempotency-Key window on the offline-queue endpoints (FMS-116)', () =
       cases: [
         { path: '/fuel-logs', body: fuel, records: (s: Scene) => count('SELECT count(*)::int AS n FROM fuel.fuel_logs WHERE vehicle_id = $1', s.vehicle.id) },
         { path: '/dvir-reports', body: inspection, records: (s: Scene) => count('SELECT count(*)::int AS n FROM fleet.dvir_reports WHERE vehicle_id = $1', s.vehicle.id) },
-        {
-          path: '/dvir',
-          body: { ...inspection, type: 'post_trip' },
-          records: (s: Scene) => count('SELECT count(*)::int AS n FROM fleet.dvir_reports WHERE vehicle_id = $1 AND inspection_type = $2', s.vehicle.id, 'post_trip'),
-        },
         { path: '/incidents', body: incident, records: (s: Scene) => count('SELECT count(*)::int AS n FROM alert.incident_reports WHERE reported_by = $1', s.driver.user.id) },
       ],
     };
   }
 
-  test.each(['/fuel-logs', '/dvir-reports', '/dvir', '/incidents'])(
+  test.each(['/fuel-logs', '/dvir-reports', '/incidents'])(
     'POST %s keeps its key 7 days: a replay 3 days later returns the original and records nothing',
     async (path) => {
       const s = await setups();

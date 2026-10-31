@@ -1,7 +1,7 @@
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
-import { pool } from './db';
+import { pool, reads } from './db';
 import { auditLogMiddleware } from './middleware/auditLog';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { requestContext } from './middleware/requestContext';
@@ -53,7 +53,13 @@ export function createApp(options: AppOptions = {}): Express {
 
   const outbox = outboxHealth(pool);
   app.use(
-    healthRouter(readinessChecks, undefined, options.optionalDependencies ?? { redis: cache, outbox }, options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }), integrations: integrationGateway.metrics }),
+    healthRouter(
+      readinessChecks,
+      undefined,
+      // The read replica (FMS-94): degraded when reporting reads fall back to the primary.
+      options.optionalDependencies ?? { redis: cache, outbox, replica: reads },
+      options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }), integrations: integrationGateway.metrics, replica: () => reads.metrics() },
+    ),
   );
 
   for (const mod of options.modules ?? defaultModules) {

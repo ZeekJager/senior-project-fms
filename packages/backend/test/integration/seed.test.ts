@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { runSeed, SEED_ADMIN_EMAIL } from '../../scripts/seed/apply';
+import { buildPlan } from '../../scripts/seed/plan';
+import { tripTrack } from '../../scripts/seed/tracks';
 import { pool } from '../../src/db';
 import { verifyPassword } from '../../src/modules/auth/infrastructure/password-hasher';
 
@@ -13,7 +15,10 @@ describe('seed generator', () => {
   test('the small profile writes every kind of data through the API, audited', { timeout: 120_000 }, async () => {
     const summary = await runSeed(OPTIONS);
     fingerprints.push(summary.fingerprint);
-    expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 16, maintenance_records: 20, vehicle_documents: 48 });
+    expect(summary.counts).toMatchObject({ depots: 3, vehicles: 24, drivers: 30, trips: 80, roles_held: 9, trip_statuses: 6, spare_parts: 19, vehicle_documents: 48 });
+    // 20 repairs, then each vehicle's service history (FMS-55).
+    expect(summary.counts.maintenance_records).toBe(buildPlan(OPTIONS.profile, OPTIONS.seed, OPTIONS.anchor).maintenance.length);
+    expect(summary.counts.maintenance_records).toBeGreaterThan(100);
     expect(summary.counts.electric_vehicles).toBeGreaterThan(0);
     expect(summary.counts.fuel_logs).toBeGreaterThan(0);
     expect(summary.counts.failure_events).toBeGreaterThan(0);
@@ -21,11 +26,39 @@ describe('seed generator', () => {
     expect(summary.counts.documents_expiring_red).toBeGreaterThan(0);
     expect(summary.logins.map((l) => l.role)).toEqual(expect.arrayContaining(['admin', 'fleet_manager', 'dispatcher', 'driver']));
 
+    // Every completed trip's GPS track (FMS-136), within its actual start and end, and the vehicles' current
+    // location from it; batches audited like the ingestion's.
+    const plan = buildPlan(OPTIONS.profile, OPTIONS.seed, OPTIONS.anchor);
+    expect(summary.counts.gps_pings).toBe(plan.trips.reduce((n, _, i) => n + tripTrack(plan, i).length, 0));
+    const tracks = await pool.query<{ outside: number; trips: number; completed: number; located: number; batches: number }>(
+      `SELECT (SELECT count(*) FROM tracking.gps_pings p JOIN trip.trips t ON t.id = p.trip_id
+                WHERE p.recorded_at NOT BETWEEN t.actual_start AND t.actual_end OR p.vehicle_id <> t.vehicle_id)::int AS outside,
+              (SELECT count(DISTINCT trip_id) FROM tracking.gps_pings)::int AS trips,
+              (SELECT count(*) FROM trip.trips WHERE status = 'completed')::int AS completed,
+              (SELECT count(*) FROM tracking.vehicle_current_location)::int AS located,
+              (SELECT count(*) FROM audit.audit_logs WHERE action = 'tracking.pings_ingested')::int AS batches`,
+    );
+    expect(tracks.rows[0]).toMatchObject({ outside: 0, trips: tracks.rows[0].completed, batches: Math.ceil(summary.counts.gps_pings / 5000) });
+    expect(tracks.rows[0].located).toBeGreaterThan(0);
+
     // Every row has its audit entry: written by the services, or by auditedMutation for trips.
     const audited = await pool.query<{ entity_type: string; n: number }>(
       "SELECT entity_type, count(*)::int AS n FROM audit.audit_logs WHERE action = 'INSERT' AND entity_type IN ('fleet.vehicles', 'fleet.drivers', 'trip.trips', 'document.documents') GROUP BY 1",
     );
     expect(Object.fromEntries(audited.rows.map((r) => [r.entity_type, r.n]))).toEqual({ 'fleet.vehicles': 24, 'fleet.drivers': 30, 'trip.trips': 80, 'document.documents': 48 });
+    // Each vehicle joined the fleet when the plan says, years ago.
+    const registered = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM fleet.vehicles WHERE created_at < now() - interval '60 days'");
+    expect(registered.rows[0].n).toBe(24);
+
+    // Every vehicle's registered odometer, fuel log and completed repair with an odometer is a meter reading (FMS-126).
+    const readings = await pool.query<{ source: string; n: number }>('SELECT source, count(*)::int AS n FROM fleet.meter_readings GROUP BY 1');
+    const completedWithOdometer = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM maintenance.maintenance_records WHERE status = 'completed' AND odometer_km IS NOT NULL");
+    expect(Object.fromEntries(readings.rows.map((r) => [r.source, r.n]))).toEqual({
+      manual: 24,
+      fuel_log: summary.counts.fuel_logs,
+      maintenance: completedWithOdometer.rows[0].n,
+    });
+    expect(summary.counts.meter_readings).toBe(24 + summary.counts.fuel_logs + completedWithOdometer.rows[0].n);
 
     // The accounts it lists can sign in.
     expect(await canSignIn(SEED_ADMIN_EMAIL)).toBe(true);

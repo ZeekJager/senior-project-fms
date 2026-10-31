@@ -4,17 +4,22 @@ import {
   DEPOT_SITES,
   EV_MODELS,
   FIRST_NAMES,
+  FLUID_PARTS,
   FUEL_PRICE_CENTS,
   FUEL_STATIONS,
   LAST_NAMES,
   PARTS,
   REPAIRS,
+  SERVICE_SCHEDULE,
+  TYRE_FOR,
   VEHICLE_MODELS,
   WORKSHOPS,
   type Place,
   type SeedVehicleType,
+  type ServiceItem,
 } from './catalog';
 import { Rng } from './random';
+import { seedRoad } from './roads';
 
 // The whole dataset as plain data, from (profile, seed, anchor) alone: no
 // clock, no database. The same inputs always give the same plan, which is
@@ -82,6 +87,8 @@ export interface PlannedVehicle {
   depot: number;
   /** The odometer now: the base reading plus every completed trip. */
   odometer_km: number;
+  /** When it joined the fleet: the vehicle's created_at, years back, never before its model year. */
+  registered_at: string;
 }
 
 export interface PlannedDriver extends PlannedPerson {
@@ -99,6 +106,7 @@ export interface PlannedPart {
   unit_cost_cents: number;
   stock_quantity: number;
   reorder_threshold: number;
+  service_item: ServiceItem | null;
 }
 
 export interface PlannedMaintenance {
@@ -217,12 +225,6 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const dateOf = (ms: number) => new Date(ms + ADDIS_OFFSET).toISOString().slice(0, 10);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-function haversineKm(a: Place, b: Place): number {
-  const rad = (d: number) => (d * Math.PI) / 180;
-  const h = Math.sin(rad(b.latitude - a.latitude) / 2) ** 2 + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(rad(b.longitude - a.longitude) / 2) ** 2;
-  return 2 * 6371 * Math.asin(Math.sqrt(h));
-}
-
 /** Keeps generated keys (emails, plates, VINs, licence numbers) unique. */
 function uniqueFrom(make: () => string): () => string {
   const seen = new Set<string>();
@@ -294,6 +296,8 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       fuel_efficiency_ml_per_km: model.mlPerKm === null ? null : Math.round(model.mlPerKm * rng.between(0.92, 1.1)),
       depot: pickDepot(),
       odometer_km: rng.int(5, 40) * 1000 * (2026 - year + 1) / 4,
+      // Drawn with the service history, below.
+      registered_at: '',
     });
   }
   // Per depot: trips are crewed from their own depot only.
@@ -331,16 +335,19 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     unit_cost_cents: p.costCents,
     stock_quantity: p.number === 'WPR-BLD-24' ? 3 : p.number === 'LMP-HDL-H4' ? 0 : rng.int(40, 120) * profile.stockFactor,
     reorder_threshold: rng.int(5, 15),
+    service_item: p.renews ?? null,
   }));
   const partIndex = new Map(parts.map((p, i) => [p.part_number, i]));
 
-  // Routes from each depot to other cities.
+  // Routes from each depot to other cities, as long as their road (FMS-84, roads.json); the plan's time at 55 km/h.
   const routes: PlannedRoute[] = [];
   depots.forEach((depot, d) => {
     const origin: Place = { city: depot.city, latitude: depot.latitude, longitude: depot.longitude };
     const destinations = rng.shuffle(CITIES.filter((c) => c.city !== depot.city)).slice(0, profile.routesPerDepot);
     for (const destination of destinations) {
-      const distance = Math.round(haversineKm(origin, destination) * 1.25);
+      const road = seedRoad(origin, destination);
+      if (!road) throw new Error(`No road from ${origin.city} to ${destination.city} in scripts/seed/roads.json: run npm run routes:roads`);
+      const distance = Math.round(road.distance_km);
       routes.push({
         depot: d,
         name: `${depot.city} – ${destination.city}`,
@@ -433,6 +440,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   // in time order so each vehicle's odometer only goes up. About 3% are
   // well above what the distance explains, for the reconciliation screen.
   const odometer = vehicles.map((v) => v.odometer_km);
+  const baseOdometer = [...odometer];
   const fuelLogs: PlannedFuelLog[] = [];
   const completed = trips.map((trip, i) => ({ trip, i })).filter(({ trip }) => trip.status === 'completed').sort((a, b) => a.trip.actual_end!.localeCompare(b.trip.actual_end!) || a.i - b.i);
   for (const { trip, i } of completed) {
@@ -462,6 +470,21 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   }
   vehicles.forEach((v, i) => (v.odometer_km = odometer[i]));
 
+  /**
+   * A vehicle's odometer at a time (a repair's reading, FMS-126): during the seeded trips, its base reading
+   * plus its trips completed by then; before them, run back at its average rate since it was built, so a
+   * vehicle's readings only go up over time.
+   */
+  const tripsFrom = at(DAYS.completed[0], 0);
+  const odometerAt = (vehicle: number, time: number) => {
+    if (time < tripsFrom) {
+      const built = anchorMidnight(`${vehicles[vehicle].year}-01-01`);
+      const kmPerDay = baseOdometer[vehicle] / Math.max(1, (tripsFrom - built) / DAY);
+      return round1(Math.max(0, baseOdometer[vehicle] - (kmPerDay * (tripsFrom - time)) / DAY));
+    }
+    return round1(baseOdometer[vehicle] + completed.filter(({ trip }) => trip.vehicle === vehicle && Date.parse(trip.actual_end!) <= time).reduce((km, { trip }) => km + trip.actual_distance_km!, 0));
+  };
+
   // Maintenance history: mostly completed work, some open and scheduled.
   const maintenance: PlannedMaintenance[] = [];
   for (let m = 0; m < profile.maintenance; m++) {
@@ -472,6 +495,9 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     const hours = round1(repair.hours * rng.between(0.8, 1.4));
     const partsCost = used.reduce((sum, u) => sum + parts[u.part].unit_cost_cents * u.quantity, 0);
     const day = status === 'completed' ? -rng.int(1, 180) : status === 'scheduled' ? rng.int(1, 30) : -rng.int(0, 5);
+    const completedAt = status === 'completed' ? at(day, rng.int(9, 17)) : null;
+    // The odometer when the vehicle came in; scheduled work has not happened yet.
+    const slack = rng.int(0, 400);
     maintenance.push({
       vehicle,
       description: repair.description,
@@ -483,8 +509,8 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       // Scheduled work takes its parts when it is done, not now.
       parts: status === 'scheduled' ? [] : used,
       scheduled_at: status === 'scheduled' ? iso(at(day, 8)) : null,
-      completed_at: status === 'completed' ? iso(at(day, rng.int(9, 17))) : null,
-      odometer_km: round1(Math.max(0, vehicles[vehicle].odometer_km - rng.int(0, 400))),
+      completed_at: completedAt === null ? null : iso(completedAt),
+      odometer_km: status === 'scheduled' ? round1(Math.max(0, vehicles[vehicle].odometer_km - slack)) : odometerAt(vehicle, completedAt ?? at(day, 9)),
       workshop: rng.pick(WORKSHOPS),
       failures: [],
     });
@@ -534,6 +560,45 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     const occurred = m.completed_at ? Date.parse(m.completed_at) - rng.int(2, 72) * HOUR : at(-rng.int(1, 6), rng.int(6, 18));
     m.failures.push({ component: failure.component, failure_mode: failure.failure_mode, unplanned, detected_by, occurred_at: iso(occurred) });
   }
+
+  // Service history (FMS-55), drawn last so nothing above changes. Each vehicle joined the fleet 4 to 6
+  // years ago (or new, when younger), and each wearing part and fluid was last renewed a share of its usual
+  // interval ago: mostly on time, one in twenty overdue. A change due before the vehicle joined is its
+  // original part, never changed here. The model's health score reads this history (docs/ml-dataset.md).
+  for (const p of FLUID_PARTS) {
+    partIndex.set(p.number, parts.length);
+    parts.push({ part_number: p.number, name: p.name, unit_cost_cents: p.costCents, stock_quantity: rng.int(40, 120) * profile.stockFactor, reorder_threshold: rng.int(5, 15), service_item: p.renews });
+  }
+  vehicles.forEach((v, vehicle) => {
+    const built = anchorMidnight(`${v.year}-01-01`);
+    const registered = Math.min(Math.max(built + rng.int(0, 60) * DAY, at(-rng.int(4 * 365, 6 * 365), 10)), at(-60, 10));
+    v.registered_at = iso(registered);
+    for (const service of SERVICE_SCHEDULE) {
+      if (service.combustionOnly && v.fuel_type === 'electric') continue;
+      const share = rng.chance(0.05) ? rng.between(1.1, 1.8) : rng.between(0.05, 0.95);
+      const completedAt = at(-Math.max(1, Math.round(service.intervalDays * share)), rng.int(9, 16));
+      if (completedAt <= registered) continue;
+      const used = service.parts.map((number) => (number === 'TYRES' ? { part: partIndex.get(TYRE_FOR[v.vehicle_type])!, quantity: 4 } : { part: partIndex.get(number)!, quantity: 1 }));
+      // Opening stock covers the history, so what is left on the shelf is the stock drawn above.
+      for (const u of used) parts[u.part].stock_quantity += u.quantity;
+      const hours = round1(service.hours * rng.between(0.8, 1.3));
+      maintenance.push({
+        vehicle,
+        description: service.description,
+        maintenance_type: 'preventive',
+        status: 'completed',
+        priority: 'low',
+        labour_hours: hours,
+        total_cost_cents: used.reduce((sum, u) => sum + parts[u.part].unit_cost_cents * u.quantity, 0) + Math.round(hours * 60_000),
+        parts: used,
+        scheduled_at: null,
+        completed_at: iso(completedAt),
+        odometer_km: odometerAt(vehicle, completedAt),
+        workshop: rng.pick(WORKSHOPS),
+        failures: [],
+      });
+    }
+  });
 
   return { profile: profileName, seed, anchor, depots, staff, vehicles, drivers, parts, maintenance, attendance, documents, routes, trips, fuelLogs };
 }

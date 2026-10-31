@@ -31,6 +31,10 @@ Settings come from your environment, or from the repo-root `.env` that `make env
 
 Uploaded documents go to local disk in a temporary folder (`STORAGE_DRIVER=local`), cleared before and after each run. The S3 adapter's own test, `test/integration/s3-storage.test.ts`, is skipped unless `S3_TEST_ENDPOINT` points at an S3-compatible server (MinIO, RustFS) with a bucket named `fms-test` (or `S3_TEST_BUCKET`); set `S3_TEST_ACCESS_KEY_ID` and `S3_TEST_SECRET_ACCESS_KEY` too. CI does not run it.
 
+### Access control is tested from the registry (FMS-59)
+
+`route-access.test.ts`, `data-scope.test.ts` and `realtime-scope.test.ts` call every route and every forwarded socket event, as every role, so a new route or event needs no access test of its own. They fail when a route without a permission is not on the reviewed lists, when a forwarded event has no sample, or when anything of depot B reaches a depot A user ([auth.md](auth.md#the-access-audit-fms-59)). `data-scope.test.ts` runs the small seed, about 25 seconds.
+
 ### Every test is rolled back
 
 Each integration test runs inside one database transaction that is rolled back when the test ends, so nothing it writes survives, audit rows included. The app's own transactions become savepoints inside it, so transactional code behaves as in production.
@@ -108,7 +112,7 @@ The overlap decision is SQL (`tstzrange(..., '[]')`), not a function, so a unit 
 `test/integration/openapi.test.ts` keeps `docs/openapi.yaml` and the mounted routes in step in both directions:
 
 - **Listed, so mounted.** Every operation in the spec answers on the real app (not "No route for"), every `$ref` resolves and every error code it names is in `ERROR_CODES`.
-- **Mounted, so listed.** The routes are read off the running app (`mountedRoutes`, the same walk as the startup access-policy check) and compared with the spec, method and path, with every parameter as `{}` (`:tripId` and `{trip_id}` are the same route). A route in neither the spec nor the exceptions fails: **mounting a route without documenting it fails CI**.
+- **Mounted, so listed.** The routes are read off the running app (`routeRegistry`, the same walk as the startup access-policy check) and compared with the spec, method and path, with every parameter as `{}` (`:tripId` and `{trip_id}` are the same route). A route in neither the spec nor the exceptions fails: **mounting a route without documenting it fails CI**.
 - **The exceptions only shrink.** `test/support/openapi-baseline.ts` lists the routes that predate the spec (`NOT_YET_DOCUMENTED`), second mounts of a documented operation (`ALIASES`) and routes outside `/api/v1` (health). A line for a route that is gone, or that the spec now describes, fails the test, so documenting an operation means deleting its line. Never add a line for new work.
 - **Is the spec right?** These checks prove an operation exists, not that its schema is true. When you write one, run the real call and validate the response against the schema once (Ajv, from a scratch test); FMS-119's schemas were checked that way.
 

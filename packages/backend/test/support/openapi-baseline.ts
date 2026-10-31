@@ -18,7 +18,6 @@ export const OUTSIDE_API_BASE: readonly string[] = [
 /**
  * Second mounts of operations the spec describes under their canonical path (the /maintenance mount of
  * /maintenance-records, /audit of /audit-logs). They behave identically, so one description serves both.
- * Never documented separately; /dvir is the exception and has its own entry in the spec.
  */
 export const ALIASES: readonly string[] = [
   'GET /maintenance',

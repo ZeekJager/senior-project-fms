@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { depotScope } from '../../../shared/authz/scope';
+import { depotScope, ownDriverScope } from '../../../shared/authz/scope';
 import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import type { Cache } from '../../../shared/cache/cache';
 import type { EventBus } from '../../../shared/events/event-bus';
@@ -94,6 +94,8 @@ export interface VehicleServiceDeps {
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   /** The maintenance module's open record behind a flag, connected by src/modules/index.ts (maintenance imports fleet). */
   maintenance: () => { openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> } | null;
+  /** A person setting the odometer is a manual meter reading (FMS-126). Optional for tests that do not look at readings. */
+  meters?: { manual(client: PoolClient, ctx: MutationContext, vehicleId: string, odometerKm: number, at: Date): Promise<void> };
   now?: () => Date;
 }
 
@@ -130,6 +132,14 @@ function reviveVehicle(raw: unknown): CachedVehicle | null {
 }
 
 /**
+ * What a caller sees of a vehicle. A driver (and nothing else) reads the depot's vehicles without their current
+ * trip: it would tell them where every colleague is going and when (§24.3, FMS-59). Their own trips are in /trips.
+ */
+function forCaller(caller: Caller, view: VehicleView): VehicleView {
+  return ownDriverScope(caller.user).kind === 'own' && view.current_trip ? { ...view, current_trip: null } : view;
+}
+
+/**
  * Register, update and retire vehicles (FMS-15). Every write is limited to
  * the caller's depot scope, writes one audit row, and writes its event into
  * the outbox in the same transaction (delivered after commit, FMS-73).
@@ -137,9 +147,10 @@ function reviveVehicle(raw: unknown): CachedVehicle | null {
 export class VehicleService {
   constructor(private readonly deps: VehicleServiceDeps) {}
 
-  list(caller: Caller, query: VehicleListQuery): Promise<{ items: VehicleView[]; total: number }> {
+  async list(caller: Caller, query: VehicleListQuery): Promise<{ items: VehicleView[]; total: number }> {
     const { vehicles } = this.deps;
-    return vehicles.inTransaction((client) => vehicles.list(client, query, depotScope(caller.user)));
+    const page = await vehicles.inTransaction((client) => vehicles.list(client, query, depotScope(caller.user)));
+    return { ...page, items: page.items.map((v) => forCaller(caller, v)) };
   }
 
   /**
@@ -159,11 +170,11 @@ export class VehicleService {
         reviveVehicle,
       );
       if (!entry || (scope.kind === 'depot' && entry.depotId !== scope.depotId)) throw vehicleNotFound();
-      return entry.view;
+      return forCaller(caller, entry.view);
     }
     const view = await vehicles.inTransaction((client) => vehicles.findView(client, vehicleId, scope));
     if (!view) throw vehicleNotFound();
-    return view;
+    return forCaller(caller, view);
   }
 
   /** Drops a vehicle's cached view; call after the change has committed. */
@@ -183,6 +194,7 @@ export class VehicleService {
       const depotId = await this.depotInScope(client, input.depot_id, caller);
       const row = await vehicles.insert(mutationContext(caller), { ...toColumns(input), depot_id: depotId }, client);
       const created = await vehicles.findViewById(client, row.id as string);
+      await this.deps.meters?.manual(client, mutationContext(caller), row.id as string, created.odometer_km, created.created_at);
       await this.publish(client, caller, VEHICLE_EVENTS.registered, { vehicle_id: created.id, depot_id: created.depot_id });
       return created;
     });
@@ -212,6 +224,9 @@ export class VehicleService {
 
       await vehicles.update(mutationContext(caller), current.id, data, client);
       const updated = await vehicles.findViewById(client, current.id);
+      if (patch.odometer_km !== undefined && patch.odometer_km !== current.odometerKm) {
+        await this.deps.meters?.manual(client, mutationContext(caller), current.id, patch.odometer_km, updated.updated_at);
+      }
       await this.publish(client, caller, VEHICLE_EVENTS.updated, {
         vehicle_id: updated.id,
         depot_id: updated.depot_id,

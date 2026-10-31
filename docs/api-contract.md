@@ -139,7 +139,7 @@ Unversioned and unauthenticated, for load balancers and container orchestration:
 | Endpoint | Returns |
 |---|---|
 | `GET /health/live` | `200` while the process is running; checks no dependencies |
-| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured) |
+| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`) |
 
 ## 4. HTTP Status Contract
 
@@ -206,13 +206,14 @@ The audit trail is read-only through the API. There is no create, update or dele
 Audit reader rules (FMS-28):
 
 - **Who:** `audit:read`, which admin, fleet owner and compliance officer hold. Migration 025 took it from fleet manager, who now gets `403`, as does a dispatcher.
+- **Read from the replica** when it is up (FMS-94): a row written a moment ago may appear a few seconds later. `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag).
 - **Order and paging:** newest first, on (`created_at`, row) so rows written in one transaction keep a stable order. `page_size` 1-200 (default 50). `meta.next_cursor` is the `cursor` for the next page, or `null` on the last. A row written while paging is newer than the cursor, so pages never shift, skip or repeat. A cursor that is not one the API issued is `400`, `reason: "invalid_cursor"`.
 - **Filters:**
   - `user_id`: the actor's public id.
   - `entity_type`: a schema-qualified table, e.g. `fleet.vehicles`.
   - `entity_id`: the entity's public id. It matches mutation rows of that entity and, for a user account, its sign-in events and role changes.
   - `correlation_id`: one request or job run.
-  - `action`, e.g. `UPDATE` or `auth.login_failed`.
+  - `action`, e.g. `UPDATE` or `auth.login_failed`. Up to 10, comma-separated, each an exact action or a prefix ending in `.*`: `INSERT,UPDATE,DELETE,ROLE_CHANGE` is every data change, `auth.*` every sign-in event (FMS-29). Anything else is `400`, `reason: "invalid_action"`.
   - `result`: `success`, `denied` or `failed`.
   - `from` and `to`: an ISO instant, or a date meaning that Addis Ababa day. A `to` date includes its day; `from` must come before `to`.
   - An unknown `user_id` returns no rows, not `404`.
@@ -256,12 +257,13 @@ Depot rules (FMS-20):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /vehicles` | List/search vehicles | `vehicle:read` | `page,page_size,status,depot_id,maintenance_flag,ready_to_dispatch,documents,search,sort_by,sort_order,then_by,then_order` -> `Vehicle[]` |
+| `GET /vehicles` | List/search vehicles | `vehicle:read` | `page,page_size,status,depot_id,maintenance_flag,ready_to_dispatch,documents,health,search,sort_by,sort_order,then_by,then_order` -> `Vehicle[]` |
 | `POST /vehicles` | Create vehicle | `vehicle:write` | `VehicleCreate` -> `Vehicle` |
 | `GET /vehicles/{vehicle_id}` | Get vehicle | `vehicle:read` | `Vehicle` |
 | `PATCH /vehicles/{vehicle_id}` | Update vehicle | `vehicle:write` | `VehicleUpdate` -> `Vehicle` |
 | `DELETE /vehicles/{vehicle_id}` | Retire/remove vehicle | `vehicle:delete` | `204`. Soft retire; `409 CONFLICT_VEHICLE_IN_USE` if in use |
 | `GET /vehicles/{vehicle_id}/status` | Operational status | `vehicle:read` | `from,to` -> `VehicleStatus` |
+| `GET /vehicles/{vehicle_id}/meter-readings` | Odometer and engine-hour history (FMS-126) | `vehicle:read` | `meter,from,to,page,page_size` -> paged `MeterReading[]`, newest first |
 | `GET /dispatch/availability` | Dispatcher board: a depot's drivers and vehicles, state and availability | `trip:assign` | `depot_id, from, to, exclude_trip_id` -> `DispatchBoard` |
 | `POST /vehicles/{vehicle_id}/status` | Change status | `vehicle:write` | `{status, reason}` -> `VehicleStatus`; `If-Match`; `meta.warnings` |
 
@@ -286,14 +288,23 @@ Dispatcher board (FMS-33, screen S-07):
 Vehicle rules (FMS-15):
 
 - **Writable fields** (`VehicleCreate`; `VehicleUpdate` is any non-empty subset): `registration_number`, `vin`, `make`, `model`, `year`, `vehicle_type`, `fuel_type`, `fuel_efficiency_ml_per_km`, `depot_id`, `odometer_km`. Required on create: `registration_number`, `make`, `model`, `vehicle_type`, `fuel_type`, `depot_id`, and `fuel_efficiency_ml_per_km` unless electric. `status`, `maintenance_flag` and `health_score` are set by their own workflows (vehicle status FMS-76, maintenance, the ML service); sending them, or any other field, is `400 VALIDATION_FAILED` with `reason: "not_writable"`.
-- **Values:** `registration_number` is stored trimmed, upper case, single-spaced, so `aa  3-12345` and `AA 3-12345` are the same plate (`409 CONFLICT_DUPLICATE_PLATE`). `vin` is 17 characters (ISO 3779), unique (`409 CONFLICT_DUPLICATE`, `field: "vin"`). A fractional `fuel_efficiency_ml_per_km` is `400 VALIDATION_FLOAT_IN_MONEY_PATH`. `odometer_km` has at most one decimal and never goes down: a lower reading is `409 CONFLICT_ODOMETER_REGRESSION`. The fuel-efficiency rule is checked on the vehicle as it would be after a `PATCH`.
+- **Values:** `registration_number` is stored trimmed, upper case, single-spaced, so `aa  3-12345` and `AA 3-12345` are the same plate (`409 CONFLICT_DUPLICATE_PLATE`). `vin` is 17 characters (ISO 3779), unique (`409 CONFLICT_DUPLICATE`, `field: "vin"`). A fractional `fuel_efficiency_ml_per_km` is `400 VALIDATION_FLOAT_IN_MONEY_PATH`. `odometer_km` has at most one decimal and never goes down: a lower reading is `409 CONFLICT_ODOMETER_REGRESSION`. It also moves up with trusted meter readings (below). The fuel-efficiency rule is checked on the vehicle as it would be after a `PATCH`.
 - **Depot scope:** reads and writes cover the caller's depots only (`depotScope`). A vehicle outside it is `404`; a `depot_id` outside it, on create or `PATCH`, is `400 VALIDATION_FAILED` with `reason: "references_missing_record"`, the same as an unknown depot.
 - **Retirement:** `DELETE` sets `status = retired` and `is_active = false` (one audit row) and returns `204`. It is refused with `409 CONFLICT_VEHICLE_IN_USE` while the vehicle is on an `assigned` or `en_route` trip or has an active driver assignment. Retiring a retired vehicle returns `204` and changes nothing. A retired vehicle is left out of `GET /vehicles` unless `status=retired` is asked for, can still be read by id, and cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`). Its plate stays taken.
 - **List:** `page` from 1, `page_size` default 25, capped at 100. `search` matches registration number, VIN, make or model (case-insensitive, wildcards literal). `sort_by`: `registration_number` (default), `make`, `model`, `year`, `odometer_km`, `health_score`, `created_at`, `updated_at`, `status`, `vehicle_type`, `depot` (the depot's name); `sort_order` `asc` (default) or `desc`. `then_by` (the same columns) and `then_order` add a second sort for the rows the first leaves tied; the same column twice is just the first sort.
 - **Dispatch and document filters** (FMS-18): `ready_to_dispatch=true` lists the vehicles that can be sent out now: `status` is `active`, `maintenance_flag` is false, no `assigned` or `en_route` trip, and no live document past its `expires_on`. `ready_to_dispatch=false` lists the rest. `documents=expired` lists vehicles with a live document past its date; `documents=expiring` those with one expiring within 30 days (today included, the same window as the expiry warnings); `documents=due` either. A deleted document never counts. Dates are calendar dates in Addis Ababa. The filters combine with every other filter, and `meta.total_items` counts the filtered set, so a client can show each view's count with `page_size=1`.
-- **Current trip:** every `Vehicle` carries `current_trip`: the trip it is on now (`assigned` or `en_route`; en route first, then the earliest scheduled), as `{ id, status, origin, destination, scheduled_start }`, or `null`. Read only; it comes from the trip module (FMS-18).
+- **Health filter** (FMS-56): `health` is the health score's band, as the screens colour it: `at_risk` (below 75), `watch` (75 to 84), `healthy` (85 and up), each for a score set in the last 25 hours; `stale` (scored more than 25 hours ago, whatever the score); `unscored`. The five are disjoint. Any other value is `400`. Every vehicle reader sees `health_score` and `health_score_updated_at` (when the nightly scoring last set it, null when never); the breakdown behind it is `GET /vehicles/{vehicle_id}/maintenance-risk` (§10.2, `prediction:read`).
+- **Current trip:** every `Vehicle` carries `current_trip`: the trip it is on now (`assigned` or `en_route`; en route first, then the earliest scheduled), as `{ id, status, origin, destination, scheduled_start }`, or `null`. Read only; it comes from the trip module (FMS-18). A caller who is only a driver always gets `null`: it would say where each colleague is driving and when (§24.3, FMS-59); their own trips are in `GET /trips`.
 - **Events:** `VehicleRegistered`, `VehicleUpdated` (with `changed_fields`) and `VehicleRetired`, each with `vehicle_id` and `depot_id` (public ids).
 - **Concurrency:** `version` and `ETag` / `If-Match` as described under the driver rules (§6.3).
+
+Meter readings (FMS-126, [meter-readings.md](meter-readings.md)):
+
+- **Sources:** each fuel log (`fuel_log`, at the fill-up) and each completed repair with an odometer (`maintenance`, at its completion) is an odometer reading, added when its event is delivered; a vehicle's own device or telematics provider (`telematics`) at most once an hour per vehicle; a person registering a vehicle or changing its `odometer_km` (`manual`); the nightly engine-hours job (`gps_derived`, engine hours only). Odometers sent by phones or signed-in users are not readings.
+- **Suspect:** an odometer reading lower than the highest trusted reading recorded at or before it is stored with `suspect: true`, not refused, and the vehicle's odometer does not follow it. A trusted reading above the vehicle's `odometer_km` moves it up (one audit row; `version` changes).
+- **Engine hours:** each local day, for vehicles whose device or telematics pings say whether the ignition is on, the time from one such ping to the next counts when the first had it on and the gap is at most 10 minutes. The day's reading, at the end of the day, is the vehicle's last engine hours plus that time. Phone-only vehicles get none.
+- **`GET /vehicles/{vehicle_id}/meter-readings`:** `vehicle:read`, the depot scope of `GET /vehicles/{id}` (`404` outside it, or for an id that is not a UUID). `meter` (`odometer` or `engine_hours`), `from` and `to` (instants, or dates meaning Addis Ababa days; `to` inclusive) filter on `recorded_at`; paged, newest first.
+- **`MeterReading`:** `id`, `meter`, `value` (km, or hours), `source`, `source_ref` (the fuel log's or repair's id, the device's id, or the day `YYYY-MM-DD` of an engine-hours reading; `null` for manual), `recorded_at` (when it was true), `suspect`, `created_at`.
 
 ### 6.3 Drivers, assignments and attendance
 
@@ -349,7 +360,6 @@ Attendance rules (FMS-21):
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `POST /dvir` | Legacy-compatible DVIR command | `dvir:write` | Same body, behaviour and `Idempotency-Key` as `POST /dvir-reports` |
 | `POST /dvir-reports` | Canonical DVIR create | `dvir:write` | `vehicle_id,type,items`; optional `trip_id`, `driver_id`, `issues_found`, `submitted_at` -> `201 DVIRReport` (`meta.created: true`), or `200` with the original and `meta.created: false`; `Idempotency-Key` |
 | `GET /vehicles/{vehicle_id}/dvir-reports` | DVIR history | `dvir:read` | `type`, `issues_found`, `from`, `to`, `sort_order` (`desc` default) -> paged `DVIRReport[]` |
 
@@ -361,6 +371,7 @@ DVIR rules (FMS-36):
 - **Duplicates:** with a `trip_id`, an inspection of one type is recorded once per vehicle and trip. Submitting it again (an offline replay) answers `200` with the original report and `meta.created: false`, even if the second checklist differs, and changes nothing. Without a trip there is nothing to match on. `Idempotency-Key` (§19) additionally replays the exact stored response.
 - **Who:** `dvir:write` is held by admin, fleet manager, depot admin, technician and driver. A driver always submits as themselves (`driver_id` omitted or their own; another is `400`, `reason: "not_writable"`), for vehicles of their depot, and reads only their own reports. Everyone else names the driver the inspection is for (`400`, `reason: "required"`; a driver outside their depots is `references_missing_record`). A driver without a driver profile cannot submit.
 - **Vehicle and trip:** the vehicle must be a live vehicle in the caller's depots (`400`, `field: "vehicle_id"`, `references_missing_record` or `vehicle_retired`). `trip_id` must be a trip the caller may see (a driver's own; staff their depots') and, if it has a vehicle, this one (`reason: "trip_vehicle_mismatch"`).
+- **One path:** `POST /dvir-reports` is the only way to submit an inspection. The legacy `POST /dvir` alias was removed before the contract froze (FMS-122); it answers `404 NOT_FOUND` like any unknown path.
 - **History:** `GET /vehicles/{id}/dvir-reports` is `404` for a vehicle outside the caller's depots (the same body as a missing id); a driver gets their own reports of it. `from` and `to` are Addis Ababa days (as in §3), and `to` includes its whole day.
 
 ## 7. Trips and Routes API
@@ -373,25 +384,27 @@ DVIR rules (FMS-36):
 | `POST /routes` | Create route | `route:write` | `RouteCreate` -> `Route` |
 | `GET /routes/{route_id}` | Get route | `route:read` | `Route` |
 | `PATCH /routes/{route_id}` | Update route | `route:write` | `RouteUpdate` -> `Route` |
+| `GET /routes/{route_id}/geometry` | The road the route follows (FMS-84) | `route:read` | GeoJSON `LineString` (`[longitude, latitude]` pairs), or `null` until measured |
 
 Route rules (FMS-83):
 
 - **Who:** `route:read`: every staff role except the finance clerk, and drivers (for their trips). `route:write`: admin, fleet manager, dispatcher, depot admin. Depot scope applies to reads and writes: a depot's dispatcher never sees, reads (`404`) or changes another depot's routes, and cannot create one there (`400 references_missing_record`).
-- **Create:** `name` (1-255, unique among the depot's active routes, case-insensitive: `409 CONFLICT_DUPLICATE` with field `name`) and `depot_id` are required; a route without a depot is `400 VALIDATION_FAILED`. Optional: `origin_name`, `origin` (`{latitude, longitude}`), `destination_name`, `destination`, `stops` (up to 25, in travel order: `[{name, latitude, longitude}]`, a stop's point optional but both parts or neither), `distance_km` (0-100,000, at most 3 decimals), `estimated_duration_seconds` (0-30 days). Latitude is -90 to 90 and longitude -180 to 180, at most 6 decimals. Distance and time are entered by hand until the mapping adapter (FMS-84) measures them.
-- **`Route`:** `id`, `name`, `depot_id`, `origin_name`, `origin`, `destination_name`, `destination`, `stops[]`, `distance_km`, `estimated_duration_seconds`, `is_active`, `version` (ETag; `If-Match` on `PATCH`, `409 CONFLICT_CONCURRENT_MODIFICATION` when stale), `created_at`, `updated_at`.
+- **Create:** `name` (1-255, unique among the depot's active routes, case-insensitive: `409 CONFLICT_DUPLICATE` with field `name`) and `depot_id` are required; a route without a depot is `400 VALIDATION_FAILED`. Optional: `origin_name`, `origin` (`{latitude, longitude}`), `destination_name`, `destination`, `stops` (up to 25, in travel order: `[{name, latitude, longitude}]`, a stop's point optional but both parts or neither), `distance_km` (0-100,000, at most 3 decimals), `estimated_duration_seconds` (0-30 days). Latitude is -90 to 90 and longitude -180 to 180, at most 6 decimals. With both ends, the road is measured on save (FMS-84, [routing.md](routing.md)): its distance and time fill `distance_km` and `estimated_duration_seconds` unless they were sent. A distance that is sent is kept as typed (`distance_source: manual`). When the routing engine is down or not set up, the route saves with what was sent and no road.
+- **`Route`:** `id`, `name`, `depot_id`, `origin_name`, `origin`, `destination_name`, `destination`, `stops[]`, `distance_km`, `estimated_duration_seconds`, `distance_source` (`road`: measured along the road; `manual`: typed in; `null`), `measured_at` (when the road was measured; `null` while it is not), `is_active`, `is_adhoc` (a one-off route made for one trip, FMS-139), `version` (ETag; `If-Match` on `PATCH`, `409 CONFLICT_CONCURRENT_MODIFICATION` when stale), `created_at`, `updated_at`.
 - **Update:** `PATCH` takes the fields sent (an empty body is `400`); `null` clears an optional field; `stops` replaces the whole list. A `PATCH` that changes nothing writes no audit row and publishes nothing.
+- **Road (FMS-84):** changing the origin, destination or stops measures the road again; a typed distance stays. Sending `distance_km: null` takes the road's distance. Other changes do not ask the routing engine. The hourly `route-roads` job measures routes saved without a road.
 - **Retire:** `PATCH {"is_active": false}`. Routes are never deleted: a retired route leaves the default list (`status=active`) and is not offered for new trips, while trips that used it keep their reference and their own copy of the plan (origin, destination, planned distance, stops). Its name is free for a new route; `{"is_active": true}` restores it unless the name has been taken (`409`).
-- **List:** `GET /routes` filters by `depot_id`, `search` (name, origin, destination), `status` (`active` default, `retired`, `all`); sorts by `name` (default), `distance_km` or `updated_at` (`sort_order`). Paged (§18).
-- **Events:** `RouteCreated` (`route_id`, `depot_id`, `name`, `distance_km`) and `RouteUpdated` (`route_id`, `depot_id`, `changed_fields`, `is_active`), ordered per route (FMS-73).
+- **List:** `GET /routes` filters by `depot_id`, `search` (name, origin, destination), `status` (`active` default, `retired`, `all`); sorts by `name` (default), `distance_km` or `updated_at` (`sort_order`). Paged (§18). One-off routes (`is_adhoc: true`, made by `POST /trips` for an unplanned trip, FMS-139) are never listed; `GET /routes/{route_id}` still reads one, and its name does not count against the depot's unique names.
+- **Events:** `RouteCreated` (`route_id`, `depot_id`, `name`, `distance_km`) and `RouteUpdated` (`route_id`, `depot_id`, `changed_fields`, `is_active`), ordered per route (FMS-73). `changed_fields` names `geometry` when the road was measured again.
 
 ### 7.2 Trips
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
 | `GET /trips` | Search trips | `trip:read` | filters + paging -> `Trip[]` |
-| `POST /trips` | Create trip | `trip:write` | route/vehicle/driver or scheduling data; `Idempotency-Key` |
+| `POST /trips` | Create trip | `trip:write` | `route_id`, or a one-off `route` with `depot_id`, and times; `Idempotency-Key` |
 | `GET /trips/{trip_id}` | Get trip | `trip:read` | `Trip` |
-| `PATCH /trips/{trip_id}` | Update trip | `trip:write` | `TripUpdate` -> `Trip` |
+| `PATCH /trips/{trip_id}` | Update trip | `trip:write` | `TripUpdate` -> `Trip`; `meta.shifted` |
 | `POST /trips/{trip_id}/assign` | Assign driver and vehicle | `trip:assign` | Runs overlap + vehicle maintenance/flag rules; 409 conflicts |
 | `POST /trips/{trip_id}/start` | Start trip | `trip:execute` | Valid state transition -> `Trip`; `If-Match`, `Idempotency-Key`; `meta.warnings` |
 | `POST /trips/{trip_id}/end` | End trip | `trip:execute` | Valid state transition -> `Trip`; `If-Match`, `Idempotency-Key` |
@@ -406,12 +419,20 @@ The overlap rules hold for any write that puts a trip into `assigned` or `en_rou
 Trip rules (FMS-30):
 
 - **Who:** `trip:read`: every staff role except the finance clerk and technician, and drivers. Staff see the trips of their depots (a trip's depot is its route's depot); a driver sees **only the trips they drive**: other trips are `404`, and filtering by another driver returns an empty list, not `403`. `trip:write` (create, reschedule, cancel): admin, fleet manager, dispatcher.
-- **Create:** `route_id` (an active route in your depots: unknown or elsewhere is `400 references_missing_record`, retired is `400 route_retired`), `scheduled_start` and `scheduled_end` (ISO 8601 with an offset). An end at or before the start is `400 VALIDATION_INVALID_DATE_RANGE`. The trip starts `scheduled`, with no driver or vehicle (assigned later, FMS-31), and copies the route's plan: `origin`, `destination`, `planned_distance_km`, `planned_duration_seconds` and its stops (as `stops[]`, `status: planned`). A later edit of the route never changes the trip. `Idempotency-Key` is accepted (§19).
+- **Create:** `route_id` (an active route in your depots: unknown or elsewhere is `400 references_missing_record`, retired is `400 route_retired`), or instead a one-off `route` (below), `scheduled_start` and `scheduled_end` (ISO 8601 with an offset). Both `route_id` and `route`, or neither, is `400` (`reason: route_id_or_route`). Without `scheduled_end` the trip ends the route's `estimated_duration_seconds` after its start; a route without one needs the end (`400`, `scheduled_end` `required`). An end at or before the start is `400 VALIDATION_INVALID_DATE_RANGE`. The trip starts `scheduled`, with no driver or vehicle (assigned later, FMS-31), and copies the route's plan: `origin`, `destination`, `planned_distance_km`, `planned_duration_seconds` and its stops (as `stops[]`, `status: planned`). A later edit of the route never changes the trip. `Idempotency-Key` is accepted (§19).
 - **`Trip`:** `id`, `route_id`, `route_name`, `depot_id`, `vehicle_id`, `driver_id`, `status`, `origin`, `destination`, `planned_distance_km`, `planned_duration_seconds`, `scheduled_start`, `scheduled_end`, `actual_start`, `actual_end`, `actual_distance_km`, `stops[]` (`id`, `sequence_number`, `name`, `latitude`, `longitude`, `status`, `planned_arrival`, `actual_arrival`), `version` (ETag; `If-Match` on `PATCH`), `created_at`, `updated_at`.
-- **Update:** `PATCH` takes `scheduled_start`, `scheduled_end` and `status: "cancelled"`; driver, vehicle and route are not writable (re-plan by cancelling and creating). Only an open trip (`draft`, `scheduled`, `assigned`) changes; a draft that gets both times becomes `scheduled`. The overlap rules above still hold when an assigned trip is rescheduled.
+- **Update:** `PATCH` takes `scheduled_start`, `scheduled_end`, `status: "cancelled"`, `reason` (1-500) and `shift_following` (boolean); driver, vehicle and route are not writable (re-plan by cancelling and creating). An open trip (`draft`, `scheduled`, `assigned`) changes; a trip under way (`en_route`) can move its end only (FMS-139, below). A draft that gets both times becomes `scheduled`. The overlap rules above still hold when an assigned or en-route trip is rescheduled. The response's `meta.shifted` lists the trips moved later to make room (`[{ trip_id, scheduled_start, scheduled_end }]`, empty when none).
 - **Cancel:** `PATCH {"status": "cancelled"}` keeps the row with status `cancelled`; it stays in the history. A trip under way (`en_route`) is ended, not cancelled, and a completed or cancelled trip never changes: both `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: trip_en_route`, `trip_completed`, `trip_cancelled`).
 - **History:** `GET /trips` filters by `status` (one or several, comma-separated), `driver_id`, `vehicle_id`, `route_id`, `depot_id`, and `from`/`to` on the trip's start (`scheduled_start`, or `created_at` for an unscheduled draft). `from`/`to` take an instant or a date; a date is that Addis Ababa day, and a date `to` covers the whole day. `to` at or before `from` is `400 VALIDATION_INVALID_DATE_RANGE`. Filters combine (AND); one naming something unknown matches nothing. Newest first (`sort_order=asc` for earliest first) with **keyset paging**: `page_size` 1-100 (default 50), `meta.next_cursor` for the next page or `null` on the last; trips written while paging never shift a page. A cursor the API did not issue is `400 invalid_cursor`.
-- **Events:** `TripCreated` (`trip_id`, `route_id`, `depot_id`, `scheduled_start`, `scheduled_end`), `TripUpdated` on a reschedule (`changed_fields`, `status`), `TripCancelled` (`previous_status`, `route_id`, `driver_id`, `vehicle_id`), ordered per trip (FMS-73).
+- **Events:** `TripCreated` (`trip_id`, `route_id`, `depot_id`, `scheduled_start`, `scheduled_end`), `TripUpdated` on a reschedule (`changed_fields`, `status`, and `reason` when given), `TripCancelled` (`previous_status`, `route_id`, `driver_id`, `vehicle_id`), ordered per trip (FMS-73).
+
+Flexible dispatch (FMS-139, [flexible-dispatch.md](flexible-dispatch.md)):
+
+- **One-off trip:** `POST /trips` with `route: { origin_name, origin?, destination_name, destination?, stops? }` (names 1-120; points `{latitude, longitude}` or `null`; up to 25 stops as for routes) and `depot_id` instead of `route_id`. The API saves it as a route of its own (`is_adhoc: true`, named `"<origin> → <destination>"`) in that depot and creates the trip from it, in one transaction. `depot_id` must be one of your depots (`400 references_missing_record`); without it, a depot-scoped user's own depot is used, and anyone else gets `400` (`depot_id` `required`).
+- **Reason:** changing the times of an `assigned` or `en_route` trip needs `reason` (`400 VALIDATION_FAILED`, `reason` `required`); it is kept with the change (`TripUpdated.reason`). Optional otherwise.
+- **Under way:** an `en_route` trip moves its `scheduled_end` only: a different `scheduled_start` is `400` (`reason: trip_under_way`), and an end at or before `actual_start` is `400 VALIDATION_INVALID_DATE_RANGE`.
+- **Running into the next trip:** a change to an `assigned` or `en_route` trip that overlaps another trip of the same driver or vehicle is `409 CONFLICT_DRIVER_OVERLAP` / `CONFLICT_VEHICLE_OVERLAP` with `details: [{ field, reason: "overlapping_trip", record_id, shiftable, shift_minutes? }]`. `shiftable` is true when that trip is `assigned` and starts at or after this one: sent again with `shift_following: true`, it moves later by `shift_minutes` (so it starts 1 minute after this trip ends; its length is kept), and any trip it then runs into moves the same way. A trip under way, or one starting earlier, is never moved (`shiftable: false`). More than 20 trips to move is `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: too_many_trips_to_shift`). All moves happen in one transaction, or none.
+- **Events:** one `TripUpdated` per moved trip, with `shifted_by_trip_id` and a `reason` saying what moved it.
 
 Assignment rules (FMS-31):
 
@@ -484,10 +505,10 @@ Document rules (FMS-17):
 | `POST /fuel-logs` | Record fuel event | `fuel:write` | `vehicle_id,quantity_ml,total_cost_cents,odometer_km`; optional `trip_id`, `driver_id`, `fuel_type` (defaults to the vehicle's), `unit_price_cents`, `station_name`, `fueled_at` (FMS-115) -> `201 FuelLog`; `Idempotency-Key`; integer ml and cents |
 | `GET /fuel-logs` | Search fuel history | `fuel:read` | `vehicle_id`, `driver_id`, `trip_id`, `from`, `to`, `sort_order` (`desc` default) -> paged `FuelLog[]` |
 | `GET /fuel-logs/{fuel_log_id}` | Get a fuel log | `fuel:read` | `FuelLog`; `404` outside your scope |
-| `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary | `fuel:read` | `FuelSummary` |
-| `GET /fuel-anomalies` | List anomalies | `fuel-anomaly:read` | Paged `FuelAnomaly[]` |
-| `GET /fuel-anomalies/{anomaly_id}` | Anomaly detail | `fuel-anomaly:read` | `FuelAnomaly` |
-| `POST /fuel-anomalies/{anomaly_id}/resolve` | Resolve anomaly | `fuel-anomaly:write` | `FuelAnomaly` |
+| `GET /vehicles/{vehicle_id}/fuel-summary` | Fuel efficiency summary (FMS-41) | `fuel:read` | `from`, `to` (default: the 30 days to now) -> `FuelSummary`; `404` outside your depots and for a driver |
+| `GET /fuel-anomalies` | List anomalies (FMS-42) | `fuel-anomaly:read` | `status` (one or several, comma-separated), `vehicle_id`, `anomaly_type`, `page`, `page_size` -> paged `FuelAnomaly[]`, newest detected first |
+| `GET /fuel-anomalies/{anomaly_id}` | Anomaly detail (FMS-42) | `fuel-anomaly:read` | `FuelAnomaly`; `404` outside your depots |
+| `POST /fuel-anomalies/{anomaly_id}/resolve` | Close an anomaly (FMS-42) | `fuel-anomaly:write` | `outcome` (`resolved` default, or `dismissed`), `notes` (required to dismiss, up to 2,000 characters) -> `FuelAnomaly` |
 
 Fuel log rules (FMS-39):
 
@@ -502,13 +523,31 @@ Fuel log rules (FMS-39):
 - **Event:** `FuelLogged` (after commit, ordered per vehicle) carries `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km` (the highest reading before this one in time, null for a vehicle's first), `recorded_at` (when the fill-up happened) and `created_at` (when it was received). The anomaly rules (FMS-82) read it.
 - **Vehicle odometer:** a fuel log does not change `fleet.vehicles.odometer_km`; the vehicle's own odometer changes through the vehicle API.
 
+Fuel anomaly rules (FMS-42):
+
+- **Who:** reading needs `fuel-anomaly:read` (admin, fleet manager, depot admin, finance clerk, compliance officer), closing `fuel-anomaly:write` (admin, fleet manager, finance clerk). Rows are the anomalies of the caller's depots' vehicles; another depot's anomaly is `404`, and a driver sees none.
+- **`FuelAnomaly`:** `id`, `vehicle_id`, `registration_number`, `depot_id`, `depot_name` (named here: a finance clerk may not read vehicles or depots), `fuel_log_id` (the fill-up a per-event rule flagged, FMS-82; null for a month's reconciliation), `anomaly_type`, `severity`, `status` (`open`, `reviewed`, `dismissed`, `resolved`), `period_from` and `period_to` (a reconciliation's month), `distance_km`, `expected_ml`, `actual_ml`, `deviation_pct` (whole percent), `detected_at`, `reviewed_by` and `reviewed_by_name` (who closed it), `reviewed_at`, `notes`.
+- **Closing:** `resolved` means it was real and dealt with, `dismissed` that it was not a problem, which needs a `notes` saying why (`400`, `field: "notes"`, `reason: "required_to_dismiss"`). Closing records who and when (`reviewed_by`, `reviewed_at`) and is audited. Only an `open` or `reviewed` anomaly can be closed; one already closed is `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: "already_closed"`). The row is locked while it is closed, so two people closing it at once cannot both succeed.
+- **Read from the primary**, not the replica: the screen shows a resolution the moment it is saved.
+
 ### 9.2 Fuel reconciliation
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /fuel-reconciliation` | Actual vs expected fuel usage | `analytics:read` / `fuel:read` | `vehicle_id,depot_id,from,to` -> reconciliation by vehicle |
+| `GET /fuel-reconciliation` | Actual vs expected fuel usage (FMS-41) | `analytics:read` and `fuel:read` | `vehicle_id`, `depot_id`, `from`, `to` (default: last calendar month), `status`, `page`, `page_size` -> paged `FuelReconciliation[]`, furthest from expected first; `meta` adds `from`, `to`, `threshold_pct` and `summary` |
 
 `fuel.fuel_logs` stores raw observations. `fuel.fuel_anomalies` stores derived findings. Reconciliation compares actual consumption with expected consumption using trip distance, vehicle efficiency and configured rules. The API must reject floating-point values in money paths; use integer minor units such as cents.
+
+Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
+
+- **Figures:** for each vehicle and period, the distance of its completed trips (`actual_distance_km`, by `actual_end`), the fuel that distance needs at the vehicle's `fuel_efficiency_ml_per_km` (`expected_ml`), the fuel logged (`actual_ml`, by `recorded_at`) and `variance_pct = (actual - expected) / expected`. Integers end to end: distance in metres, fuel in ml, money in cents, the variance in whole percent, each division rounded half away from zero. Nothing passes through a float.
+- **Judgement:** more than `FUEL_VARIANCE_THRESHOLD_PCT` (default 20) above expected is `above`; more than it below is `below`; otherwise `within` (exactly 20% is within). An electric vehicle, one without a rating, or under 100 km of trips is `not_judged`, with `reason` `electric`, `no_efficiency` or `too_little_distance`.
+- **Who:** `GET /fuel-reconciliation` needs both permissions: a driver (`fuel:read` only) and a dispatcher (`analytics:read` only) get `403`. Rows are the caller's depots' vehicles; a `vehicle_id` or `depot_id` outside them, or unknown, gives an empty page. `GET /vehicles/{vehicle_id}/fuel-summary` needs `fuel:read` in the depot scope; a driver gets `404` for every vehicle, as its totals include other drivers' fill-ups.
+- **Period:** `from` and `to` are instants, or dates meaning Addis Ababa days (`to` inclusive). One bound alone: `from` runs to now, `to` covers the 30 days before it. At most 366 days (`400`, `reason: "period_too_long"`); `to` must be after `from` (`reason: "before_from"`).
+- **`FuelReconciliation`:** `vehicle_id`, `registration_number`, `depot_id`, `depot_name`, `fuel_type`, `fuel_efficiency_ml_per_km`, `distance_km`, `trips`, `fuel_logs`, `expected_ml`, `actual_ml`, `variance_ml`, `variance_pct`, `total_cost_cents`, `status`, `reason`, `anomaly_id` (the anomaly the monthly job raised for exactly this period). `meta.summary`: `vehicles`, `judged`, `above`, `below`, `expected_ml` and `actual_ml` (judged vehicles), `variance_pct`, `total_cost_cents` (every vehicle).
+- **`FuelSummary`:** `vehicle_id`, `from`, `to`, `fuel_logs`, `actual_ml`, `total_cost_cents`, `trips`, `distance_km`, `rated_efficiency_ml_per_km`, `actual_efficiency_ml_per_km`, `expected_ml`, `variance_ml`, `variance_pct`, `status`, `reason`, `cost_per_km_cents`, `average_price_cents_per_litre`, `open_anomalies`, `threshold_pct`.
+- **Read from the replica** when it is up (FMS-94), the monthly job too. Both endpoints return `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag).
+- **The API only reads.** The monthly job `fuel-reconciliation` (04:30 daily, last calendar month) writes a `fuel.fuel_anomalies` row for each vehicle above or below (`consumption_above_expected` or `consumption_below_expected`; severity `high` beyond twice the threshold, else `medium`), once per vehicle and month, and publishes `FuelAnomalyDetected`.
 
 ## 10. Maintenance, Inventory and Predictive Maintenance API
 
@@ -518,7 +557,7 @@ Fuel log rules (FMS-39):
 |---|---|---|---|
 | `GET /maintenance` | Legacy-compatible maintenance list | `maintenance:read` | Paged repair records |
 | `POST /maintenance` | Legacy-compatible maintenance create | `maintenance:write` | `vehicle_id,description,labour_hours,cost_cents`; activates maintenance flag |
-| `GET /maintenance-records` | Canonical maintenance list | `maintenance:read` | Paged `MaintenanceRecord[]` |
+| `GET /maintenance-records` | Canonical maintenance list | `maintenance:read` | `vehicle_id`, `status`, `open`, `maintenance_type`, `sort_by` (`created_at`, when entered, the default; or `work_date`, when the work happened: completed, else started, else scheduled; FMS-136), `sort_order` (`desc` default) -> Paged `MaintenanceRecord[]` (also `GET /maintenance`) |
 | `POST /maintenance-records` | Canonical maintenance create | `maintenance:write` | `MaintenanceRecordCreate` -> `MaintenanceRecord` |
 | `GET /maintenance-records/{id}` | Maintenance detail | `maintenance:read` | `MaintenanceRecord` (also `/maintenance/{id}`) |
 | `PATCH /maintenance-records/{id}` | Update maintenance | `maintenance:write` | `MaintenanceRecordUpdate` -> `MaintenanceRecord`; `PUT` too (also `/maintenance/{id}`) |
@@ -532,6 +571,7 @@ Fuel log rules (FMS-39):
 | `GET /inventory/{part_id}` | Part detail | `inventory:read` | `InventoryPart` |
 | `PUT /inventory/{part_id}` | Update part | `inventory:write` | Fields sent (not stock) -> `InventoryPart`; `If-Match` |
 | `GET /inventory/{part_id}/movements` | A part's stock ledger | `inventory:read` | Paged `InventoryMovement[]` |
+| `GET /vehicles/{vehicle_id}/service-items` | When each wearing part and fluid was last changed (FMS-52) | `maintenance:read` | `ServiceItem[]`: all 11 items, in a fixed order |
 | `POST /inventory/movements` | Record stock movement | `inventory:write` | `InventoryMovement` -> `InventoryMovement` |
 
 Maintenance rules (FMS-22):
@@ -543,12 +583,13 @@ Maintenance rules (FMS-22):
 - **Completion:** `completed_at` is not in the future (5 minutes' clock skew allowed) nor before `started_at`; `completed_by` is the caller. `status: in_progress` sets `started_at`. A `corrective` repair is completed only with at least one failure record (FMS-125): otherwise `400` with `{ field: "failures", reason: "failure_required" }`, and the record stays open.
 - **Failures (FMS-125, [maintenance.md](maintenance.md)):** what broke, recorded as `failures` on create, on `POST .../complete` (same transaction) or one at a time on `POST .../failures` (open or completed work; cancelled is `409`). `FailureInput`: `component` and `failure_mode` from fixed catalogues (anything else is `400`), `unplanned` (required), `detected_by` (default `technician`), `occurred_at` (default the repair's opening; not in the future), `odometer_km` (default the repair's), `incident_id` (the same vehicle's: else `incident_other_vehicle`), `notes`. `FailureEvent` adds `id`, `vehicle_id`, `registration_number`, `maintenance_record_id`, `recorded_by`, `created_at`. Never edited.
 - **`MaintenanceRecord`:** `id`, `vehicle_id`, `registration_number`, `maintenance_type`, `description`, `status`, `priority`, `scheduled_at`, `started_at`, `completed_at`, `odometer_km`, `labour_hours`, `total_cost_cents`, `parts_cost_cents`, `workshop`, `notes`, `completed_by`, `parts[]`, `failures[]` (`FailureEvent`, oldest first), `version` (ETag; `If-Match` on `PUT`/`PATCH`), `created_at`, `updated_at`. Lists are newest first (`sort_order=asc` for oldest), filterable by `vehicle_id`, `status`, `open`, `maintenance_type`.
-- **Events:** `MaintenanceRecordOpened`, `MaintenanceRecordUpdated` (with `changed_fields`) and `MaintenanceRecordCompleted`, each with `maintenance_record_id`, `vehicle_id` and `maintenance_flag_cleared`. `FailureRecorded` once per failure, on the vehicle's aggregate.
+- **Events:** `MaintenanceRecordOpened`, `MaintenanceRecordUpdated` (with `changed_fields`) and `MaintenanceRecordCompleted`, each with `maintenance_record_id`, `vehicle_id` and `maintenance_flag_cleared`; `MaintenanceRecordCompleted` also carries `odometer_km` (or `null`) and `completed_at`, an odometer reading (FMS-126). `FailureRecorded` once per failure, on the vehicle's aggregate.
 
 Inventory rules (FMS-23):
 
 - **Who:** `inventory:read` / `inventory:write`: admin, fleet manager, depot admin, technician. A driver (or dispatcher) gets `403` on every inventory endpoint. A depot-scoped caller sees their depots' parts plus shared stock (`depot_id: null`); creating or changing shared stock needs a fleet-wide role (`403` otherwise).
-- **`InventoryPart`:** `id`, `part_number` (trimmed, upper case, unique: `409 CONFLICT_DUPLICATE`), `name`, `description`, `depot_id`, `unit_cost_cents` (whole cents, else `VALIDATION_FLOAT_IN_MONEY_PATH`), `stock_quantity`, `reorder_threshold` (the "reorder level"), `below_reorder` (`stock_quantity <= reorder_threshold`), `stock_status` (`out` at 0, `low` at or below the threshold, `ok`), `is_active`, `version`, `created_at`, `updated_at`.
+- **`InventoryPart`:** `id`, `part_number` (trimmed, upper case, unique: `409 CONFLICT_DUPLICATE`), `name`, `description`, `depot_id`, `unit_cost_cents` (whole cents, else `VALIDATION_FLOAT_IN_MONEY_PATH`), `stock_quantity`, `reorder_threshold` (the "reorder level"), `below_reorder` (`stock_quantity <= reorder_threshold`), `stock_status` (`out` at 0, `low` at or below the threshold, `ok`), `service_item`, `is_active`, `version`, `created_at`, `updated_at`.
+- **What a part renews (FMS-52):** `service_item` on create and update is one of `engine_oil, air_filter, fuel_filter, coolant, brake_pads, brake_fluid, clutch_fluid, tyres, battery, gearbox_oil, belts`, or `null` for a part that renews none (`400` for anything else). A completed repair that used the part is a change of that item. `GET /vehicles/{vehicle_id}/service-items` (vehicles in the caller's depots; `404` otherwise) lists every item with `last_changed_at`, `maintenance_record_id`, `odometer_km` and `part_number` from the latest such repair, or `null`s when it was never changed in the system. The predictive model's part history reads this ([ml-dataset.md](ml-dataset.md)).
 - **List:** `below_reorder=true` (or `belowReorder=true`) returns only parts at or below their threshold; `stock_status=out|low|ok` returns one status band (`out`: 0; `low`: 1 to the threshold; `ok`: above it), as on the inventory screen (FMS-25). Also `depot_id`, `search` (part number, name), `status` (`active` default, `inactive`, `all`), `sort_by` (`part_number`, `name`, `stock_quantity`), `sort_order`.
 - **Stock changes** only through the ledger: opening stock on create (`purchase`), `POST /inventory/{id}/adjust` (`adjustment`) and repairs (`consumption`, FMS-22). Stock is `CHECK (stock_quantity >= 0)`.
 - **Adjust:** `{ quantity, reason }`: a non-zero whole number (positive in, negative out) and a reason (3-500 characters). One that would make stock negative is `409 CONFLICT_INSUFFICIENT_STOCK` and changes nothing. Each adjustment writes an audit row with the old and new `stock_quantity`, and a ledger line with the reason. `PUT` cannot set stock (`not_writable`).
@@ -560,20 +601,62 @@ Inventory rules (FMS-23):
 |---|---|---|---|
 | `GET /maintenance-predictions` | Persisted ML predictions | `prediction:read` | Paged `Prediction[]` |
 | `GET /vehicles/{vehicle_id}/maintenance-risk` | Current maintenance risk | `prediction:read` | `MaintenanceRisk` |
+| `POST /maintenance-predictions/{prediction_id}/feedback` | What an inspection of the flagged vehicle found (FMS-128) | `prediction:read` + `maintenance:write` | `{outcome, component?, failure_event_id?, comment?}` -> `201 PredictionFeedback`; `409` when it already has feedback |
+| `PATCH /maintenance-predictions/{prediction_id}/feedback` | The author changes it, for 7 days | `prediction:read` + `maintenance:write` | the fields to change -> `PredictionFeedback`; `403 not_author`, `409 edit_window_closed` |
+| `GET /ml-models` | The model registry (FMS-127) | `prediction:read` | `status?`, paging -> `MlModel[]`, newest first; each with `feedback` (FMS-128) |
+| `GET /ml-models/{model_id}` | One registered model | `prediction:read` | `MlModel` |
+| `POST /ml-models/{model_id}/activate` | Let a registered model score | `ml-model:activate` (admin) | -> `MlModel`; `409` when trained on other inputs |
+
+**The model registry (FMS-127).** Every prediction can be traced to the model, data and metrics behind it. How it works: [docs/ml-model-registry.md](ml-model-registry.md).
+
+- **`MlModel`:**
+  - `id`, `name`, `version`, `status` (`registered`, `active`, `retired`);
+  - `algorithm`, `features` (in order), `feature_spec_version`, `feature_spec_hash`, `features_match`;
+  - `metrics` (`roc_auc`, `brier`, `at_alert_threshold.precision`, `.recall`, `.f1`, ...), `training_data` (file and its SHA-256, rows, vehicles, dates, split);
+  - `trained_at`, `artefact_sha256`, `first_seen_at`, `activated_at`, `activated_by`, `retired_at`.
+- **Registration** is the scoring job's alone, the first time the ML service serves a version (`GET /model`, §10.3). There is no endpoint to register or change a model.
+- **Scoring needs** the served model to be active and trained on the core's feature spec: its `feature_spec_hash` is the SHA-256 of `feature_spec.json`'s inputs and label, hashed the same way in Python and Node. Otherwise nothing is scored, and administrators get an `ml_scoring_blocked` alert (`MlScoringBlocked`).
+- **Activation** is explicit: a new version scores only once an administrator activates it, here or with `npm run ml:model -- activate <version> --by <email>`. It retires the model that was active (one active model per name). Activating a retired model again is a rollback. A model with `features_match: false` is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `feature_spec_mismatch`.
+- **Predictions** name a registered model: `maintenance_predictions (model_name, model_version)` references the registry.
+
+**The nightly scoring (FMS-55).** The job `maintenance-scoring` (02:00) scores every vehicle in service. Only the batch writes scores: no endpoint calls the model. How it works: [docs/ml-scoring.md](ml-scoring.md).
+
+- **Inputs:** the 19 of `feature_spec.json`, computed by the core from its own tables as of the start of the day (Addis Ababa), capped and rounded to the spec.
+- **Calls:** batches of 100 to `POST /internal/ml/predict-maintenance/batch` (§10.3), through the integration gateway: 10 s per attempt, 2 retries, the ML service's circuit breaker.
+- **Stored:** a `maintenance_predictions` row per vehicle and night (`health_score`, `risk_level`, `factors`, `risk_score`, `feature_snapshot`, `as_of`; the previous one is `superseded`), and the vehicle's `health_score` and `health_score_updated_at`.
+- **Risk:** a score falling below 75, or its risk level rising, publishes `MaintenanceRiskDetected`: a `maintenance_risk` alert for the vehicle's technicians and depot admins.
+- **Failures:** an ML service that is down, a failing batch, an open breaker, or a model that may not score skips those vehicles, which keep their last score. The run still finishes.
+
+**Maintenance risk (FMS-56).** `GET /vehicles/{vehicle_id}/maintenance-risk` (`prediction:read`: not dispatchers or drivers; depot scope, `404` outside it or for an id that is not a UUID) is the vehicle's latest stored prediction, never a new model call. How the screen uses it: [docs/vehicle-health.md](vehicle-health.md).
+
+- **`MaintenanceRisk`:** `vehicle_id`, `prediction_id`, `health_score`, `risk_level` (`low`, `medium`, `high`), `failure_probability`, `prediction_horizon_days` (30), `factors`, `model_name`, `model_version`, `as_of` (the time the inputs were computed as of), `scored_at`, `stale` (scored more than 25 hours ago), `feedback` (what a technician found for this prediction, or `null`).
+- **Feedback on a prediction (FMS-128).** `POST /maintenance-predictions/{prediction_id}/feedback` (`prediction_id` is the one `MaintenanceRisk` returns) records the outcome of inspecting a flagged vehicle: `confirmed_issue`, `no_issue_found`, `already_fixed` or `not_inspected`. A confirmed issue may carry the `component` found and the `failure_event_id` it led to (§8.4: the same vehicle's, in scope; the component defaults to the failure's and may not contradict it); the other outcomes carry neither (`400`, `only_for_confirmed_issue`). Needs `prediction:read` and `maintenance:write`; a prediction on a vehicle outside the caller's depots, or one that was never scored, is `404`; a superseded prediction can still be given feedback. One feedback per prediction (`409 CONFLICT_DUPLICATE`, `already_recorded`, naming it). Its author can change it with `PATCH` for 7 days (`403 not_author`, `409 edit_window_closed`); changing the outcome away from a confirmed issue drops the component and the failure link, and a change that changes nothing writes nothing. It is never deleted. `PredictionFeedbackRecorded` is published on each write (`edited` says which), on the vehicle's aggregate. `PredictionFeedback`: `id`, `prediction_id`, `outcome`, `component`, `failure_event_id`, `comment`, `recorded_by`, `created_at`, `updated_at`, `editable_until`, `can_edit` (the caller is the author and the time has not passed).
+- **The confirmed share, per model version.** Each `MlModel` of `GET /ml-models` carries `feedback`: the version's `high_risk_predictions`, how many have feedback, the count of each outcome, `reviewed` (`confirmed_issue` + `no_issue_found` + `already_fixed`; `not_inspected` judges nothing, and an issue already fixed cannot be confirmed by an inspection, so it counts against), `precision` (`confirmed_issue / reviewed`, three decimals, `null` until something is reviewed) and `by_month` (the last 12 months feedback was given in, Addis Ababa, newest first). Only predictions at risk level `high` are counted.
+- **`factors`:** up to 3 `{ feature, value, unit }`, the inputs raising the vehicle's risk most, largest first, with its value when scored and the spec's unit (`km`, `h`, `d`, `count`, `%`, `years`). Empty for a healthy vehicle.
+- **Never scored:** every score field is null, `factors` is empty and `stale` is false.
 
 ### 10.3 Internal ML service contract
 
+The predictive maintenance service (FMS-54, [ml-service.md](ml-service.md)) is reachable only inside the Docker network (`http://ai-service:5000`). Every call but `GET /health` sends `X-Internal-Token: <ML_SERVICE_TOKEN>`; without it, or with a wrong one, `401 AUTH_TOKEN_INVALID`.
+
+| Method + path | Purpose | Request / response |
+|---|---|---|
+| `GET /health` | Liveness, no token | `{ status: "ok", model_version, load_seconds }` |
+| `GET /model` | The model serving now (for the registry, FMS-127) | `name`, `model_version`, `trained_at`, `algorithm`, `features`, `feature_spec_version`, `feature_spec_hash`, `artefact_sha256`, `training_data`, `metrics`, `health_score`, `risk_levels`, `prediction_horizon_days` |
+| `POST /internal/ml/predict-maintenance` | One vehicle | `PredictRequest` -> `Prediction` |
+| `POST /internal/ml/predict-maintenance/batch` | 1 to 500 vehicles (the nightly scoring) | `{ items: PredictRequest[] }` -> `Prediction[]`, in the same order |
+
 ```http
 POST /internal/ml/predict-maintenance
+X-Internal-Token: <ML_SERVICE_TOKEN>
 
 {
-  "vehicle_id": "uuid",
-  "as_of": "2026-10-05T07:00:00Z",
+  "vehicle_id": "6f0f2b4e-6a1c-4c3e-9a55-3c2d4f9b8e11",
+  "as_of": "2026-10-25T01:00:00+03:00",
   "features": {
-    "mileage_km": 128450,
-    "engine_temperature_avg": 91.2,
-    "fault_code_count_30d": 2,
-    "service_overdue_days": 5
+    "mileage_km": 5214.0, "engine_hours": 131.2, "days_since_last_service": 100, "num_fault_reports": 5,
+    "fuel_variance_pct": 2.1, "age_years": 7.9, "days_since_oil_change": 100, "km_since_oil_change": 17380.0,
+    "...": "every input of feature_spec.json"
   }
 }
 ```
@@ -581,16 +664,24 @@ POST /internal/ml/predict-maintenance
 ```json
 200
 {
-  "prediction": {
-    "risk_score": 0.82,
+  "data": {
+    "vehicle_id": "6f0f2b4e-6a1c-4c3e-9a55-3c2d4f9b8e11",
+    "as_of": "2026-10-25T01:00:00+03:00",
+    "failure_probability": 0.8125,
+    "health_score": 19,
     "risk_level": "high",
     "prediction_horizon_days": 30,
-    "failure_category": "cooling_system",
     "model_version": "pm-2026.10",
-    "factors": ["engine_temperature_avg", "service_overdue_days"]
-  }
+    "factors": ["num_fault_reports", "days_since_last_service", "days_since_oil_change"]
+  },
+  "meta": { "request_id": "uuid", "model_version": "pm-2026.10" }
 }
 ```
+
+- **`PredictRequest`:** `vehicle_id` (UUID), `as_of` (an instant with offset) and `features`: every input of `packages/ai-service/feature_spec.json` (the 19 of spec version 2), each within its range, integers where the spec says `int`, and nothing else.
+- **`Prediction`:** `failure_probability` (an unplanned failure in the next 30 days), `health_score` (`round((1 - p) * 100)`), `risk_level` (`low` at 75 and above, `medium` 41 to 74, `high` at 40 and below: the core raises a risk event below 75), `prediction_horizon_days` (30), `model_version`, and `factors`: up to 3 inputs that raise this vehicle's risk most (each, put back to the training rows' typical value, lowers the probability by at least 0.01), largest first. The model predicts no failure category (FMS-53).
+- **Errors:** the core's envelope (§3.4). A missing, out-of-range, mistyped or unknown input, a missing `vehicle_id` or `as_of`, or a batch of 0 or more than 500 is `422 VALIDATION_FAILED`, each problem named: `{ field: "features.mileage_km", reason: "required" }`; in a batch, `items.3.features.age_years`. Reasons: `required`, `out_of_range`, `not_allowed`, `too_few`, `too_many`, `invalid_json`, `invalid`.
+- **Correlation:** `X-Request-Id` is echoed (one is made when none is sent) and returned as `meta.request_id`.
 
 The ML service never directly updates fleet master data. The Node.js core validates the result and persists `maintenance.maintenance_predictions`. This preserves the selected modular-monolith boundary with one specialized service.
 
@@ -602,9 +693,9 @@ The ML service never directly updates fleet master data. The Node.js core valida
 |---|---|---|---|
 | `GET /tracking/vehicles/current` | Current fleet locations (the live map, FMS-45) | `tracking:read` | `depot_id?` -> `VehicleLocation[]`; cached 5 s |
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
-| `GET /vehicles/{vehicle_id}/tracking` | Historical GPS | `tracking:read` | `from,to,limit,cursor` -> `GPSPoint[]` |
+| `GET /vehicles/{vehicle_id}/tracking` | Historical GPS (FMS-136) | `tracking:read` | `from`, `to` (both included), `limit` (1-1000, default 500), `cursor` -> `TrackPoint[]` oldest first, `meta.next_cursor` for the next page or `null`; depot scope, another depot's vehicle is `404` |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
-| `GET /command-center/overview` | Operational overview | `command:read` | Vehicle state, alerts, incidents, trip summary |
+| `GET /command-center/overview` | Operational overview (FMS-89) | `command:read` | `depot_id?` -> `CommandCenterOverview`: vehicles by state and health, drivers, the day's trips, active alerts and incidents; cached 5 s |
 
 **Live map snapshot (FMS-45).** `GET /tracking/vehicles/current` lists the caller's vehicles (depot scope; `depot_id` narrows it, and a depot outside the scope gives `[]`) that are not retired and have a position or a trip under way, by plate. How the command center uses it: [docs/live-map.md](live-map.md).
 
@@ -620,10 +711,11 @@ The ML service never directly updates fleet master data. The Node.js core valida
 - **`GPSPoint`** (in): `recorded_at` (ISO with offset), `lat`, `lng`, `speed_kmh` (0-300, rounded to whole km/h), and optionally `heading`, `accuracy_m`, `altitude_m`, `ignition_on`, `odometer_km`. A user with `tracking:ingest` adds `vehicle_id`; for a device or a phone it is implied.
 - **Who may report what.**
   - A device (`Authorization: Bearer fmsd_...`) reports for its own vehicle only.
-  - A driver's phone (`trip:execute`) reports for the vehicle of the driver's trip under way only.
-  - Naming another vehicle, or having no trip under way, refuses the whole batch: `403 FORBIDDEN_INSUFFICIENT_ROLE`, reason `not_your_vehicle` or `no_trip_under_way`.
+  - A driver's phone (`trip:execute`) reports for the vehicle of a trip the driver drove, each ping in the trip it was recorded in (`actual_start <= recorded_at <= actual_end`, or still under way), however late the phone delivers it (FMS-124).
+  - Naming another vehicle, or having no trip started in the last 7 days, refuses the whole batch: `403 FORBIDDEN_INSUFFICIENT_ROLE`, reason `not_your_vehicle` or `no_trip_under_way`. A ping in no trip of the driver is refused alone: `no_trip_at_time`.
+  - `gps_pings.trip_id` is the trip at `recorded_at` for every source. A ping of a trip that has ended is stored but never becomes the vehicle's current position or an event.
   - An unknown device token is `401 AUTH_TOKEN_INVALID`.
-- **Validation.** Out of range or unknown fields: `400`, the whole batch, naming `pings.<i>.<field>`. A readable ping that cannot be used is refused alone in `rejected[]`: `future_timestamp` (over 2 min ahead), `too_old` (over 7 days), `low_accuracy` (over 500 m), `vehicle_retired`, `unknown_vehicle`.
+- **Validation.** Out of range or unknown fields: `400`, the whole batch, naming `pings.<i>.<field>`. A readable ping that cannot be used is refused alone in `rejected[]`: `future_timestamp` (over 2 min ahead), `too_old` (over 7 days), `low_accuracy` (over 500 m), `vehicle_retired`, `unknown_vehicle`, `no_trip_at_time` (a phone, at a time with no trip of its driver).
 - **Duplicates.** A ping of a vehicle at an instant already stored is skipped (`(vehicle_id, recorded_at)`, §15), so a retried batch counts as `duplicates` and stores nothing.
 - **Event.** `VehicleLocationUpdated` announces each vehicle's newest position at most once per `TRACKING_EVENT_INTERVAL_SECONDS` (5) of its pings; it reaches clients as `vehicle.location.updated` (§11.2).
 
@@ -632,6 +724,16 @@ The ML service never directly updates fleet master data. The Node.js core valida
 - **`TelemetryFlag`** (out): `flag_id`, `vehicle_id`, `trip_id`, `flag_type`, `severity` (`high` speeding, `medium` idling), `status` (the review status), `observed_at` (the condition began), `resolved_at` (it ended; null while it lasts), `details` (`speed_limit_kmh`, `speed_kmh`, `consecutive_pings`, `idle_minutes`, `lat`, `lng`, `flagged_at`; on closing `end_reason`, `duration_seconds`, `max_speed_kmh`).
 - **`GET /vehicles/{vehicle_id}/telemetry-flags`:** `flag_type` (comma-separated), `from`/`to` (ISO with offset, on `observed_at`), `ongoing` (`true`/`false`), `limit` (1-200, default 50). Behavioural data (§24.3): `tracking:read` only, never drivers; a vehicle outside the caller's depot scope is `404`. Names the trip, not the driver.
 - **Events.** `TelemetryFlagRaised` (an `unsafe_driving` alert, docs/alerts.md) and `TelemetryFlagResolved`; both reach clients as `vehicle.flag.changed` (§11.2).
+
+**Command center overview (FMS-89).** `GET /command-center/overview` counts what needs attention for the caller's depot, or every depot for a fleet-wide user (`depot_id` narrows it; a depot outside the scope is `404`). How the live map shows it: [docs/live-map.md](live-map.md).
+
+- **`vehicles`** (every vehicle but retired ones): `total`, `on_trip` (a trip under way), `available` (in service, not flagged, not on a trip), `in_maintenance`, `inactive`, `flagged` (maintenance flag), `health` (vehicles per band of the health score: `at_risk` under 75, `watch` under 85, `healthy`, `stale` when not rescored for 25 hours, `unscored`) and `health_watch` (the at-risk and watch vehicles with their score, lowest first).
+- **`drivers`** (active drivers): `total`, `on_trip`, `available` (not on a trip, not marked absent, licence valid), `absent` (marked absent, on leave or sick today), `licence_expired`.
+- **`trips`**: `today`, the trips scheduled to start today (Addis Ababa) by status; `under_way`; `overdue`, under way past their scheduled end.
+- **`alerts`** (open and acknowledged): `active`, `unacknowledged` (open), `by_severity`, and `items`, most severe then newest, up to 50, each with its vehicle's `registration_number`.
+- **`incidents`** (open and investigating): `active`, `by_status`, `by_severity`, `items` (up to 50, with `registration_number` and `driver_name`).
+- **Permissions.** `command:read` for the vehicles; the `drivers`, `trips`, `alerts` and `incidents` sections need `driver:read`, `trip:read`, `alert:read` and `incident:read` as well, and are `null` without them (a fleet owner has no incidents).
+- **Freshness.** Cached in Redis for 5 s, one per depot shown (`command-center:overview:<depot public id>`, or `all`); alert, incident, trip, vehicle and attendance events drop it after commit.
 
 The previous contract defined a client-to-server Socket.IO `location_update` event. In the canonical contract, high-volume telemetry ingestion is REST/webhook based and Socket.IO is used for server-to-client fan-out. This is a deliberate replacement, not a loss of the capability.
 
@@ -644,6 +746,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `alert.created` | Server -> client | `Alert` | New alert |
 | `alert.updated` | Server -> client | Alert patch | Acknowledge/resolve update |
 | `incident.created` | Server -> client | `Incident` | New active incident |
+| `incident.updated` | Server -> client | `incident_id,depot_id,status,previous_status,assigned_to,resolved_at,updated_at,changes` | An incident's status, assignee or notes changed (FMS-89); never the notes |
 | `notifications.unread` | Server -> client | `unread_count,reason,changed_at` | The user's unread in-app count changed (`reason`: `delivered`, `read`, `read_all`). Sent to that user's own sockets only |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
 | `vehicle.flag.changed` | Server -> client | `flag_id,vehicle_id,trip_id,flag_type,severity,observed_at,resolved_at,change` | A speeding or idling flag opened (`raised`) or closed (`resolved`); the live map re-reads (FMS-46) |
@@ -654,7 +757,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 Real-time rules (FMS-43; details in docs/realtime.md):
 
 - **Connection:** Socket.IO at `/api/v1/socket.io` on the API's server. The handshake carries the session cookie and is checked like any API call (`connect_error` message `AUTH_TOKEN_INVALID`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_REVOKED` or `AUTH_ACCOUNT_DISABLED`). A browser `Origin` must be the API's own or listed in `REALTIME_ALLOWED_ORIGINS`. The server closes the socket when the access token expires and when the account is deactivated or its roles or account change; the client renews the session and reconnects.
-- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` and `vehicle.flag.changed` need `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
+- **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` and `vehicle.flag.changed` need `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` and `incident.updated` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
 - **Notifications:** `notifications.unread` is not a channel anyone subscribes to: it goes to the room of the one user it is about, which only that user's own sockets join, so no permission or role (an admin's included) receives another user's count.
 - **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, version, updated_at` and `change` (the domain event). `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
 - **Client -> server:** only the legacy `location_update`, off unless `REALTIME_LEGACY_LOCATION=true`, acknowledged `{ok}` or `{ok: false, error: {code, message}}`. Every client event is rate limited (5 at once, then 1 per second; `RATE_LIMITED`); a socket that keeps exceeding it is closed.
@@ -693,11 +796,19 @@ An alert is a business event requiring attention. A notification is a delivery a
 | `POST /incidents` | Create incident | `incident:write` | `description`, `severity`; optional `vehicle_id`, `trip_id`, `driver_id` (staff), `latitude` with `longitude`, `incident_type` (default `other`), `occurred_at` (default now) -> `201 Incident`; Idempotency-Key; a late replay of the same report -> `200` with `meta.created: false` |
 | `GET /incidents` | List incidents | `incident:read` | `status`, `severity`, `incident_type` (comma-separated), `vehicle_id`, `from`, `to`, `page`, `page_size` -> Paged `Incident[]`, newest first; a driver sees only what they reported, staff their depots' |
 | `GET /incidents/{incident_id}` | Incident detail | `incident:read` | `Incident` |
-| `PATCH /incidents/{incident_id}` | Update incident | `incident:write` | `IncidentUpdate` -> `Incident` |
+| `PATCH /incidents/{incident_id}` | Handle incident (FMS-89) | `incident:manage` | `IncidentUpdate` (`status`, `assigned_to`, `notes`; at least one) -> `Incident` |
 
 Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The reporter is the authenticated user.
 
-**Incident reports (FMS-38).** An incident belongs to its vehicle's depot, or the reporter's. A critical one sets the vehicle's maintenance flag in its transaction and becomes an alert; every one publishes `IncidentReported` (`incident.created` on the socket). `PATCH` is not built yet. Fields, refusals and the offline replay: [docs/incidents.md](incidents.md).
+**Incident reports (FMS-38).** An incident belongs to its vehicle's depot, or the reporter's. A critical one sets the vehicle's maintenance flag in its transaction and becomes an alert; every one publishes `IncidentReported` (`incident.created` on the socket). Fields, refusals and the offline replay: [docs/incidents.md](incidents.md).
+
+**Handling an incident (FMS-89).** `PATCH /incidents/{id}` is `incident:manage` (admin, fleet manager, dispatcher, depot admin): drivers report incidents (`incident:write`) but do not close them. Depot scope; another depot's incident is `404`.
+
+- **Status:** `open` to `investigating`, `resolved` or `closed`; `investigating` to `resolved` or `closed`; `resolved` back to `investigating` or on to `closed`. `closed` is final: any change is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `incident_closed`; another move not listed is `409` with `incident_<status>`.
+- **Notes:** what was found and done, up to 4,000 characters; blank or `null` clears them. Resolving or closing needs notes, given now or kept from before (`400`, `field: "notes"`, `reason: "required"`).
+- **Assignee:** `assigned_to` is a user's public id, or `null` to unassign. The user must be active, hold `incident:manage` and see the incident's depot (their home depot, or every depot); anyone else is `400` `references_missing_record`.
+- **`Incident`** carries `assigned_to` (`{id, full_name}` or null), `notes`, `resolved_at` and `resolved_by` (set on resolving or closing, cleared on reopening) and `updated_at`.
+- **Audit and events:** one audited `UPDATE` of the row with who changed it; `IncidentUpdated` reaches every console of the depot, and the driver who reported it, as `incident.updated`. A request that changes nothing writes and publishes nothing.
 
 ## 13. EV Fleet Management API
 
@@ -719,14 +830,19 @@ Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The
 
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
-| `GET /analytics/fleet-summary` | Fleet utilization and status | `analytics:read` | `FleetSummary` |
-| `GET /analytics/utilisation` | Legacy-compatible utilization view | `analytics:read` | `UtilisationSummary`; same metrics exposed by fleet-summary |
-| `GET /analytics/fuel-efficiency` | Fuel KPIs | `analytics:read` | `FuelEfficiencySummary[]` |
-| `GET /analytics/maintenance-risk` | Maintenance risk KPIs | `analytics:read` | `MaintenanceRiskSummary[]` |
-| `GET /analytics/trips` | Trip KPIs | `analytics:read` | `TripAnalytics` |
-| `GET /analytics/alerts` | Alert KPIs | `analytics:read` | `AlertAnalytics` |
+| `GET /analytics/fleet-summary` | Fleet utilisation, cost and status (FMS-50) | `analytics:read` | `from`, `to`, `depot_id` -> `FleetSummary`: vehicles by status, flagged and average health score; utilisation, distance, completed trips, on-time, fuel, fuel and repair cost, cost per km; open alerts by severity; and the same KPIs per day (`daily`) |
+| `GET /analytics/utilisation` | Utilisation by vehicle | `analytics:read` | `from`, `to`, `depot_id` -> `UtilisationSummary`: the fleet's `utilisation_pct`, `vehicle_days`, `days_used`, and each vehicle's, highest first |
+| `GET /analytics/fuel-efficiency` | Fuel KPIs by vehicle | `analytics:read` | `from`, `to`, `depot_id` -> `FuelEfficiencySummary[]`: fuel (ml) and its cost, distance, `ml_per_km` against `rated_ml_per_km` (`variance_pct`), fuel cost per km; costliest first |
+| `GET /analytics/maintenance-risk` | Maintenance risk by vehicle | `analytics:read` | `from`, `to`, `depot_id` -> `MaintenanceRiskSummary[]`: health score, maintenance flag, the highest active prediction (`risk_pct`, type, failure, when) and the range's repair cost; riskiest first |
+| `GET /analytics/trips` | Trip KPIs | `analytics:read` | `from`, `to`, `depot_id` -> `TripAnalytics`: trips planned in the range by status, completed, on time (ended within 15 minutes of the scheduled end), distance, and per day |
+| `GET /analytics/alerts` | Alert KPIs | `analytics:read` | `from`, `to`, `depot_id` -> `AlertAnalytics`: open alerts by severity now; raised in the range by severity, by type and per day; mean minutes to acknowledge |
 
-Analytics reads should prefer PostgreSQL read replicas or precomputed analytics views. Responses include the reporting period and, where useful, a `data_freshness` timestamp because replica lag is possible.
+- **Range:** `from` and `to` are Addis Ababa days, both included; the 30 days to today by default, never past today, at most 366 days (`400 VALIDATION_FAILED`, `before_from` or `range_too_long`).
+- **Who:** the caller's depots (admins, fleet managers, owners and compliance officers see every depot); `depot_id` narrows to one of them, and a depot that is unknown or not the caller's gives zeros. A driver has no `analytics:read` (`403`).
+- **Integers:** percentages are whole percent, fuel is ml, money is cents, cost per km is whole cents per km, all rounded half away from zero; a ratio with nothing to divide by is `null`.
+- **Cache:** the KPIs are summed from `analytics.analytics_cache`, one row per vehicle and day, refreshed hourly (today and yesterday) and nightly (35 days back) ([analytics.md](analytics.md)). `meta` gives `from`, `to`, `days`, `computed_at` (the last refresh) and `stale: true` when that is more than 25 hours ago or the cache was never filled. Answers are kept in Redis for 5 minutes per caller scope and range, and dropped by each refresh.
+
+Analytics and reporting reads go to the PostgreSQL read replica (FMS-94, [read-replica.md](read-replica.md)): today `GET /fuel-reconciliation`, `GET /vehicles/{vehicle_id}/fuel-summary`, `GET /audit-logs` and the analytics endpoints above. Their responses include the reporting period where they have one and `meta.data_freshness` (FMS-94, [read-replica.md](read-replica.md)): `source` (`replica` or `primary`), `lag_seconds` (how far the data may be behind the primary; 0 from the primary) and `as_of` (now less the lag), because replica lag is possible. A replica that is down or too far behind is not read: the primary answers, and says so.
 
 ## 15. Integrations and Webhooks
 
@@ -803,6 +919,7 @@ Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING
   "status": "active",
   "maintenance_flag": false,
   "health_score": 87,
+  "health_score_updated_at": "2026-10-26T02:00:04Z",
   "depot_id": "uuid",
   "odometer_km": 128450.5,
   "current_trip": {
@@ -896,9 +1013,9 @@ Normal resources use `page`/`page_size`. Server page size is capped. Telemetry h
 
 ## 19. Idempotency and Concurrency
 
-Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. A retry with the same body gets the stored response again, with `Idempotent-Replayed: true`. Only a 2xx outcome is kept; any other response frees the key. Keys are per user and expire after 24 hours, except on the endpoints the driver's offline queue sends to (`POST /fuel-logs`, `/dvir-reports` and its `/dvir` alias, `/incidents`), which keep them 7 days, as long as the queue may hold a submission (FMS-116); the daily `idempotency-key-purge` job (02:00) deletes expired rows. The web client sends a UUID key with `api.request(path, { idempotencyKey: true })`, kept across its own token-refresh retry. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
+Retry-prone create and command endpoints support `Idempotency-Key`. The server stores the key, authenticated caller, request hash and outcome for a bounded retention period (`api.idempotency_keys`). Reusing the same key with a different body returns `409 CONFLICT_IDEMPOTENCY_KEY_REUSED`; reusing it while the first request is still running returns `409 CONFLICT_IDEMPOTENCY_IN_PROGRESS`. A retry with the same body gets the stored response again, with `Idempotent-Replayed: true`. Only a 2xx outcome is kept; any other response frees the key. Keys are per user and expire after 24 hours, except on the endpoints the driver's offline queue sends to (`POST /fuel-logs`, `/dvir-reports`, `/incidents`), which keep them 7 days, as long as the queue may hold a submission (FMS-116); the daily `idempotency-key-purge` job (02:00) deletes expired rows. The web client sends a UUID key with `api.request(path, { idempotencyKey: true })`, kept across its own token-refresh retry. State-changing operations use database transactions where multiple records must change atomically. Optimistic concurrency using `version`, `updated_at` or ETag should be used where stale writes are possible.
 
-`Idempotency-Key` is optional on the endpoints marked with it. The first request with a key runs; a `2xx` response is stored and replayed to any retry with the same key and body, with the header `Idempotent-Replayed: true`. An error response frees the key, so a corrected retry may reuse it. Keys are per user and kept 24 hours; on `POST /fuel-logs`, `/dvir-reports` (and `/dvir`) and `/incidents`, 7 days (a driver's phone may hold a queued submission that long, and a fill-up has no natural duplicate check).
+`Idempotency-Key` is optional on the endpoints marked with it. The first request with a key runs; a `2xx` response is stored and replayed to any retry with the same key and body, with the header `Idempotent-Replayed: true`. An error response frees the key, so a corrected retry may reuse it. Keys are per user and kept 24 hours; on `POST /fuel-logs`, `/dvir-reports` and `/incidents`, 7 days (a driver's phone may hold a queued submission that long, and a fill-up has no natural duplicate check).
 
 ## 20. Rate Limiting and Resilience
 
@@ -978,8 +1095,8 @@ GPS provider
 
 ```
 Node.js Core API
-  -> POST /internal/ml/predict-maintenance
-  -> FastAPI validation + model inference
+  -> POST /internal/ml/predict-maintenance/batch (X-Internal-Token)
+  -> FastAPI validation (feature_spec.json) + model inference
   -> prediction result
   -> persist maintenance_predictions
   -> optional alert
@@ -1020,7 +1137,7 @@ Driver / fuel card / provider
 | `GET/POST/PUT /attendance` | `/attendance` + `/attendance/{id}` | Retained and expanded |
 | `POST /documents`, `GET /documents/{id}` | `/documents` + `/documents/{id}` | Retained |
 | `POST /trips/{id}/assign` | `/trips/{trip_id}/assign` | Retained as canonical command |
-| `POST /dvir` | `/dvir-reports` | Retained as compatibility alias |
+| `POST /dvir` | `/dvir-reports` | Removed (FMS-122): `/dvir-reports` is the one path; `/dvir` is `404` |
 | `POST /incidents` | `/incidents` | Retained |
 | `POST /inventory/{id}/adjust` | `/inventory/{part_id}/adjust` | Retained as a command that creates an inventory movement |
 | `POST /fuel-logs` | `/fuel-logs` | Retained |
@@ -1114,6 +1231,7 @@ This file is the combined contract (`Fleet_Management_API_Contract_Combined.pdf`
 | 5.2 | Cursor paging instead of pages; `action` and `result` filters; actors and entities by public id; `audit:read` without fleet manager | Stable order on an append-only trail that grows while it is read; IDs rule; S-10's roles (FMS-28) |
 | 6.2, 6.3 | Vehicle fuel-efficiency requirement; driver depot stored on the user | Required DB columns / single source of depot |
 | 7.2 | `/assign` uses new `trip:assign`; overlap rules apply to every assigning write and are DB-enforced | Drivers need `trip:execute` without assignment rights; concurrent-assignment race |
+| 7.1, 7.2 | One-off trips (`route` instead of `route_id`, saved as an `is_adhoc` route); end defaults to the route's estimate; `PATCH` takes `reason` and `shift_following`, moves an en-route trip's end, answers `meta.shifted` | Dispatchers could not handle unplanned trips or a late trip that runs into the next one (FMS-139) |
 | 9.1, 12.2 | `fuel_type`, `incident_type`, `occurred_at` optional with defaults | Required DB columns the requests did not carry |
 | 15 | Webhook de-duplication keys | Telemetry retries were stored twice |
 | 16 | Examples use stored enum values; trip uses `scheduled_start/_end`, `en_route`, `version` | `IN_PROGRESS`, `planned_start` and uppercase values did not exist |

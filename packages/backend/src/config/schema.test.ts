@@ -94,3 +94,21 @@ test('GPS events: at most one per vehicle per 5 s by default (FMS-88)', () => {
   assert.equal(loadAppConfig({ ...validEnv, TRACKING_EVENT_INTERVAL_SECONDS: '0' }).tracking.eventIntervalSeconds, 0);
   assert.ok(problems(() => loadAppConfig({ ...validEnv, TRACKING_EVENT_INTERVAL_SECONDS: '-1' })).some((p) => p.startsWith('TRACKING_EVENT_INTERVAL_SECONDS')));
 });
+
+test('ML service: off unless ML_SERVICE_URL is set, then a 32-character token (FMS-54, FMS-127)', () => {
+  assert.deepEqual(loadAppConfig(validEnv).ml, { service: null, featureSpecPath: '../ai-service/feature_spec.json' });
+  const token = 't'.repeat(32);
+  assert.deepEqual(loadAppConfig({ ...validEnv, ML_SERVICE_URL: 'http://ai-service:5000/', ML_SERVICE_TOKEN: token }).ml.service, { url: 'http://ai-service:5000', token });
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, ML_SERVICE_URL: 'http://ai-service:5000', ML_SERVICE_TOKEN: PLACEHOLDER })), [
+    'ML_SERVICE_TOKEN: must be at least 32 characters when ML_SERVICE_URL is set',
+  ]);
+  assert.ok(problems(() => loadAppConfig({ ...validEnv, ML_SERVICE_URL: 'ftp://ai-service', ML_SERVICE_TOKEN: token })).some((p) => p.startsWith('ML_SERVICE_URL')));
+  assert.equal(loadAppConfig({ ...validEnv, ML_FEATURE_SPEC_PATH: '/srv/feature_spec.json' }).ml.featureSpecPath, '/srv/feature_spec.json');
+});
+
+test('Road routing: off unless ROUTING_URL is set, an empty value included (FMS-84)', () => {
+  assert.equal(loadAppConfig(validEnv).routing, null);
+  assert.equal(loadAppConfig({ ...validEnv, ROUTING_URL: '' }).routing, null);
+  assert.deepEqual(loadAppConfig({ ...validEnv, ROUTING_URL: 'http://osrm:5000/' }).routing, { url: 'http://osrm:5000' });
+  assert.ok(problems(() => loadAppConfig({ ...validEnv, ROUTING_URL: 'ftp://osrm' })).some((p) => p.startsWith('ROUTING_URL')));
+});

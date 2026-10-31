@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { DEPOT_UNSCOPED_ROLES } from '../../../shared/authz/scope';
 import { auditedMutation, type MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { UserStatus } from '../domain/auth-policy';
@@ -94,6 +95,25 @@ export const userDirectory = {
       [roles, depotId, unscopedRoles],
     );
     return res.rows.map((r) => r.id);
+  },
+
+  /**
+   * An active account that holds `permission` through an active role, by public id, with its home depot (internal
+   * id) and whether its roles see every depot (DEPOT_UNSCOPED_ROLES). For choosing who handles an incident (FMS-89).
+   */
+  async activeHolder(db: Queryable, publicId: string, permission: string): Promise<{ id: string; depotId: string | null; unscoped: boolean } | null> {
+    const res = await db.query<{ id: string; depotId: string | null; unscoped: boolean }>(
+      `SELECT u.id, u.depot_id AS "depotId", bool_or(r.name = ANY($3::text[])) AS unscoped
+         FROM auth.users u
+         JOIN auth.user_roles ur ON ur.user_id = u.id
+         JOIN auth.roles r ON r.id = ur.role_id AND r.is_active
+        WHERE u.public_id = $1 AND u.status = 'active'
+        GROUP BY u.id
+       HAVING bool_or(EXISTS (SELECT 1 FROM auth.role_permissions rp JOIN auth.permissions p ON p.id = rp.permission_id
+                               WHERE rp.role_id = r.id AND p.code = $2))`,
+      [publicId, permission, DEPOT_UNSCOPED_ROLES],
+    );
+    return res.rows[0] ?? null;
   },
 
   /** Active accounts whose home depot this is (internal id); a depot with any cannot be deleted. */

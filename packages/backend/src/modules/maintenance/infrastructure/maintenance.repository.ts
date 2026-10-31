@@ -3,6 +3,7 @@ import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
+import type { ServiceItem } from '../domain/inventory';
 import { OPEN_STATUSES, type MaintenancePriority, type MaintenanceStatus, type MaintenanceType } from '../domain/maintenance';
 
 /** A maintenance.maintenance_records row (internal ids). */
@@ -48,6 +49,15 @@ export interface LockedPart {
   reorderThreshold: number;
 }
 
+/** The vehicle's last completed repair that renewed an item (FMS-52). */
+export interface LastServiceItemRow {
+  item: ServiceItem;
+  changedAt: Date;
+  recordPublicId: string;
+  odometerKm: number | null;
+  partNumber: string;
+}
+
 export interface RecordListFilter extends Page {
   /** Vehicles in the caller's scope (internal ids); null: every vehicle. */
   vehicleIds: string[] | null;
@@ -55,6 +65,8 @@ export interface RecordListFilter extends Page {
   status?: MaintenanceStatus;
   open?: boolean;
   maintenanceType?: MaintenanceType;
+  /** created_at: when entered; work_date: when the work happened (completed, else started, else scheduled, else entered). */
+  sortBy: 'created_at' | 'work_date';
   sortOrder: 'asc' | 'desc';
 }
 
@@ -113,8 +125,9 @@ export class MaintenanceRepository extends Repository {
     const count = await db.query<{ total: number }>(`SELECT count(*)::int AS total FROM maintenance.maintenance_records r ${whereSql}`, params);
     const { limit, offset } = limitOffset(f);
     const dir = f.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const key = f.sortBy === 'work_date' ? 'COALESCE(r.completed_at, r.started_at, r.scheduled_at, r.created_at)' : 'r.created_at';
     const res = await db.query<RecordRow>(
-      `${ROW_SQL} ${whereSql} ORDER BY r.created_at ${dir}, r.id ${dir} LIMIT ${add(limit)} OFFSET ${add(offset)}`,
+      `${ROW_SQL} ${whereSql} ORDER BY ${key} ${dir}, r.id ${dir} LIMIT ${add(limit)} OFFSET ${add(offset)}`,
       params,
     );
     return { rows: res.rows, total: count.rows[0].total };
@@ -198,6 +211,40 @@ export class MaintenanceRepository extends Repository {
       [vehicleIds, OPEN_STATUSES],
     );
     return new Map(res.rows.map(({ vehicleId, ...summary }) => [vehicleId, summary]));
+  }
+
+  /**
+   * The last change of each item on the vehicle (FMS-52): its latest completed
+   * repair, before `before` when given, that used a part renewing the item. An
+   * item never changed in the system has no row.
+   */
+  async lastServiceItems(db: Queryable, vehicleId: string, before: Date | null = null): Promise<LastServiceItemRow[]> {
+    const res = await db.query<LastServiceItemRow>(
+      `SELECT DISTINCT ON (p.service_item)
+              p.service_item AS item, r.completed_at AS "changedAt", r.public_id AS "recordPublicId",
+              r.odometer_km::float8 AS "odometerKm", p.part_number AS "partNumber"
+         FROM maintenance.maintenance_records r
+         JOIN maintenance.maintenance_parts mp ON mp.maintenance_record_id = r.id
+         JOIN maintenance.inventory_parts p ON p.id = mp.inventory_part_id
+        WHERE r.vehicle_id = $1 AND r.status = 'completed' AND p.service_item IS NOT NULL
+          AND ($2::timestamptz IS NULL OR r.completed_at < $2)
+        ORDER BY p.service_item, r.completed_at DESC, r.id DESC`,
+      [vehicleId, before],
+    );
+    return res.rows;
+  }
+
+  /** Completed repairs with an odometer, completed at or after `since` (null: all): meter readings (FMS-126). */
+  async completedOdometers(db: Queryable, since: Date | null): Promise<{ vehicleId: string; ref: string; odometerKm: number; at: Date }[]> {
+    const res = await db.query<{ vehicleId: string; ref: string; odometerKm: number; at: Date }>(
+      `SELECT vehicle_id AS "vehicleId", public_id::text AS ref, odometer_km::float8 AS "odometerKm", completed_at AS at
+         FROM maintenance.maintenance_records
+        WHERE status = 'completed' AND odometer_km IS NOT NULL AND completed_at IS NOT NULL
+          AND ($1::timestamptz IS NULL OR completed_at >= $1)
+        ORDER BY completed_at, id`,
+      [since],
+    );
+    return res.rows;
   }
 
   /** Row-locks the parts by public id, in id order (two repairs using the same parts never deadlock). */

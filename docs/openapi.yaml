@@ -5,15 +5,12 @@ info:
   description: >
     Machine-readable contract for the endpoints listed here. docs/api-contract.md
     stays the full reference; an endpoint is added here as its card is built, and
-    test/integration/openapi.test.ts checks that every operation listed is mounted,
-    that every route the API mounts is listed (the ones that predate this file are
-    grandfathered in test/support/openapi-baseline.ts) and that every error code
-    named is one the API sends.
-    Trips, routes, inspections and fuel-log reads were added with FMS-119.
+    test/integration/openapi.test.ts checks that every operation listed is mounted
+    and that every error code named is one the API sends.
     Started with trip assignment (FMS-31), vehicle status and availability (FMS-76) and the
     trip lifecycle commands (FMS-32), and the dispatcher board (FMS-33); the integration gateway's provider
     status, manual sync and signed webhooks (FMS-85); GPS ingestion (FMS-88); the live map's snapshot (FMS-45); alerts (FMS-92); incident reports (FMS-38);
-    failure records on corrective repairs (FMS-125).
+    failure records on corrective repairs (FMS-125); each vehicle's part history (FMS-52); meter readings (FMS-126); trip creation and rescheduling with flexible dispatch (FMS-139).
 servers:
   - url: /api/v1
 security:
@@ -27,11 +24,13 @@ tags:
   - name: Dispatch
   - name: Integrations
   - name: Tracking
+  - name: Command center
   - name: Fuel
   - name: Alerts
   - name: Incidents
   - name: Maintenance
   - name: Notifications
+  - name: Analytics
 
 paths:
   /trips:
@@ -84,12 +83,12 @@ paths:
     post:
       tags: [Trips]
       operationId: createTrip
-      summary: Schedule a trip on a route (FMS-30)
+      summary: Create a trip, from a saved route or a one-off route (FMS-30, FMS-139)
       description: >
-        Needs trip:write (admin, fleet manager, dispatcher). The trip copies the route's origin, destination,
-        distance, duration and stops, starts as scheduled and has no driver or vehicle yet (assign them with
-        POST /trips/{trip_id}/assign). The route must be active and in the caller's depots. Publishes
-        TripCreated. Audited. Location names the trip.
+        Needs trip:write. route_id names an active route in the caller's depots; or route describes a
+        one-off trip, saved as a route of its own (is_adhoc) in depot_id (default: a depot-scoped caller's
+        own depot). Without scheduled_end the trip ends the route's estimated time after its start. The trip
+        starts scheduled, without driver or vehicle, and copies the route's plan. Publishes TripCreated.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -99,17 +98,38 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [route_id, scheduled_start, scheduled_end]
+              required: [scheduled_start]
+              description: Exactly one of route_id and route.
               properties:
                 route_id: { type: string, format: uuid }
-                scheduled_start: { type: string, format: date-time, description: With an offset. }
-                scheduled_end: { type: string, format: date-time, description: With an offset; after scheduled_start. }
+                route:
+                  type: object
+                  additionalProperties: false
+                  required: [origin_name, destination_name]
+                  properties:
+                    origin_name: { type: string, minLength: 1, maxLength: 120 }
+                    origin: { $ref: '#/components/schemas/NullablePoint' }
+                    destination_name: { type: string, minLength: 1, maxLength: 120 }
+                    destination: { $ref: '#/components/schemas/NullablePoint' }
+                    stops:
+                      type: array
+                      maxItems: 25
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [name]
+                        properties:
+                          name: { type: string, minLength: 1, maxLength: 120 }
+                          latitude: { type: [number, 'null'], minimum: -90, maximum: 90 }
+                          longitude: { type: [number, 'null'], minimum: -180, maximum: 180 }
+                depot_id: { type: string, format: uuid, description: The depot a one-off trip leaves from. }
+                scheduled_start: { type: string, format: date-time }
+                scheduled_end: { type: string, format: date-time, description: Default the route's estimated time after the start. }
       responses:
         '201':
-          description: Scheduled.
+          description: Created.
           headers:
             ETag: { $ref: '#/components/headers/ETag' }
-            Location: { schema: { type: string } }
           content:
             application/json:
               schema:
@@ -120,14 +140,11 @@ paths:
                   meta: { $ref: '#/components/schemas/Meta' }
         '400':
           description: >
-            VALIDATION_FAILED (a field that is not writable; route_id references_missing_record or
-            route_retired) or VALIDATION_INVALID_DATE_RANGE (scheduled_end not after scheduled_start).
+            VALIDATION_FAILED (both or neither of route_id and route; an unknown or retired route; a depot
+            outside the caller's; no end and no estimated time) or VALIDATION_INVALID_DATE_RANGE.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409':
-          description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
-          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /trips/{trip_id}:
     get:
@@ -156,13 +173,14 @@ paths:
     patch:
       tags: [Trips]
       operationId: updateTrip
-      summary: Reschedule or cancel a trip (FMS-30)
+      summary: Reschedule or cancel a trip (FMS-30, FMS-139)
       description: >
-        Needs trip:write. Send scheduled_start and/or scheduled_end to reschedule, or status cancelled to cancel;
-        at least one field. Only an open trip (draft, scheduled, assigned) changes: a trip under way is ended, not
-        cancelled, and a completed or cancelled trip never changes. A draft that gets both times becomes
-        scheduled. Send If-Match to refuse a stale write. Publishes TripUpdated (rescheduled) or TripCancelled.
-        Audited.
+        Needs trip:write. Moves an open trip's times, or only the end of one en route; cancels with
+        status cancelled. Once assigned or en route a time change needs a reason (kept on TripUpdated) and
+        may not overlap the driver's or vehicle's other trips: 409 naming that trip, with shiftable and
+        shift_minutes; sent again with shift_following, that trip and any it then runs into move later
+        (at most 20), all in one transaction. Publishes TripUpdated (one per moved trip, with
+        shifted_by_trip_id) or TripCancelled.
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IfMatch'
@@ -177,10 +195,14 @@ paths:
               properties:
                 scheduled_start: { type: string, format: date-time }
                 scheduled_end: { type: string, format: date-time }
-                status: { type: string, enum: [cancelled] }
+                status: { const: cancelled }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+                shift_following:
+                  type: boolean
+                  description: Move the trips this change runs into later, instead of refusing.
       responses:
         '200':
-          description: The trip after the change (unchanged if the body changed nothing).
+          description: Changed. meta.shifted lists the trips moved later to make room.
           headers:
             ETag: { $ref: '#/components/headers/ETag' }
           content:
@@ -190,19 +212,34 @@ paths:
                 required: [data, meta]
                 properties:
                   data: { $ref: '#/components/schemas/Trip' }
-                  meta: { $ref: '#/components/schemas/Meta' }
+                  meta:
+                    type: object
+                    required: [request_id, shifted]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      shifted:
+                        type: array
+                        items:
+                          type: object
+                          required: [trip_id, scheduled_start, scheduled_end]
+                          properties:
+                            trip_id: { type: string, format: uuid }
+                            scheduled_start: { type: string, format: date-time }
+                            scheduled_end: { type: string, format: date-time }
         '400':
           description: >
-            VALIDATION_FAILED (an empty_update, or a field that is not writable) or
-            VALIDATION_INVALID_DATE_RANGE (the end not after the start).
+            VALIDATION_FAILED (an empty change; a reason missing; a new start for a trip under way) or
+            VALIDATION_INVALID_DATE_RANGE (an end at or before the start, or before an en-route trip's
+            actual start).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: >
-            CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match) or CONFLICT_INVALID_STATE_TRANSITION (a trip
-            under way cancelled, or a completed or cancelled trip changed).
+            CONFLICT_CONCURRENT_MODIFICATION, CONFLICT_INVALID_STATE_TRANSITION (a closed trip, or more than
+            20 trips to move), CONFLICT_DRIVER_OVERLAP or CONFLICT_VEHICLE_OVERLAP (record_id, shiftable,
+            shift_minutes).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /routes:
@@ -391,31 +428,6 @@ paths:
           description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
-  /dvir:
-    post:
-      tags: [Inspections]
-      operationId: submitDvirAlias
-      summary: Submit a vehicle inspection (alias of POST /dvir-reports)
-      description: The legacy-compatible alias of POST /dvir-reports, with the same behaviour, body and responses.
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/DvirInput' }
-      responses:
-        '201': { $ref: '#/components/responses/DvirRecorded' }
-        '200': { $ref: '#/components/responses/DvirRecorded' }
-        '400':
-          description: As POST /dvir-reports.
-          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409':
-          description: CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
-          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
-
   /vehicles/{vehicle_id}/dvir-reports:
     get:
       tags: [Inspections]
@@ -450,6 +462,29 @@ paths:
         '400':
           description: VALIDATION_FAILED, or VALIDATION_INVALID_ENUM (an unknown type).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /fuel-logs/{fuel_log_id}:
+    get:
+      tags: [Fuel]
+      operationId: getFuelLog
+      summary: One fuel log (FMS-39)
+      description: Needs fuel:read. Another driver's log, or one outside the caller's depots, is 404, the same as a missing one.
+      parameters:
+        - $ref: '#/components/parameters/FuelLogId'
+      responses:
+        '200':
+          description: The fuel log.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelLog' }
+                  meta: { $ref: '#/components/schemas/Meta' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -741,6 +776,51 @@ paths:
           description: CONFLICT_INVALID_STATE_TRANSITION (nothing leaves retired), CONFLICT_VEHICLE_IN_USE (on a trip under way; record_id is the trip) or CONFLICT_CONCURRENT_MODIFICATION.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /vehicles/{vehicle_id}/meter-readings:
+    get:
+      tags: [Vehicles]
+      operationId: listVehicleMeterReadings
+      summary: A vehicle's odometer and engine-hour history (FMS-126)
+      description: >
+        Every reading with its source (fuel log, completed repair, device or telematics provider, the nightly
+        engine-hours job, manual), newest first by when it was true. A reading lower than a trusted earlier one is
+        kept with suspect true; the vehicle's odometer does not follow it (docs/meter-readings.md). Needs
+        vehicle:read, in the caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: meter, in: query, schema: { type: string, enum: [odometer, engine_hours] } }
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of readings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MeterReading' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown meter, a bad date, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /integrations/providers:
     get:
       tags: [Integrations]
@@ -949,6 +1029,43 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /command-center/overview:
+    get:
+      tags: [Command center]
+      operationId: getCommandCenterOverview
+      summary: What needs attention on the live map (FMS-89)
+      description: >
+        command:read, depot scope: the caller's depot, or every depot for a fleet-wide user (depot_id narrows it; a
+        depot outside the scope is 404). Vehicles by state and health band, the at-risk and watch vehicles' scores,
+        drivers on a trip, available, absent today and with an expired licence, the day's trips (Addis Ababa) by
+        status with those under way and overdue, and the active alerts and incidents, most severe first (up to 50 of
+        each, counted in full). The drivers, trips, alerts and incidents sections need driver:read, trip:read,
+        alert:read and incident:read as well, and are null without them. Cached for 5 s per depot shown; alert,
+        incident, trip, vehicle and attendance events drop it (docs/live-map.md).
+      parameters:
+        - name: depot_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The overview.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/CommandCenterOverview' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (depot_id not a UUID, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (depot_id outside the caller's depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /tracking/gps-pings:
     post:
       tags: [Tracking]
@@ -956,7 +1073,7 @@ paths:
       summary: Ingest GPS pings (FMS-88)
       description: >
         A batch of positions. A device (bearer token) reports for its own vehicle; a driver's phone (trip:execute)
-        for the vehicle of the driver's trip under way; a user with tracking:ingest names the vehicle on each ping.
+        for the vehicle of a trip the driver drove, each ping in the trip it was recorded in, however late it arrives (FMS-124: a ping in no trip of the driver is refused alone as no_trip_at_time); a user with tracking:ingest names the vehicle on each ping.
         Naming any other vehicle refuses the whole batch (403). A ping already stored (same vehicle, same instant) is
         a duplicate and stored once. Readable pings that cannot be used are listed in rejected; the rest are stored.
         Each vehicle's newest position is announced as VehicleLocationUpdated at most once per 5 s.
@@ -999,7 +1116,7 @@ paths:
                           required: [index, reason]
                           properties:
                             index: { type: integer }
-                            reason: { type: string, enum: [future_timestamp, too_old, low_accuracy, unknown_vehicle, unknown_device, vehicle_retired] }
+                            reason: { type: string, enum: [future_timestamp, too_old, low_accuracy, unknown_vehicle, unknown_device, vehicle_retired, no_trip_at_time] }
                   meta: { $ref: '#/components/schemas/Meta' }
         '400':
           description: VALIDATION_FAILED (a field out of range or unknown, details name pings.<i>.<field>; a user's ping without vehicle_id).
@@ -1008,7 +1125,7 @@ paths:
         '403':
           description: >
             FORBIDDEN_INSUFFICIENT_ROLE: no tracking:ingest or trip:execute; or a device or phone naming a vehicle that is
-            not its own (reason not_your_vehicle); or a phone with no trip under way (no_trip_under_way). Nothing is stored.
+            not its own (reason not_your_vehicle); or a phone with no trip started in the last 7 days (no_trip_under_way). Nothing is stored.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /vehicles/{vehicle_id}/telemetry-flags:
@@ -1057,6 +1174,92 @@ paths:
         '400':
           description: VALIDATION_FAILED (an unknown flag type, a time without offset, limit out of range, to before from, or an unknown query parameter).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vehicles/{vehicle_id}/tracking:
+    get:
+      tags: [Tracking]
+      operationId: getVehicleTracking
+      summary: A vehicle's GPS history (FMS-136)
+      description: >
+        The vehicle's stored positions, oldest first, a page at a time: the vehicle page draws a trip's track from
+        the points between its actual start and end. Behavioural data: needs tracking:read (never drivers), in the
+        caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404. Each point names its trip,
+        not the driver.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - name: from
+          in: query
+          description: recorded_at at or after this instant.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: recorded_at at or before this instant.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+        - name: cursor
+          in: query
+          description: meta.next_cursor of the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The points, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrackPoint' }
+                  meta:
+                    type: object
+                    required: [page_size, next_cursor, request_id]
+                    properties:
+                      page_size: { type: integer }
+                      next_cursor: { type: [string, 'null'], description: The next page's cursor; null on the last page. }
+                      request_id: { type: string }
+        '400':
+          description: VALIDATION_FAILED (a time without offset, limit out of range, to before from, a cursor the API did not issue, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /routes/{route_id}/geometry:
+    get:
+      tags: [Trips]
+      operationId: getRouteGeometry
+      summary: The road a route follows (FMS-84)
+      description: >
+        Measured by the routing engine (OSRM) through the route's origin, stops with coordinates and destination
+        when the route is saved, simplified to within 15 m. Null while the route has no road (no ends, the engine
+        down or not set up). Needs route:read, in the caller's depot scope; another depot's route, or an id that
+        is not a UUID, is a 404. docs/routing.md.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The road, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/RoadLine'
+                      - type: 'null'
+                  meta: { $ref: '#/components/schemas/Meta' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1303,25 +1506,431 @@ paths:
             CONFLICT_IDEMPOTENCY_IN_PROGRESS.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
-  /fuel-logs/{fuel_log_id}:
+  /fuel-reconciliation:
     get:
       tags: [Fuel]
-      operationId: getFuelLog
-      summary: One fuel log (FMS-39)
-      description: Needs fuel:read. Another driver's log, or one outside the caller's depots, is 404, the same as a missing one.
+      operationId: reconcileFuel
+      summary: Fuel logged against what the trips needed, by vehicle (FMS-41)
+      description: >
+        For each vehicle in the caller's depots: the completed trips' distance in the period (by actual_end), the fuel
+        it needed at the vehicle's fuel_efficiency_ml_per_km, the fuel logged (by recorded_at) and the variance,
+        integers throughout (ml, cents, whole percent, rounded half away from zero). Beyond FUEL_VARIANCE_THRESHOLD_PCT
+        (default 20) either way is above or below; electric vehicles, vehicles without a rating and under 100 km of
+        trips are not_judged. Furthest from expected first. The period defaults to last calendar month (Addis Ababa);
+        at most 366 days. Only reads, from the read replica when it is up (meta.data_freshness); the monthly job writes
+        anomalies (docs/fuel-reconciliation.md). Needs both
+        analytics:read and fuel:read.
       parameters:
-        - $ref: '#/components/parameters/FuelLogId'
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [above, below, within, not_judged] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
       responses:
         '200':
-          description: The fuel log.
+          description: A page of vehicles, with the period, the threshold and a summary of every vehicle in it.
           content:
             application/json:
               schema:
                 type: object
                 required: [data, meta]
                 properties:
-                  data: { $ref: '#/components/schemas/FuelLog' }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FuelReconciliation' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages, from, to, threshold_pct, summary, data_freshness]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      data_freshness: { $ref: '#/components/schemas/DataFreshness' }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+                      from: { type: string, format: date-time }
+                      to: { type: string, format: date-time, description: Exclusive. }
+                      threshold_pct: { type: integer }
+                      summary:
+                        type: object
+                        required: [vehicles, judged, above, below, expected_ml, actual_ml, variance_pct, total_cost_cents]
+                        properties:
+                          vehicles: { type: integer }
+                          judged: { type: integer }
+                          above: { type: integer }
+                          below: { type: integer }
+                          expected_ml: { type: integer, description: Over the judged vehicles. }
+                          actual_ml: { type: integer, description: Over the judged vehicles. }
+                          variance_pct: { type: [integer, 'null'] }
+                          total_cost_cents: { type: integer, description: Every vehicle's. }
+        '400':
+          description: VALIDATION_FAILED (a bad date or status; to before_from; period_too_long; an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /fuel-anomalies:
+    get:
+      tags: [Fuel]
+      operationId: listFuelAnomalies
+      summary: Fuel anomalies of the caller's depots (FMS-42)
+      description: >
+        Newest detected first. Needs fuel-anomaly:read (admin, fleet manager, depot admin, finance clerk, compliance
+        officer). Read from the primary, so a resolution shows at once. docs/fuel-reconciliation.md.
+      parameters:
+        - { name: status, in: query, description: 'One or several, comma-separated: open,reviewed is what still needs someone.', schema: { type: string } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: anomaly_type, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of anomalies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FuelAnomaly' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown status, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /fuel-anomalies/{anomaly_id}:
+    get:
+      tags: [Fuel]
+      operationId: getFuelAnomaly
+      summary: One fuel anomaly (FMS-42)
+      description: Another depot's anomaly, or an id that is not a UUID, is a 404.
+      parameters:
+        - { name: anomaly_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The anomaly.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelAnomaly' }
                   meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /fuel-anomalies/{anomaly_id}/resolve:
+    post:
+      tags: [Fuel]
+      operationId: closeFuelAnomaly
+      summary: Resolve or dismiss a fuel anomaly (FMS-42)
+      description: >
+        Closes an open or reviewed anomaly, recording who and when (reviewed_by, reviewed_at); audited. Needs
+        fuel-anomaly:write (admin, fleet manager, finance clerk).
+      parameters:
+        - { name: anomaly_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                outcome: { type: string, enum: [resolved, dismissed], default: resolved }
+                notes: { type: string, minLength: 1, maxLength: 2000, description: Required to dismiss. }
+      responses:
+        '200':
+          description: The closed anomaly.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelAnomaly' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown outcome or field; notes required_to_dismiss).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (already resolved or dismissed).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /analytics/fleet-summary:
+    get:
+      tags: [Analytics]
+      operationId: getFleetSummary
+      summary: Fleet KPIs for a range of days (FMS-50)
+      description: >
+        Vehicles by status, utilisation, distance, trips, on-time, fuel, repair cost, cost per km and open alerts, and the same KPIs per day. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [vehicles, utilisation_pct, distance_km, trips_completed, on_time_pct, fuel_ml, fuel_cost_cents, maintenance_cost_cents, total_cost_cents, cost_per_km_cents, open_alerts, daily]
+                    properties:
+                      vehicles: { type: object, description: 'total, by_status (active, inactive, maintenance, retired), maintenance_flagged, average_health_score.' }
+                      utilisation_pct: { type: [integer, 'null'], description: 'Vehicle-days used of vehicle-days in the range.' }
+                      distance_km: { type: integer }
+                      trips_completed: { type: integer }
+                      on_time_pct: { type: [integer, 'null'] }
+                      fuel_ml: { type: integer }
+                      fuel_cost_cents: { type: integer }
+                      maintenance_cost_cents: { type: integer }
+                      total_cost_cents: { type: integer }
+                      cost_per_km_cents: { type: [integer, 'null'], description: '(fuel + repair cost) over distance, whole cents.' }
+                      open_alerts: { type: object, description: 'low, medium, high, critical, total.' }
+                      daily: { type: array, items: { type: object, description: 'date, vehicles_used and the KPIs above for one day.' } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/utilisation:
+    get:
+      tags: [Analytics]
+      operationId: getUtilisation
+      summary: Utilisation by vehicle (FMS-50)
+      description: >
+        Days each vehicle was on a trip, of the days in the range, highest first. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [utilisation_pct, vehicle_days, days_used, vehicles]
+                    properties:
+                      utilisation_pct: { type: [integer, 'null'] }
+                      vehicle_days: { type: integer }
+                      days_used: { type: integer }
+                      vehicles: { type: array, items: { type: object, description: 'vehicle_id, registration_number, depot_id, depot_name, status, days_used, days, utilisation_pct, distance_km, trips_completed.' } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/fuel-efficiency:
+    get:
+      tags: [Analytics]
+      operationId: getFuelEfficiency
+      summary: Fuel KPIs by vehicle (FMS-50)
+      description: >
+        Fuel and its cost against distance, actual ml per km against the rating, costliest first. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { type: object, description: 'vehicle_id, registration_number, depot_id, depot_name, fuel_type, fuel_ml, fuel_cost_cents, distance_km, ml_per_km, rated_ml_per_km, variance_pct, fuel_cost_per_km_cents.' }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/maintenance-risk:
+    get:
+      tags: [Analytics]
+      operationId: getMaintenanceRisk
+      summary: Maintenance risk by vehicle (FMS-50)
+      description: >
+        Health score, the highest active prediction and the range repair cost, riskiest first. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { type: object, description: 'vehicle_id, registration_number, depot_id, depot_name, status, health_score, maintenance_flag, risk_pct, prediction_type, predicted_failure_type, predicted_at, maintenance_cost_cents.' }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/trips:
+    get:
+      tags: [Analytics]
+      operationId: getTripAnalytics
+      summary: Trip KPIs (FMS-50)
+      description: >
+        Trips planned by status, completed, on time (within 15 minutes of the scheduled end) and distance, per day too. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [planned, by_status, completed, on_time, timed, on_time_pct, distance_km, average_distance_km, daily]
+                    properties:
+                      planned: { type: integer }
+                      by_status: { type: object, description: 'Trips planned in the range, by status.' }
+                      completed: { type: integer }
+                      on_time: { type: integer }
+                      timed: { type: integer }
+                      on_time_pct: { type: [integer, 'null'] }
+                      distance_km: { type: integer }
+                      average_distance_km: { type: [integer, 'null'] }
+                      daily: { type: array, items: { type: object, description: 'date, completed, on_time_pct, distance_km.' } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /analytics/alerts:
+    get:
+      tags: [Analytics]
+      operationId: getAlertAnalytics
+      summary: Alert KPIs (FMS-50)
+      description: >
+        Open alerts by severity now; raised in the range by severity, type and day; mean minutes to acknowledge. From analytics_cache (refreshed hourly and nightly) and the analytics views on the read replica;
+        integers throughout. Needs analytics:read, in the caller's depot scope.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day, included. Default: 29 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day, included. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives zeros.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs, with the range and how old the cache is.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [open, raised, by_type, acknowledged, mean_minutes_to_acknowledge, daily]
+                    properties:
+                      open: { type: object, description: 'Open and acknowledged now: low, medium, high, critical, total.' }
+                      raised: { type: object, description: 'Raised in the range: low, medium, high, critical, total.' }
+                      by_type: { type: array, items: { type: object, properties: { alert_type: { type: string }, count: { type: integer } } } }
+                      acknowledged: { type: integer }
+                      mean_minutes_to_acknowledge: { type: [integer, 'null'] }
+                      daily: { type: array, items: { type: object, properties: { date: { type: string, format: date }, raised: { type: integer } } } }
+                  meta: { $ref: '#/components/schemas/AnalyticsMeta' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; range_too_long, over 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /vehicles/{vehicle_id}/fuel-summary:
+    get:
+      tags: [Fuel]
+      operationId: getVehicleFuelSummary
+      summary: A vehicle's fuel over a period (FMS-41)
+      description: >
+        The fuel logged and its cost, the completed trips' distance, the rated and the actual efficiency, the
+        variance against what the distance needed (as GET /fuel-reconciliation judges it), cost per km, average price
+        per litre and the vehicle's open fuel anomalies. The period defaults to the 30 days to now. Needs fuel:read,
+        in the caller's depot scope: a vehicle outside it, an id that is not a UUID, and any vehicle for a driver
+        (its totals include other drivers' fill-ups) are 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
+        - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
+      responses:
+        '200':
+          description: The summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/FuelSummary' }
+                  meta:
+                    type: object
+                    required: [request_id, data_freshness]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      data_freshness: { $ref: '#/components/schemas/DataFreshness' }
+        '400':
+          description: VALIDATION_FAILED (a bad date; to before_from; period_too_long).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1445,6 +2054,49 @@ paths:
         '404':
           description: NOT_FOUND (no such incident, or not yours to see).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    patch:
+      tags: [Incidents]
+      operationId: updateIncident
+      summary: Handle an incident (FMS-89)
+      description: >
+        incident:manage (admin, fleet manager, dispatcher, depot admin; not drivers, who report with incident:write),
+        in the caller's depots. Status moves open to investigating, resolved or closed; investigating to resolved or
+        closed; resolved back to investigating or to closed; closed is final (409 incident_closed). Resolving or
+        closing needs notes, given now or kept from before. The assignee is an active user who holds incident:manage
+        and sees the incident's depot. Row-locked; one audited UPDATE; publishes IncidentUpdated (incident.updated on
+        the socket, never the notes). A request that changes nothing writes and publishes nothing.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncidentUpdate' }
+      responses:
+        '200':
+          description: The incident as it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Incident' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED: empty_update, an unknown field (not_writable), notes required to resolve or close
+            (field notes, reason required), or an assignee who cannot handle this depot's incidents (field
+            assigned_to, references_missing_record).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such incident, or outside your depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (reason incident_closed, or incident_<status> for a move the status does not allow).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /maintenance-records/{record_id}/failures:
     post:
@@ -1534,6 +2186,263 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /vehicles/{vehicle_id}/service-items:
+    get:
+      tags: [Maintenance]
+      operationId: listVehicleServiceItems
+      summary: When each wearing part and fluid was last changed (FMS-52)
+      description: >
+        Every service item, in a fixed order, with the vehicle's latest completed repair that used a stocked part
+        renewing it (inventory_parts.service_item). An item never changed in the system has nulls. Open or cancelled
+        work does not count. The predictive model's part history reads this (docs/ml-dataset.md). Needs
+        maintenance:read, in the caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+      responses:
+        '200':
+          description: The items.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    minItems: 11
+                    maxItems: 11
+                    items: { $ref: '#/components/schemas/ServiceItem' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vehicles/{vehicle_id}/maintenance-risk:
+    get:
+      tags: [Maintenance]
+      operationId: getVehicleMaintenanceRisk
+      summary: A vehicle's latest health score and what drives it (FMS-56)
+      description: >
+        The vehicle's latest prediction from the nightly scoring (FMS-55, docs/ml-scoring.md): health score, risk
+        level, failure probability within 30 days, and up to 3 factors (the inputs raising its risk most, largest
+        first) with the vehicle's value when scored. Never a new model call. A vehicle never scored has null score
+        fields and no factors. stale is true when the score is more than 25 hours old. Needs prediction:read
+        (not dispatchers or drivers: they see health_score on the vehicle only), in the caller's depot scope; a
+        vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+      responses:
+        '200':
+          description: The vehicle's maintenance risk.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MaintenanceRisk' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /maintenance-predictions/{prediction_id}/feedback:
+    post:
+      tags: [Maintenance]
+      operationId: recordPredictionFeedback
+      summary: Say what an inspection of a flagged vehicle found (FMS-128)
+      description: >
+        A technician records the outcome of inspecting the vehicle a prediction flagged: confirmed_issue,
+        no_issue_found, already_fixed or not_inspected. A confirmed issue may name the component found and the
+        failure record (FMS-125) it led to (the same vehicle's; the component defaults to the failure's and may
+        not contradict it); the other outcomes carry neither. One feedback per prediction. The prediction must be
+        on a vehicle in the caller's depots (anything else, an unscored row included, is a 404) and may be a
+        superseded one. Needs prediction:read and maintenance:write (technicians, depot admins, fleet managers,
+        admins). Publishes PredictionFeedbackRecorded. Audited. The confirmed share of a model version's
+        high-risk predictions is on GET /ml-models.
+      parameters:
+        - $ref: '#/components/parameters/PredictionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome]
+              properties:
+                outcome: { $ref: '#/components/schemas/PredictionOutcome' }
+                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null], description: Only for a confirmed issue. }
+                failure_event_id: { type: [string, 'null'], format: uuid, description: The failure record the issue led to; only for a confirmed issue. }
+                comment: { type: [string, 'null'], maxLength: 1000, description: Trimmed. }
+      responses:
+        '201':
+          description: Recorded. Location names the feedback.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PredictionFeedback' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (a field that is not writable; component or failure_event_id only_for_confirmed_issue;
+            failure_event_id references_missing_record or failure_other_vehicle; component_mismatch) or
+            VALIDATION_INVALID_ENUM (an unknown outcome or component).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_DUPLICATE (reason already_recorded; record_id is the feedback already given, by anyone).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    patch:
+      tags: [Maintenance]
+      operationId: editPredictionFeedback
+      summary: Change feedback you gave, within 7 days (FMS-128)
+      description: >
+        Only the technician who gave the feedback, and only for 7 days after they gave it. Send the fields to
+        change, at least one; null clears a component, a failure link or a comment. Changing the outcome to
+        anything but a confirmed issue drops the component and the failure link. A request that changes nothing
+        writes and publishes nothing. Needs prediction:read and maintenance:write. Publishes
+        PredictionFeedbackRecorded with edited true. Audited.
+      parameters:
+        - $ref: '#/components/parameters/PredictionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                outcome: { $ref: '#/components/schemas/PredictionOutcome' }
+                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null] }
+                failure_event_id: { type: [string, 'null'], format: uuid }
+                comment: { type: [string, 'null'], maxLength: 1000 }
+      responses:
+        '200':
+          description: The feedback after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PredictionFeedback' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: As POST, or VALIDATION_FAILED reason empty_update.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission, or reason not_author).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '404':
+          description: NOT_FOUND (no such prediction in the caller's depots, or it has no feedback yet).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, reason edit_window_closed (more than 7 days since it was given).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /ml-models:
+    get:
+      tags: [Maintenance]
+      operationId: listMlModels
+      summary: The model registry (FMS-127)
+      description: >
+        Every predictive maintenance model version the ML service has served, newest first by when the scoring job
+        first saw it, with its inputs, the SHA-256 of the feature spec it was trained on, metrics, training data and
+        artefact checksum. features_match false means its inputs are not the ones the core computes: it can never
+        score. feedback is how its high-risk predictions fared when technicians inspected the vehicles (FMS-128).
+        Registration is the scoring job's alone (docs/ml-model-registry.md). Needs prediction:read.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [registered, active, retired] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of models.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MlModel' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown status, an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /ml-models/{model_id}:
+    get:
+      tags: [Maintenance]
+      operationId: getMlModel
+      summary: One registered model (FMS-127)
+      description: The model behind a prediction's model_name and model_version. Needs prediction:read; an unknown id, or one that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/MlModelId'
+      responses:
+        '200':
+          description: The model.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MlModel' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ml-models/{model_id}/activate:
+    post:
+      tags: [Maintenance]
+      operationId: activateMlModel
+      summary: Let a registered model score (FMS-127)
+      description: >
+        Makes the model the active one of its name, so the nightly scoring scores with it while the ML service
+        serves it, and retires the model that was active. Activating the active model changes nothing; a retired
+        model may be activated again (a rollback). A model whose feature spec hash is not the core's is refused.
+        Each change is audited. Needs ml-model:activate (administrators).
+      parameters:
+        - $ref: '#/components/parameters/MlModelId'
+      responses:
+        '200':
+          description: The model, now active.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MlModel' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, reason feature_spec_mismatch (trained on other inputs than the core computes).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /notifications:
     get:
@@ -1676,6 +2585,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    PredictionId:
+      name: prediction_id
+      in: path
+      required: true
+      description: A prediction's id, as GET /vehicles/{vehicle_id}/maintenance-risk returns it (prediction_id).
+      schema: { type: string, format: uuid }
     MaintenanceRecordId:
       name: record_id
       in: path
@@ -1688,6 +2603,11 @@ components:
       schema: { type: string, format: uuid }
     TripId:
       name: trip_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MlModelId:
+      name: model_id
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1730,7 +2650,7 @@ components:
       required: false
       description: >-
         Makes a retry safe: the same key and body replays the stored 2xx with Idempotent-Replayed: true.
-        Kept 24 hours, except on POST /fuel-logs, /dvir-reports, /dvir and /incidents (the driver's offline
+        Kept 24 hours, except on POST /fuel-logs, /dvir-reports and /incidents (the driver's offline
         queue), which keep it 7 days.
       schema: { type: string, format: uuid }
 
@@ -1815,6 +2735,14 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   schemas:
+    NullablePoint:
+      type: [object, 'null']
+      additionalProperties: false
+      required: [latitude, longitude]
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+
     Meta:
       type: object
       required: [request_id]
@@ -1843,6 +2771,12 @@ components:
                     type: string
                     format: uuid
                     description: The record the problem is about (the conflicting trip, the open maintenance record).
+                  shiftable:
+                    type: boolean
+                    description: For a trip overlap, whether the other trip can move later to make room (FMS-139).
+                  shift_minutes:
+                    type: integer
+                    description: How many minutes later it would move, when shiftable.
                   allowed_transitions:
                     type: array
                     items: { type: string }
@@ -2330,6 +3264,37 @@ components:
             signal_lost), duration_seconds and, for speeding, max_speed_kmh.
           additionalProperties: true
 
+    RoadLine:
+      type: object
+      description: A GeoJSON LineString, [longitude, latitude] pairs at 5 decimals (FMS-84).
+      required: [type, coordinates]
+      properties:
+        type: { type: string, enum: [LineString] }
+        coordinates:
+          type: array
+          minItems: 2
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: { type: number }
+    TrackPoint:
+      type: object
+      description: A stored position of a vehicle (FMS-136), as GET /vehicles/{vehicle_id}/tracking returns it.
+      required: [recorded_at, lat, lng, speed_kmh, heading, altitude_m, accuracy_m, ignition_on, odometer_km, source, trip_id]
+      properties:
+        recorded_at: { type: string, format: date-time }
+        lat: { type: number }
+        lng: { type: number }
+        speed_kmh: { type: integer, minimum: 0 }
+        heading: { type: [number, 'null'], description: Degrees from north, 0-360. }
+        altitude_m: { type: [number, 'null'] }
+        accuracy_m: { type: [number, 'null'] }
+        ignition_on: { type: [boolean, 'null'], description: Null when the reporter cannot tell (a phone). }
+        odometer_km: { type: [number, 'null'] }
+        source: { type: string, enum: [device, phone, api, telematics], description: Who reported it. }
+        trip_id: { type: [string, 'null'], format: uuid, description: The trip the vehicle was on, if any. }
+
     VehicleLocation:
       type: object
       required: [vehicle_id, registration_number, vehicle_type, vehicle_status, maintenance_flag, depot_id, position, trip, flags]
@@ -2465,9 +3430,103 @@ components:
         recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
         created_at: { type: string, format: date-time, description: When the server received it. }
 
+    AnalyticsMeta:
+      type: object
+      required: [request_id, from, to, days, computed_at, stale, data_freshness]
+      properties:
+        request_id: { type: string, format: uuid }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        days: { type: integer }
+        computed_at: { type: [string, 'null'], format: date-time, description: "The cache's last refresh." }
+        stale: { type: boolean, description: 'True when the last refresh is more than 25 hours old, or the cache was never filled.' }
+        data_freshness: { $ref: '#/components/schemas/DataFreshness' }
+    DataFreshness:
+      type: object
+      description: Which database answered a reporting read, and how far behind the primary it was (FMS-94, docs/read-replica.md).
+      required: [source, lag_seconds, as_of]
+      properties:
+        source: { type: string, enum: [replica, primary], description: The primary when the replica is not configured, down, or too far behind. }
+        lag_seconds: { type: integer, minimum: 0, description: How far the data may be behind the primary; 0 from the primary. }
+        as_of: { type: string, format: date-time, description: The data is at least this current. }
+
+    FuelReconciliation:
+      type: object
+      description: One vehicle's period (FMS-41). Integers; distance in km to 3 decimals.
+      required: [vehicle_id, registration_number, depot_id, depot_name, fuel_type, fuel_efficiency_ml_per_km, distance_km, trips, fuel_logs, expected_ml, actual_ml, variance_ml, variance_pct, total_cost_cents, status, reason, anomaly_id]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string, description: Named here; a finance clerk may not read vehicles (FMS-42). }
+        depot_id: { type: string, format: uuid }
+        depot_name: { type: string }
+        fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other] }
+        fuel_efficiency_ml_per_km: { type: [integer, 'null'], description: The vehicle's rating. }
+        distance_km: { type: number, description: Completed trips' actual distance, actual_end in the period. }
+        trips: { type: integer }
+        fuel_logs: { type: integer }
+        expected_ml: { type: [integer, 'null'], description: 'distance x rating; null when not judged.' }
+        actual_ml: { type: integer, description: Fuel logged, recorded_at in the period. }
+        variance_ml: { type: [integer, 'null'] }
+        variance_pct: { type: [integer, 'null'], description: '(actual - expected) / expected, whole percent.' }
+        total_cost_cents: { type: integer }
+        status: { type: string, enum: [above, below, within, not_judged] }
+        reason: { type: [string, 'null'], enum: [electric, no_efficiency, too_little_distance, null], description: Why not judged. }
+        anomaly_id: { type: [string, 'null'], format: uuid, description: The anomaly the monthly job raised for exactly this period. }
+
+    FuelAnomaly:
+      type: object
+      description: A derived finding about a vehicle's fuel (FMS-41 reconciliation, FMS-82 per fill-up). Integers; distance in km.
+      required: [id, vehicle_id, registration_number, depot_id, depot_name, fuel_log_id, anomaly_type, severity, status, period_from, period_to, distance_km, expected_ml, actual_ml, deviation_pct, detected_at, reviewed_by, reviewed_by_name, reviewed_at, notes]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        depot_id: { type: string, format: uuid }
+        depot_name: { type: string }
+        fuel_log_id: { type: [string, 'null'], format: uuid, description: The fill-up a per-event rule flagged; null for a month. }
+        anomaly_type: { type: string, description: 'consumption_above_expected, consumption_below_expected, or a per-fill-up rule.' }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [open, reviewed, dismissed, resolved] }
+        period_from: { type: [string, 'null'], format: date-time }
+        period_to: { type: [string, 'null'], format: date-time, description: Exclusive. }
+        distance_km: { type: [number, 'null'] }
+        expected_ml: { type: [integer, 'null'] }
+        actual_ml: { type: [integer, 'null'] }
+        deviation_pct: { type: [integer, 'null'] }
+        detected_at: { type: string, format: date-time }
+        reviewed_by: { type: [string, 'null'], format: uuid, description: Who closed it. }
+        reviewed_by_name: { type: [string, 'null'] }
+        reviewed_at: { type: [string, 'null'], format: date-time }
+        notes: { type: [string, 'null'] }
+
+    FuelSummary:
+      type: object
+      description: A vehicle's fuel over a period (FMS-41). Integers; distance in km to 3 decimals.
+      required: [vehicle_id, from, to, fuel_logs, actual_ml, total_cost_cents, trips, distance_km, rated_efficiency_ml_per_km, actual_efficiency_ml_per_km, expected_ml, variance_ml, variance_pct, status, reason, cost_per_km_cents, average_price_cents_per_litre, open_anomalies, threshold_pct]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time, description: Exclusive. }
+        fuel_logs: { type: integer }
+        actual_ml: { type: integer }
+        total_cost_cents: { type: integer }
+        trips: { type: integer }
+        distance_km: { type: number }
+        rated_efficiency_ml_per_km: { type: [integer, 'null'] }
+        actual_efficiency_ml_per_km: { type: [integer, 'null'], description: ml logged per km driven; null without distance. }
+        expected_ml: { type: [integer, 'null'] }
+        variance_ml: { type: [integer, 'null'] }
+        variance_pct: { type: [integer, 'null'] }
+        status: { type: string, enum: [above, below, within, not_judged] }
+        reason: { type: [string, 'null'], enum: [electric, no_efficiency, too_little_distance, null] }
+        cost_per_km_cents: { type: [integer, 'null'] }
+        average_price_cents_per_litre: { type: [integer, 'null'] }
+        open_anomalies: { type: integer }
+        threshold_pct: { type: integer }
+
     Incident:
       type: object
-      required: [id, incident_type, severity, status, description, vehicle_id, driver_id, trip_id, depot_id, reported_by, latitude, longitude, occurred_at, created_at]
+      required: [id, incident_type, severity, status, description, vehicle_id, driver_id, trip_id, depot_id, reported_by, latitude, longitude, occurred_at, created_at, assigned_to, notes, resolved_at, resolved_by, updated_at]
       properties:
         id: { type: string, format: uuid }
         incident_type: { type: string, description: 'accident, breakdown, tyre, theft, vandalism, injury, road_hazard, other.' }
@@ -2483,6 +3542,104 @@ components:
         longitude: { type: [number, 'null'] }
         occurred_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
+        assigned_to:
+          description: Who is dealing with it (FMS-89).
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, full_name]
+              properties:
+                id: { type: string, format: uuid }
+                full_name: { type: string }
+        notes: { type: [string, 'null'], description: What was found and done. }
+        resolved_at: { type: [string, 'null'], format: date-time, description: When it was resolved or closed; null while active. }
+        resolved_by: { type: [string, 'null'], format: uuid }
+        updated_at: { type: string, format: date-time }
+
+    IncidentUpdate:
+      type: object
+      description: At least one field (FMS-89).
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: { type: string, enum: [open, investigating, resolved, closed] }
+        assigned_to: { type: [string, 'null'], format: uuid, description: "A user's public id; null unassigns." }
+        notes: { type: [string, 'null'], maxLength: 4000, description: Blank or null clears them. }
+
+    CommandCenterOverview:
+      type: object
+      required: [depot_id, generated_at, vehicles, drivers, trips, alerts, incidents]
+      properties:
+        depot_id: { type: [string, 'null'], format: uuid, description: The depot shown; null for every depot in scope. }
+        generated_at: { type: string, format: date-time }
+        vehicles:
+          type: object
+          description: Every vehicle but retired ones. available is in service, not flagged and not on a trip.
+          properties:
+            total: { type: integer }
+            on_trip: { type: integer }
+            available: { type: integer }
+            in_maintenance: { type: integer }
+            inactive: { type: integer }
+            flagged: { type: integer }
+            health:
+              type: object
+              properties:
+                at_risk: { type: integer }
+                watch: { type: integer }
+                healthy: { type: integer }
+                stale: { type: integer }
+                unscored: { type: integer }
+            health_watch:
+              type: array
+              description: Vehicles at risk or to watch, lowest score first.
+              items:
+                type: object
+                properties:
+                  vehicle_id: { type: string, format: uuid }
+                  registration_number: { type: string }
+                  health_score: { type: integer }
+                  band: { type: string, enum: [at_risk, watch] }
+        drivers:
+          type: [object, 'null']
+          description: Null without driver:read.
+          properties:
+            total: { type: integer }
+            on_trip: { type: integer }
+            available: { type: integer }
+            absent: { type: integer, description: 'Marked absent, on leave or sick today.' }
+            licence_expired: { type: integer }
+        trips:
+          type: [object, 'null']
+          description: Null without trip:read.
+          properties:
+            today: { type: object, description: "Trips scheduled to start today (Addis Ababa), by status.", additionalProperties: { type: integer } }
+            under_way: { type: integer }
+            overdue: { type: integer, description: Under way past their scheduled end. }
+        alerts:
+          type: [object, 'null']
+          description: Null without alert:read. Active is open or acknowledged; unacknowledged is open.
+          properties:
+            active: { type: integer }
+            unacknowledged: { type: integer }
+            by_severity: { $ref: '#/components/schemas/SeverityCounts' }
+            items: { type: array, description: "Most severe first, then newest; each with the vehicle's registration_number.", items: { type: object } }
+        incidents:
+          type: [object, 'null']
+          description: Null without incident:read. Active is open or investigating.
+          properties:
+            active: { type: integer }
+            by_status: { type: object, properties: { open: { type: integer }, investigating: { type: integer } } }
+            by_severity: { $ref: '#/components/schemas/SeverityCounts' }
+            items: { type: array, description: "Incident fields plus registration_number and driver_name.", items: { type: object } }
+
+    SeverityCounts:
+      type: object
+      properties:
+        critical: { type: integer }
+        high: { type: integer }
+        medium: { type: integer }
+        low: { type: integer }
 
     IncidentEnvelope:
       type: object
@@ -2533,4 +3690,135 @@ components:
         odometer_km: { type: [number, 'null'] }
         notes: { type: [string, 'null'] }
         recorded_by: { type: [string, 'null'], format: uuid, description: The user who recorded it. }
+        created_at: { type: string, format: date-time }
+
+    ServiceItem:
+      type: object
+      description: When a wearing part or fluid was last changed on a vehicle (FMS-52).
+      required: [service_item, last_changed_at, maintenance_record_id, odometer_km, part_number]
+      properties:
+        service_item: { type: string, enum: [engine_oil, air_filter, fuel_filter, coolant, brake_pads, brake_fluid, clutch_fluid, tyres, battery, gearbox_oil, belts] }
+        last_changed_at: { type: [string, 'null'], format: date-time, description: The completed_at of the repair; null when never changed in the system. }
+        maintenance_record_id: { type: [string, 'null'], format: uuid }
+        odometer_km: { type: [number, 'null'], description: "The repair's odometer, if it was entered." }
+        part_number: { type: [string, 'null'], description: The part that renewed it. }
+
+    MaintenanceRisk:
+      type: object
+      description: A vehicle's latest prediction (FMS-55, FMS-56). Score fields are null for a vehicle never scored.
+      required: [vehicle_id, prediction_id, health_score, risk_level, failure_probability, prediction_horizon_days, factors, model_name, model_version, as_of, scored_at, stale, feedback]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        prediction_id: { type: [string, 'null'], format: uuid, description: "The id that feedback on the prediction takes (POST /maintenance-predictions/{prediction_id}/feedback)." }
+        health_score: { type: [integer, 'null'], minimum: 0, maximum: 100, description: 'round((1 - failure_probability) * 100)' }
+        risk_level: { type: [string, 'null'], enum: [low, medium, high, null], description: 'low at 75 and up, high at 40 and below.' }
+        failure_probability: { type: [number, 'null'], minimum: 0, maximum: 1, description: The chance of an unplanned failure within the horizon. }
+        prediction_horizon_days: { type: [integer, 'null'], example: 30 }
+        factors:
+          type: array
+          maxItems: 3
+          description: The inputs raising this vehicle's risk most, largest first. Empty for a healthy or unscored vehicle.
+          items:
+            type: object
+            required: [feature, value, unit]
+            properties:
+              feature: { type: string, example: days_since_last_service, description: An input of feature_spec.json. }
+              value: { type: [number, 'null'], example: 100, description: "The vehicle's value when scored." }
+              unit: { type: [string, 'null'], example: d }
+        model_name: { type: [string, 'null'], example: predictive-maintenance }
+        model_version: { type: [string, 'null'], example: pm-2026.10 }
+        as_of: { type: [string, 'null'], format: date-time, description: The scoring time the inputs were computed as of (the start of the day, Addis Ababa). }
+        scored_at: { type: [string, 'null'], format: date-time }
+        stale: { type: boolean, description: Scored more than 25 hours ago. }
+        feedback:
+          oneOf: [{ $ref: '#/components/schemas/PredictionFeedback' }, { type: 'null' }]
+          description: What a technician found when they inspected the vehicle for this prediction (FMS-128), or null. Last night's feedback is about last night's score, not this one.
+
+    PredictionOutcome:
+      type: string
+      enum: [confirmed_issue, no_issue_found, already_fixed, not_inspected]
+      description: >
+        confirmed_issue: the inspection found what the model feared. no_issue_found: nothing wrong.
+        already_fixed: it was a real problem, repaired before the inspection. not_inspected: nobody looked.
+
+    PredictionFeedback:
+      type: object
+      description: What a technician found on a flagged vehicle (FMS-128). One per prediction; never deleted.
+      required: [id, prediction_id, outcome, component, failure_event_id, comment, recorded_by, created_at, updated_at, editable_until, can_edit]
+      properties:
+        id: { type: string, format: uuid }
+        prediction_id: { type: string, format: uuid }
+        outcome: { $ref: '#/components/schemas/PredictionOutcome' }
+        component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null], description: What was found; confirmed issues only. }
+        failure_event_id: { type: [string, 'null'], format: uuid, description: The failure record (FMS-125) the confirmed issue led to. }
+        comment: { type: [string, 'null'] }
+        recorded_by: { type: [string, 'null'], format: uuid, description: The user who gave it. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        editable_until: { type: string, format: date-time, description: 7 days after created_at. }
+        can_edit: { type: boolean, description: The caller is the author and editable_until has not passed. }
+
+    MlModelFeedback:
+      type: object
+      description: >
+        How a model version's high-risk predictions fared (FMS-128). precision is confirmed_issue / reviewed, where
+        reviewed = confirmed_issue + no_issue_found + already_fixed: not_inspected judges nothing, and already_fixed
+        cannot be confirmed by an inspection, so it counts against.
+      required: [high_risk_predictions, with_feedback, confirmed_issue, no_issue_found, already_fixed, not_inspected, reviewed, precision, by_month]
+      properties:
+        high_risk_predictions: { type: integer, description: Scored predictions of this version at risk level high. }
+        with_feedback: { type: integer }
+        confirmed_issue: { type: integer }
+        no_issue_found: { type: integer }
+        already_fixed: { type: integer }
+        not_inspected: { type: integer }
+        reviewed: { type: integer }
+        precision: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'Three decimals; null when nothing is reviewed yet.' }
+        by_month:
+          type: array
+          description: Newest first; the last 12 months, only months with a judgement; the month feedback was given in (Addis Ababa).
+          items:
+            type: object
+            required: [month, reviewed, confirmed_issue, precision]
+            properties:
+              month: { type: string, pattern: '^\d{4}-\d{2}$', example: 2026-10 }
+              reviewed: { type: integer }
+              confirmed_issue: { type: integer }
+              precision: { type: [number, 'null'] }
+
+    MlModel:
+      type: object
+      description: A registered predictive maintenance model version (FMS-127). Written once when first seen; only its status changes.
+      required: [id, name, version, status, algorithm, features, feature_spec_version, feature_spec_hash, features_match, metrics, training_data, trained_at, artefact_sha256, first_seen_at, activated_at, activated_by, retired_at, feedback]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: predictive-maintenance }
+        version: { type: string, example: pm-2026.10 }
+        status: { type: string, enum: [registered, active, retired], description: 'registered: seen, not allowed to score; active: the one that scores (at most one per name); retired: replaced.' }
+        algorithm: { type: string }
+        features: { type: array, items: { type: string }, description: "The model's inputs, in the order it takes them." }
+        feature_spec_version: { type: integer }
+        feature_spec_hash: { type: string, pattern: '^[0-9a-f]{64}$', description: 'SHA-256 of the canonical feature definitions it was trained on (feature_spec.json).' }
+        features_match: { type: boolean, description: "Whether feature_spec_hash is the core's: false, it can never score." }
+        metrics: { type: object, additionalProperties: true, description: 'As the ML service reported them: roc_auc, brier, at_alert_threshold (precision, recall, f1), and more.' }
+        training_data: { type: object, additionalProperties: true, description: 'Which data: file and its SHA-256, rows, vehicles, dates, split.' }
+        trained_at: { type: string, format: date-time }
+        artefact_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        first_seen_at: { type: string, format: date-time, description: 'When the scoring job first saw the ML service serve it.' }
+        activated_at: { type: [string, 'null'], format: date-time }
+        activated_by: { type: [string, 'null'], format: uuid, description: 'The administrator who last activated it.' }
+        retired_at: { type: [string, 'null'], format: date-time }
+        feedback: { $ref: '#/components/schemas/MlModelFeedback' }
+    MeterReading:
+      type: object
+      description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).
+      required: [id, meter, value, source, source_ref, recorded_at, suspect, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        meter: { type: string, enum: [odometer, engine_hours] }
+        value: { type: number, description: 'km for the odometer, hours for engine hours; one decimal.' }
+        source: { type: string, enum: [fuel_log, maintenance, telematics, gps_derived, manual] }
+        source_ref: { type: [string, 'null'], description: "The fuel log's or repair's id, the device's id, or the day (YYYY-MM-DD) of an engine-hours reading; null for manual." }
+        recorded_at: { type: string, format: date-time, description: When the reading was true. }
+        suspect: { type: boolean, description: "Lower than a trusted reading recorded before it: kept, but the vehicle's odometer did not follow it." }
         created_at: { type: string, format: date-time }

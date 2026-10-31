@@ -1,5 +1,5 @@
 /**
- * GPS simulator (FMS-88): drives N vehicles along their depots' seeded routes and posts each one's
+ * GPS simulator (FMS-88): drives N vehicles along their depots' seeded routes (on their roads, FMS-84) and posts each one's
  * position every interval to the running API, as its own device would. For the demo, the live map
  * (FMS-45) and the load target of FMS-61 (200 vehicles every 10 s).
  *
@@ -55,18 +55,29 @@ function options() {
   };
 }
 
-/** Each route's points: origin, its stops that have coordinates, destination. */
+/**
+ * Each route's path: its road when it has been measured (FMS-84), so vehicles keep to the roads; otherwise
+ * origin, the stops that have coordinates, destination, in straight lines.
+ */
 async function routesByDepot(): Promise<Map<string, Point[][]>> {
-  const res = await pool.query<{ depot_id: string; olat: number; olng: number; dlat: number; dlng: number; stops: { latitude?: number; longitude?: number }[] }>(
+  const res = await pool.query<{
+    depot_id: string;
+    olat: number;
+    olng: number;
+    dlat: number;
+    dlng: number;
+    stops: { latitude?: number; longitude?: number }[];
+    road: { coordinates: [number, number][] } | null;
+  }>(
     `SELECT depot_id, origin_latitude::float8 AS olat, origin_longitude::float8 AS olng,
-            destination_latitude::float8 AS dlat, destination_longitude::float8 AS dlng, stops
+            destination_latitude::float8 AS dlat, destination_longitude::float8 AS dlng, stops, geometry AS road
        FROM trip.routes
       WHERE is_active AND origin_latitude IS NOT NULL AND destination_latitude IS NOT NULL`,
   );
   const byDepot = new Map<string, Point[][]>();
   for (const r of res.rows) {
     const stops = (r.stops ?? []).flatMap((s) => (typeof s.latitude === 'number' && typeof s.longitude === 'number' ? [{ lat: s.latitude, lng: s.longitude }] : []));
-    const path = [{ lat: r.olat, lng: r.olng }, ...stops, { lat: r.dlat, lng: r.dlng }];
+    const path = r.road ? r.road.coordinates.map(([lng, lat]) => ({ lat, lng })) : [{ lat: r.olat, lng: r.olng }, ...stops, { lat: r.dlat, lng: r.dlng }];
     if (pathLength(path) > 0) byDepot.set(r.depot_id, [...(byDepot.get(r.depot_id) ?? []), path]);
   }
   return byDepot;

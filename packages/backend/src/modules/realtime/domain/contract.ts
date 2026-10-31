@@ -14,6 +14,8 @@ export const SOCKET_EVENTS = {
   /** The user's unread in-app notification count changed (FMS-48): to that user's own sockets only. */
   notificationsUnread: 'notifications.unread',
   incidentCreated: 'incident.created',
+  /** An incident's status, assignee or notes changed (FMS-89). */
+  incidentUpdated: 'incident.updated',
   tripUpdated: 'trip.updated',
   flagChanged: 'vehicle.flag.changed',
   /** Legacy alias of vehicle.location.updated. */
@@ -176,7 +178,7 @@ const FORWARDERS: Record<string, Forwarder> = {
         event: SOCKET_EVENTS.alertCreated,
         channel: 'alerts',
         depotId,
-        payload: pick(e.payload, ['alert_id', 'alert_type', 'severity', 'priority', 'status', 'entity_type', 'entity_id', 'vehicle_id', 'title', 'message', 'created_at']),
+        payload: pick(e.payload, ['alert_id', 'depot_id', 'alert_type', 'severity', 'priority', 'status', 'entity_type', 'entity_id', 'vehicle_id', 'title', 'message', 'created_at']),
       },
       {
         event: SOCKET_EVENTS.legacyAlertCreated,
@@ -213,7 +215,20 @@ const FORWARDERS: Record<string, Forwarder> = {
         channel: 'incidents',
         depotId: str(e.payload.depot_id),
         ...(reporter ? { driverIds: [reporter] } : {}),
-        payload: pick(e.payload, ['incident_id', 'vehicle_id', 'trip_id', 'severity', 'incident_type', 'status', 'latitude', 'longitude', 'occurred_at']),
+        payload: pick(e.payload, ['incident_id', 'depot_id', 'vehicle_id', 'trip_id', 'severity', 'incident_type', 'status', 'latitude', 'longitude', 'occurred_at']),
+      },
+    ];
+  },
+  // Published when an incident is handled (FMS-89): to the incident's depot, and to the driver who reported it. Never the notes.
+  IncidentUpdated: (e) => {
+    const reporter = str(e.payload.reported_by_driver_id);
+    return [
+      {
+        event: SOCKET_EVENTS.incidentUpdated,
+        channel: 'incidents',
+        depotId: str(e.payload.depot_id),
+        ...(reporter ? { driverIds: [reporter] } : {}),
+        payload: pick(e.payload, ['incident_id', 'depot_id', 'vehicle_id', 'trip_id', 'severity', 'incident_type', 'status', 'previous_status', 'assigned_to', 'resolved_at', 'updated_at', 'changes']),
       },
     ];
   },
@@ -236,6 +251,7 @@ function alertPatch(e: EventEnvelope): Delivery {
     depotId: str(e.payload.depot_id),
     payload: pick(e.payload, [
       'alert_id',
+      'depot_id',
       'status',
       'severity',
       'priority',

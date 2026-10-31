@@ -3,13 +3,19 @@ import { config } from '../../src/config';
 import { pool } from '../../src/db';
 import { rebuildReadModels } from '../../src/modules';
 import { hashPassword } from '../../src/modules/auth';
+import { recordAuditEntry } from '../../src/shared/infrastructure/audit-log';
 import { auditedMutation, type MutationContext } from '../../src/shared/infrastructure/audited-mutation';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
 import { SeedApi } from './api-client';
 import { fingerprint } from './fingerprint';
 import { assertNotProduction } from './guard';
 import { placeholderPdf } from './pdf';
-import { buildPlan, type ProfileName, type SeedPlan } from './plan';
+import { anchorMidnight, buildPlan, type ProfileName, type SeedPlan } from './plan';
+import { roadLine } from './roads';
+import { tripTrack } from './tracks';
+
+/** GPS pings written per statement (and per audit entry, as the ingestion audits a batch). */
+const PING_BATCH = 5000;
 
 export interface SeedOptions {
   profile: ProfileName;
@@ -37,7 +43,7 @@ const TIMEZONE = 'Africa/Addis_Ababa';
  * Writes the plan for (profile, seed, anchor). Everything with an API goes
  * through it; trips, routes and fuel logs have no API yet (their cards come
  * later), so they are inserted with auditedMutation, which audits each row
- * like the services do. Refuses a database that already holds data: reset
+ * like the services do, and so is each vehicle's registration date. Refuses a database that already holds data: reset
  * first (`--reset`), so a run always starts from the same state.
  */
 export async function runSeed(options: SeedOptions): Promise<SeedSummary> {
@@ -167,6 +173,7 @@ async function writeThroughApi(api: SeedApi, plan: SeedPlan, password: string, l
       unit_cost_cents: p.unit_cost_cents,
       stock_quantity: p.stock_quantity,
       reorder_threshold: p.reorder_threshold,
+      service_item: p.service_item,
     });
     parts.push(data.id);
   }
@@ -227,6 +234,11 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
   const drivers = await internalIds('fleet.drivers', ids.drivers);
 
   await withTransaction(pool, async (client) => {
+    // When each vehicle joined the fleet (its history starts there): the API registers it today.
+    for (const [i, v] of plan.vehicles.entries()) {
+      await auditedMutation(client, ctx, 'fleet.vehicles', 'UPDATE', vehicles[i], { created_at: v.registered_at });
+    }
+
     const routes: string[] = [];
     for (const r of plan.routes) {
       const row = await auditedMutation(client, ctx, 'trip.routes', 'INSERT', null, {
@@ -240,6 +252,10 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
         destination_longitude: r.destination.longitude,
         distance_km: r.distance_km,
         estimated_duration_seconds: r.duration_seconds,
+        // The committed road (FMS-84), measured as of the plan's anchor day, so every run writes the same.
+        geometry: JSON.stringify(roadLine(r.origin, r.destination)),
+        measured_at: new Date(anchorMidnight(plan.anchor)),
+        distance_source: 'road',
       });
       routes.push(String(row.id));
     }
@@ -286,6 +302,30 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
       });
     }
     log(`fuel logs: ${plan.fuelLogs.length}`);
+
+    // Each completed trip's GPS track (FMS-136), as the driver's phone reports it: in batches, one audit entry
+    // each, like the ingestion. Each vehicle's current location follows its newest ping (trigger).
+    const pings = plan.trips.flatMap((t, i) => tripTrack(plan, i).map((p) => ({ ...p, vehicle: vehicles[t.vehicle!], trip: trips[i] })));
+    for (let i = 0; i < pings.length; i += PING_BATCH) {
+      const batch = pings.slice(i, i + PING_BATCH);
+      const col = <K extends keyof (typeof batch)[number]>(key: K) => batch.map((p) => p[key]);
+      await client.query(
+        `INSERT INTO tracking.gps_pings (vehicle_id, trip_id, latitude, longitude, speed_kmh, heading_degrees, source, recorded_at)
+         SELECT v, t, lat, lng, speed, heading, 'phone', at
+           FROM unnest($1::bigint[], $2::bigint[], $3::numeric[], $4::numeric[], $5::smallint[], $6::numeric[], $7::timestamptz[])
+                AS u(v, t, lat, lng, speed, heading, at)`,
+        [col('vehicle'), col('trip'), col('latitude'), col('longitude'), col('speed_kmh'), col('heading'), col('recorded_at')],
+      );
+      await recordAuditEntry(client, {
+        action: 'tracking.pings_ingested',
+        userId: ctx.userId,
+        entityType: 'tracking.gps_pings',
+        entityId: null,
+        correlationId: ctx.correlationId,
+        details: { source: 'phone', seeded: true, received: batch.length, accepted: batch.length },
+      });
+    }
+    log(`gps pings: ${pings.length}`);
   });
 }
 
@@ -302,6 +342,8 @@ async function countRows(anchor: string): Promise<Record<string, number>> {
            (SELECT count(*) FROM trip.trips)::int AS trips,
            (SELECT count(DISTINCT status) FROM trip.trips)::int AS trip_statuses,
            (SELECT count(*) FROM fuel.fuel_logs)::int AS fuel_logs,
+           (SELECT count(*) FROM tracking.gps_pings)::int AS gps_pings,
+           (SELECT count(*) FROM fleet.meter_readings)::int AS meter_readings,
            (SELECT count(*) FROM maintenance.maintenance_records)::int AS maintenance_records,
            (SELECT count(*) FROM maintenance.failure_events)::int AS failure_events,
            (SELECT count(*) FROM maintenance.inventory_parts)::int AS spare_parts,

@@ -3,6 +3,7 @@ import { pageQuery } from '../../../shared/http/pagination';
 import { FLOAT_IN_MONEY_PATH } from '../../../shared/http/validate';
 import {
   FUEL_TYPES,
+  HEALTH_FILTERS,
   VEHICLE_STATUSES,
   VEHICLE_TYPES,
   VIN_PATTERN,
@@ -135,6 +136,7 @@ export const vehicleListQuery = z.object({
     .transform((v) => v === 'true')
     .optional(),
   documents: z.enum(['expired', 'expiring', 'due']).optional(),
+  health: z.enum(HEALTH_FILTERS).optional(),
   search: z
     .string()
     .trim()

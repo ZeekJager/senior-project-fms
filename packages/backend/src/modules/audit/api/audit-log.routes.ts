@@ -4,7 +4,7 @@ import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { AuditLogService } from '../application/audit-log.service';
-import { MAX_PAGE_SIZE } from '../domain/audit-log';
+import { MAX_ACTIONS, MAX_PAGE_SIZE, parseActions } from '../domain/audit-log';
 
 /** Addis Ababa is UTC+3 all year: a date filter means that local day. */
 const ADDIS_OFFSET = '+03:00';
@@ -31,7 +31,16 @@ const listQuery = z
       .optional(),
     entity_id: z.uuid().optional(),
     correlation_id: z.uuid().optional(),
-    action: z.string().trim().min(1).max(100).optional(),
+    action: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .refine((a) => parseActions(a) !== null, {
+        message: `Up to ${MAX_ACTIONS} actions, comma-separated, each like UPDATE or auth.* (every action starting auth.).`,
+        params: { reason: 'invalid_action' },
+      })
+      .optional(),
     result: z.enum(['success', 'denied', 'failed']).optional(),
     from: instantOrDate.optional(),
     to: instantOrDate.optional(),
@@ -51,8 +60,10 @@ export function auditLogRouter(service: AuditLogService): Router {
   const router = Router();
   const handler: RequestHandler = asyncHandler(async (req, res) => {
     const q = parseInput(listQuery, req.query);
-    const { items, nextCursor } = await service.list({ ...q, from: bound(q.from, false), to: bound(q.to, true) });
-    res.set('Cache-Control', 'no-store').json({ data: items, meta: { page_size: q.page_size, next_cursor: nextCursor, request_id: req.correlationId } });
+    const { items, nextCursor, freshness } = await service.list({ ...q, from: bound(q.from, false), to: bound(q.to, true) });
+    res
+      .set('Cache-Control', 'no-store')
+      .json({ data: items, meta: { page_size: q.page_size, next_cursor: nextCursor, data_freshness: freshness, request_id: req.correlationId } });
   });
   router.get('/audit-logs', authorize('audit:read'), handler);
   router.get('/audit', authorize('audit:read'), handler);

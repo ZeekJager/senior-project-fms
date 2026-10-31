@@ -3,7 +3,7 @@ import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { FuelType, VehicleStatus, VehicleTrip, VehicleType, VehicleView } from '../domain/vehicle';
+import { HEALTH_BANDS, type FuelType, type HealthFilter, type VehicleStatus, type VehicleTrip, type VehicleType, type VehicleView } from '../domain/vehicle';
 import type { StatusChangeSource } from '../domain/availability';
 import { EXPIRY_WINDOW_DAYS } from '../domain/expiry';
 import { operatingToday } from '../domain/attendance';
@@ -44,6 +44,8 @@ export interface VehicleListQuery {
    * (within the expiry window, today included) or `due` (either).
    */
   documents?: 'expired' | 'expiring' | 'due';
+  /** The health score's band (FMS-56, HEALTH_BANDS): a fresh score's band, `stale`, or `unscored`. */
+  health?: HealthFilter;
   /** Matches registration number, VIN, make or model. */
   search?: string;
   sort_by: VehicleSortKey;
@@ -119,7 +121,7 @@ type VehicleRow = Omit<VehicleView, 'current_trip'> & { internal_id: string };
 const VIEW_SQL = `
   SELECT v.id AS internal_id, v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
          v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.status, v.maintenance_flag,
-         v.health_score, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
+         v.health_score, v.health_score_updated_at, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
          v.version, v.created_at, v.updated_at
     FROM fleet.vehicles v
     JOIN fleet.depots d ON d.id = v.depot_id`;
@@ -232,6 +234,18 @@ export class VehicleRepository extends Repository {
         const ready = `(v.status = 'active' AND NOT v.maintenance_flag AND NOT ${this.onActiveTripSql('v.id')} AND NOT ${expired})`;
         where.push(query.ready_to_dispatch ? ready : `NOT ${ready}`);
       }
+    }
+    if (query.health) {
+      const fresh = `v.health_score_updated_at >= now() - make_interval(hours => ${HEALTH_BANDS.staleAfterHours})`;
+      where.push(
+        {
+          at_risk: `${fresh} AND v.health_score < ${HEALTH_BANDS.atRiskBelow}`,
+          watch: `${fresh} AND v.health_score >= ${HEALTH_BANDS.atRiskBelow} AND v.health_score < ${HEALTH_BANDS.healthyFrom}`,
+          healthy: `${fresh} AND v.health_score >= ${HEALTH_BANDS.healthyFrom}`,
+          stale: `v.health_score IS NOT NULL AND NOT (${fresh})`,
+          unscored: 'v.health_score IS NULL',
+        }[query.health],
+      );
     }
     if (query.search) {
       const p = add(containsPattern(query.search));

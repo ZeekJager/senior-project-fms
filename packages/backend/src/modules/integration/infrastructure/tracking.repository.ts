@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { PingSource } from '../domain/gps';
 import { STOPPED_LOOKBACK_HOURS } from '../domain/live-map';
+import type { TrackPointRow, TrackQuery } from '../domain/track-history';
 import type { RulePing } from '../domain/telemetry-rules';
 
 /** A ping ready to store: internal ids, integer speed. */
@@ -64,10 +65,15 @@ export class TrackingRepository {
    * Inserts the pings in one statement. A ping already stored, the same vehicle at the same instant
    * (a retried batch, a provider redelivering), is skipped: `uq_gps_ping_vehicle_time` (api-contract §15).
    * Returns the pings actually inserted.
+   *
+   * `historyOnly` stores pings of a trip that has already ended (FMS-124): they join the vehicle's history but
+   * never become its current position. It is a transaction-local setting the current-location trigger reads
+   * (migration 042), set only around this one INSERT; if the INSERT fails the transaction ends and with it the setting.
    */
-  async insertPings(client: PoolClient, rows: readonly PingRow[]): Promise<{ vehicleId: string; recordedAt: Date }[]> {
+  async insertPings(client: PoolClient, rows: readonly PingRow[], options: { historyOnly?: boolean } = {}): Promise<{ vehicleId: string; recordedAt: Date }[]> {
     if (rows.length === 0) return [];
     const col = <K extends keyof PingRow>(key: K) => rows.map((r) => r[key]);
+    if (options.historyOnly) await client.query("SELECT set_config('fms.ping_history_only', 'on', true)");
     const res = await client.query<{ vehicleId: string; recordedAt: Date }>(
       `INSERT INTO tracking.gps_pings
               (vehicle_id, trip_id, gps_device_id, latitude, longitude, speed_kmh, heading_degrees, altitude_m,
@@ -92,6 +98,7 @@ export class TrackingRepository {
         col('recordedAt'),
       ],
     );
+    if (options.historyOnly) await client.query("SELECT set_config('fms.ping_history_only', 'off', true)");
     return res.rows;
   }
 
@@ -159,6 +166,28 @@ export class TrackingRepository {
   }
 
   /**
+   * A vehicle's GPS history (FMS-136): its pings in [from, to], oldest first, after the cursor, at most `limit`.
+   * The (vehicle, time) index serves it; (recorded_at, id) is the table's key, so the order is total.
+   */
+  async history(db: Queryable, vehicleId: string, query: TrackQuery): Promise<TrackPointRow[]> {
+    const res = await db.query<TrackPointRow>(
+      `SELECT id::text AS id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at, recorded_at AS "recordedAt",
+              latitude::float8 AS lat, longitude::float8 AS lng, speed_kmh AS "speedKmh", heading_degrees::float8 AS heading,
+              altitude_m::float8 AS "altitudeM", accuracy_m::float8 AS "accuracyM", ignition_on AS "ignitionOn",
+              odometer_km::float8 AS "odometerKm", source, trip_id::text AS "tripId"
+         FROM tracking.gps_pings
+        WHERE vehicle_id = $1
+          AND ($2::timestamptz IS NULL OR recorded_at >= $2)
+          AND ($3::timestamptz IS NULL OR recorded_at <= $3)
+          AND ($4::timestamptz IS NULL OR (recorded_at, id) > ($4::timestamptz, $5::bigint))
+        ORDER BY recorded_at, id
+        LIMIT $6`,
+      [vehicleId, query.from, query.to, query.cursor?.at ?? null, query.cursor?.id ?? null, query.limit],
+    );
+    return res.rows;
+  }
+
+  /**
    * A vehicle's stored pings recorded after `after` (exclusive; null: from `upTo` minus `lookbackMs`) up to `upTo`,
    * oldest first, at most `limit`: what the telemetry rules (FMS-46) have not seen yet.
    */
@@ -174,6 +203,32 @@ export class TrackingRepository {
       [vehicleId, after, upTo, lookbackMs, limit],
     );
     return res.rows.map((r) => ({ ...r, at: r.at.getTime() }));
+  }
+
+  /**
+   * Seconds with the ignition on in [start, end), per vehicle (internal id), from device and telematics
+   * pings that say whether the ignition is on (phones cannot). The time from one such ping to the next
+   * counts when the first had the ignition on and the next came within `maxGapSeconds`; a longer gap (the
+   * device was off, or had no signal) counts nothing. An interval across the window's edge counts only its
+   * part inside, so consecutive days never count the same time twice. Vehicles with such a ping inside the
+   * window are listed, with 0 when the ignition was off all along.
+   */
+  async ignitionSeconds(db: Queryable, start: Date, end: Date, maxGapSeconds: number): Promise<Map<string, number>> {
+    const res = await db.query<{ vehicleId: string; seconds: number }>(
+      `SELECT vehicle_id AS "vehicleId",
+              COALESCE(sum(EXTRACT(EPOCH FROM LEAST(next_at, $2) - GREATEST(recorded_at, $1)))
+                         FILTER (WHERE ignition_on AND next_at - recorded_at <= make_interval(secs => $3) AND next_at > $1 AND recorded_at < $2), 0)::float8 AS seconds
+         FROM (SELECT vehicle_id, recorded_at, ignition_on,
+                      lead(recorded_at) OVER (PARTITION BY vehicle_id ORDER BY recorded_at) AS next_at
+                 FROM tracking.gps_pings
+                WHERE source IN ('device', 'telematics') AND ignition_on IS NOT NULL
+                  AND recorded_at >= $1::timestamptz - make_interval(secs => $3)
+                  AND recorded_at < $2::timestamptz + make_interval(secs => $3)) p
+        GROUP BY vehicle_id
+       HAVING bool_or(recorded_at >= $1 AND recorded_at < $2)`,
+      [start, end, maxGapSeconds],
+    );
+    return new Map(res.rows.map((r) => [r.vehicleId, r.seconds]));
   }
 
   /** Current positions of vehicles (internal ids), for the simulator's check and tests. */

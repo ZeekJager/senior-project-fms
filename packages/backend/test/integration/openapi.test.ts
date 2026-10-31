@@ -4,7 +4,7 @@ import request from 'supertest';
 import { describe, expect, test } from 'vitest';
 import { parse } from 'yaml';
 import { createApp } from '../../src/app';
-import { mountedRoutes } from '../../src/shared/authz/route-policy';
+import { routeRegistry } from '../../src/shared/authz/route-policy';
 import { ERROR_CODES } from '../../src/shared/errors/app-error';
 import { createUser } from '../support/factories';
 import { ALIASES, NOT_YET_DOCUMENTED, OUTSIDE_API_BASE } from '../support/openapi-baseline';
@@ -71,12 +71,12 @@ describe('docs/openapi.yaml', () => {
   });
 
   test('every route the API mounts is described: a new undocumented one fails (add it to docs/openapi.yaml)', () => {
-    const { undocumented } = drift(mountedRoutes(app).map((r) => shape(r.method, r.path)), documented, baseline);
+    const { undocumented } = drift(routeRegistry(app).map((r) => shape(r.method, r.path)), documented, baseline);
     expect(undocumented, 'Mounted but not in docs/openapi.yaml; describe each one there').toEqual([]);
   });
 
   test('the grandfathered list holds only routes still mounted and still undocumented (delete a line when its operation is described)', () => {
-    const { stale } = drift(mountedRoutes(app).map((r) => shape(r.method, r.path)), documented, baseline);
+    const { stale } = drift(routeRegistry(app).map((r) => shape(r.method, r.path)), documented, baseline);
     expect(stale, 'In test/support/openapi-baseline.ts but removed or now described; delete these lines').toEqual([]);
   });
 

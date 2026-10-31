@@ -8,7 +8,7 @@ import { useDepots } from '@/features/depots'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { describeFilters } from '@/lib/describeFilters'
 import { AdjustStockDialog } from './AdjustStockDialog'
-import { useMovements, useParts, useStockCounts, type Movement, type Part, type PartFilters, type StockStatus } from './api'
+import { SERVICE_ITEM_LABELS, useMovements, useParts, useStockCounts, type Movement, type Part, type PartFilters, type StockStatus } from './api'
 
 const STOCK_VIEW: Record<string, string> = { ok: 'OK', low: 'Low', out: 'Out of stock' }
 
@@ -118,6 +118,8 @@ export function InventoryPage() {
           <p className="truncate text-xs text-ink-subtle">
             {p.part_number}
             {(depots.data?.length ?? 0) > 1 && ` · ${p.depot_id ? (depotNames.get(p.depot_id) ?? 'Depot') : 'Shared stock'}`}
+            {/* What a repair using it renews: the part history the maintenance predictions read (FMS-52). */}
+            {p.service_item && ` · Renews ${SERVICE_ITEM_LABELS[p.service_item].toLowerCase()}`}
           </p>
           {/* Phones drop the status column; the badge rides under the name. */}
           <span className="mt-1 block sm:hidden" aria-hidden="true">

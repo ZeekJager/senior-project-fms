@@ -20,6 +20,8 @@ Read this with the four reference documents: the [API contract](docs/api-contrac
 | Call an outside system or receive its webhook | Write an adapter in the integration module; call only through its client (timeout, retries, breaker). Secrets in `INTEGRATION_<CODE>_*`, never in the database (`docs/integrations.md`) |
 | Show a status | `<StatusBadge status="...">`, not your own coloured span |
 | Show or enter money/fuel | `MoneyDisplay`, `FuelDisplay`, `MoneyInput`, `FuelInput` |
+| Add or change a predictive-maintenance input | Edit `packages/ai-service/feature_spec.json` and the core's feature extractor in the same change. The spec hash changes, so the model is retrained ([docs/ml-dataset.md](docs/ml-dataset.md)) |
+| Train a predictive model | `python scripts/train.py --version pm-YYYY.MM` in `packages/ai-service`: it writes nothing unless the model passes its grading. Never commit `models/`; open a model only with `ml.artefact.load`, which checks its checksum and feature spec hash ([docs/ml-model.md](docs/ml-model.md)) |
 
 ## Money and fuel
 
@@ -93,10 +95,10 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | Schema | Owning module | Tables |
 |---|---|---|
 | `auth` | auth | users, roles, permissions, role_permissions, user_roles, refresh_sessions |
-| `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017) |
+| `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017), meter_readings (odometer and engine-hour history, migration 038) |
 | `trip` | trip | routes, trips, trip_stops |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
-| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions, inventory_parts, inventory_movements, failure_events |
+| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions (scored nightly, FMS-55), inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039) |
 | `alert` | alert | alerts, alert_acknowledgements, incident_reports, notifications |
 | `ev` | ev | charging_stations, charging_sessions, ev_battery_logs |
 | `integration` | integration | external_providers, gps_devices, fuel_card_transactions, sync_logs |
@@ -127,7 +129,7 @@ A permission code is `resource:action`: `vehicle:write`, `fuel-anomaly:read`, `a
 - **A permission is not a scope.** Drivers hold `fuel:read` (they enter and review their own fuel), so `GET /fuel-logs` is allowed for them, and the repository must limit what they get. Any endpoint a driver can read returns only the driver's own records: filter with `ownDriverScope`, and answer another driver's record by id with `404`, not `403`.
 - **Hiding a button is not security.** The server enforces every permission; the frontend gate only decides what to render.
 
-Use `authorize('resource:action')` on every route, or `authenticated()` / `publicRoute()` on purpose; the app will not start with a route that declares none. Filter rows with `depotScope` / `ownDriverScope` and `scopeClause` inside the repository. How, and the role-to-permission table, are in [docs/auth.md](docs/auth.md#authorization) and [docs/permissions.md](docs/permissions.md).
+Use `authorize('resource:action')` on every route, or `authenticated()` / `publicRoute()` on purpose; the app will not start with a route that declares none, and a new `authenticated()` or `publicRoute()` route fails CI until it is added to the reviewed lists in `test/integration/route-access.test.ts` (FMS-59). A new event the socket gateway forwards needs a depot B sample in `test/integration/realtime-scope.test.ts`. Filter rows with `depotScope` / `ownDriverScope` and `scopeClause` inside the repository. How, and the role-to-permission table, are in [docs/auth.md](docs/auth.md#authorization) and [docs/permissions.md](docs/permissions.md).
 
 ## Errors
 
@@ -184,6 +186,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | maintenance (FMS-22) | maintenance | `maintenance_record_id`, `vehicle_id`; `changed_fields`, `maintenance_flag_cleared` | `fleet.vehicle-cache` |
 | `InventoryPartCreated`, `InventoryPartUpdated`, `InventoryStockAdjusted`, `InventoryReorderNeeded` | maintenance (FMS-23) | part | `part_id`; stock and threshold on adjust and reorder | |
 | `FailureRecorded` | maintenance (FMS-125, [maintenance.md](docs/maintenance.md)) | vehicle | `failure_event_id`, `vehicle_id`, `maintenance_record_id`, `incident_id`, `component`, `failure_mode`, `unplanned`, `detected_by`, `occurred_at`, `odometer_km` | |
+| `PredictionFeedbackRecorded` | maintenance (FMS-128, [ml-scoring.md](docs/ml-scoring.md#feedback-from-technicians-fms-128)) | vehicle | `feedback_id`, `prediction_id`, `vehicle_id`, `model_name`, `model_version`, `risk_level`, `outcome`, `component`, `failure_event_id`, `edited` (a change to feedback already given) | |
 | `RouteCreated`, `RouteUpdated` | trip (FMS-83) | route | `route_id`, `depot_id`; `name`, `distance_km` on create; `changed_fields`, `is_active` on update (retiring is an update) | |
 | `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | `fleet.vehicle-cache` (`TripCancelled`) |
 | `FuelLogged` | fuel (FMS-39) | vehicle | `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km` (the reading before this one in time), `recorded_at` (when the fill-up happened: `fueled_at`, FMS-115), `created_at` (when it was received) | |
@@ -199,7 +202,11 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `AlertUpdated` | alert (FMS-92): a repeat of the alert's source | alert | `alert_id`, `depot_id`, `status`, `severity`, `priority`, `occurrence_count`, `last_occurred_at` | real-time gateway (`alert.updated`) |
 | `AlertAcknowledged`, `AlertResolved` | alert (FMS-92) | alert | `alert_id`, `depot_id`, `status`, and `acknowledged_at`/`_by` or `resolved_at`/`_by` (user public ids) | real-time gateway (`alert.updated`) |
 | `AlertEscalated` | alert (FMS-92): a critical alert left unacknowledged | alert | `alert_id`, `depot_id`, `status`, `severity`, `escalation_level`, `escalated_at` | real-time gateway (`alert.updated`) |
+| `MlScoringBlocked` | maintenance (FMS-127, the scoring job's check of the served model) | ml_model | `model_id`, `model_name`, `model_version`, `model_status`, `reason` (`feature_spec_mismatch`, `artefact_mismatch`, `not_active`), `feature_spec_hash` (the served model's), `expected_feature_spec_hash` (the core's). One per run, model and reason (a fixed id) | `alert.engine` |
+| `MaintenanceRiskDetected` | maintenance (FMS-55, the nightly scoring): a health score falling below 75, or its risk level rising | vehicle | `prediction_id`, `vehicle_id`, `risk_level` (`medium`, `high`), `failure_probability`, `health_score`, `previous_health_score`, `factors`, `component` (null), `model_name`, `model_version`, `as_of`. One per scoring time, vehicle and model (a fixed id) | `alert.engine` |
+| `FuelAnomalyDetected` | fuel (FMS-41, the monthly reconciliation): a vehicle's month of fuel more than `FUEL_VARIANCE_THRESHOLD_PCT` above or below what its trips needed | vehicle | `anomaly_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_log_id` (all three null for a month), `anomaly_type` (`consumption_above_expected`, `consumption_below_expected`), `severity` (`medium`, `high`), `period_from`, `period_to`, `distance_km`, `expected_ml`, `actual_ml`, `deviation_pct`. One per vehicle and month (a fixed id). The per-fill-up rules (FMS-82) will publish it for one fill-up, with its ids | `alert.engine` |
 | `IncidentReported` | alert (FMS-38, incident reports) | incident | `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`, `incident_type`, `status`, `latitude`, `longitude`, `occurred_at`, `maintenance_flag_set`, `reported_by_driver_id` (the reporter's driver profile when a driver reported it); never the description | real-time gateway (`incident.created`), `alert.engine` (critical only), `fleet.vehicle-cache` |
+| `IncidentUpdated` | alert (FMS-89, handling an incident) | incident | `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `previous_status`, `assigned_to` (a user's public id), `resolved_at`, `updated_at`, `changes` (which of `status`, `assigned_to`, `notes`), `reported_by_driver_id`; never the notes | real-time gateway (`incident.updated`), `command-center.overview-cache` |
 | `IntegrationWebhookReceived` | integration (FMS-85) | provider | `sync_log_id`, `provider_id`, `provider_code`, `provider_type`, `event_id`, `kind`, `occurred_at`. The data is not in the event: read it with `webhookDeliveries.find(tx, sync_log_id)`. One event per provider event id (a fixed id) | `integration.telematics-pings` (telematics `positions`, FMS-88); fuel card and EV later |
 
 Trip events and fleet's availability: the `fleet.trip-assignments` projection (FMS-76) takes every type in `TRIP_EVENTS` (trip/domain/trip.ts), needs only `trip_id`, and re-reads the trip's state from the trip module. Every change to a trip's status, schedule, vehicle or driver must publish one of them in its transaction: `TripAssigned` is published by assignment (FMS-31), `TripStarted` and `TripCompleted` by the lifecycle commands (FMS-32). A write that skips them is repaired by the daily rebuild, which logs it as drift.
@@ -207,8 +214,6 @@ Trip events and fleet's availability: the `fleet.trip-assignments` projection (F
 Planned, named here so modules agree on them. The alert engine (FMS-92, docs/alerts.md) already has a rule for each, reading these payload fields (public ids), so an alert follows as soon as the event is published:
 
 - `VehicleFaultDetected` (integration, from telematics; the DVIR one is above).
-- `FuelAnomalyDetected` (fuel, FMS-82): `anomaly_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_log_id`, `anomaly_type`, `severity`.
-- `MaintenanceRiskDetected` (maintenance, FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
 - `BatteryThresholdExceeded` (ev, FMS-96): `vehicle_id`, `trip_id`, `metric`, `value`, `threshold`, `severity`.
 
 **Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it. To show a new event live, add it to the gateway's map as well.
@@ -221,6 +226,12 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 - Endpoints marked `Idempotency-Key` in the contract must honour it: add `idempotent()` (`src/shared/http/idempotency.ts`) after `authorize(...)`. It stores the first successful response and replays it to retries (api-contract §19). From the web client, pass `idempotencyKey: true` to `api.request` on those calls. A driver-app form that creates a record submits through the offline queue instead (`useOfflineQueue().submit`, `docs/portals.md`), which keeps the key across retries. Keys are kept 24 hours; a route the offline queue sends to takes `idempotent({ ttlHours: OFFLINE_QUEUE_TTL_HOURS })` (7 days, FMS-116). Expired keys are purged daily by `idempotency-key-purge` (`docs/jobs.md`).
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 - A new or changed endpoint also goes in `docs/openapi.yaml` (OpenAPI 3.1). `test/integration/openapi.test.ts` fails if an operation listed there is not mounted, a `$ref` is broken, or an error code it names is not in `ERROR_CODES`, and, the other way (FMS-119), **if a route is mounted that the spec does not describe**: mounting a route without documenting it fails CI. The routes that predate the spec are listed in `test/support/openapi-baseline.ts` (`NOT_YET_DOCUMENTED`); never add a line there for new work, and delete a line when you document its operation (a line for a route that is gone or now described fails too). A second mount of a documented operation (`ALIASES`) and routes outside `/api/v1` (health) are exempt.
+
+## Read replica
+
+- **Reporting reads go to the replica** (FMS-94, `docs/read-replica.md`): analytics, reconciliation, history and audit searches that scan many rows. A service takes `reads` (`src/db.ts`, `{ session(): Promise<ReadSession> }`) in its deps, opens one session per request (`await reads.session()`) and runs that request's queries on it. The response puts `session.freshness()` in `meta.data_freshness`.
+- **Never** for a read that a write in the same request depends on, for a check before a write (a conflict, a balance, a duplicate) or for a screen that must show what was just saved (forms, dispatch, the live map): those read the primary (`pool`), in the write's transaction where there is one. The replica is seconds behind and refuses locks (`FOR SHARE`, `FOR UPDATE`).
+- The session falls back to the primary by itself (the replica down or too far behind) and says so. Code never chooses the database.
 
 ## Redis
 
@@ -282,4 +293,5 @@ The `middleware/` files that predate this (`auditLog.ts`, `requestContext.ts`, `
 
 - Branches, commits and the Jira board: [README](README.md#-contribution--jira-workflow) and CFG-1 in Jira.
 - Tests: [docs/testing.md](docs/testing.md). CI: [docs/ci.md](docs/ci.md).
+- The predictive model's inputs, label and training data: [docs/ml-dataset.md](docs/ml-dataset.md). The model, its grading and its folder: [docs/ml-model.md](docs/ml-model.md). The service that serves it: [docs/ml-service.md](docs/ml-service.md).
 - Sign-in, tokens and sessions: [docs/auth.md](docs/auth.md).

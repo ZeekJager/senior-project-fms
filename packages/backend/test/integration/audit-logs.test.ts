@@ -147,6 +147,25 @@ describe('GET /audit-logs', () => {
     expect((await get('/audit-logs?page_size=201', reader.cookie)).status).toBe(400);
   });
 
+  test('action takes several actions and prefixes, so one view shows every change or every sign-in', async () => {
+    const reader = await signIn(['admin']);
+    for (const action of ['pick.one', 'pick.two', 'pick_x.three', 'pickyx.four', 'other']) await seedRows(action, ['2026-07-01T09:00:00.000000Z']);
+    const actions = async (filter: string) =>
+      (await get(`/audit-logs?from=2026-07-01&to=2026-07-01&action=${filter}`, reader.cookie)).body.data.map((r: { action: string }) => r.action).sort();
+
+    expect(await actions('pick.one,other')).toEqual(['other', 'pick.one']);
+    expect(await actions('pick.*')).toEqual(['pick.one', 'pick.two']);
+    expect(await actions('pick.*,other')).toEqual(['other', 'pick.one', 'pick.two']);
+    // `_` is part of the name, not LIKE's any-character: pick_x.* does not reach pickyx.four.
+    expect(await actions('pick_x.*')).toEqual(['pick_x.three']);
+
+    for (const bad of ['pick.%25', 'a,,b', '*', 'auth.*.x', Array(11).fill('a').join(',')]) {
+      const res = await get(`/audit-logs?action=${bad}`, reader.cookie);
+      expect(res.status).toBe(400);
+      expect(res.body.error.details).toEqual([expect.objectContaining({ field: 'action', reason: 'invalid_action' })]);
+    }
+  });
+
   test('the reader never writes: the trail has no write endpoint', async () => {
     const { cookie } = await signIn(['admin']);
     for (const method of ['post', 'put', 'patch', 'delete'] as const) {

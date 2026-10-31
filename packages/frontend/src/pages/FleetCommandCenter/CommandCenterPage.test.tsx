@@ -1,7 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { StrictMode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,15 +9,16 @@ import { AuthProvider } from '@/context/AuthContext'
 import { createQueryClient } from '@/lib/query'
 import { RealtimeContext, type RealtimeHandler, type RealtimeValue } from '@/lib/realtime/context'
 import { AppRouter } from '@/router/AppRouter'
-import { currentUser, envelope, LocationProbe, signedInAs, testApi } from '@/test/auth'
+import { currentUser, envelope, errorEnvelope, LocationProbe, signedInAs, testApi } from '@/test/auth'
 import { server } from '@/test/msw/server'
+import type { Overview, OverviewAlert, OverviewIncident } from './overview'
 import type { LocationUpdate, VehicleLocation } from './types'
 
 // FMS-45: the Fleet Command Center. Leaflet runs in jsdom with a size for every element (it lays
 // nothing out); the socket is a stand-in the test plays events through.
 
 const DEPOT = '11111111-1111-4111-8111-111111111111'
-const dispatcher = currentUser(['dispatcher'], ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'vehicle:read', 'driver:read'])
+const dispatcher = currentUser(['dispatcher'], ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'route:read', 'vehicle:read', 'driver:read'])
 const driverUser = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read'])
 
 const ago = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString()
@@ -63,9 +64,33 @@ function fakeSocket(): RealtimeValue & { emit(event: string, payload: unknown): 
   }
 }
 
-function serve(vehicles: VehicleLocation[]) {
+/** An overview with the vehicles counted and, unless given, no alerts or incidents section (the caller may not read them). */
+function overviewOf(extra: Partial<Overview> = {}): Overview {
+  return {
+    depot_id: null,
+    generated_at: new Date().toISOString(),
+    vehicles: {
+      total: 12,
+      on_trip: 2,
+      available: 7,
+      in_maintenance: 1,
+      inactive: 0,
+      flagged: 2,
+      health: { at_risk: 1, watch: 1, healthy: 8, stale: 0, unscored: 2 },
+      health_watch: [{ vehicle_id: 'v-1', registration_number: 'AA 3-10001', health_score: 62, band: 'at_risk' }],
+    },
+    drivers: { total: 10, on_trip: 2, available: 6, absent: 1, licence_expired: 1 },
+    trips: { today: { draft: 0, scheduled: 3, assigned: 1, en_route: 2, completed: 4, cancelled: 0 }, under_way: 2, overdue: 1 },
+    alerts: null,
+    incidents: null,
+    ...extra,
+  }
+}
+
+function serve(vehicles: VehicleLocation[], overview: Overview = overviewOf()) {
   const requests: URL[] = []
   server.use(
+    http.get('/api/v1/command-center/overview', () => envelope(overview)),
     http.get('/api/v1/depots', () => envelope([{ id: DEPOT, name: 'Addis Ababa Central', code: 'ADD', location: 'Addis Ababa' }])),
     http.get('/api/v1/tracking/vehicles/current', ({ request }) => {
       requests.push(new URL(request.url))
@@ -100,6 +125,8 @@ const marker = (plate: string) => document.querySelector<HTMLElement>(`.fleet-ma
 const placed = (el: HTMLElement) => el.style.transform || `${el.style.left},${el.style.top}`
 const markerState = (plate: string) => marker(plate)?.querySelector('.fleet-marker')?.getAttribute('data-state')
 const card = (plate: string) => within(screen.getByRole('list', { name: 'Vehicles' })).getByText(plate, { selector: '.plate' }).closest('button')!
+/** The cards in the list: each is a pressed-or-not button (a driver's card also has its focus button). */
+const cards = () => within(screen.getByRole('list', { name: 'Vehicles' })).getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed'))
 
 const sizes = ['clientWidth', 'clientHeight'] as const
 const sizeProperties = sizes.map((name) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, name))
@@ -126,9 +153,8 @@ describe('Fleet Command Center (FMS-45)', () => {
     expect(await screen.findByRole('heading', { name: 'Live map', level: 1 })).toBeInTheDocument()
     await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(3))
 
-    const list = screen.getByRole('list', { name: 'Vehicles' })
     // "On trip" by default: the two with a trip, by plate.
-    expect(within(list).getAllByRole('button').map((b) => within(b).getByText(/^AA /).textContent)).toEqual(['AA 3-10001', 'AA 3-10002'])
+    expect(cards().map((b) => within(b).getByText(/^AA /).textContent)).toEqual(['AA 3-10001', 'AA 3-10002'])
     const first = card('AA 3-10001')
     expect(first).toHaveTextContent('Abebe Kebede')
     expect(first).toHaveTextContent('Bole - Adama')
@@ -156,8 +182,15 @@ describe('Fleet Command Center (FMS-45)', () => {
     const sent = Date.now()
     const update: LocationUpdate = { vehicle_id: 'v-1', depot_id: DEPOT, trip_id: 't-1', lat: 9.01, lng: 38.76, speed: 63, heading: 45, recorded_at: new Date().toISOString() }
     socket.emit('vehicle.location.updated', update)
-    await waitFor(() => expect(card('AA 3-10001')).toHaveTextContent('63 km/h'), { timeout: 500 })
-    expect(placed(marker('AA 3-10001')!)).not.toBe(before)
+    // Both within the budget. The card renders the update at once; react-leaflet moves the marker in an effect
+    // after it, so checking the marker as soon as the card changed raced it (CI, 31 Oct 2026).
+    await waitFor(
+      () => {
+        expect(card('AA 3-10001')).toHaveTextContent('63 km/h')
+        expect(placed(marker('AA 3-10001')!)).not.toBe(before)
+      },
+      { timeout: 500 },
+    )
     expect(Date.now() - sent).toBeLessThan(500)
   })
 
@@ -224,8 +257,7 @@ describe('Fleet Command Center (FMS-45)', () => {
     open()
     await screen.findByText('AA 3-10001', { selector: '.plate' })
     await userEvent.type(screen.getByRole('searchbox', { name: 'Find a vehicle, driver or route' }), 'kality')
-    const list = screen.getByRole('list', { name: 'Vehicles' })
-    expect(within(list).getAllByRole('button')).toHaveLength(1)
+    expect(cards()).toHaveLength(1)
     expect(card('AA 3-10002')).toBeInTheDocument()
   })
 
@@ -235,5 +267,277 @@ describe('Fleet Command Center (FMS-45)', () => {
     open()
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Live map', level: 1 })).not.toBeInTheDocument())
     expect(screen.queryByRole('region', { name: 'Live fleet map' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Command center overview: alerts, incidents and counters (FMS-89)', () => {
+  const handler = currentUser(
+    ['dispatcher'],
+    ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'vehicle:read', 'driver:read', 'alert:read', 'alert:ack', 'alert:resolve', 'incident:read', 'incident:manage'],
+  )
+  const brakes: OverviewAlert = {
+    id: 'a-1',
+    type: 'vehicle_fault',
+    severity: 'critical',
+    priority: 1,
+    status: 'open',
+    title: 'Brakes failed inspection',
+    message: 'Pre-trip inspection: brakes',
+    vehicle_id: 'v-1',
+    registration_number: 'AA 3-10001',
+    driver_id: null,
+    entity_type: 'dvir_report',
+    entity_id: 'd-1',
+    occurrence_count: 1,
+    escalation_level: 0,
+    created_at: ago(120),
+    last_occurred_at: ago(120),
+    acknowledged_at: null,
+  }
+  const flat: OverviewIncident = {
+    id: 'i-1',
+    incident_type: 'tyre',
+    severity: 'high',
+    status: 'open',
+    description: 'Flat tyre on the ring road near Megenagna',
+    vehicle_id: 'v-1',
+    registration_number: 'AA 3-10001',
+    driver_id: 'dr-1',
+    driver_name: 'Abebe Kebede',
+    assigned_to: null,
+    notes: null,
+    latitude: 9.02,
+    longitude: 38.8,
+    occurred_at: ago(600),
+    updated_at: ago(600),
+  }
+  const sections = (alerts: OverviewAlert[], incidents: OverviewIncident[]): Partial<Overview> => ({
+    alerts: { active: alerts.length, unacknowledged: alerts.filter((a) => a.status === 'open').length, by_severity: { critical: alerts.filter((a) => a.severity === 'critical').length, high: 0, medium: 0, low: 0 }, items: alerts },
+    incidents: { active: incidents.length, by_status: { open: incidents.length, investigating: 0 }, by_severity: { critical: 0, high: incidents.length, medium: 0, low: 0 }, items: incidents },
+  })
+  const panelTab = (name: RegExp) => within(screen.getByRole('group', { name: 'Panel' })).getByRole('button', { name })
+
+  it('counts the fleet, drivers and trips above the map, and badges a vehicle whose health is at risk', async () => {
+    serve([onTrip, speeding], overviewOf())
+    signedInAs(dispatcher)
+    open()
+    const vehicles = await screen.findByRole('region', { name: 'Vehicles' })
+    expect(within(vehicles).getByText('Available').previousSibling).toHaveTextContent('7')
+    const trips = screen.getByRole('region', { name: 'Trips today' })
+    expect(within(trips).getByText('Overdue').previousSibling).toHaveTextContent('1')
+    expect(within(trips).getByText('Still to start').previousSibling).toHaveTextContent('4')
+    expect(screen.getByRole('region', { name: 'Drivers' })).toHaveTextContent('Licence expired')
+    // No alerts or incidents to read: no panel tabs.
+    expect(screen.queryByRole('group', { name: 'Panel' })).not.toBeInTheDocument()
+    await waitFor(() => expect(card('AA 3-10001')).toHaveTextContent('Health at risk: 62'))
+  })
+
+  it('acknowledges an alert from the map: the alert says so at once, and the counters follow', async () => {
+    serve([onTrip], overviewOf(sections([brakes], [])))
+    const acks: string[] = []
+    server.use(
+      http.post('/api/v1/alerts/:id/acknowledge', ({ params }) => {
+        acks.push(params.id as string)
+        return envelope({ id: params.id, status: 'acknowledged', acknowledged_at: new Date().toISOString() })
+      }),
+    )
+    signedInAs(handler)
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: /^Alerts/ }))
+    const list = await screen.findByRole('list', { name: 'Active alerts' })
+    expect(within(list).getByText('Brakes failed inspection')).toBeInTheDocument()
+    expect(within(list).getByText('AA 3-10001')).toBeInTheDocument()
+
+    await userEvent.click(within(list).getByRole('button', { name: 'Acknowledge: Brakes failed inspection' }))
+    await waitFor(() => expect(acks).toEqual(['a-1']))
+    expect(await within(list).findByText('Acknowledged')).toBeInTheDocument()
+    expect(within(list).queryByRole('button', { name: /^Acknowledge:/ })).not.toBeInTheDocument()
+    // Still active (acknowledged is not resolved), so still counted.
+    expect(panelTab(/^Alerts/)).toHaveTextContent('1')
+  })
+
+  it('a new critical alert appears at once from the socket, said out loud; another console acknowledging it shows here', async () => {
+    serve([onTrip], overviewOf(sections([], [])))
+    signedInAs(handler)
+    const socket = open('/command-center?panel=alerts')
+    expect(await screen.findByText('No active alerts')).toBeInTheDocument()
+
+    socket.emit('alert.created', {
+      alert_id: 'a-9',
+      depot_id: DEPOT,
+      alert_type: 'incident',
+      severity: 'critical',
+      priority: 1,
+      status: 'open',
+      entity_type: 'incident',
+      entity_id: 'i-9',
+      vehicle_id: 'v-1',
+      title: 'Critical incident: accident',
+      message: 'Reported by the driver',
+      created_at: new Date().toISOString(),
+    })
+    const list = await screen.findByRole('list', { name: 'Active alerts' })
+    expect(within(list).getByText('Critical incident: accident')).toBeInTheDocument()
+    expect(within(list).getByText('AA 3-10001')).toBeInTheDocument()
+    expect(screen.getByText('Critical alert: Critical incident: accident')).toBeInTheDocument()
+
+    socket.emit('alert.updated', { alert_id: 'a-9', depot_id: DEPOT, status: 'acknowledged', acknowledged_at: new Date().toISOString() })
+    expect(await within(list).findByText('Acknowledged')).toBeInTheDocument()
+    socket.emit('alert.updated', { alert_id: 'a-9', depot_id: DEPOT, status: 'resolved' })
+    expect(await screen.findByText('No active alerts')).toBeInTheDocument()
+  })
+
+  it('an incident is taken on, then resolved only with notes saying what was done', async () => {
+    serve([onTrip], overviewOf(sections([], [flat])))
+    const patches: Record<string, unknown>[] = []
+    server.use(
+      http.patch('/api/v1/incidents/:id', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push(body)
+        const assigned = 'assigned_to' in body ? (body.assigned_to ? { id: 'u-1', full_name: 'Sam Tester' } : null) : null
+        return envelope({ ...flat, ...body, assigned_to: assigned, status: body.status ?? 'open', notes: body.notes ?? null, depot_id: DEPOT, trip_id: null, reported_by: 'u-9', resolved_at: null, resolved_by: null, created_at: flat.occurred_at })
+      }),
+    )
+    signedInAs(handler)
+    open('/command-center?panel=incidents')
+    const list = await screen.findByRole('list', { name: 'Active incidents' })
+    expect(within(list).getByText('Nobody has taken it on')).toBeInTheDocument()
+    await userEvent.click(within(list).getByRole('button', { name: /Tyre/ }))
+
+    const drawer = await screen.findByRole('dialog', { name: 'Tyre: AA 3-10001' })
+    expect(within(drawer).getByText('Flat tyre on the ring road near Megenagna')).toBeInTheDocument()
+    expect(within(drawer).getByText('Abebe Kebede')).toBeInTheDocument()
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Take it on' }))
+    await waitFor(() => expect(patches).toEqual([{ assigned_to: 'u-1' }]))
+    expect(await within(drawer).findByText('Sam Tester (you)')).toBeInTheDocument()
+
+    await userEvent.selectOptions(within(drawer).getByLabelText('Status'), 'resolved')
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Save' }))
+    expect(await within(drawer).findByText('Say what was found and done before resolving it.')).toBeInTheDocument()
+    expect(patches).toHaveLength(1)
+
+    await userEvent.type(within(drawer).getByLabelText(/What was found and done/), 'Spare fitted, tyre to the workshop.')
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(patches[1]).toEqual({ status: 'resolved', notes: 'Spare fitted, tyre to the workshop.' }))
+    // Resolved: off the active list, the drawer closed.
+    expect(await screen.findByText('No active incidents')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('Live map: one driver in focus (FMS-140)', () => {
+  const ROUTE = 'b0000000-0000-4000-8000-000000000001'
+
+  /** The focused trip's route and the vehicle's track today; records the track queries. */
+  function serveFocus() {
+    const trackQueries: URLSearchParams[] = []
+    server.use(
+      http.get('/api/v1/trips/t-1', () => envelope({ id: 't-1', route_id: ROUTE })),
+      http.get(`/api/v1/routes/${ROUTE}`, () =>
+        envelope({
+          id: ROUTE,
+          name: 'Bole - Adama',
+          origin: { latitude: 8.99, longitude: 38.79 },
+          destination: { latitude: 8.54, longitude: 39.27 },
+          stops: [{ name: 'Bishoftu', latitude: 8.75, longitude: 38.98 }],
+        }),
+      ),
+      http.get('/api/v1/vehicles/v-1/tracking', ({ request }) => {
+        trackQueries.push(new URL(request.url).searchParams)
+        return HttpResponse.json({
+          data: [
+            { recorded_at: ago(1200), lat: 8.99, lng: 38.79, speed_kmh: 40, trip_id: 't-1' },
+            { recorded_at: ago(600), lat: 8.995, lng: 38.77, speed_kmh: 45, trip_id: 't-1' },
+          ],
+          meta: { request_id: 'r-1', page_size: 1000, next_cursor: null },
+        })
+      }),
+    )
+    return trackQueries
+  }
+
+  it('focusing from the list shows only that vehicle with its planned route and today’s track; clearing brings back the fleet', async () => {
+    serve([onTrip, speeding, quiet])
+    const trackQueries = serveFocus()
+    signedInAs(dispatcher)
+    open('/command-center?view=all')
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(3))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Focus the map on Abebe Kebede' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/command-center?view=all&driver=dr-1')
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(1))
+    expect(marker('AA 3-10001')).not.toBeNull()
+
+    const panel = screen.getByRole('region', { name: 'Driver in focus' })
+    expect(within(panel).getByRole('heading', { name: 'Abebe Kebede' })).toBeInTheDocument()
+    expect(panel).toHaveTextContent('AA 3-10001')
+    expect(panel).toHaveTextContent('Bole - Adama')
+    expect(panel).toHaveTextContent('42 km/h')
+    expect(screen.queryByRole('list', { name: 'Vehicles' })).not.toBeInTheDocument()
+
+    // The route as planned (origin, its stop, destination) dashed; the track today solid, from midnight in Addis Ababa.
+    await waitFor(() => expect(document.querySelector('.fleet-focus-planned')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('.fleet-focus-track')).not.toBeNull())
+    expect(trackQueries[0].get('from')).toMatch(/T21:00:00\.000Z$/)
+    expect(within(panel).getByText('Driven today (GPS)')).toBeInTheDocument()
+    expect(within(panel).getByText('Planned route')).toBeInTheDocument()
+
+    await userEvent.click(within(panel).getByRole('button', { name: 'Whole fleet' }))
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(3))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/command-center\?view=all$/)
+    expect(document.querySelector('.fleet-focus-track')).toBeNull()
+  })
+
+  it('a link with ?driver= opens focused and follows the vehicle live; Esc returns to the whole fleet', async () => {
+    serve([onTrip, speeding])
+    serveFocus()
+    signedInAs(dispatcher)
+    const socket = open('/command-center?driver=dr-1')
+    const panel = await screen.findByRole('region', { name: 'Driver in focus' })
+    expect(await within(panel).findByRole('heading', { name: 'Abebe Kebede' })).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(1))
+
+    socket.emit('vehicle.location.updated', { vehicle_id: 'v-1', depot_id: DEPOT, trip_id: 't-1', lat: 9.01, lng: 38.76, speed: 63, heading: 90, recorded_at: new Date().toISOString() })
+    await waitFor(() => expect(panel).toHaveTextContent('63 km/h'))
+    // Another vehicle's position moves nothing here.
+    socket.emit('vehicle.location.updated', { vehicle_id: 'v-2', depot_id: DEPOT, trip_id: 't-2', lat: 9.03, lng: 38.78, speed: 20, heading: 90, recorded_at: new Date().toISOString() })
+    expect(document.querySelectorAll('.fleet-marker')).toHaveLength(1)
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(2))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/command-center$/)
+  })
+
+  it('choosing Alerts in the counters leaves the focus for the alerts panel', async () => {
+    serve([onTrip, speeding], overviewOf({ alerts: { active: 0, unacknowledged: 0, by_severity: { critical: 0, high: 0, medium: 0, low: 0 }, items: [] } }))
+    serveFocus()
+    signedInAs(currentUser(['dispatcher'], ['command:read', 'tracking:read', 'depot:read', 'trip:read', 'route:read', 'vehicle:read', 'driver:read', 'alert:read']))
+    open('/command-center?driver=dr-1')
+    await screen.findByRole('region', { name: 'Driver in focus' })
+
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Needs attention' })).getByRole('button', { name: /Alerts/ }))
+    expect(await screen.findByText('No active alerts')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Driver in focus' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/command-center\?panel=alerts$/)
+    await waitFor(() => expect(document.querySelectorAll('.fleet-marker')).toHaveLength(2))
+  })
+
+  it('a driver unknown or outside the depots shows not found; one not on a trip says so', async () => {
+    serve([onTrip])
+    server.use(
+      http.get('/api/v1/drivers/dr-9', () => errorEnvelope(404, 'NOT_FOUND', 'Driver not found.')),
+      http.get('/api/v1/drivers/dr-3', () => envelope({ id: 'dr-3', full_name: 'Sara Haile' })),
+    )
+    signedInAs(dispatcher)
+    open('/command-center?driver=dr-9')
+    const panel = await screen.findByRole('region', { name: 'Driver in focus' })
+    expect(await within(panel).findByRole('heading', { name: 'Driver not found' })).toBeInTheDocument()
+    expect(document.querySelectorAll('.fleet-marker')).toHaveLength(0)
+    expect(screen.getByText('Not on a trip now')).toBeInTheDocument()
+    cleanup()
+
+    open('/command-center?driver=dr-3')
+    expect(await screen.findByRole('heading', { name: 'Sara Haile is not on a trip' })).toBeInTheDocument()
+    expect(document.querySelectorAll('.fleet-marker')).toHaveLength(0)
   })
 })

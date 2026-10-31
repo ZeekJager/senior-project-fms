@@ -13,6 +13,7 @@ import { notificationRouter } from './api/notification.routes';
 import { AlertService } from './application/alert.service';
 import { IncidentService } from './application/incident.service';
 import { InboxService } from './application/inbox.service';
+import type { IncidentType } from './domain/incident';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
 import { IncidentRepository } from './infrastructure/incident.repository';
@@ -58,7 +59,10 @@ const incidentService = new IncidentService({
   refs: {
     ...incidentRefs,
     trips: { find: tripLookups.find, publicIds: tripLookups.publicIds },
-    users: { publicIds: userPublicIds },
+    users: {
+      accounts: async (db, ids) => new Map((await userDirectory.findByIds(db, ids)).map((u) => [u.id, { publicId: u.publicId, fullName: u.fullName }])),
+      activeHolder: (db, publicId, permission) => userDirectory.activeHolder(db, publicId, permission),
+    },
   },
   events: eventBus,
 });
@@ -95,6 +99,12 @@ export const alertEngine = {
   escalate: (now: Date, correlationId: string) => service.escalate({ now, correlationId }),
 };
 
+/** For the command center's overview (FMS-89): a depot's (internal id) or every depot's (null) active alerts and incidents. */
+export const commandCenterFeed = {
+  alerts: (depotId: string | null, limit: number) => service.active(depotId, limit),
+  incidents: (depotId: string | null, limit: number) => incidentService.active(depotId, limit),
+};
+
 /**
  * For maintenance (FMS-125): the incident a failure came from, by public id, with its vehicle (internal
  * ids), and incidents' public ids for responses. The caller checks the vehicle is the failure's own.
@@ -102,6 +112,9 @@ export const alertEngine = {
 export const incidentLookup = {
   find: (db: Queryable, publicId: string) => incidentRepository.refByPublicId(db, publicId),
   publicIds: (db: Queryable, ids: readonly string[]) => incidentRepository.publicIds(db, ids),
+  /** For the nightly scoring (FMS-55): each vehicle's incidents of these types in [from, to), by internal id. */
+  countsByVehicle: (db: Queryable, vehicleIds: readonly string[], types: readonly IncidentType[], from: Date, to: Date) =>
+    incidentRepository.countsByVehicle(db, vehicleIds, types, from, to),
 };
 
 export { ALERT_EVENTS, SEVERITIES as ALERT_SEVERITIES, type AlertView } from './domain/alert';

@@ -1,6 +1,6 @@
 import express, { Router, type RequestHandler } from 'express';
 import { describe, expect, it } from 'vitest';
-import { assertEveryRouteDeclaresPolicy, policyOf, publicRoute, routesWithoutPolicy, withPolicy } from './route-policy';
+import { assertEveryRouteDeclaresPolicy, policyOf, publicRoute, routeRegistry, routesWithoutPolicy, withPolicy } from './route-policy';
 
 const pass: RequestHandler = (_req, _res, next) => next();
 const open = () => withPolicy((_req, _res, next) => next(), { kind: 'permission', codes: ['vehicle:read'] });
@@ -61,5 +61,32 @@ describe('route policy startup guard', () => {
     expect(policyOf(open())).toEqual({ kind: 'permission', codes: ['vehicle:read'] });
     expect(policyOf(() => undefined)).toBeUndefined();
     expect(policyOf('not a function')).toBeUndefined();
+  });
+});
+
+describe('route registry (FMS-59)', () => {
+  const read = { kind: 'permission', codes: ['vehicle:read'] } as const;
+  const write = { kind: 'permission', codes: ['maintenance:write'] } as const;
+
+  it("lists every method of every route with its full path and the policies it declared, each method's own", () => {
+    const app = express();
+    const router = Router();
+    router.get('/vehicles', open(), handler);
+    router
+      .route('/vehicles/:id')
+      .get(open(), handler)
+      .patch(open(), withPolicy((_req, _res, next) => next(), write), handler);
+    router.post('/login', publicRoute(), handler);
+    router.delete('/loose', pass, handler);
+    app.use('/api/v1', router);
+
+    expect(routeRegistry(app)).toEqual([
+      { method: 'GET', path: '/api/v1/vehicles', policies: [read] },
+      { method: 'GET', path: '/api/v1/vehicles/:id', policies: [read] },
+      { method: 'PATCH', path: '/api/v1/vehicles/:id', policies: [read, write] },
+      { method: 'POST', path: '/api/v1/login', policies: [{ kind: 'public' }] },
+      { method: 'DELETE', path: '/api/v1/loose', policies: [] },
+    ]);
+    expect(routesWithoutPolicy(app)).toEqual(['DELETE /api/v1/loose']);
   });
 });

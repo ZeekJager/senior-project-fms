@@ -27,7 +27,8 @@ function destination(n: Subject): string | null {
     case 'driver':
       return '/drivers'
     case 'fuel_anomaly':
-      return '/fuel-reconciliation'
+      // S-15 opens the anomaly itself (FMS-42).
+      return `/fuel-reconciliation?tab=anomalies&anomaly=${encodeURIComponent(n.entity.id)}`
     case 'telemetry_flag':
     case 'incident':
       return '/command-center?view=attention'

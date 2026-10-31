@@ -36,12 +36,41 @@ import type { TripRepository, TripRow, TripVisibility, TripWrite } from '../infr
 import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
 import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleRequired, type CommandStatus } from '../domain/lifecycle';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
+import type { Coordinates, RouteStop } from '../domain/route';
+import type { RouteRepository } from '../infrastructure/route.repository';
+import {
+  MAX_SHIFTED,
+  RESCHEDULABLE_STATUSES,
+  STAFFED_STATUSES,
+  endRequired,
+  reasonRequired,
+  scheduleClash,
+  shiftNeeded,
+  shiftedBy,
+  startFixed,
+  adhocDepotRequired,
+  tooManyShifted,
+  type Slot,
+} from '../domain/schedule';
+
+/** A trip nobody planned (FMS-139): where it goes, saved as a one-off route of the depot. */
+export interface AdhocRoute {
+  origin_name: string;
+  origin?: Coordinates | null;
+  destination_name: string;
+  destination?: Coordinates | null;
+  stops?: RouteStop[];
+}
 
 export interface TripCreate {
   /** Public id of an active route in the caller's depots. Its plan (ends, distance, time, stops) is copied onto the trip. */
-  route_id: string;
+  route_id?: string;
+  /** Instead of route_id (FMS-139): a one-off route, in `depot_id` (default: the caller's own depot). */
+  route?: AdhocRoute;
+  depot_id?: string;
   scheduled_start: Date;
-  scheduled_end: Date;
+  /** Default: the start plus the route's estimated time; required when the route has none. */
+  scheduled_end?: Date;
 }
 
 /** PATCH: reschedule, or cancel with status "cancelled". Driver and vehicle are set by assignment (FMS-31). */
@@ -49,6 +78,17 @@ export interface TripUpdate {
   scheduled_start?: Date;
   scheduled_end?: Date;
   status?: 'cancelled';
+  /** Why the times change (FMS-139): required once a driver or vehicle waits on them (assigned, en route). */
+  reason?: string;
+  /** Move the trips this change runs into later instead of refusing it (FMS-139). */
+  shift_following?: boolean;
+}
+
+/** A trip moved later because a change ran into it (FMS-139). */
+export interface ShiftedTrip {
+  trip_id: string;
+  scheduled_start: string;
+  scheduled_end: string;
 }
 
 export interface TripHistoryQuery {
@@ -74,8 +114,10 @@ export interface TripAssignment {
 export interface TripServiceDeps {
   trips: Pick<
     TripRepository,
-    'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop' | 'overlapping' | 'underWay'
+    'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop' | 'overlapping' | 'underWay' | 'clashing'
   >;
+  /** One-off routes for unplanned trips (FMS-139). */
+  routes: Pick<RouteRepository, 'insert'>;
   /** The fleet and maintenance modules' lookups, connected by src/modules/index.ts. */
   fleet: () => FleetRefs;
   maintenance: () => MaintenanceRefs;
@@ -175,15 +217,19 @@ export class TripService {
   }
 
   async create(caller: Caller, input: TripCreate): Promise<TripView> {
-    if (input.scheduled_end <= input.scheduled_start) throw invalidDateRange('scheduled_end', 'The trip must end after it starts.');
+    if (input.scheduled_end && input.scheduled_end <= input.scheduled_start) throw invalidDateRange('scheduled_end', 'The trip must end after it starts.');
     const { trips } = this.deps;
     const ctx = mutationContext(caller);
     return trips.inTransaction(async (client) => {
       const visibility = await this.visibility(client, caller);
       if (visibility.kind !== 'all' && visibility.kind !== 'depot') throw tripRouteNotFound();
-      const route = await trips.routePlan(client, input.route_id, visibility.kind === 'depot' ? visibility.depotId : null);
+      const routeId = input.route ? await this.adhocRoute(client, caller, input.route, input.depot_id) : input.route_id!;
+      const route = await trips.routePlan(client, routeId, visibility.kind === 'depot' ? visibility.depotId : null);
       if (!route) throw tripRouteNotFound();
       if (!route.isActive) throw tripRouteRetired();
+      // No end given: the route's estimated time from the start (FMS-139).
+      const end = input.scheduled_end ?? (route.estimatedDurationSeconds ? new Date(input.scheduled_start.getTime() + route.estimatedDurationSeconds * 1000) : null);
+      if (!end) throw endRequired();
 
       const row = await trips.insert(
         ctx,
@@ -195,7 +241,7 @@ export class TripService {
           planned_distance_km: route.distanceKm,
           planned_duration_seconds: route.estimatedDurationSeconds,
           scheduled_start: input.scheduled_start,
-          scheduled_end: input.scheduled_end,
+          scheduled_end: end,
         },
         client,
       );
@@ -217,41 +263,128 @@ export class TripService {
   }
 
   /**
-   * PATCH /trips/{id}: reschedule an open trip (draft, scheduled, assigned),
-   * or cancel it. A draft that gets both times becomes scheduled. A trip under
-   * way is ended, not cancelled; a completed or cancelled trip never changes.
+   * PATCH /trips/{id}: reschedule a trip (draft, scheduled, assigned; an en-route trip its end only, FMS-139), or
+   * cancel it. A draft that gets both times becomes scheduled. A trip under way is ended, not cancelled; a
+   * completed or cancelled trip never changes. Once a driver or vehicle waits on the times (assigned, en route),
+   * a change needs a reason and may not run into their other trips: it is refused naming the trip, or, with
+   * `shift_following`, that trip and any it then runs into move later (docs/flexible-dispatch.md).
    */
-  async update(caller: Caller, tripId: string, patch: TripUpdate, expectedVersion: number | null): Promise<TripView> {
+  async update(caller: Caller, tripId: string, patch: TripUpdate, expectedVersion: number | null): Promise<{ trip: TripView; shifted: ShiftedTrip[] }> {
     const { trips } = this.deps;
     return trips.inTransaction(async (client) => {
       const row = await trips.findVisible(client, tripId, await this.visibility(client, caller), true);
       if (!row) throw tripNotFound();
       if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
       if (row.status === 'en_route' && patch.status === 'cancelled') throw cannotCancelEnRoute();
-      if (!OPEN_STATUSES.includes(row.status)) throw tripClosed(row.status);
+      const retiming = patch.scheduled_start !== undefined || patch.scheduled_end !== undefined;
+      if (!(retiming && patch.status === undefined ? RESCHEDULABLE_STATUSES : OPEN_STATUSES).includes(row.status)) throw tripClosed(row.status);
+      if (row.status === 'en_route' && patch.scheduled_start && patch.scheduled_start.getTime() !== row.scheduledStart?.getTime()) throw startFixed();
 
       const start = patch.scheduled_start ?? row.scheduledStart;
       const end = patch.scheduled_end ?? row.scheduledEnd;
       if (start && end && end <= start) throw invalidDateRange('scheduled_end', 'The trip must end after it starts.');
+      if (row.status === 'en_route' && end && row.actualStart && end <= row.actualStart) throw invalidDateRange('scheduled_end', 'The trip must end after it started.');
 
       const data: TripWrite = {};
       if (patch.scheduled_start && patch.scheduled_start.getTime() !== row.scheduledStart?.getTime()) data.scheduled_start = patch.scheduled_start;
       if (patch.scheduled_end && patch.scheduled_end.getTime() !== row.scheduledEnd?.getTime()) data.scheduled_end = patch.scheduled_end;
       const rescheduled = Object.keys(data).sort();
+      const staffed = STAFFED_STATUSES.includes(row.status);
+      const reason = patch.reason?.trim() || null;
+      if (rescheduled.length > 0 && staffed && !reason) throw reasonRequired();
       if (patch.status === 'cancelled') data.status = 'cancelled';
       else if (row.status === 'draft' && start && end) data.status = 'scheduled';
 
-      if (Object.keys(data).length > 0) await trips.update(mutationContext(caller), row.id, data, client);
+      // The trips this change runs into: refused, or moved later first (latest first, so no step overlaps).
+      const shifted = rescheduled.length > 0 && staffed && start && end ? await this.shiftPlan(client, row, start, end, patch.shift_following === true) : [];
+      const ctx = mutationContext(caller);
+      for (const s of [...shifted].sort((a, b) => b.start.getTime() - a.start.getTime())) {
+        await trips.update(ctx, s.id, { scheduled_start: s.start, scheduled_end: s.end }, client);
+      }
+      if (Object.keys(data).length > 0) await trips.update(ctx, row.id, data, client);
       const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
 
       const events: DomainEvent[] = [];
-      if (rescheduled.length > 0) events.push(tripEvent(caller, TRIP_EVENTS.updated, { trip_id: view.id, changed_fields: rescheduled, status: view.status }));
+      if (rescheduled.length > 0) {
+        events.push(tripEvent(caller, TRIP_EVENTS.updated, { trip_id: view.id, changed_fields: rescheduled, status: view.status, ...(reason ? { reason } : {}) }));
+      }
+      for (const s of shifted) {
+        events.push(
+          tripEvent(caller, TRIP_EVENTS.updated, {
+            trip_id: s.publicId,
+            changed_fields: ['scheduled_end', 'scheduled_start'],
+            status: s.status,
+            reason: `Moved later: trip ${view.id} now ends at ${end!.toISOString()}.${reason ? ` ${reason}` : ''}`,
+            shifted_by_trip_id: view.id,
+          }),
+        );
+      }
       if (patch.status === 'cancelled') {
         events.push(tripEvent(caller, TRIP_EVENTS.cancelled, { trip_id: view.id, previous_status: row.status, route_id: view.route_id, driver_id: view.driver_id, vehicle_id: view.vehicle_id }));
       }
       if (events.length > 0) await this.deps.events.publish(client, events);
-      return view;
+      return {
+        trip: view,
+        shifted: shifted.map((s) => ({ trip_id: s.publicId, scheduled_start: s.start.toISOString(), scheduled_end: s.end.toISOString() })),
+      };
     });
+  }
+
+  /**
+   * The trips that must move for `row` to take [start, end] (FMS-139): each assigned trip of the same driver or
+   * vehicle it runs into, moved later to start a turnaround after it, and then the trips those run into. Without
+   * `shift` the first one is refused (409 naming it and the minutes it would move). A trip under way, or one that
+   * starts before this one, cannot be moved: always refused.
+   */
+  private async shiftPlan(client: Queryable, row: TripRow, start: Date, end: Date, shift: boolean): Promise<Slot[]> {
+    const own: Slot = { id: row.id, publicId: row.publicId, driverId: row.driverId, vehicleId: row.vehicleId, status: row.status, start, end };
+    const moved = new Map<string, Slot>([[own.id, own]]);
+    const queue: Slot[] = [own];
+    while (queue.length > 0) {
+      const slot = queue.shift()!;
+      for (const other of await this.deps.trips.clashing(client, slot.driverId, slot.vehicleId, slot.start, slot.end, [...moved.keys()])) {
+        const field = slot.driverId !== null && other.driverId === slot.driverId ? 'driver_id' : 'vehicle_id';
+        const shiftMs = shiftNeeded(slot.end, other.start);
+        const shiftable = other.status === 'assigned' && other.start.getTime() >= slot.start.getTime();
+        if (!shift || !shiftable) throw scheduleClash(field, other, shiftMs, shiftable);
+        const later = shiftedBy(other, shiftMs);
+        moved.set(later.id, later);
+        if (moved.size > MAX_SHIFTED + 1) throw tooManyShifted();
+        queue.push(later);
+      }
+    }
+    moved.delete(own.id);
+    return [...moved.values()];
+  }
+
+  /** A one-off route for an unplanned trip (FMS-139), in a depot of the caller's: its public id. */
+  private async adhocRoute(client: PoolClient, caller: Caller, route: AdhocRoute, depotPublicId: string | undefined): Promise<string> {
+    const scope = depotScope(caller.user);
+    const fleet = this.deps.fleet();
+    const depotId = depotPublicId
+      ? await fleet.depots.resolveInScope(client, depotPublicId, scope)
+      : scope.kind === 'depot'
+        ? scope.depotId
+        : null;
+    if (!depotId) throw adhocDepotRequired(depotPublicId !== undefined);
+    const stops = route.stops ?? [];
+    const row = await this.deps.routes.insert(
+      mutationContext(caller),
+      {
+        name: `${route.origin_name} → ${route.destination_name}`.slice(0, 255),
+        depot_id: depotId,
+        origin_name: route.origin_name,
+        origin_latitude: route.origin?.latitude ?? null,
+        origin_longitude: route.origin?.longitude ?? null,
+        destination_name: route.destination_name,
+        destination_latitude: route.destination?.latitude ?? null,
+        destination_longitude: route.destination?.longitude ?? null,
+        stops: JSON.stringify(stops.map((s) => ({ name: s.name, latitude: s.latitude, longitude: s.longitude }))),
+        is_adhoc: true,
+      },
+      client,
+    );
+    return String(row.public_id);
   }
 
   /**

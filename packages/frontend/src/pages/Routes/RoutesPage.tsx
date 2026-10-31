@@ -113,7 +113,14 @@ export function RoutesPage() {
       sortKey: 'distance_km',
       width: 'w-[96px] sm:w-[120px]',
       align: 'right',
-      cell: (r) => <span className={r.distance_km === null ? 'text-ink-subtle' : 'tabular font-medium text-ink'}>{formatDistance(r.distance_km)}</span>,
+      cell: (r) => (
+        <span className={r.distance_km === null ? 'text-ink-subtle' : 'tabular font-medium text-ink'}>
+          {formatDistance(r.distance_km)}
+          {r.distance_km !== null && (
+            <span className="block text-xs font-normal text-ink-subtle">{r.distance_source === 'road' ? 'by road' : 'typed in'}</span>
+          )}
+        </span>
+      ),
     },
     {
       key: 'time',

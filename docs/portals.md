@@ -8,9 +8,9 @@ The four portals of the architecture (§6, §7) are the sections of the route ta
 
 | Portal | Screens | Layout |
 |---|---|---|
-| Fleet management | Dashboard, Vehicles, Drivers, Attendance, Repair log, Spare parts, Routes, Fuel reconciliation | Staff |
+| Fleet management | Dashboard, Vehicles, Drivers, Attendance, Repair log, Vehicle health, Spare parts, Routes, Fuel reconciliation | Staff |
 | Command center | Dispatch (S-07), Live map (S-16) | Staff |
-| Administration | Users & roles | Staff |
+| Administration | Users & roles, Audit log (S-10) | Staff |
 | Driver | My day (S-11; DVIR, fuel and incident forms join here) | Driver |
 
 **Staff layout:**
@@ -71,13 +71,14 @@ With today's grants (`docs/permissions.md`), the menus are:
 
 | Role | Menu |
 |---|---|
-| admin, fleet_manager | every staff screen |
+| admin | every staff screen |
+| fleet_manager | every staff screen but the Audit log (`audit:read`, migration 025) |
 | dispatcher | Dashboard, Vehicles, Drivers, Attendance, Routes · Dispatch, Live map |
 | depot_admin | all of fleet management · Live map |
-| technician | Dashboard, Vehicles, Repair log, Spare parts |
+| technician | Dashboard, Vehicles, Repair log, Vehicle health, Spare parts |
 | finance_clerk | Dashboard, Fuel reconciliation |
-| compliance_officer | Dashboard, Vehicles, Drivers, Attendance, Repair log, Routes, Fuel reconciliation · Users & roles |
-| fleet_owner | Dashboard, Vehicles, Drivers, Repair log, Routes · Live map |
+| compliance_officer | Dashboard, Vehicles, Drivers, Attendance, Repair log, Vehicle health, Routes, Fuel reconciliation · Users & roles, Audit log |
+| fleet_owner | Dashboard, Vehicles, Drivers, Repair log, Vehicle health, Routes · Live map · Audit log |
 | driver | My day (driver portal) |
 
 `router/navigation.test.ts` reads `docs/permissions.md` and checks these menus. A grant change that moves a screen shows up there.

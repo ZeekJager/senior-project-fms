@@ -139,7 +139,20 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     }),
     windowMinutes: DAY,
     title: (_p, n) => `Unexpected fuel use on ${vehicleName(n)}`,
-    message: (p) => `${capitalize(humanize(str(p, 'anomaly_type') ?? 'fuel anomaly'))} detected. Check the fill-up against the trip.`,
+    message: (p) => {
+      // The monthly reconciliation (FMS-41): a month's fuel against what its trips needed.
+      const deviation = num(p, 'deviation_pct');
+      const km = num(p, 'distance_km');
+      const from = str(p, 'period_from');
+      if (deviation !== null && km !== null && from !== null) {
+        const month = new Date(from).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'Africa/Addis_Ababa' });
+        const driven = `${Math.round(km).toLocaleString('en-US')} km`;
+        return deviation > 0
+          ? `Fuel logged in ${month} was ${deviation}% more than its ${driven} of trips needed. Check its fill-ups against its trips.`
+          : `Fuel logged in ${month} was ${-deviation}% less than its ${driven} of trips needed: fill-ups may be missing. Check them against its trips.`;
+      }
+      return `${capitalize(humanize(str(p, 'anomaly_type') ?? 'fuel anomaly'))} detected. Check the fill-up against the trip.`;
+    },
     audience: ['depot_admin', 'fleet_manager'],
   },
 
@@ -162,7 +175,8 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     audience: ['dispatcher', 'depot_admin'],
   },
 
-  // Predictive maintenance (FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `component`.
+  // Predictive maintenance (FMS-55): `prediction_id`, `vehicle_id`, `risk_level`, `failure_probability`, `health_score`,
+  // `factors` (the inputs raising the risk most), `component` (null: the model names none).
   MaintenanceRiskDetected: {
     type: () => 'maintenance_risk',
     module: 'maintenance',
@@ -179,10 +193,51 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     title: (_p, n) => `Maintenance risk on ${vehicleName(n)}`,
     message: (p) => {
       const probability = num(p, 'failure_probability');
+      const score = num(p, 'health_score');
       const component = str(p, 'component');
-      return `${component ? `${capitalize(humanize(component))}: ` : ''}failure likely${probability !== null ? ` (${Math.round(probability * 100)}%)` : ''}. Schedule an inspection.`;
+      const factors = Array.isArray(p.factors) ? p.factors.filter((f): f is string => typeof f === 'string') : [];
+      const chance = probability !== null ? `a ${Math.round(probability * 100)}% chance of a breakdown within 30 days` : 'a breakdown is likely';
+      return [
+        component ? `${capitalize(humanize(component))}: ` : '',
+        score !== null ? `health score ${score}, ` : '',
+        chance,
+        factors.length ? `, mostly from ${factors.map(humanize).join(', ')}` : '',
+        '. Schedule an inspection.',
+      ]
+        .join('')
+        .replace(/^./, (c) => c.toUpperCase());
     },
     audience: ['technician', 'depot_admin'],
+  },
+
+  // The model registry (FMS-127): the nightly scoring did not score. `model_id`, `model_version`, `reason`
+  // (feature_spec_mismatch, artefact_mismatch, not_active). Fleet-wide: for administrators.
+  MlScoringBlocked: {
+    type: () => 'ml_scoring_blocked',
+    module: 'maintenance',
+    facts: (p) => ({
+      severity: str(p, 'reason') === 'not_active' ? 'medium' : 'high',
+      vehicleId: null,
+      driverId: null,
+      tripId: null,
+      depotId: null,
+      entity: str(p, 'model_id') ? { type: 'ml_model', id: str(p, 'model_id')! } : null,
+      dedupKey: `ml_scoring_blocked:${str(p, 'model_id')}:${str(p, 'reason')}`,
+    }),
+    windowMinutes: DAY,
+    title: (p) => `Maintenance scoring paused: model ${str(p, 'model_version') ?? 'unknown'}`,
+    message: (p) => {
+      const version = str(p, 'model_version') ?? 'unknown';
+      switch (str(p, 'reason')) {
+        case 'not_active':
+          return `Model ${version} is registered but not active. Review it and activate it to resume scoring.`;
+        case 'artefact_mismatch':
+          return `The ML service serves another model under version ${version}, which names a registered model. No vehicle is scored until it serves a new version.`;
+        default:
+          return `Model ${version} was trained on other inputs than the core computes. No vehicle is scored until a matching model is served.`;
+      }
+    },
+    audience: ['admin'],
   },
 
   // EV battery monitoring (FMS-96): `vehicle_id`, `metric`, `value`, `threshold`, `severity`.

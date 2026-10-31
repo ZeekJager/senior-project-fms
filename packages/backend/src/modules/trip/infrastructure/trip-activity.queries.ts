@@ -138,6 +138,39 @@ export async function enRouteTripOfDriver(db: Queryable, driverId: string): Prom
   return res.rows[0] ?? null;
 }
 
+/**
+ * A trip that has started, as the span of time it was driven (FMS-124): GPS ingestion places a ping in the
+ * trip it was recorded in, not the one under way when it arrives. `actualEnd` is null while the trip is under
+ * way; `ended` says it has finished since.
+ */
+export interface TripSpan {
+  id: string;
+  publicId: string;
+  vehicleId: string | null;
+  actualStart: Date;
+  actualEnd: Date | null;
+  ended: boolean;
+}
+
+const SPAN_SELECT = `SELECT t.id, t.public_id AS "publicId", t.vehicle_id AS "vehicleId", t.actual_start AS "actualStart",
+                            t.actual_end AS "actualEnd", (t.status = 'completed') AS ended
+                       FROM trip.trips t
+                      WHERE t.status IN ('en_route', 'completed') AND t.actual_start IS NOT NULL
+                        AND t.actual_start <= $2 AND (t.actual_end IS NULL OR t.actual_end >= $3)`;
+
+/** The trips a driver (internal id) drove at any time in [from, to]: started by `to`, and not ended before `from`. */
+export async function tripSpansOfDriver(db: Queryable, driverId: string, from: Date, to: Date): Promise<TripSpan[]> {
+  const res = await db.query<TripSpan>(`${SPAN_SELECT} AND t.driver_id = $1 ORDER BY t.actual_start, t.id`, [driverId, to, from]);
+  return res.rows;
+}
+
+/** The trips of these vehicles (internal ids) driven at any time in [from, to]. */
+export async function tripSpansOfVehicles(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<TripSpan[]> {
+  if (vehicleIds.length === 0) return [];
+  const res = await db.query<TripSpan>(`${SPAN_SELECT} AND t.vehicle_id = ANY($1::bigint[]) ORDER BY t.actual_start, t.id`, [vehicleIds, to, from]);
+  return res.rows;
+}
+
 /** A trip under way as the live map shows it (FMS-45): the route's name, and the driver by internal id (fleet names them). */
 export interface LiveTrip {
   vehicleId: string;

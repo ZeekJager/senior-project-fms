@@ -4,6 +4,7 @@ import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
+import type { ServiceItem } from '../domain/inventory';
 
 /** A maintenance.inventory_parts row (internal ids). */
 export interface PartRow {
@@ -16,6 +17,7 @@ export interface PartRow {
   unitCostCents: number | null;
   stockQuantity: number;
   reorderThreshold: number;
+  serviceItem: ServiceItem | null;
   isActive: boolean;
   version: number;
   createdAt: Date;
@@ -29,6 +31,7 @@ export interface PartWrite {
   depot_id?: string | null;
   unit_cost_cents?: number | null;
   reorder_threshold?: number;
+  service_item?: ServiceItem | null;
   is_active?: boolean;
   stock_quantity?: number;
 }
@@ -50,7 +53,7 @@ const SORT = { part_number: 'p.part_number', name: 'p.name', stock_quantity: 'p.
 const ROW_SQL = `
   SELECT p.id, p.public_id AS "publicId", p.part_number AS "partNumber", p.name, p.description, p.depot_id AS "depotId",
          p.unit_cost_cents AS "unitCostCents", p.stock_quantity AS "stockQuantity", p.reorder_threshold AS "reorderThreshold",
-         p.is_active AS "isActive", p.version, p.created_at AS "createdAt", p.updated_at AS "updatedAt"
+         p.service_item AS "serviceItem", p.is_active AS "isActive", p.version, p.created_at AS "createdAt", p.updated_at AS "updatedAt"
     FROM maintenance.inventory_parts p`;
 
 const containsPattern = (term: string) => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;

@@ -9,8 +9,10 @@ import { authorize } from '../../auth';
 import type { IngestionService, Reporter } from '../application/ingestion.service';
 import type { LiveMapService } from '../application/live-map.service';
 import type { TelemetryRulesService } from '../application/telemetry-rules.service';
+import type { TrackHistoryService } from '../application/track-history.service';
 import { deviceTokenInvalid } from '../domain/gps';
 import { apiPingBatch } from '../domain/ping-schema';
+import { decodeTrackCursor, TRACK_PAGE_DEFAULT, TRACK_PAGE_MAX } from '../domain/track-history';
 import type { DeviceRow } from '../infrastructure/device.repository';
 
 /** Runs an `authorize(...)` chain (sign in, then the permission check) as one middleware. */
@@ -71,13 +73,29 @@ const flagsQuery = z
     limit: q.limit,
   }));
 
+/** GET /vehicles/{vehicle_id}/tracking: a period of recorded_at (both ends included), a page size, the next page's cursor. */
+const trackQuery = z
+  .strictObject({
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional(),
+    limit: z.coerce.number().int().min(1).max(TRACK_PAGE_MAX).default(TRACK_PAGE_DEFAULT),
+    cursor: z.string().max(200).optional(),
+  })
+  .transform((q) => ({
+    from: q.from ? new Date(q.from) : null,
+    to: q.to ? new Date(q.to) : null,
+    limit: q.limit,
+    cursor: q.cursor ? decodeTrackCursor(q.cursor) : null,
+  }));
+
 /**
  * POST /tracking/gps-pings (api-contract §11.1, FMS-88): a batch of positions, answered with what was stored.
  * GET /tracking/vehicles/current (FMS-45): the live map's snapshot.
- * GET /vehicles/{vehicle_id}/telemetry-flags (FMS-46): the vehicle's speeding and idling flags. Behavioural
- * data (§24.3): tracking:read only, never drivers, in the caller's depot scope.
+ * GET /vehicles/{vehicle_id}/telemetry-flags (FMS-46): the vehicle's speeding and idling flags.
+ * GET /vehicles/{vehicle_id}/tracking (FMS-136): the vehicle's GPS history, oldest first, a page at a time.
+ * Behavioural data (§24.3): tracking:read only, never drivers, in the caller's depot scope.
  */
-export function trackingRouter(service: IngestionService, liveMap: LiveMapService, rules: TelemetryRulesService): Router {
+export function trackingRouter(service: IngestionService, liveMap: LiveMapService, rules: TelemetryRulesService, history: TrackHistoryService): Router {
   const router = Router();
   router.get(
     '/tracking/vehicles/current',
@@ -108,6 +126,17 @@ export function trackingRouter(service: IngestionService, liveMap: LiveMapServic
       const query = parseInput(flagsQuery, req.query);
       const data = await rules.listForVehicle(req.user!, vehicleId.data, query);
       res.json({ data, meta: { request_id: req.correlationId } });
+    }),
+  );
+  router.get(
+    '/vehicles/:vehicleId/tracking',
+    authorize('tracking:read'),
+    asyncHandler(async (req, res) => {
+      const vehicleId = z.uuid().safeParse(req.params.vehicleId);
+      if (!vehicleId.success) throw notFound('Vehicle not found.');
+      const query = parseInput(trackQuery, req.query);
+      const { points, nextCursor } = await history.forVehicle(req.user!, vehicleId.data, query);
+      res.json({ data: points, meta: { page_size: query.limit, next_cursor: nextCursor, request_id: req.correlationId } });
     }),
   );
   return router;
