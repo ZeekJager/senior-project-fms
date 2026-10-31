@@ -127,11 +127,12 @@ The map only draws what it is given. The page that shows it (the Fleet Command C
 
 ## Trip map
 
-Card: FMS-136 (SE-180). Code: `packages/frontend/src/components/TripMap/`. Import from `@/components/TripMap`. One trip on a map, on the vehicle page (S-22): the route it was planned on as a dashed line from origin to destination, the GPS track it drove as a solid line in the brand colour, a ring where it set off and a dot where it got to, and a legend for the lines it shows.
+Card: FMS-136 (SE-180). Code: `packages/frontend/src/components/TripMap/`. Import from `@/components/TripMap`. One trip on a map, on the vehicle page (S-22), and a route's road in the route panel (S-21): the route it was planned on as a dashed line, along its road when measured (FMS-84) and straight from origin to destination otherwise, the GPS track it drove as a solid line in the brand colour, a ring where it set off and a dot where it got to, and a legend for the lines it shows.
 
 | Prop | Notes |
 |---|---|
 | `planned` | `{origin, destination}`, each `[lat, lng]` or null: the route's ends (`GET /routes/{id}`) |
+| `road` | Optional `[lat, lng][]`: the route's road (`GET /routes/{id}/geometry`, `roadPoints` from `@/pages/Routes/api`), drawn instead of the straight line; the legend says "Planned route (road)" |
 | `track` | `[lat, lng][]`, oldest first: the trip's points from `GET /vehicles/{id}/tracking` between its actual start and end |
 | `label` | The map region's accessible name |
 | `className` | Size the map here; a height is required |

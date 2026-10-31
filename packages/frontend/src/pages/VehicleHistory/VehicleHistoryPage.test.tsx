@@ -10,8 +10,15 @@ import type { Vehicle } from '@/pages/Vehicles/types'
 // Leaflet draws lines with SVG or canvas, neither of which jsdom has: the page's tests check what it hands the map.
 vi.mock('@/components/TripMap', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/components/TripMap')>()),
-  TripMap: ({ planned, track, label }: TripMapProps) => (
-    <div role="region" aria-label={label} data-origin={planned.origin?.join(',') ?? ''} data-destination={planned.destination?.join(',') ?? ''} data-points={track.length} />
+  TripMap: ({ planned, road, track, label }: TripMapProps) => (
+    <div
+      role="region"
+      aria-label={label}
+      data-origin={planned.origin?.join(',') ?? ''}
+      data-destination={planned.destination?.join(',') ?? ''}
+      data-road={road?.map((p) => p.join(',')).join(' ') ?? ''}
+      data-points={track.length}
+    />
   ),
 }))
 
@@ -77,8 +84,10 @@ function serveVehicle() {
     http.get('/api/v1/trips', () => page([trip], { next_cursor: null })),
     http.get('/api/v1/drivers', () => page([{ id: DRIVER, full_name: 'Tigist Haile' }])),
     http.get(`/api/v1/routes/${ROUTE}`, () =>
-      envelope({ id: ROUTE, name: trip.route_name, origin: { latitude: 9.0108, longitude: 38.7613 }, destination: { latitude: 8.54, longitude: 39.27 }, stops: [] }),
+      envelope({ id: ROUTE, name: trip.route_name, origin: { latitude: 9.0108, longitude: 38.7613 }, destination: { latitude: 8.54, longitude: 39.27 }, stops: [], measured_at: '2026-10-30T09:00:00Z' }),
     ),
+    // The road it follows (FMS-84): GeoJSON, longitude first.
+    http.get(`/api/v1/routes/${ROUTE}/geometry`, () => envelope({ type: 'LineString', coordinates: [[38.7613, 9.0108], [39.0, 8.75], [39.27, 8.54]] })),
     http.get(`/api/v1/vehicles/${VEHICLE_ID}/tracking`, ({ request }) => {
       trackQueries.push(new URL(request.url).searchParams)
       return HttpResponse.json({
@@ -145,6 +154,8 @@ describe('Vehicle history (S-22)', () => {
     const map = await within(panel).findByRole('region', { name: 'Map of Addis Ababa – Adama' })
     await waitFor(() => expect(map).toHaveAttribute('data-points', '3'))
     expect(map).toHaveAttribute('data-origin', '9.0108,38.7613')
+    // The planned route along its road, [latitude, longitude] for the map.
+    expect(map).toHaveAttribute('data-road', '9.0108,38.7613 8.75,39 8.54,39.27')
     expect(map).toHaveAttribute('data-destination', '8.54,39.27')
     expect(api.trackQueries[0].get('from')).toBe(trip.actual_start)
     expect(api.trackQueries[0].get('to')).toBe(trip.actual_end)

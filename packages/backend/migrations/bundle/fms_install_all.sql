@@ -2647,3 +2647,28 @@ SELECT
     a.acknowledged_at
 FROM alert.alerts a
 LEFT JOIN fleet.vehicles v ON v.id = a.vehicle_id;
+
+-- ===== 045_route_roads.sql =====
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS measured_at TIMESTAMPTZ;
+ALTER TABLE trip.routes ADD COLUMN IF NOT EXISTS distance_source VARCHAR(10);
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_distance_source
+        CHECK (distance_source IS NULL OR distance_source IN ('road', 'manual'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_geometry_line
+        CHECK (geometry IS NULL OR (geometry->>'type' = 'LineString' AND jsonb_typeof(geometry->'coordinates') = 'array'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.routes ADD CONSTRAINT chk_route_measured
+        CHECK ((geometry IS NULL) = (measured_at IS NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+UPDATE trip.routes SET distance_source = 'manual' WHERE distance_km IS NOT NULL AND distance_source IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_trip_routes_unmeasured
+    ON trip.routes (id)
+    WHERE is_active AND geometry IS NULL AND origin_latitude IS NOT NULL AND destination_latitude IS NOT NULL;

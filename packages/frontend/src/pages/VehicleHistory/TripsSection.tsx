@@ -4,6 +4,7 @@ import { DataTable, EmptyState, StatusBadge, useCursorPages, type Column } from 
 import { Drawer, Skeleton } from '@/components/ui'
 import { TripMap, type LatLng } from '@/components/TripMap'
 import { useAuth } from '@/context/AuthContext'
+import { roadPoints, useRouteRoad } from '@/pages/Routes/api'
 import type { Vehicle } from '@/pages/Vehicles/types'
 import { useDriverNames, useRoute, useTrack, useVehicleTrips, type TripRecord } from './api'
 import { formatDateTime, formatDay, formatDuration, formatKm, formatTime } from './format'
@@ -132,6 +133,8 @@ function TripPanel({ vehicle, trip, driver, onClose }: { vehicle: Vehicle; trip:
   const { hasPermission } = useAuth()
   const canTrack = hasPermission('tracking:read')
   const route = useRoute(trip?.route_id ?? null, trip !== null && hasPermission('route:read'))
+  // The road its route follows today (FMS-84); the trip itself keeps only the two ends.
+  const road = useRouteRoad(route.data ?? null)
   // A trip under way has no end yet: its track so far.
   const until = trip?.actual_end ?? (trip?.status === 'en_route' ? new Date().toISOString() : null)
   const track = useTrack(vehicle.id, trip?.actual_start ?? null, until, trip !== null && canTrack)
@@ -170,13 +173,14 @@ function TripPanel({ vehicle, trip, driver, onClose }: { vehicle: Vehicle; trip:
             </Fact>
           </dl>
 
-          {route.isPending && route.fetchStatus !== 'idle' ? (
+          {(route.isPending && route.fetchStatus !== 'idle') || (road.isPending && road.fetchStatus !== 'idle') ? (
             <Skeleton className="h-80 w-full rounded-card" />
           ) : (
             <div className="space-y-2">
               <TripMap
                 label={`Map of ${trip.route_name ?? 'the trip'}`}
                 planned={{ origin: toLatLng(route.data?.origin ?? null), destination: toLatLng(route.data?.destination ?? null) }}
+                road={roadPoints(road.data)}
                 track={(track.data ?? []).map((p): LatLng => [p.lat, p.lng])}
                 className="h-80"
               />

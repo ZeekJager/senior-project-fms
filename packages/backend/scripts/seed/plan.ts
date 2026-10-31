@@ -19,6 +19,7 @@ import {
   type ServiceItem,
 } from './catalog';
 import { Rng } from './random';
+import { seedRoad } from './roads';
 
 // The whole dataset as plain data, from (profile, seed, anchor) alone: no
 // clock, no database. The same inputs always give the same plan, which is
@@ -224,12 +225,6 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const dateOf = (ms: number) => new Date(ms + ADDIS_OFFSET).toISOString().slice(0, 10);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-function haversineKm(a: Place, b: Place): number {
-  const rad = (d: number) => (d * Math.PI) / 180;
-  const h = Math.sin(rad(b.latitude - a.latitude) / 2) ** 2 + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(rad(b.longitude - a.longitude) / 2) ** 2;
-  return 2 * 6371 * Math.asin(Math.sqrt(h));
-}
-
 /** Keeps generated keys (emails, plates, VINs, licence numbers) unique. */
 function uniqueFrom(make: () => string): () => string {
   const seen = new Set<string>();
@@ -344,13 +339,15 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   }));
   const partIndex = new Map(parts.map((p, i) => [p.part_number, i]));
 
-  // Routes from each depot to other cities.
+  // Routes from each depot to other cities, as long as their road (FMS-84, roads.json); the plan's time at 55 km/h.
   const routes: PlannedRoute[] = [];
   depots.forEach((depot, d) => {
     const origin: Place = { city: depot.city, latitude: depot.latitude, longitude: depot.longitude };
     const destinations = rng.shuffle(CITIES.filter((c) => c.city !== depot.city)).slice(0, profile.routesPerDepot);
     for (const destination of destinations) {
-      const distance = Math.round(haversineKm(origin, destination) * 1.25);
+      const road = seedRoad(origin, destination);
+      if (!road) throw new Error(`No road from ${origin.city} to ${destination.city} in scripts/seed/roads.json: run npm run routes:roads`);
+      const distance = Math.round(road.distance_km);
       routes.push({
         depot: d,
         name: `${depot.city} – ${destination.city}`,

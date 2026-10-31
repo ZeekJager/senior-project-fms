@@ -7,8 +7,11 @@ import type { RequestUser } from '../../types/express';
 import { routeRouter } from './api/route.routes';
 import { tripRouter } from './api/trip.routes';
 import { config } from '../../config';
+import { cache } from '../../shared/cache';
+import { logger } from '../../shared/logging/logger';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
 import { TripService } from './application/trip.service';
+import { OsrmRoadPlanner, type RoadPlanner, type RoutingGatewayClient } from './infrastructure/osrm.planner';
 import { RouteRepository } from './infrastructure/route.repository';
 import { TripRepository } from './infrastructure/trip.repository';
 
@@ -29,6 +32,16 @@ export function provideMaintenanceRefs(refs: MaintenanceRefs): void {
   maintenanceRefs = refs;
 }
 
+let roadPlanner: RoadPlanner | null = null;
+
+/**
+ * Connects the routing engine (FMS-84) through the integration gateway, which imports trip. Called once by
+ * src/modules/index.ts when ROUTING_URL is set; never called (or null, as tests reset it), routes keep the distance typed in.
+ */
+export function provideRoutingClient(client: ((correlationId: string) => RoutingGatewayClient) | null): void {
+  roadPlanner = client ? new OsrmRoadPlanner(client, cache) : null;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -39,7 +52,13 @@ function maintenance(): MaintenanceRefs {
   return maintenanceRefs;
 }
 
-const routeService = new RouteService({ routes: new RouteRepository(pool), fleet, events: eventBus });
+const routeService = new RouteService({
+  routes: new RouteRepository(pool),
+  fleet,
+  events: eventBus,
+  roads: () => roadPlanner,
+  warn: (fields, message) => logger.warn(fields, message),
+});
 const tripRepository = new TripRepository(pool);
 const tripService = new TripService({
   trips: tripRepository,
@@ -53,7 +72,18 @@ const router = Router();
 router.use(routeRouter(routeService));
 router.use(tripRouter(tripService));
 
-export const tripModule: AppModule = { name: 'trip', router };
+export const tripModule: AppModule = {
+  name: 'trip',
+  router,
+  jobs: [
+    {
+      // FMS-84: the road of routes saved while the routing engine was down or before it was set up.
+      name: 'route-roads',
+      every: 60,
+      run: (context) => routeService.measureMissing(context.correlationId),
+    },
+  ],
+};
 
 /**
  * For the fuel module: a trip the user may see (null if missing or out of
@@ -70,6 +100,7 @@ export const tripLookups = {
 };
 
 export { ROUTE_EVENTS } from './domain/route';
+export { ROUTING_TIMEOUT_MS } from './infrastructure/osrm.planner';
 export { TRIP_EVENTS, type TripSummary } from './domain/trip';
 
 /**

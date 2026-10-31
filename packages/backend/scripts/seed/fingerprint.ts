@@ -35,7 +35,8 @@ const QUERIES: Record<string, string> = {
   documents: `SELECT v.registration_number, doc.document_type, doc.original_filename, doc.content_type, doc.size_bytes, doc.sha256, doc.expires_on::text
                 FROM document.documents doc JOIN fleet.vehicles v ON doc.owner_type = 'vehicle' AND v.id = doc.owner_id
                ORDER BY v.registration_number, doc.document_type`,
-  routes: `SELECT r.name, d.code AS depot, r.distance_km, r.estimated_duration_seconds FROM trip.routes r
+  // The road (FMS-84) by its hash: the line itself is kilobytes per route.
+  routes: `SELECT r.name, d.code AS depot, r.distance_km, r.estimated_duration_seconds, r.distance_source, r.measured_at, md5(r.geometry::text) AS road FROM trip.routes r
              JOIN fleet.depots d ON d.id = r.depot_id ORDER BY d.code, r.name`,
   trips: `SELECT r.name AS route, v.registration_number, dr.license_number, t.status, t.scheduled_start, t.scheduled_end,
                  t.actual_start, t.actual_end, t.planned_distance_km, t.actual_distance_km, t.actual_duration_seconds
@@ -50,7 +51,7 @@ const QUERIES: Record<string, string> = {
                 f.odometer_km, f.station_name, f.source, f.recorded_at
            FROM fuel.fuel_logs f JOIN fleet.vehicles v ON v.id = f.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = f.driver_id
           ORDER BY f.recorded_at, v.registration_number`,
-  // GPS tracks (FMS-136): about 55,000 pings on the budget profile, so per vehicle, not row by row.
+  // GPS tracks (FMS-136): about 71,000 pings on the budget profile, so per vehicle, not row by row.
   gps: `SELECT v.registration_number, count(*) AS pings, min(p.recorded_at) AS first, max(p.recorded_at) AS last,
                sum(p.latitude) AS lat, sum(p.longitude) AS lng, sum(p.speed_kmh) AS speed, sum(p.heading_degrees) AS heading
           FROM tracking.gps_pings p JOIN fleet.vehicles v ON v.id = p.vehicle_id

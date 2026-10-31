@@ -4,6 +4,7 @@ import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
+import type { DistanceSource, LineString } from '../domain/road';
 import type { RouteStop } from '../domain/route';
 
 /** A trip.routes row (internal ids). Numerics are read as float8, so they arrive as numbers. */
@@ -21,6 +22,9 @@ export interface RouteRow {
   stops: RouteStop[];
   distanceKm: number | null;
   estimatedDurationSeconds: number | null;
+  distanceSource: DistanceSource | null;
+  /** When the road (geometry) was measured; null while it is not. */
+  measuredAt: Date | null;
   isActive: boolean;
   version: number;
   createdAt: Date;
@@ -40,7 +44,22 @@ export interface RouteWrite {
   stops?: string;
   distance_km?: number | null;
   estimated_duration_seconds?: number | null;
+  distance_source?: DistanceSource | null;
+  /** GeoJSON text, as `stops`. */
+  geometry?: string | null;
+  measured_at?: Date | null;
   is_active?: boolean;
+}
+
+/** An active route whose road is still to be measured (the route-roads job). */
+export interface UnmeasuredRoute {
+  id: string;
+  originLatitude: number;
+  originLongitude: number;
+  destinationLatitude: number;
+  destinationLongitude: number;
+  stops: RouteStop[];
+  distanceSource: DistanceSource | null;
 }
 
 export interface RouteListFilter extends Page {
@@ -60,6 +79,7 @@ const ROW_SQL = `
          r.destination_name AS "destinationName", r.destination_latitude::float8 AS "destinationLatitude",
          r.destination_longitude::float8 AS "destinationLongitude", r.stops,
          r.distance_km::float8 AS "distanceKm", r.estimated_duration_seconds AS "estimatedDurationSeconds",
+         r.distance_source AS "distanceSource", r.measured_at AS "measuredAt",
          r.is_active AS "isActive", r.version, r.created_at AS "createdAt", r.updated_at AS "updatedAt"
     FROM trip.routes r`;
 
@@ -109,6 +129,29 @@ export class RouteRepository extends Repository {
   async findById(db: Queryable, id: string): Promise<RouteRow> {
     const res = await db.query<RouteRow>(`${ROW_SQL} WHERE r.id = $1`, [id]);
     return res.rows[0];
+  }
+
+  /** The road of a route the scope may see: undefined when the route is not visible, null when it has no road yet. */
+  async geometryOf(db: Queryable, publicId: string, scope: Scope): Promise<LineString | null | undefined> {
+    const clause = scopeClause(scope, 'r.depot_id', 2);
+    const res = await db.query<{ geometry: LineString | null }>(`SELECT r.geometry FROM trip.routes r WHERE r.public_id = $1 AND ${clause.sql}`, [publicId, ...clause.params]);
+    return res.rows.length === 0 ? undefined : res.rows[0].geometry;
+  }
+
+  /** Up to `limit` active routes with both ends and no road yet, oldest change first, locked and skipped by another run. */
+  async unmeasured(db: Queryable, limit: number): Promise<UnmeasuredRoute[]> {
+    const res = await db.query<UnmeasuredRoute>(
+      `SELECT r.id, r.origin_latitude::float8 AS "originLatitude", r.origin_longitude::float8 AS "originLongitude",
+              r.destination_latitude::float8 AS "destinationLatitude", r.destination_longitude::float8 AS "destinationLongitude",
+              r.stops, r.distance_source AS "distanceSource"
+         FROM trip.routes r
+        WHERE r.is_active AND r.geometry IS NULL AND r.origin_latitude IS NOT NULL AND r.destination_latitude IS NOT NULL
+        ORDER BY r.updated_at, r.id
+        LIMIT $1
+          FOR UPDATE SKIP LOCKED`,
+      [limit],
+    );
+    return res.rows;
   }
 
   insert(ctx: MutationContext, data: RouteWrite, client: PoolClient): Promise<Row> {

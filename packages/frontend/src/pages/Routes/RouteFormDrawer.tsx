@@ -1,9 +1,10 @@
 import { AlertCircle, Archive, ArrowDown, ArrowUp, MapPin, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
-import { Button, Drawer, IconButton, SelectField, TextField, useToast } from '@/components/ui'
+import { Button, Drawer, IconButton, SelectField, Skeleton, TextField, useToast } from '@/components/ui'
+import { TripMap, type LatLng } from '@/components/TripMap'
 import type { Depot } from '@/features/depots'
 import { ApiError } from '@/lib/api/errors'
-import { useCreateRoute, useUpdateRoute, type Route } from './api'
+import { roadPoints, useCreateRoute, useRouteRoad, useUpdateRoute, type Route } from './api'
 import {
   EMPTY_FORM,
   MAX_STOPS,
@@ -245,7 +246,7 @@ export function RouteFormDrawer({ open, onClose, route, depots, defaultDepotId, 
             value={values.distance_km}
             onChange={(e) => set('distance_km', e.target.value)}
             error={errors.distance_km}
-            hint="Used to check fuel use. Measured automatically once maps are connected."
+            hint={distanceHint(route)}
             trailing={<span className="text-xs">km</span>}
           />
           <div className="grid grid-cols-2 gap-x-4">
@@ -253,8 +254,39 @@ export function RouteFormDrawer({ open, onClose, route, depots, defaultDepotId, 
             <TextField label="Minutes" optional inputMode="numeric" value={values.minutes} onChange={(e) => set('minutes', e.target.value)} error={errors.minutes} trailing={<span className="text-xs">min</span>} />
           </div>
         </Section>
+
+        {route?.measured_at && <RoadPreview route={route} />}
       </form>
     </Drawer>
+  )
+}
+
+/** What the distance is and what leaving it blank does (FMS-84). */
+function distanceHint(route: Route | null): string {
+  if (route?.distance_source === 'road') return 'Measured along the road. Type a distance to use your own instead.'
+  if (route?.distance_source === 'manual') return 'Typed in. Clear it to measure the road between the coordinates.'
+  return 'Used to check fuel use. Leave it blank to measure the road between the origin and destination coordinates.'
+}
+
+/** The road the saved route follows, as measured (FMS-84). */
+function RoadPreview({ route }: { route: Route }) {
+  const road = useRouteRoad(route)
+  const point = (c: Route['origin']): LatLng | null => (c ? [c.latitude, c.longitude] : null)
+  return (
+    <Section title="Road">
+      {road.isPending ? (
+        <Skeleton className="h-56 w-full rounded-card" />
+      ) : (
+        <TripMap
+          label={`Road of ${route.name}`}
+          planned={{ origin: point(route.origin), destination: point(route.destination) }}
+          road={roadPoints(road.data)}
+          track={[]}
+          className="h-56"
+        />
+      )}
+      <p className="mt-2 text-xs text-ink-subtle">The road as it was when the route was saved. It is measured again when the origin, destination or stops change.</p>
+    </Section>
   )
 }
 

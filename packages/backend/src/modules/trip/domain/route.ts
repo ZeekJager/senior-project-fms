@@ -1,4 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
+import type { DistanceSource } from './road';
 
 /** A point on the map. Both parts or neither. */
 export interface Coordinates {
@@ -23,9 +24,13 @@ export interface RouteView {
   destination_name: string | null;
   destination: Coordinates | null;
   stops: RouteStop[];
-  /** Entered by hand until the mapping adapter (FMS-84) measures it. */
+  /** Measured along the road (FMS-84) unless typed in: distance_source says which. */
   distance_km: number | null;
   estimated_duration_seconds: number | null;
+  /** 'road' when measured with the road, 'manual' when typed in; null when unknown. */
+  distance_source: DistanceSource | null;
+  /** When the road was measured: its line is at GET /routes/{id}/geometry. Null while it is not. */
+  measured_at: Date | null;
   /** False once retired: kept for the trips that used it, not offered for new ones. */
   is_active: boolean;
   version: number;

@@ -1,6 +1,7 @@
 import type { Place } from './catalog';
 import type { SeedPlan } from './plan';
 import { Rng } from './random';
+import { roadLine } from './roads';
 
 /** A seeded GPS ping of a completed trip (FMS-136): what a driver's phone would have reported. */
 export interface TrackPoint {
@@ -11,36 +12,27 @@ export interface TrackPoint {
   heading: number;
 }
 
-/** One ping every five minutes (4.6 km at 55 km/h): a city-to-city track still reads as a line, and the budget profile stays near 55,000 pings, each a row trigger (the current location). */
+/** One ping every five minutes (4.6 km at 55 km/h): a city-to-city track still reads as a line, and the budget profile stays near 71,000 pings, each a row trigger (the current location). */
 export const TRACK_INTERVAL_SECONDS = 300;
 /** Trips longer than this stop once on the way, for 15 to 30 minutes. */
 const REST_STOP_AFTER_SECONDS = 3 * 3600;
-/** Points on a route's road between its two cities. */
-const ROAD_POINTS = 64;
 
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
+const roads = new Map<string, Place[]>();
+
 /**
- * The road a route follows: a gentle curve between its two cities, the same for every trip on the route. Its
- * own generator (seed and route), so tracks never change what the rest of the plan draws.
+ * The road a route follows (FMS-84): measured with OSRM on OpenStreetMap and committed (roads.json), from its
+ * origin to its destination, the same for every trip on the route.
  */
-export function routeRoad(seed: number, routeIndex: number, origin: Place, destination: Place): Place[] {
-  const rng = new Rng((seed ^ Math.imul(routeIndex + 1, 0x9e3779b1)) >>> 0);
-  const dLat = destination.latitude - origin.latitude;
-  const dLng = destination.longitude - origin.longitude;
-  const length = Math.hypot(dLat, dLng);
-  // The unit normal to the straight line, and how far the road swings off it.
-  const [nLat, nLng] = length === 0 ? [0, 0] : [-dLng / length, dLat / length];
-  const amplitude = length * rng.between(0.04, 0.09) * (rng.chance(0.5) ? 1 : -1);
-  const waves = rng.between(1, 2.5);
-  const phase = rng.between(0, Math.PI);
-  const wiggle = length * rng.between(0.005, 0.015);
-  return Array.from({ length: ROAD_POINTS + 1 }, (_, i) => {
-    const f = i / ROAD_POINTS;
-    // Zero at both ends: the road starts and ends in the cities.
-    const off = Math.sin(Math.PI * f) * (amplitude * Math.sin(Math.PI * f * waves + phase) + wiggle * Math.sin(Math.PI * f * 9));
-    return { city: '', latitude: origin.latitude + dLat * f + nLat * off, longitude: origin.longitude + dLng * f + nLng * off };
-  });
+export function routeRoad(origin: Place, destination: Place): Place[] {
+  const key = `${origin.city}|${destination.city}`;
+  let road = roads.get(key);
+  if (!road) {
+    road = roadLine(origin, destination).coordinates.map(([longitude, latitude]) => ({ city: '', latitude, longitude }));
+    roads.set(key, road);
+  }
+  return road;
 }
 
 /** Where a fraction (0 to 1) of the road's length lies, and the road's cumulative lengths. */
@@ -80,7 +72,7 @@ export function tripTrack(plan: SeedPlan, tripIndex: number): TrackPoint[] {
   const trip = plan.trips[tripIndex];
   if (trip.status !== 'completed' || trip.vehicle === null || !trip.actual_start || !trip.actual_end || trip.actual_distance_km === null) return [];
   const route = plan.routes[trip.route];
-  const at = walker(routeRoad(plan.seed, trip.route, route.origin, route.destination));
+  const at = walker(routeRoad(route.origin, route.destination));
   const rng = new Rng((plan.seed ^ Math.imul(tripIndex + 1, 0x85ebca6b)) >>> 0);
 
   const start = Date.parse(trip.actual_start);

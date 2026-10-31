@@ -105,3 +105,10 @@ test('ML service: off unless ML_SERVICE_URL is set, then a 32-character token (F
   assert.ok(problems(() => loadAppConfig({ ...validEnv, ML_SERVICE_URL: 'ftp://ai-service', ML_SERVICE_TOKEN: token })).some((p) => p.startsWith('ML_SERVICE_URL')));
   assert.equal(loadAppConfig({ ...validEnv, ML_FEATURE_SPEC_PATH: '/srv/feature_spec.json' }).ml.featureSpecPath, '/srv/feature_spec.json');
 });
+
+test('Road routing: off unless ROUTING_URL is set, an empty value included (FMS-84)', () => {
+  assert.equal(loadAppConfig(validEnv).routing, null);
+  assert.equal(loadAppConfig({ ...validEnv, ROUTING_URL: '' }).routing, null);
+  assert.deepEqual(loadAppConfig({ ...validEnv, ROUTING_URL: 'http://osrm:5000/' }).routing, { url: 'http://osrm:5000' });
+  assert.ok(problems(() => loadAppConfig({ ...validEnv, ROUTING_URL: 'ftp://osrm' })).some((p) => p.startsWith('ROUTING_URL')));
+});

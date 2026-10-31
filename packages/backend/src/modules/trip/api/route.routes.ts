@@ -34,7 +34,7 @@ const fields = {
   destination_name: placeName,
   destination: coordinates.nullable().optional(),
   stops: z.array(stop).max(25).optional(),
-  /** Entered by hand until the mapping adapter (FMS-84) measures it. */
+  /** Typed in (manual): wins over the road the routing engine measures (FMS-84), which fills it when left out. */
   distance_km: z.number().min(0).max(100_000).refine(decimals(3), { message: 'At most 3 decimals.', params: { reason: 'too_many_decimals' } }).nullable().optional(),
   estimated_duration_seconds: z.number().int().min(0).max(30 * 24 * 3600).nullable().optional(),
 };
@@ -109,6 +109,17 @@ export function routeRouter(service: RouteService): Router {
     asyncHandler(async (req, res) => {
       const route = await service.get(caller(req), routeId(req));
       res.set('ETag', etagFor(route.version)).json({ data: route, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // FMS-84: the road the route follows, as a GeoJSON LineString ([longitude, latitude] pairs); null until measured.
+  // Apart from the route itself: a line across the country is tens of kilobytes, which lists should not carry.
+  router.get(
+    '/routes/:routeId/geometry',
+    authorize('route:read'),
+    asyncHandler(async (req, res) => {
+      const line = await service.geometry(caller(req), routeId(req));
+      res.json({ data: line, meta: { request_id: req.correlationId } });
     }),
   );
 

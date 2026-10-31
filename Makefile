@@ -1,4 +1,4 @@
-.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed
+.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing
 
 # Create .env from .env.example with generated secrets. An existing .env keeps
 # its values and gains any key added to .env.example since (e.g. REDIS_PASSWORD).
@@ -61,3 +61,12 @@ SIZE ?= small
 SEED ?= 20261007
 seed:
 	docker exec -e FMS_SEED_PASSWORD fms_backend npm run seed -- --reset --size=$(SIZE) --seed=$(SEED)
+
+# Road routing (FMS-84, docs/routing.md): download Ethiopia's OpenStreetMap
+# extract and build OSRM's road graph once (kept in the fms_osrm_data volume),
+# then start OSRM. Steps already done are skipped.
+routing: env
+	docker volume create fms_osrm_data >/dev/null
+	docker-compose --profile routing-setup run --rm osrm-download
+	docker-compose --profile routing-setup run --rm osrm-prepare
+	docker-compose --profile routing up -d osrm
