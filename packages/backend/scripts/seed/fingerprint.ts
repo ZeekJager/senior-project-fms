@@ -30,7 +30,8 @@ const QUERIES: Record<string, string> = {
                FROM maintenance.failure_events f JOIN fleet.vehicles v ON v.id = f.vehicle_id
                JOIN maintenance.maintenance_records r ON r.id = f.maintenance_record_id
               ORDER BY f.occurred_at, v.registration_number, f.component`,
-  attendance: `SELECT dr.license_number, a.attendance_date::text, a.status FROM fleet.driver_attendance a
+  attendance: `SELECT dr.license_number, a.attendance_date::text, a.status, a.check_in_at, a.check_in_method, a.check_out_at, a.check_out_method
+                 FROM fleet.driver_attendance a
                  JOIN fleet.drivers dr ON dr.id = a.driver_id ORDER BY dr.license_number, a.attendance_date`,
   documents: `SELECT v.registration_number, doc.document_type, doc.original_filename, doc.content_type, doc.size_bytes, doc.sha256, doc.expires_on::text
                 FROM document.documents doc JOIN fleet.vehicles v ON doc.owner_type = 'vehicle' AND v.id = doc.owner_id

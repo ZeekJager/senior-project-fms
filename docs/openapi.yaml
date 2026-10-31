@@ -22,6 +22,7 @@ tags:
   - name: Inspections
   - name: Vehicles
   - name: Dispatch
+  - name: Attendance
   - name: Integrations
   - name: Tracking
   - name: Command center
@@ -644,6 +645,84 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TripMoveRefused' }
+
+  /attendance/qr:
+    get:
+      tags: [Attendance]
+      operationId: getAttendanceCode
+      summary: The depot's check-in code (FMS-141)
+      description: >
+        The code the depot screen (S-24) shows as a QR, for drivers to scan with the driver app. HMAC-signed, naming
+        the depot and a 30-second window: a new one from refresh_at, each accepted until expires_at (60 s after its
+        window began). generated_at is the server's clock, so a screen times its refresh from it. Sent with
+        Cache-Control no-store. Needs attendance:qr (admin, fleet manager, dispatcher, depot admin; never drivers).
+        The caller's own depot unless depot_id names one in their scope; someone without a depot must name one.
+      parameters:
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The code now, and the depot's start time and grace.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/AttendanceCode' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (depot_id required for someone without a depot; references_missing_record for one outside the scope).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /attendance/check-in:
+    post:
+      tags: [Attendance]
+      operationId: checkIn
+      summary: Check in or out by scanning the depot's code (FMS-141)
+      description: >
+        A driver's scan (S-25). The first scan of the day checks them in with the time, present, or late after the
+        depot's work_starts_at plus late_after_minutes (Addis Ababa); a record made by hand without a time is
+        checked in by it. The next scan, at least 10 minutes later, checks them out. Only the driver's own depot's
+        code, and only while it is valid. Audited and published as AttendanceRecorded. Needs attendance:check-in
+        (drivers); someone without a driver profile is 403.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string, maxLength: 200, description: The text read from the QR. }
+      responses:
+        '200':
+          description: What the scan did, and the day's record.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [action, attendance]
+                    properties:
+                      action: { type: string, enum: [checked_in, checked_out] }
+                      attendance: { $ref: '#/components/schemas/Attendance' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED on code (invalid, not a code this server signed; expired; other_depot, not the driver's own depot's).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: FORBIDDEN_INSUFFICIENT_ROLE (no attendance:check-in, or no driver profile).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_ATTENDANCE_DUPLICATE (just_checked_in, a scan within 10 minutes of checking in; already_checked_out), or CONFLICT_INVALID_STATE_TRANSITION for a retired driver.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /dispatch/availability:
     get:
@@ -3798,6 +3877,38 @@ components:
         recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
         created_at: { type: string, format: date-time, description: When the server received it. }
 
+    AttendanceCode:
+      type: object
+      description: The depot's check-in code now (FMS-141).
+      required: [depot_id, depot_name, work_starts_at, late_after_minutes, code, generated_at, issued_at, refresh_at, expires_at]
+      properties:
+        depot_id: { type: string, format: uuid }
+        depot_name: { type: string }
+        work_starts_at: { type: string, description: 'HH:MM, Addis Ababa.' }
+        late_after_minutes: { type: integer }
+        code: { type: string, description: 'FMSA1.<depot id>.<window>.<signature>: what the QR holds.' }
+        generated_at: { type: string, format: date-time, description: The server's clock when it answered. }
+        issued_at: { type: string, format: date-time, description: When this code's 30-second window began. }
+        refresh_at: { type: string, format: date-time, description: When the next code is out. }
+        expires_at: { type: string, format: date-time, description: The last moment a scan of it is accepted. }
+    Attendance:
+      type: object
+      description: One driver's record for one day (FMS-21), with check-in and check-out (FMS-141).
+      required: [id, driver_id, date, status, notes, check_in_at, check_in_method, check_out_at, check_out_method, logged_by, logged_by_name, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        date: { type: string, format: date, description: The calendar day in Addis Ababa. }
+        status: { type: string, enum: [present, absent, on_leave, late, sick, other] }
+        notes: { type: [string, 'null'] }
+        check_in_at: { type: [string, 'null'], format: date-time }
+        check_in_method: { type: [string, 'null'], enum: [qr, manual, null], description: 'qr: scanned at the depot; manual: entered by staff.' }
+        check_out_at: { type: [string, 'null'], format: date-time }
+        check_out_method: { type: [string, 'null'], enum: [qr, manual, null] }
+        logged_by: { type: string, format: uuid, description: Whoever recorded it last. }
+        logged_by_name: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     AnalyticsMeta:
       type: object
       required: [request_id, from, to, days, computed_at, stale, data_freshness]

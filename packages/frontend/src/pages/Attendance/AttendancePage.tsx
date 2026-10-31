@@ -1,6 +1,6 @@
-import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, Search, Users } from 'lucide-react'
+import { Building2, CalendarCheck, CalendarDays, ChevronLeft, ChevronRight, QrCode, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ConfirmDialog, EmptyState, ErrorState, ListToolbar } from '@/components/shared'
 import { Button, Card, cn, FilterSelect, IconButton, Skeleton, useToast } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
@@ -8,7 +8,7 @@ import { useDepots } from '@/features/depots'
 import { formatDate, today } from '@/features/documents/expiry'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { AttendanceCard } from './AttendanceCard'
-import { ATTENDANCE_STATUSES, ROSTER_PAGE_SIZE, useDayCounts, useMarkAttendance, useRoster, type AttendanceStatus, type RosterEntry, type RosterFilters } from './api'
+import { ATTENDANCE_STATUSES, ROSTER_PAGE_SIZE, useDayCounts, useMarkAttendance, useRecordCheckTime, useRoster, type AttendanceStatus, type RosterEntry, type RosterFilters } from './api'
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -56,6 +56,7 @@ export function AttendancePage() {
   const [params, setParams] = useSearchParams()
   const filters = useMemo(() => readFilters(params), [params])
   const canWrite = hasPermission('attendance:write')
+  const canShowCode = hasPermission('attendance:qr')
   const isToday = filters.date === today()
   const future = filters.date > today()
 
@@ -75,6 +76,7 @@ export function AttendancePage() {
   const depots = useDepots()
   const depotMap = useMemo(() => new Map((depots.data ?? []).map((d) => [d.id, d.name])), [depots.data])
   const mark = useMarkAttendance()
+  const recordTime = useRecordCheckTime()
   const [bulkBusy, setBulkBusy] = useState(false)
   const [confirmingBulk, setConfirmingBulk] = useState(false)
 
@@ -135,6 +137,15 @@ export function AttendancePage() {
             <Button variant="ghost" onClick={() => update({ date: today() })}>
               Today
             </Button>
+          )}
+          {canShowCode && (
+            <Link
+              to={filters.depotId ? `/attendance/qr?depot=${filters.depotId}` : '/attendance/qr'}
+              className="focus-ring inline-flex h-10 items-center gap-2 rounded-control border border-line-strong bg-surface px-3.5 text-sm font-medium text-ink shadow-soft hover:bg-surface-muted coarse:h-11"
+            >
+              <QrCode className="h-4 w-4 text-brand-ink" aria-hidden="true" />
+              Check-in code
+            </Link>
           )}
         </nav>
       </header>
@@ -236,6 +247,7 @@ export function AttendancePage() {
                   canWrite={canWrite}
                   future={future}
                   onMark={(e, status: AttendanceStatus) => mark.mutateAsync({ entry: e, status })}
+                  onRecordTime={canWrite && isToday ? (e, kind) => recordTime.mutateAsync({ entry: e, kind }) : undefined}
                 />
               ))}
             </div>

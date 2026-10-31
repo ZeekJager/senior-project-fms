@@ -239,6 +239,25 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
       await auditedMutation(client, ctx, 'fleet.vehicles', 'UPDATE', vehicles[i], { created_at: v.registered_at });
     }
 
+    // Check-in and check-out times (FMS-141), as the depot scans or a supervisor recorded them; the records
+    // themselves went through the API above.
+    let checkedIn = 0;
+    for (const a of plan.attendance) {
+      if (!a.check_in_at) continue;
+      const row = await client.query<{ id: string }>('SELECT id FROM fleet.driver_attendance WHERE driver_id = $1 AND attendance_date = $2::date', [
+        drivers[a.driver],
+        a.date,
+      ]);
+      await auditedMutation(client, ctx, 'fleet.driver_attendance', 'UPDATE', row.rows[0].id, {
+        check_in_at: new Date(a.check_in_at),
+        check_in_method: a.method,
+        check_out_at: a.check_out_at ? new Date(a.check_out_at) : null,
+        check_out_method: a.check_out_at ? a.method : null,
+      });
+      checkedIn += 1;
+    }
+    log(`attendance check-ins: ${checkedIn}`);
+
     const routes: string[] = [];
     for (const r of plan.routes) {
       const row = await auditedMutation(client, ctx, 'trip.routes', 'INSERT', null, {

@@ -17,6 +17,9 @@ export interface DepotView {
   longitude: number | null;
   /** Vehicles the yard holds. */
   capacity: number | null;
+  /** When the depot's day starts (HH:MM, Addis Ababa) and how many minutes after it a check-in is still on time (FMS-141). */
+  work_starts_at: string;
+  late_after_minutes: number;
   /** False once deleted (soft): its records stay, it leaves lists and pickers. */
   is_active: boolean;
   /** Bumped on every change; also the ETag. */

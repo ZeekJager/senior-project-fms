@@ -99,6 +99,8 @@ Through the application's own HTTP API, served in the seed process on a loopback
 
 Routes, trips and fuel logs have no API yet. They are inserted with `auditedMutation`, which writes the same audit entry a service would. GPS pings are inserted 5,000 to a statement with one `tracking.pings_ingested` audit entry each, as the ingestion audits a batch. Only the first admin is inserted directly, because the API needs someone to sign in as.
 
+Present and late drivers get a check-in time (present 07:00 to 08:09, late 08:20 to 09:29, from the driver's number, not the random draws), and on days before the anchor a check-out between 17:00 and 17:59; every tenth driver's are recorded by hand, the rest as QR scans (FMS-141). They are set with `auditedMutation` after the records are created through the API, since a seed run has no driver phones to scan with.
+
 Then every read model is rebuilt (`rebuildReadModels()`), because those inserts publish no events. That includes the meter readings of the fuel logs and completed repairs (FMS-126). Each vehicle's registered odometer is a manual reading. Each completed repair reads the odometer the vehicle had on its date: its base reading plus the trips completed by then.
 
 ## Repeatable

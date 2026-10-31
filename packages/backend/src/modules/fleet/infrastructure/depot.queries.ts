@@ -32,6 +32,19 @@ export async function resolveDepotInScope(db: Queryable, publicId: string, scope
   return res.rows[0]?.id ?? null;
 }
 
+/** When a depot's day starts and how late a check-in may be (FMS-141), by internal id; null for an unknown or deleted depot. */
+export async function depotAttendanceRules(
+  db: Queryable,
+  depotId: string,
+): Promise<{ publicId: string; name: string; workStartsAt: string; lateAfterMinutes: number } | null> {
+  const res = await db.query<{ publicId: string; name: string; workStartsAt: string; lateAfterMinutes: number }>(
+    `SELECT public_id AS "publicId", name, to_char(work_starts_at, 'HH24:MI') AS "workStartsAt", late_after_minutes AS "lateAfterMinutes"
+       FROM fleet.depots WHERE id = $1 AND is_active`,
+    [depotId],
+  );
+  return res.rows[0] ?? null;
+}
+
 /** A live depot's public id from its code (as people write it in a spreadsheet), case-insensitively. */
 export async function depotPublicIdByCode(db: Queryable, code: string): Promise<string | null> {
   const res = await db.query<{ public_id: string }>(

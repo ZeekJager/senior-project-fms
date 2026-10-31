@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
+import type { AttendanceRecord, RosterEntry } from '@/pages/Attendance/api'
 import { readPostTrip } from './checklist'
 
 // The driver's day (FMS-35, S-11): today's trips, and start and end with one tap.
@@ -170,4 +171,29 @@ export function useWorkingTrip(tripId: string | null) {
     loading: today.isPending && today.fetchStatus !== 'paused',
     offline: today.isPending && today.fetchStatus === 'paused',
   }
+}
+
+/** The driver's own record for today (GET /attendance: a driver sees only their own line), or null. */
+export function useMyAttendance(enabled = true) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['attendance', 'mine', operatingToday()],
+    queryFn: async () => (await api.request<RosterEntry[]>('/attendance?date=today&page_size=1'))[0]?.attendance ?? null,
+    enabled,
+  })
+}
+
+/** POST /attendance/check-in (FMS-141): the scanned depot code. Checks in, or out at the next scan. */
+export function useCheckIn() {
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (code: string) => api.request<CheckInResult>('/attendance/check-in', { method: 'POST', json: { code } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['attendance'] }),
+  })
+}
+
+export interface CheckInResult {
+  action: 'checked_in' | 'checked_out'
+  attendance: AttendanceRecord
 }

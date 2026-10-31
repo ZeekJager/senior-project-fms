@@ -28,7 +28,7 @@ function entry(overrides: Partial<RosterEntry> = {}): RosterEntry {
 }
 
 function record(status: AttendanceRecord['status'], id = `a-${++seq}`): AttendanceRecord {
-  return { id, status, notes: null, logged_by: 'u-9', logged_by_name: 'Depot Clerk', created_at: '2026-10-10T05:12:00Z', updated_at: '2026-10-10T05:12:00Z' }
+  return { id, status, notes: null, check_in_at: null, check_in_method: null, check_out_at: null, check_out_method: null, logged_by: 'u-9', logged_by_name: 'Depot Clerk', created_at: '2026-10-10T05:12:00Z', updated_at: '2026-10-10T05:12:00Z' }
 }
 
 /** A fake roster over `entries` (mutated by the write handlers), with the status filters and counts. */
@@ -56,6 +56,44 @@ async function openAttendance(user = depotAdmin, path = '/attendance') {
 const card = (name: string) => screen.getByRole('article', { name: new RegExp(`^${name}:`) })
 
 describe('Attendance roll call (S-06)', () => {
+  it('shows when each driver checked in and out and how; staff record an arrival by hand, and open the check-in code (FMS-141)', async () => {
+    const scanned = entry({ full_name: 'Abebe Kebede', attendance: { ...record('late'), check_in_at: '2026-10-31T05:31:00Z', check_in_method: 'qr' } })
+    const waiting = entry({ full_name: 'Tigist Haile' })
+    serveRoster([scanned, waiting])
+    let posted: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/v1/attendance', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        waiting.attendance = { ...record('present'), check_in_at: String(posted.check_in_at), check_in_method: 'manual' }
+        return envelope(waiting.attendance)
+      }),
+    )
+    const user = userEvent.setup()
+    await openAttendance(currentUser(['depot_admin'], ['attendance:read', 'attendance:write', 'attendance:qr', 'driver:read', 'depot:read']))
+    await screen.findByRole('article', { name: /^Abebe Kebede:/ })
+
+    const abebe = card('Abebe Kebede')
+    expect(within(abebe).getByText('08:31')).toBeInTheDocument()
+    expect(within(abebe).getByText('QR scan')).toBeInTheDocument()
+    expect(within(abebe).getByRole('button', { name: 'Record leaving for Abebe Kebede' })).toBeInTheDocument()
+
+    await user.click(within(card('Tigist Haile')).getByRole('button', { name: 'Record arrival for Tigist Haile' }))
+    await waitFor(() => expect(posted).toMatchObject({ driver_id: waiting.driver_id, date: today(), check_in_at: expect.any(String) }))
+    expect(posted).not.toHaveProperty('status')
+    expect(await within(card('Tigist Haile')).findByText('By hand')).toBeInTheDocument()
+
+    expect(screen.getByRole('link', { name: 'Check-in code' })).toHaveAttribute('href', '/attendance/qr')
+  })
+
+  it('without attendance:write and attendance:qr the times are read-only and there is no code link', async () => {
+    serveRoster([entry({ full_name: 'Abebe Kebede', attendance: { ...record('present'), check_in_at: '2026-10-31T04:50:00Z', check_in_method: 'manual' } })])
+    await openAttendance(dispatcher)
+    const abebe = await screen.findByRole('article', { name: /^Abebe Kebede:/ })
+    expect(within(abebe).getByText('07:50')).toBeInTheDocument()
+    expect(within(abebe).queryByRole('button', { name: /Record/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Check-in code' })).not.toBeInTheDocument()
+  })
+
   it("shows today's drivers as cards, and a click on an unmarked driver records them (POST)", async () => {
     const a = entry({ full_name: 'Abebe Kebede' })
     const entries = [a, entry({ full_name: 'Tigist Haile', attendance: record('absent') })]

@@ -18,6 +18,8 @@ export interface DepotWrite {
   latitude?: number | null;
   longitude?: number | null;
   capacity?: number | null;
+  work_starts_at?: string;
+  late_after_minutes?: number;
 }
 
 export interface DepotListFilter extends Page {
@@ -29,7 +31,8 @@ export interface DepotListFilter extends Page {
 
 const VIEW_SQL = `
   SELECT d.public_id AS id, d.name, d.code, d.location, d.address, d.city, d.country, d.timezone,
-         d.latitude::float8 AS latitude, d.longitude::float8 AS longitude, d.capacity, d.is_active,
+         d.latitude::float8 AS latitude, d.longitude::float8 AS longitude, d.capacity,
+         to_char(d.work_starts_at, 'HH24:MI') AS work_starts_at, d.late_after_minutes, d.is_active,
          d.version, d.created_at, d.updated_at
     FROM fleet.depots d`;
 

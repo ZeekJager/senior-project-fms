@@ -146,6 +146,11 @@ export interface PlannedAttendance {
   driver: number;
   date: string;
   status: 'present' | 'late' | 'absent' | 'on_leave' | 'sick';
+  /** A present or late driver's arrival, and on days before the anchor their leaving (FMS-141); null otherwise. */
+  check_in_at: string | null;
+  check_out_at: string | null;
+  /** Scanned at the depot, or every tenth driver recorded by hand. */
+  method: 'qr' | 'manual';
 }
 
 export interface PlannedRoute {
@@ -520,7 +525,18 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   const attendance: PlannedAttendance[] = [];
   for (let d = profile.attendanceDays - 1; d >= 0; d--) {
     drivers.forEach((_, driver) => {
-      attendance.push({ driver, date: dateOf(at(-d, 12)), status: rng.weighted({ present: 82, late: 6, absent: 4, on_leave: 5, sick: 3 }) });
+      const status = rng.weighted<PlannedAttendance['status']>({ present: 82, late: 6, absent: 4, on_leave: 5, sick: 3 });
+      // Times from the driver's number, not the generator, so every draw after this one stays as it was. With the
+      // depots' 08:00 start and 15 minutes' grace: present arrive 07:00-08:09, late 08:20-09:29; out 17:00-17:59.
+      const arrived = status === 'present' ? 7 + ((driver * 7) % 70) / 60 : status === 'late' ? 8 + (20 + ((driver * 11) % 70)) / 60 : null;
+      attendance.push({
+        driver,
+        date: dateOf(at(-d, 12)),
+        status,
+        check_in_at: arrived === null ? null : new Date(at(-d, arrived)).toISOString(),
+        check_out_at: arrived === null || d === 0 ? null : new Date(at(-d, 17 + ((driver * 13) % 60) / 60)).toISOString(),
+        method: driver % 10 === 0 ? 'manual' : 'qr',
+      });
     });
   }
 

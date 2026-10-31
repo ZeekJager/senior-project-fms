@@ -48,7 +48,8 @@ import { VEHICLE_EVENTS } from './domain/vehicle';
 import type { OpenWorkSummary, ServiceDueSummary } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
-import { depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
+import { attendanceCodeKey } from './domain/attendance-code';
+import { depotAttendanceRules, depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
 import { AttendanceRepository } from './infrastructure/attendance.repository';
 import { availabilityStore } from './infrastructure/availability.repository';
 import { DepotRepository } from './infrastructure/depot.repository';
@@ -247,10 +248,11 @@ eventBus.subscribe(DOCUMENT_EVENTS.uploaded, 'fleet.document-expiry', async (eve
 
 const attendanceService = new AttendanceService({
   attendance: attendanceRepository,
-  drivers: { findByPublicId: (db, id) => driverRepository.findByPublicId(db, id) },
+  drivers: { findByPublicId: (db, id) => driverRepository.findByPublicId(db, id), findByUserId: (db, id) => driverRepository.findByUserId(db, id) },
   users: userDirectory,
-  depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
+  depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds, attendanceRules: depotAttendanceRules },
   events: eventBus,
+  codeKey: attendanceCodeKey(config.jwtSecret),
 });
 
 // An inspection that finds issues sets the maintenance flag inside its own transaction (FMS-36),

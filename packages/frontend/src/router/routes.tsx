@@ -1,15 +1,15 @@
-import { Activity, Boxes, CalendarCheck, CalendarClock, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, CalendarCheck, CalendarClock, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
-import { AttendancePage } from '@/pages/Attendance'
+import { AttendancePage, CheckInCodePage } from '@/pages/Attendance'
 import { AuditLogPage } from '@/pages/AuditLog'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
+import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
 import { DashboardPage } from '@/pages/placeholders'
@@ -80,6 +80,13 @@ export const portals: Portal[] = [
         element: <AttendancePage />,
         permission: { all: ['attendance:read', 'driver:read'] },
         nav: { label: 'Attendance', icon: CalendarCheck },
+      },
+      {
+        // S-24 (FMS-141): the depot's check-in code, for a screen at the gate; opened from Attendance. attendance:qr:
+        // admin, fleet manager, dispatcher, depot admin. Never drivers: with the code they could check in from anywhere.
+        path: '/attendance/qr',
+        element: <CheckInCodePage />,
+        permission: 'attendance:qr',
       },
       {
         // S-08. Technicians log repairs; depot admins and fleet managers also read and write (FMS-24).
@@ -172,6 +179,8 @@ export const portals: Portal[] = [
     routes: [
       // S-11 (FMS-35): today's trip, START and END.
       { path: '/driver', element: <DriverHome />, permission: 'trip:execute', nav: { label: 'My day', icon: Home } },
+      // S-25 (FMS-141): check in and out by scanning the depot's code. Needs signal: the code changes every 30 s.
+      { path: '/driver/check-in', element: <DriverCheckIn />, permission: 'attendance:check-in', nav: { label: 'Check in', icon: ScanLine } },
       // S-12 (FMS-37): the pre- and post-trip inspection, submitted through the offline queue.
       { path: '/driver/dvir', element: <DriverInspection />, permission: 'dvir:write', nav: { label: 'Inspection', icon: ClipboardCheck } },
       // S-14 (FMS-40): a fill-up at the pump, submitted through the offline queue.

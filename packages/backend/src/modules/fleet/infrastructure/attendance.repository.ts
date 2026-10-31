@@ -4,7 +4,7 @@ import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { AttendanceStatus } from '../domain/attendance';
+import type { AttendanceStatus, CheckMethod } from '../domain/attendance';
 import { EXPIRING_SOON_DAYS, type LicenseStatus } from '../domain/driver';
 
 /** A fleet.driver_attendance row with internal ids; the service turns it into a view. */
@@ -17,9 +17,21 @@ export interface AttendanceRow {
   date: string;
   status: AttendanceStatus;
   notes: string | null;
+  checkInAt: Date | null;
+  checkInMethod: CheckMethod | null;
+  checkOutAt: Date | null;
+  checkOutMethod: CheckMethod | null;
   loggedBy: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** The check-in and check-out columns a write may set (FMS-141). */
+export interface CheckTimes {
+  check_in_at?: Date | null;
+  check_in_method?: CheckMethod | null;
+  check_out_at?: Date | null;
+  check_out_method?: CheckMethod | null;
 }
 
 /** A roster line: a driver, and their record for the day if there is one. */
@@ -48,6 +60,7 @@ export interface RosterFilter extends Page {
 const ROW_SQL = `
   SELECT t.id, t.public_id AS "publicId", t.driver_id AS "driverId", d.public_id AS "driverPublicId",
          d.user_id AS "driverUserId", t.attendance_date::text AS date, t.status, t.notes,
+         t.check_in_at AS "checkInAt", t.check_in_method AS "checkInMethod", t.check_out_at AS "checkOutAt", t.check_out_method AS "checkOutMethod",
          t.logged_by AS "loggedBy", t.created_at AS "createdAt", t.updated_at AS "updatedAt"
     FROM fleet.driver_attendance t
     JOIN fleet.drivers d ON d.id = t.driver_id`;
@@ -81,6 +94,12 @@ export class AttendanceRepository extends Repository {
   /** Locks a record for an update in the same transaction. */
   async lockForWrite(client: PoolClient, publicId: string): Promise<AttendanceRow | null> {
     const res = await client.query<AttendanceRow>(`${ROW_SQL} WHERE t.public_id = $1 FOR UPDATE OF t`, [publicId]);
+    return res.rows[0] ?? null;
+  }
+
+  /** Locks a driver's record for a day, if there is one: a scan reads and writes it in one transaction. */
+  async lockForDay(client: PoolClient, driverId: string, date: string): Promise<AttendanceRow | null> {
+    const res = await client.query<AttendanceRow>(`${ROW_SQL} WHERE t.driver_id = $1 AND t.attendance_date = $2::date FOR UPDATE OF t`, [driverId, date]);
     return res.rows[0] ?? null;
   }
 
@@ -125,6 +144,10 @@ export class AttendanceRepository extends Repository {
       publicId: string | null;
       status: AttendanceStatus | null;
       notes: string | null;
+      checkInAt: Date | null;
+      checkInMethod: CheckMethod | null;
+      checkOutAt: Date | null;
+      checkOutMethod: CheckMethod | null;
       loggedBy: string | null;
       createdAt: Date | null;
       updatedAt: Date | null;
@@ -132,6 +155,7 @@ export class AttendanceRepository extends Repository {
       `SELECT d.public_id AS "driverPublicId", a.full_name AS "fullName", a.email, a.depot_id AS "depotId",
               ${LICENSE_STATUS_SQL} AS "licenseStatus",
               t.id, t.public_id AS "publicId", t.status, t.notes, t.logged_by AS "loggedBy",
+              t.check_in_at AS "checkInAt", t.check_in_method AS "checkInMethod", t.check_out_at AS "checkOutAt", t.check_out_method AS "checkOutMethod",
               t.created_at AS "createdAt", t.updated_at AS "updatedAt"
          FROM ${from}
         WHERE ${whereSql}
@@ -155,6 +179,10 @@ export class AttendanceRepository extends Repository {
                 publicId: r.publicId!,
                 status: r.status!,
                 notes: r.notes,
+                checkInAt: r.checkInAt,
+                checkInMethod: r.checkInMethod,
+                checkOutAt: r.checkOutAt,
+                checkOutMethod: r.checkOutMethod,
                 loggedBy: r.loggedBy!,
                 createdAt: r.createdAt!,
                 updatedAt: r.updatedAt!,
@@ -174,11 +202,15 @@ export class AttendanceRepository extends Repository {
     return new Map(res.rows.map((r) => [r.driverId, r.status]));
   }
 
-  insert(ctx: MutationContext, data: { driver_id: string; attendance_date: string; status: AttendanceStatus; notes: string | null; logged_by: string }, client: PoolClient): Promise<Row> {
+  insert(
+    ctx: MutationContext,
+    data: { driver_id: string; attendance_date: string; status: AttendanceStatus; notes: string | null; logged_by: string } & CheckTimes,
+    client: PoolClient,
+  ): Promise<Row> {
     return this.mutate(ctx, 'fleet.driver_attendance', 'INSERT', null, { ...data }, client);
   }
 
-  update(ctx: MutationContext, id: string, data: { status?: AttendanceStatus; notes?: string | null; logged_by: string }, client: PoolClient): Promise<Row> {
+  update(ctx: MutationContext, id: string, data: { status?: AttendanceStatus; notes?: string | null; logged_by: string } & CheckTimes, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'fleet.driver_attendance', 'UPDATE', id, { ...data }, client);
   }
 }

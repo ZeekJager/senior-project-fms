@@ -19,10 +19,23 @@ export const STATUS_LABELS: Record<AttendanceStatus, string> = {
   other: 'Other',
 }
 
+/** How a check-in or check-out was recorded (FMS-141): scanned at the depot, or entered by staff. */
+export type CheckMethod = 'qr' | 'manual'
+
+export const METHOD_LABELS: Record<CheckMethod, string> = { qr: 'QR scan', manual: 'By hand' }
+
+/** A clock time in Addis Ababa, 24-hour: 07:52. */
+export const clockTime = (iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Addis_Ababa', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso))
+
 export interface AttendanceRecord {
   id: string
   status: AttendanceStatus
   notes: string | null
+  check_in_at: string | null
+  check_in_method: CheckMethod | null
+  check_out_at: string | null
+  check_out_method: CheckMethod | null
   logged_by: string
   logged_by_name: string
   created_at: string
@@ -88,6 +101,61 @@ export function useDayCounts(filters: Omit<RosterFilters, 'status' | 'page'>) {
   })
   const [total, present, absent, onLeave, unmarked] = results.map((r) => r.data)
   return { counts: { total, present, absent, onLeave, unmarked }, isLoading: results.some((r) => r.isPending) }
+}
+
+/** GET /attendance/qr (FMS-141): the code the depot screen shows, for drivers to scan. */
+export interface AttendanceCode {
+  depot_id: string
+  depot_name: string
+  work_starts_at: string
+  late_after_minutes: number
+  code: string
+  /** The server's clock when it answered; the windows below are on that clock. */
+  generated_at: string
+  issued_at: string
+  refresh_at: string
+  expires_at: string
+}
+
+/**
+ * The depot's code, fetched again when the server says the next one is out (every 30 seconds), timed from the
+ * server's clock so a wall tablet with a wrong clock still keeps up. `fetchedAt` is this device's clock at the answer.
+ */
+export function useAttendanceCode(depotId: string, enabled = true) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['attendance', 'code', depotId],
+    queryFn: async () => {
+      const code = await api.request<AttendanceCode>(`/attendance/qr${depotId ? `?depot_id=${depotId}` : ''}`)
+      return { ...code, fetchedAt: Date.now() }
+    },
+    refetchInterval: (query) => {
+      const code = query.state.data
+      if (!code) return 5_000
+      return Math.max(1_000, Date.parse(code.refresh_at) - Date.parse(code.generated_at) - (Date.now() - code.fetchedAt) + 250)
+    },
+    refetchIntervalInBackground: true,
+    enabled,
+    retry: false,
+    gcTime: 0,
+  })
+}
+
+/**
+ * Staff record a driver's arrival or leaving by hand (FMS-141), now: when the driver's phone has no signal.
+ * Arriving creates the day's record if there is none (present, or late after the depot's grace).
+ */
+export function useRecordCheckTime() {
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ entry, kind }: { entry: RosterEntry; kind: 'check_in_at' | 'check_out_at' }) => {
+      const now = new Date().toISOString()
+      if (entry.attendance) return api.request<AttendanceRecord>(`/attendance/${entry.attendance.id}`, { method: 'PATCH', json: { [kind]: now } })
+      return api.request<AttendanceRecord>('/attendance', { method: 'POST', json: { driver_id: entry.driver_id, date: entry.date, check_in_at: now } })
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['attendance'] }),
+  })
 }
 
 /**

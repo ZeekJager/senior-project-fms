@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, ScanLine, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
@@ -7,7 +7,8 @@ import type { GpsState } from '@/features/phoneGps/broadcaster'
 import { usePhoneGps } from '@/features/phoneGps/PhoneGps'
 import { ApiError } from '@/lib/api/errors'
 import { useConnectivity } from '@/pwa/useConnectivity'
-import { useTodayTrips, useTripCommand, useTripVehicle, type DriverTrip, type TripWarning } from './api'
+import { clockTime } from '@/pages/Attendance/api'
+import { useMyAttendance, useTodayTrips, useTripCommand, useTripVehicle, type DriverTrip, type TripWarning } from './api'
 import { readPostTrip, writePostTrip, type PostTrip } from './checklist'
 import { Note, Panel } from './parts'
 
@@ -62,7 +63,7 @@ function warningText(w: TripWarning): string {
  * this phone.
  */
 export function DriverHome() {
-  const { session, api } = useAuth()
+  const { session, api, hasPermission } = useAuth()
   const online = useConnectivity(api)
   const today = useTodayTrips()
   const start = useTripCommand('start')
@@ -108,6 +109,8 @@ export function DriverHome() {
           Saved on this phone at {timeFmt.format(new Date(today.dataUpdatedAt))}. It updates when you have signal.
         </p>
       )}
+
+      {hasPermission('attendance:check-in') && <CheckInStrip />}
 
       {postTrip && <PostTripPrompt tripId={postTrip.tripId} onLater={() => setPostTrip(null)} />}
 
@@ -273,6 +276,30 @@ function ActionButton({ trip, busy, online, onPress }: { trip: DriverTrip; busy:
       </button>
       {!online && <p className="mt-2 text-center text-sm text-ink-muted">Needs signal: the time is recorded by the server.</p>}
     </div>
+  )
+}
+
+/** Whether the driver has checked in at the depot today (FMS-141), and the way to do it. */
+function CheckInStrip() {
+  const mine = useMyAttendance()
+  const record = mine.data ?? null
+  const text = record?.check_out_at
+    ? `Checked out at ${clockTime(record.check_out_at)}`
+    : record?.check_in_at
+      ? `Checked in at ${clockTime(record.check_in_at)}${record.status === 'late' ? ' · late' : ''}`
+      : 'Not checked in yet'
+  return (
+    <Link
+      to="/driver/check-in"
+      className="focus-ring flex min-h-14 items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-card hover:bg-surface-muted"
+    >
+      <ScanLine className="h-6 w-6 shrink-0 text-brand-ink" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-base font-semibold text-ink">{record?.check_in_at && !record.check_out_at ? 'Check out' : 'Check in'}</span>
+        <span className="block truncate text-sm text-ink-muted">{mine.isPending ? 'Checking…' : text}</span>
+      </span>
+      <ChevronRight className="h-5 w-5 shrink-0 text-ink-subtle" aria-hidden="true" />
+    </Link>
   )
 }
 

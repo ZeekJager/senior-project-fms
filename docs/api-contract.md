@@ -245,8 +245,8 @@ Audit reader rules (FMS-28):
 Depot rules (FMS-20):
 
 - **Who:** every signed-in user reads depots (lists filter by them). Only `depot:write` writes, which **admin and fleet_owner** hold (migration 019 moved it from fleet_manager, who now gets `403`).
-- **`Depot`:** `id`, `name`, `code`, `location`, `address`, `city`, `country`, `timezone`, `latitude`, `longitude`, `capacity`, `is_active`, `version`, `created_at`, `updated_at`.
-- **Fields:** `name` and `location` required (1-255 characters). `code` optional, letters, digits and hyphens, stored trimmed and upper case, unique (`409 CONFLICT_DUPLICATE`, `field: "code"`). `timezone` an IANA zone (`Africa/Addis_Ababa`). `latitude` and `longitude` both or neither (`400`, `reason: "coordinates_pair"`). `capacity` a whole number of vehicles. `is_active` and anything else is `not_writable`.
+- **`Depot`:** `id`, `name`, `code`, `location`, `address`, `city`, `country`, `timezone`, `latitude`, `longitude`, `capacity`, `work_starts_at`, `late_after_minutes`, `is_active`, `version`, `created_at`, `updated_at`.
+- **Fields:** `name` and `location` required (1-255 characters). `code` optional, letters, digits and hyphens, stored trimmed and upper case, unique (`409 CONFLICT_DUPLICATE`, `field: "code"`). `timezone` an IANA zone (`Africa/Addis_Ababa`). `latitude` and `longitude` both or neither (`400`, `reason: "coordinates_pair"`). `capacity` a whole number of vehicles. `work_starts_at` (`HH:MM`, Addis Ababa, default `08:00`) and `late_after_minutes` (0-240, default 15): a check-in after the one plus the other is late (FMS-141); never null, so a `PUT` that leaves them out keeps them. `is_active` and anything else is `not_writable`.
 - **List:** live depots by name, every depot by default; `in_scope=true` narrows to the caller's depot scope (a depot admin's own), which the screens' depot pickers use. `status=inactive|all` lists deleted depots too and needs `depot:write` (`403` otherwise). `search` matches name, code, location or city.
 - **Read:** a deleted depot is `404` except to `depot:write`.
 - **PATCH and PUT:** `PATCH` changes the fields sent; `PUT` replaces the depot, clearing optional fields it leaves out. Both take `If-Match` (`409 CONFLICT_CONCURRENT_MODIFICATION` when stale). A deleted depot cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`); reactivate it first.
@@ -335,6 +335,8 @@ Vehicle downtime (FMS-131, [downtime.md](downtime.md)):
 | `GET /attendance/{attendance_id}` | Attendance detail | `attendance:read` | `Attendance` |
 | `PUT /attendance/{attendance_id}` | Replace status and notes | `attendance:write` | `{status,notes?}` -> `Attendance` |
 | `PATCH /attendance/{attendance_id}` | Update attendance | `attendance:write` | `AttendanceUpdate` -> `Attendance` |
+| `GET /attendance/qr` | The depot's check-in code (FMS-141) | `attendance:qr` | `depot_id` -> `AttendanceCode`; `Cache-Control: no-store` |
+| `POST /attendance/check-in` | Check in or out by scanning it (FMS-141) | `attendance:check-in` | `{code}` -> `{action, attendance}` |
 
 A driver's `depot_id` is their home depot, stored once on the driver's user account (`auth.users.depot_id`). `POST /drivers` and `PATCH /drivers` write it there, and `GET /drivers?depot_id=` filters through it.
 
@@ -360,10 +362,18 @@ Attendance rules (FMS-21):
 - **Who:** `attendance:read` reads, `attendance:write` writes: admin, fleet manager and depot admin for the drivers homed in their depots; a dispatcher reads only (`403` on writes). A driver may read and record only their own day. A driver outside the caller's depots is `400 references_missing_record` on `driver_id` (write) or `404` (by id).
 - **Days:** `date` is a calendar day in Addis Ababa; `today` in a query means that. `present`, `absent`, `late` and `sick` are recorded for today or earlier (`400`, `reason: "in_future"`); `on_leave` and `other` can be booked up to 60 days ahead (`too_far_ahead` beyond).
 - **One per driver and day:** a second `POST` is `409 CONFLICT_ATTENDANCE_DUPLICATE`; change the record with `PUT` (status, notes) or `PATCH`. A retired driver is `409 CONFLICT_INVALID_STATE_TRANSITION`. `logged_by` is whoever wrote last; each write is one audit row.
-- **`Attendance`:** `id`, `driver_id`, `date`, `status` (`present`, `absent`, `on_leave`, `late`, `sick`, `other`), `notes` (up to 500), `logged_by`, `logged_by_name`, `created_at`, `updated_at`.
+- **`Attendance`:** `id`, `driver_id`, `date`, `status` (`present`, `absent`, `on_leave`, `late`, `sick`, `other`), `notes` (up to 500), `check_in_at`, `check_in_method`, `check_out_at`, `check_out_method` (`qr` or `manual`; FMS-141), `logged_by`, `logged_by_name`, `created_at`, `updated_at`.
 - **Roster:** `GET /attendance` returns every active driver the caller may see (home depot in scope and still active), by name, each with the day's `attendance` or `null`: `{ driver_id, full_name, email, depot_id, license_status, date, attendance }`. `status=unmarked` lists drivers without a record. Paged (§18); `meta.date` is the day shown.
 - **Dispatch warning:** every `Driver` carries `attendance_today`; `absent`, `on_leave` and `sick` are a warning in dispatch (FMS-33), not a block.
-- **Events:** `AttendanceRecorded` with `attendance_id`, `driver_id`, `date`, `status` and `previous_status` (null on create).
+- **Events:** `AttendanceRecorded` with `attendance_id`, `driver_id`, `date`, `status`, `previous_status` (null on create), `check_in_at`, `check_in_method`, `check_out_at` and `check_out_method`.
+
+Check-in by QR scan (FMS-141, [attendance-check-in.md](attendance-check-in.md)):
+
+- **The code:** `GET /attendance/qr` (`attendance:qr`: admin, fleet manager, dispatcher, depot admin; never drivers) gives the depot's code for the screen at the gate (S-24): `FMSA1.<depot id>.<window>.<signature>`, HMAC-SHA256 over the depot and a 30-second window with a key derived from the JWT secret. A new one every 30 seconds (`refresh_at`); each is accepted for 60 seconds from its window's start (`expires_at`). `generated_at` is the server's clock. The caller's own depot, or `depot_id` in their scope; someone without a depot must name one (`400`, `reason: "required"`).
+- **The scan:** `POST /attendance/check-in` with `{ "code" }` (`attendance:check-in`: drivers, for their own day). The first scan of the day checks in (`check_in_at` now, `check_in_method: "qr"`): `present`, or `late` after the depot's `work_starts_at` plus `late_after_minutes`. A record made by hand without a time (marked absent, say) is checked in by it. The next scan, 10 minutes or more after the check-in, checks out. Answers `{ action: "checked_in" | "checked_out", attendance }`.
+- **Refused:** `400 VALIDATION_FAILED` on `code` with `invalid` (not a code this server signed), `expired` (more than 60 s old, or a window not begun) or `other_depot` (not the driver's own depot's); `409 CONFLICT_ATTENDANCE_DUPLICATE` with `just_checked_in` (within 10 minutes of checking in) or `already_checked_out`; `403` for someone with no driver profile; `409 CONFLICT_INVALID_STATE_TRANSITION` for a retired driver. Nothing is written.
+- **By hand:** staff with `attendance:write` record `check_in_at` and `check_out_at` (instants; `null` clears) on `POST`, `PUT` or `PATCH`, stored as `manual`. Each must be on the record's day in Addis Ababa and not in the future (`not_on_date`, `in_future`); a check-out needs a check-in and comes after it (`without_check_in`, `before_check_in`). `POST` may leave `status` out when it gives `check_in_at`, and a check-in time without a status makes the day `present` or `late` by the depot's rule. Marking a status by hand never sets a time. A driver cannot enter times (`403`, `reason: "scan_only"`), even on their own day.
+- **Offline:** a scan needs a connection (the code expires); the driver app refuses it at once and points to the supervisor, who records it by hand.
 
 ### 6.4 DVIR
 

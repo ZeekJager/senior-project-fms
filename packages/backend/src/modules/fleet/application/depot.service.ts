@@ -29,6 +29,8 @@ export interface DepotCreate {
   latitude?: number | null;
   longitude?: number | null;
   capacity?: number | null;
+  work_starts_at?: string;
+  late_after_minutes?: number;
 }
 
 export type DepotUpdate = Partial<DepotCreate>;
@@ -181,7 +183,8 @@ function mutationContext(caller: Caller): MutationContext {
 
 function toColumns(input: DepotUpdate): DepotWrite {
   const data: DepotWrite = {};
-  for (const key of ['name', 'location', ...OPTIONAL_FIELDS] as const) {
+  // The day's start and grace are never null: a PUT that leaves them out keeps them.
+  for (const key of ['name', 'location', 'work_starts_at', 'late_after_minutes', ...OPTIONAL_FIELDS] as const) {
     if (input[key] !== undefined) (data as Record<string, unknown>)[key] = input[key];
   }
   return data;
