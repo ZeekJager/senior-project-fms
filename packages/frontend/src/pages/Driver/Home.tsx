@@ -1,8 +1,10 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ClipboardCheck, Clock, MapPin, Navigation, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import type { GpsState } from '@/features/phoneGps/broadcaster'
+import { usePhoneGps } from '@/features/phoneGps/PhoneGps'
 import { ApiError } from '@/lib/api/errors'
 import { useConnectivity } from '@/pwa/useConnectivity'
 import { useTodayTrips, useTripCommand, useTripVehicle, type DriverTrip, type TripWarning } from './api'
@@ -192,6 +194,7 @@ function TripCard({ trip, children }: { trip: DriverTrip; children: ReactNode })
           {time(trip.scheduled_end)}
         </p>
         {underWay && trip.actual_start && <p className="mt-1 text-sm text-ink-muted">Started at {time(trip.actual_start)}</p>}
+        {underWay && <LocationLine />}
       </div>
 
       <div className="space-y-5 px-5 py-5">
@@ -293,5 +296,30 @@ function PostTripPrompt({ tripId, onLater }: { tripId: string; onLater: () => vo
         Later
       </button>
     </section>
+  )
+}
+
+const LOCATION_TEXT: Record<Exclude<GpsState, 'off'>, string> = {
+  starting: 'Finding your position…',
+  on: 'Sharing your location with dispatch',
+  weak: 'GPS signal is weak: your position is not precise enough to share yet',
+  denied: 'Location is blocked: dispatch cannot see your vehicle',
+  unavailable: 'No location on this phone: dispatch cannot see your vehicle',
+}
+
+/** Whether the phone is the vehicle's GPS right now (FMS-57), and what waits to be sent. */
+function LocationLine() {
+  const { status } = usePhoneGps()
+  if (status.state === 'off') return null
+  const good = status.state === 'on'
+  const bad = status.state === 'denied' || status.state === 'unavailable'
+  return (
+    <p aria-live="polite" className={cn('mt-3 flex items-center gap-2 text-sm font-medium', good ? 'text-success' : bad ? 'text-danger' : 'text-warning')}>
+      {bad ? <MapPinOff className="h-4 w-4 shrink-0" aria-hidden="true" /> : <LocateFixed className="h-4 w-4 shrink-0" aria-hidden="true" />}
+      <span>
+        {LOCATION_TEXT[status.state]}
+        {good && status.waiting > 1 && <span className="font-normal text-ink-muted">{` · ${status.waiting} positions wait for signal`}</span>}
+      </span>
+    </p>
   )
 }

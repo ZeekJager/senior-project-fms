@@ -4,6 +4,8 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/shared'
 import { NotificationInbox } from '@/components/NotificationInbox'
 import { DriverAppBanners } from '@/pwa/DriverAppBanners'
+import { LocationBanner } from '@/features/phoneGps/LocationBanner'
+import { PhoneGpsProvider } from '@/features/phoneGps/PhoneGps'
 import { OfflineQueueProvider } from '@/pwa/OfflineQueue'
 import { PendingSubmissions } from '@/pwa/PendingSubmissions'
 import { cn, Drawer, IconButton, ToastProvider } from '@/components/ui'
@@ -133,6 +135,8 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
 
       {/* Installable and offline-capable (FMS-34): the driver portal only. */}
       <DriverAppBanners />
+      {/* The phone as the vehicle's GPS during a trip (FMS-57): says when it cannot. */}
+      <LocationBanner />
 
       <Content className={cn('mx-auto w-full max-w-lg px-4 py-5', tabs && 'pb-24')} />
 
@@ -181,7 +185,10 @@ export function AppShell() {
       {isDriverPortalUser(viewer) ? (
         // Submissions made offline wait on the phone and are sent when it can (FMS-81).
         <OfflineQueueProvider>
-          <DriverShell routes={sections.flatMap((s) => s.routes)} />
+          {/* While the driver's trip is under way, their phone reports the vehicle's position (FMS-57). */}
+          <PhoneGpsProvider>
+            <DriverShell routes={sections.flatMap((s) => s.routes)} />
+          </PhoneGpsProvider>
         </OfflineQueueProvider>
       ) : (
         <StaffShell sections={sections} />
