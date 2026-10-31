@@ -74,11 +74,30 @@ const trip = {
   actual_start: '2026-10-20T03:10:00Z', actual_end: '2026-10-20T05:05:00Z', actual_distance_km: 104.3,
 }
 
+/** Its A-service is overdue by distance (FMS-129); no service on record. */
+const overdueService = {
+  vehicle_id: VEHICLE_ID,
+  registration_number: 'AA 3-20001',
+  depot_id: DEPOT,
+  program: { id: 'p-1', name: 'A-service', tasks: ['Engine oil', 'Oil filter'] },
+  status: 'overdue',
+  due_by: ['km'],
+  last_service: null,
+  since: { at: '2026-01-05T08:00:00Z', odometer_km: 75_000, engine_hours: null },
+  next_due: { odometer_km: 85_000, at: null, engine_hours: null },
+  readings: { odometer_km: 87_200, engine_hours: null },
+  remaining: { km: -2200, days: null, engine_hours: null },
+  open_record: null,
+  status_changed_at: '2026-10-20T22:30:00Z',
+  computed_at: '2026-10-30T22:30:00Z',
+}
+
 /** The vehicle and every section's list; records each tracking query. */
 function serveVehicle() {
   const trackQueries: URLSearchParams[] = []
   server.use(
     http.get(`/api/v1/vehicles/${VEHICLE_ID}`, () => envelope(vehicle)),
+    http.get(`/api/v1/vehicles/${VEHICLE_ID}/service-due`, () => envelope([overdueService])),
     http.get('/api/v1/depots', () => envelope([{ id: DEPOT, name: 'Addis Ababa Central', code: 'ADD', location: 'Addis Ababa' }])),
     http.get('/api/v1/maintenance', () => page([record('r-2', '2026-10-12T08:00:00Z', { maintenance_type: 'corrective', description: 'Replaced the front brake pads' }), record('r-1', '2026-06-02T08:00:00Z')])),
     http.get('/api/v1/trips', () => page([trip], { next_cursor: null })),
@@ -124,7 +143,7 @@ describe('Vehicle history (S-22)', () => {
     expect(await screen.findByText('Addis Ababa Central')).toBeInTheDocument()
     expect(screen.getByText('87,000 km')).toBeInTheDocument()
     expect(screen.getByText(/32\.5 L\/100 km/)).toBeInTheDocument()
-    expect(within(sections()).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Repairs', 'Trips and routes', 'Fuel and odometer', 'Documents', 'Health'])
+    expect(within(sections()).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Repairs', 'Trips and routes', 'Fuel and odometer', 'Documents', 'Health', 'Service due'])
 
     const table = await screen.findByRole('table', { name: /Repair history of AA 3-20001/ })
     await waitFor(() => expect(within(table).getAllByRole('row')).toHaveLength(3))
@@ -181,12 +200,27 @@ describe('Vehicle history (S-22)', () => {
     renderApp(`/vehicles/${VEHICLE_ID}?section=repairs`)
 
     await screen.findByRole('heading', { level: 1, name: /AA 3-20001/ })
-    expect(within(sections()).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Trips and routes', 'Odometer'])
+    expect(within(sections()).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Trips and routes', 'Odometer', 'Service due'])
     // A section the user may not see falls back to the first one they may.
     expect(await screen.findByRole('table', { name: /Trips of AA 3-20001/ })).toBeInTheDocument()
     await userEvent.setup().click(within(sections()).getByRole('button', { name: 'Odometer' }))
     expect(await screen.findByRole('table', { name: /Odometer readings/ })).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: /Fill-ups/ })).not.toBeInTheDocument()
+  })
+
+  it('says a service is overdue in the header, which opens Service due: the program, by how much and its checklist (FMS-129)', async () => {
+    serveVehicle()
+    signedInAs(manager)
+    renderApp(`/vehicles/${VEHICLE_ID}`)
+
+    await screen.findByRole('heading', { level: 1, name: /AA 3-20001/ })
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Service overdue: A-service. Open Service due.' }))
+    const section = await screen.findByRole('region', { name: 'Service due' })
+    expect(within(section).getByText('A-service')).toBeInTheDocument()
+    expect(within(section).getByText('Overdue')).toBeInTheDocument()
+    expect(within(section).getByText('2,200 km over')).toBeInTheDocument()
+    expect(within(section).getByText('Checklist: Engine oil, Oil filter')).toBeInTheDocument()
+    expect(section).toHaveTextContent('None on record')
   })
 
   it('says when the vehicle is not found', async () => {

@@ -38,6 +38,7 @@ import {
   type FailureInput,
 } from '../domain/failure';
 import { INVENTORY_EVENTS } from '../domain/inventory';
+import { recordProgramNeedsPreventive } from '../domain/service-program';
 import { inventoryEvent } from './inventory.service';
 import type { FailureRepository, FailureRow } from '../infrastructure/failure.repository';
 import type { LockedPart, MaintenanceRepository, RecordRow, RecordWrite } from '../infrastructure/maintenance.repository';
@@ -79,6 +80,8 @@ export interface MaintenanceCreate {
   notes?: string | null;
   /** What failed (FMS-125), recorded with the repair. */
   failures?: FailureInput[];
+  /** The preventive service program it carries out (FMS-129): preventive work only. */
+  service_program_id?: string | null;
 }
 
 export interface MaintenanceUpdate {
@@ -95,6 +98,7 @@ export interface MaintenanceUpdate {
   completed_at?: string;
   /** What failed (FMS-125), recorded before the completion is checked: POST .../complete only. */
   failures?: FailureInput[];
+  service_program_id?: string | null;
 }
 
 export interface MaintenanceListQuery {
@@ -151,6 +155,12 @@ export interface MaintenanceServiceDeps {
   };
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   depots: { publicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>> };
+  /** Preventive service programs (FMS-129): a repair's program, its count started again on completion, and names. */
+  services: {
+    programForRecord(client: PoolClient, vehicleId: string, programPublicId: string): Promise<string>;
+    serviceCompleted(client: PoolClient, caller: Caller, vehicleId: string, programId: string): Promise<void>;
+    names(db: Queryable, programIds: readonly string[]): Promise<Map<string, { id: string; name: string }>>;
+  };
   events: EventBus;
   now?: () => Date;
 }
@@ -231,11 +241,17 @@ export class MaintenanceService {
       });
 
       const status = input.status ?? 'open';
+      const maintenanceType = input.maintenance_type ?? 'corrective';
+      let programId: string | null = null;
+      if (input.service_program_id) {
+        if (maintenanceType !== 'preventive') throw recordProgramNeedsPreventive();
+        programId = await this.deps.services.programForRecord(client, vehicle.id, input.service_program_id);
+      }
       const row = await records.insertRecord(
         ctx,
         {
           vehicle_id: vehicle.id,
-          maintenance_type: input.maintenance_type ?? 'corrective',
+          maintenance_type: maintenanceType,
           description: input.description,
           status,
           priority: input.priority ?? 'normal',
@@ -246,6 +262,7 @@ export class MaintenanceService {
           total_cost_cents: input.total_cost_cents,
           workshop: input.workshop ?? null,
           notes: input.notes ?? null,
+          service_program_id: programId,
         },
         client,
       );
@@ -315,6 +332,11 @@ export class MaintenanceService {
       if (!OPEN_STATUSES.includes(row.status)) throw maintenanceClosed(row.status);
 
       const data = toColumns(patch);
+      if (patch.service_program_id !== undefined) {
+        data.service_program_id = patch.service_program_id === null ? null : await this.deps.services.programForRecord(client, row.vehicleId, patch.service_program_id);
+      }
+      const programId = data.service_program_id !== undefined ? data.service_program_id : row.serviceProgramId;
+      if (programId !== null && (patch.maintenance_type ?? row.maintenanceType) !== 'preventive') throw recordProgramNeedsPreventive();
       const now = this.now();
       const failed = await this.writeFailures(client, caller, vehicle, row, patch.failures ?? [], 'failures');
       if (patch.completed_at !== undefined || patch.status === 'completed') {
@@ -332,6 +354,9 @@ export class MaintenanceService {
         data.started_at = now.toISOString();
       }
       if (Object.keys(data).length > 0) await records.updateRecord(ctx, row.id, data, client);
+
+      // A service completed for its program: the program's count on the vehicle starts again from it (FMS-129).
+      if (data.status === 'completed' && programId !== null) await this.deps.services.serviceCompleted(client, caller, row.vehicleId, programId);
 
       const isClosing = data.status === 'completed' || data.status === 'cancelled';
       let cleared = false;
@@ -532,6 +557,7 @@ export class MaintenanceService {
     const vehicles = await this.deps.vehicles.refsByIds(db, [...new Set(rows.map((r) => r.vehicleId))]);
     const finishers = await this.deps.users.findByIds(db, [...new Set(rows.flatMap((r) => (r.completedBy ? [r.completedBy] : [])))]);
     const finisherIds = new Map(finishers.map((u) => [u.id, u.publicId]));
+    const programs = await this.deps.services.names(db, rows.flatMap((r) => (r.serviceProgramId ? [r.serviceProgramId] : [])));
     return rows.map((r) => {
       const parts = lines
         .filter((l) => l.recordId === r.id)
@@ -562,6 +588,7 @@ export class MaintenanceService {
         workshop: r.workshop,
         notes: r.notes,
         completed_by: r.completedBy ? (finisherIds.get(r.completedBy) ?? null) : null,
+        service_program: r.serviceProgramId ? (programs.get(r.serviceProgramId) ?? null) : null,
         parts,
         failures: failureViews.filter((_, i) => failureRows[i].recordId === r.id),
         version: r.version,

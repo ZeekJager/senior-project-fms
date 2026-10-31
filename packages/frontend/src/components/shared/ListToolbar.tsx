@@ -25,6 +25,9 @@ interface ListToolbarProps<T extends string> {
   onClear?: () => void
 }
 
+/** A list's views, for a component that renders the toolbar of a list it shares the views with. */
+export type ListToolbarViews<T extends string> = NonNullable<ListToolbarProps<T>['views']>
+
 /**
  * The bar on top of every list, in one order: views, then search and extra
  * filters. Two rows on a desktop, three short ones on a phone (a scrolling

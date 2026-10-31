@@ -22,7 +22,7 @@ const grants = seededRoles()
 const viewer = (role: string): Viewer => ({ roles: [role], permissions: grants.get(role)! })
 const menu = (role: string) => Object.fromEntries(navSections(viewer(role)).map((s) => [s.portal.name, s.routes.map((r) => r.nav!.label)]))
 
-const FLEET_ALL = ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Vehicle health', 'Spare parts', 'Routes', 'Fuel reconciliation']
+const FLEET_ALL = ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Vehicle health', 'Spare parts', 'Routes', 'Fuel reconciliation']
 
 describe('menus per role (seeded grants)', () => {
   it('reads all nine roles from the permission matrix', () => {
@@ -36,13 +36,13 @@ describe('menus per role (seeded grants)', () => {
     ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles'] }],
     ['dispatcher', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes'], 'Command center': ['Dispatch', 'Live map'] }],
     ['depot_admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Live map'] }],
-    ['technician', { 'Fleet management': ['Dashboard', 'Vehicles', 'Repair log', 'Vehicle health', 'Spare parts'] }],
+    ['technician', { 'Fleet management': ['Dashboard', 'Vehicles', 'Repair log', 'Service programs', 'Vehicle health', 'Spare parts'] }],
     ['finance_clerk', { 'Fleet management': ['Dashboard', 'Fuel reconciliation'] }],
     [
       'compliance_officer',
-      { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Vehicle health', 'Routes', 'Fuel reconciliation'], Administration: ['Users & roles', 'Audit log'] },
+      { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Vehicle health', 'Routes', 'Fuel reconciliation'], Administration: ['Users & roles', 'Audit log'] },
     ],
-    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Vehicle health', 'Routes'], 'Command center': ['Live map'], Administration: ['Audit log'] }],
+    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Service programs', 'Vehicle health', 'Routes'], 'Command center': ['Live map'], Administration: ['Audit log'] }],
     ['driver', { Driver: ['My day', 'Inspection', 'Fuel', 'Incident'] }],
   ])('%s sees exactly the screens its permissions open', (role, expected) => {
     expect(menu(role)).toEqual(expected)

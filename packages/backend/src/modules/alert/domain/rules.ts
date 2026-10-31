@@ -60,6 +60,57 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const HOUR = 60;
 const DAY = 24 * HOUR;
 
+const km = (n: number) => `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })} km`;
+const addisDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Addis_Ababa' });
+
+/** What a ServiceDue or ServiceOverdue says of the measures that made it so, against the vehicle's readings. */
+function serviceMeasures(p: Payload): string {
+  const measures = Array.isArray(p.due_by) ? p.due_by.filter((m): m is string => typeof m === 'string') : [];
+  const parts = measures.flatMap((m) => {
+    const nextKm = num(p, 'next_due_km');
+    const odometer = num(p, 'odometer_km');
+    const nextAt = str(p, 'next_due_at');
+    const nextHours = num(p, 'next_due_engine_hours');
+    const hours = num(p, 'engine_hours');
+    if (m === 'km' && nextKm !== null) return [`${km(nextKm)}${odometer !== null ? ` (odometer ${km(odometer)})` : ''}`];
+    if (m === 'days' && nextAt !== null) return [addisDate(nextAt)];
+    if (m === 'engine_hours' && nextHours !== null) return [`${nextHours} engine hours${hours !== null ? ` (now ${hours})` : ''}`];
+    return [];
+  });
+  return parts.join(', ');
+}
+
+/**
+ * Preventive service programs (FMS-129): `vehicle_id`, `depot_id`, `program_id`, `program_name`, `status`,
+ * `previous_status`, `due_by`, `next_due_km`, `next_due_at`, `next_due_engine_hours`, `odometer_km`,
+ * `engine_hours`. Due and overdue share one source per vehicle and program: falling overdue raises the
+ * alert of its coming due to high instead of opening a second one.
+ */
+function serviceRule(overdue: boolean): AlertRule {
+  return {
+    type: () => 'service_due',
+    module: 'maintenance',
+    facts: (p) => ({
+      severity: overdue ? 'high' : 'medium',
+      vehicleId: str(p, 'vehicle_id'),
+      driverId: null,
+      tripId: null,
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'vehicle_id') ? { type: 'vehicle', id: str(p, 'vehicle_id')! } : null,
+      dedupKey: `service_due:${str(p, 'vehicle_id')}:${str(p, 'program_id')}`,
+    }),
+    windowMinutes: 31 * DAY,
+    title: (p, n) => `${str(p, 'program_name') ?? 'Service'} ${overdue ? 'overdue' : 'due'}: ${vehicleName(n)}`,
+    message: (p, n) => {
+      const measures = serviceMeasures(p);
+      return overdue
+        ? `${vehicleName(n)} is past its service${measures ? `, which fell due at ${measures}` : ''}. Book it into the workshop before its next trip.`
+        : `${vehicleName(n)} is due for service${measures ? ` at ${measures}` : ''}. Book it into the workshop.`;
+    },
+    audience: ['technician', 'depot_admin'],
+  };
+}
+
 export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
   // A DVIR with defects (FMS-36), later a telematics fault code. FMS-118's technician alert.
   VehicleFaultDetected: {
@@ -209,6 +260,10 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     },
     audience: ['technician', 'depot_admin'],
   },
+
+  // Preventive service programs (FMS-129): a vehicle's service under a program coming due, and falling overdue.
+  ServiceDue: serviceRule(false),
+  ServiceOverdue: serviceRule(true),
 
   // The model registry (FMS-127): the nightly scoring did not score. `model_id`, `model_version`, `reason`
   // (feature_spec_mismatch, artefact_mismatch, not_active). Fleet-wide: for administrators.

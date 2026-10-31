@@ -6,6 +6,7 @@ import { Badge, Skeleton, ViewTabs, type ViewOption } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { HealthBadge } from '@/features/health/HealthBadge'
+import { ServiceDueBadge, useVehicleServiceDue } from '@/features/service-due'
 import { ApiError } from '@/lib/api/errors'
 import { FUEL_TYPE_LABELS, VEHICLE_TYPE_LABELS, type Vehicle } from '@/pages/Vehicles/types'
 import { useVehicle } from './api'
@@ -14,13 +15,14 @@ import { formatDay, formatKm } from './format'
 import { FuelSection } from './FuelSection'
 import { HealthSection } from './HealthSection'
 import { RepairsSection } from './RepairsSection'
+import { ServiceDueSection } from './ServiceDueSection'
 import { TripsSection } from './TripsSection'
 
-type Section = 'repairs' | 'trips' | 'fuel' | 'documents' | 'health'
+type Section = 'repairs' | 'service' | 'trips' | 'fuel' | 'documents' | 'health'
 
 /**
  * S-22 Vehicle history (FMS-136): everything that happened to one vehicle, one section at a time: its repairs
- * and services, its trips with the route each drove, fuel and odometer, its documents and its health. Each
+ * and services, its service due (FMS-129), its trips with the route each drove, fuel and odometer, its documents and its health. Each
  * section shows only with its read permission; the section is kept in the URL (?section=), so a link opens it.
  */
 export function VehicleHistoryPage() {
@@ -36,6 +38,8 @@ export function VehicleHistoryPage() {
       { value: 'fuel', label: hasPermission('fuel:read') ? 'Fuel and odometer' : 'Odometer', allowed: true },
       { value: 'documents', label: 'Documents', allowed: hasPermission('document:read') },
       { value: 'health', label: 'Health', allowed: hasPermission('prediction:read') },
+      // Last, so no one's first section changes; vehicle:read, as the page itself (FMS-129).
+      { value: 'service', label: 'Service due', allowed: true },
     ]
     return all.filter((s) => s.allowed)
   }, [hasPermission])
@@ -61,7 +65,11 @@ export function VehicleHistoryPage() {
     <div className="space-y-6">
       <div className="space-y-4 border-b border-line pb-5">
         <BackLink />
-        {vehicle.data ? <Header vehicle={vehicle.data} onHealth={hasPermission('prediction:read') ? () => choose('health') : undefined} /> : <HeaderSkeleton />}
+        {vehicle.data ? (
+          <Header vehicle={vehicle.data} onHealth={hasPermission('prediction:read') ? () => choose('health') : undefined} onService={() => choose('service')} />
+        ) : (
+          <HeaderSkeleton />
+        )}
       </div>
 
       <ViewTabs label="Vehicle history sections" value={section} options={sections} onChange={choose} />
@@ -69,6 +77,8 @@ export function VehicleHistoryPage() {
       {vehicle.data &&
         (section === 'repairs' ? (
           <RepairsSection vehicle={vehicle.data} />
+        ) : section === 'service' ? (
+          <ServiceDueSection vehicle={vehicle.data} />
         ) : section === 'trips' ? (
           <TripsSection vehicle={vehicle.data} />
         ) : section === 'fuel' ? (
@@ -91,8 +101,10 @@ function BackLink() {
   )
 }
 
-function Header({ vehicle, onHealth }: { vehicle: Vehicle; onHealth?: () => void }) {
+function Header({ vehicle, onHealth, onService }: { vehicle: Vehicle; onHealth?: () => void; onService: () => void }) {
   const depots = useDepots()
+  // Its most urgent service (FMS-129): said in the header when due or overdue, and opens Service due.
+  const service = useVehicleServiceDue(vehicle.id).data?.find((d) => d.status !== 'upcoming')
   const depot = depots.data?.find((d) => d.id === vehicle.depot_id)
   const trip = vehicle.current_trip
   return (
@@ -106,6 +118,11 @@ function Header({ vehicle, onHealth }: { vehicle: Vehicle; onHealth?: () => void
               <Badge tone="warning" icon={<AlertTriangle />}>
                 Flagged for maintenance
               </Badge>
+            )}
+            {service && (
+              <button type="button" onClick={onService} className="focus-ring rounded-full font-sans" aria-label={`Service ${service.status}: ${service.program.name}. Open Service due.`}>
+                <ServiceDueBadge status={service.status}>{service.status === 'overdue' ? 'Service overdue' : 'Service due'}</ServiceDueBadge>
+              </button>
             )}
           </h1>
           <p className="mt-1 text-sm text-ink-muted">

@@ -77,6 +77,7 @@ const createBody = rejectFractionalMoney(
     workshop: optionalText(255),
     notes: optionalText(4000),
     failures,
+    service_program_id: z.uuid().nullable().optional(),
   }),
 );
 
@@ -95,6 +96,7 @@ const updateBody = rejectFractionalMoney(
       workshop: optionalText(255),
       notes: optionalText(4000),
       completed_at: instant,
+      service_program_id: z.uuid().nullable(),
     })
     .partial()
     .refine((v) => Object.keys(v).length > 0, { message: 'Send at least one field to change.', params: { reason: 'empty_update' } }),

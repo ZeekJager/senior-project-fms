@@ -37,7 +37,7 @@ function driver(overrides: Partial<BoardDriver> = {}): BoardDriver {
 }
 
 function vehicle(overrides: Partial<BoardVehicle> = {}): BoardVehicle {
-  return { vehicle_id: 'v-1', registration_number: 'AA 3-10001', make: 'Isuzu', model: 'FSR', vehicle_type: 'truck', status: 'active', state: 'idle', availability: free, open_work: null, current_trip: null, ...overrides }
+  return { vehicle_id: 'v-1', registration_number: 'AA 3-10001', make: 'Isuzu', model: 'FSR', vehicle_type: 'truck', status: 'active', state: 'idle', availability: free, open_work: null, service_due: null, current_trip: null, ...overrides }
 }
 
 const absent = driver({ driver_id: 'd-2', full_name: 'Sara Haile', state: 'absent', attendance: 'absent', availability: { availability: 'available_with_warning', reasons: [{ code: 'driver_absent', severity: 'warning' }] } })
@@ -153,6 +153,22 @@ describe('Dispatcher trip console (S-07)', () => {
     expect(within(panel).getByText('Open maintenance work')).toBeInTheDocument()
     expect(within(panel).getByText('Brake pads worn')).toBeInTheDocument()
     expect(within(panel).getByText('Open maintenance work').parentElement).toHaveTextContent('high priority · open · opened Sun 1 Nov · work order 9b000000')
+  })
+
+  it('a vehicle overdue for service says so on its card and in the panel, and can still be assigned (FMS-129)', async () => {
+    const overdue = vehicle({ service_due: { status: 'overdue', programs: [{ program_id: 'sp-1', name: 'A-service', status: 'overdue', due_by: ['km'] }] } })
+    serve([trip()], { vehicles: [overdue, flagged] })
+    const user = userEvent.setup()
+    await openConsole()
+    await chooseTrip(user)
+
+    const card = await within(vehicles()).findByRole('button', { name: 'AA 3-10001, Available' })
+    expect(within(card).getByText('Service overdue: A-service')).toHaveClass('text-danger')
+    await user.click(card)
+    const panel = screen.getByRole('region', { name: 'Assignment panel' })
+    expect(within(panel).getByText('Service overdue')).toBeInTheDocument()
+    expect(within(panel).getByText('A-service (overdue)')).toBeInTheDocument()
+    expect(within(panel).getByText(/AA 3-10001 is past its scheduled service\. You can still assign it/)).toBeInTheDocument()
   })
 
   it('409 CONFLICT_DRIVER_OVERLAP shows the conflicting trip inline, not as a toast', async () => {

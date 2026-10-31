@@ -282,7 +282,7 @@ Vehicle status and availability (FMS-76):
 Dispatcher board (FMS-33, screen S-07):
 
 - **`GET /dispatch/availability`** (`trip:assign`: admin, fleet manager, dispatcher). `depot_id` defaults to the caller's own depot; someone who sees several (or none of their own) must give one (`400 VALIDATION_FAILED`, `reason: "required"`), and one outside their scope is `400 references_missing_record`. `from`/`to` are the trip's window, as for vehicle status (none means now); `exclude_trip_id` is the trip being staffed, whose own assignment is not a conflict.
-- **`DispatchBoard`:** `depot_id`, `window`, `drivers[]` and `vehicles[]`. A driver: `driver_id`, `full_name`, `license_categories`, `vehicle_types` (what the licence covers), `state`, `attendance` (on the window's first day), `availability` (`availability`, `reasons[]`, for the window, as in vehicle status), `current_trip` (`trip_id`, `end`) when under way. A vehicle: `vehicle_id`, `registration_number`, `make`, `model`, `vehicle_type`, `status`, `state`, `availability`, `open_work` (the open maintenance record behind a flag: `id`, `description`, `status`, `priority`, `opened_at`; dispatchers hold no `maintenance:read`), `current_trip`. Active drivers of the depot (their account's depot) and its vehicles that are not retired, by name and plate.
+- **`DispatchBoard`:** `depot_id`, `window`, `drivers[]` and `vehicles[]`. A driver: `driver_id`, `full_name`, `license_categories`, `vehicle_types` (what the licence covers), `state`, `attendance` (on the window's first day), `availability` (`availability`, `reasons[]`, for the window, as in vehicle status), `service_due` (FMS-129: `null`, or `status` `due` or `overdue` and `programs[]` with `program_id`, `name`, `status`, `due_by`; a warning, never a block), `current_trip` (`trip_id`, `end`) when under way. A vehicle: `vehicle_id`, `registration_number`, `make`, `model`, `vehicle_type`, `status`, `state`, `availability`, `open_work` (the open maintenance record behind a flag: `id`, `description`, `status`, `priority`, `opened_at`; dispatchers hold no `maintenance:read`), `current_trip`. Active drivers of the depot (their account's depot) and its vehicles that are not retired, by name and plate.
 - **`state`** is about now, for the console's colours. Drivers: `idle` (green: free, present or not yet marked), `near_end` (amber: under way, ending within 30 minutes or late), `en_route` (red), `absent` (grey: absent, on leave or sick that day; a warning, still assignable), `unavailable` (blocked for the window). Vehicles: `idle` (green), `flagged` (red: maintenance flag or in the workshop), `en_route` (grey), `unavailable`.
 
 Vehicle rules (FMS-15):
@@ -577,12 +577,12 @@ Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
 Maintenance rules (FMS-22):
 
 - **Paths:** `/maintenance` and `/maintenance-records` are the same API (list, create, read, `PUT`/`PATCH`, `POST .../complete`). Reads need `maintenance:read`; writes `maintenance:write` (technician, depot admin, fleet manager, admin; a dispatcher gets `403`); `POST .../complete` needs `maintenance:execute` (technician, fleet manager, admin). Records are limited to vehicles in the caller's depot scope (`404` otherwise).
-- **Create:** `vehicle_id`, `description`, `labour_hours` (at most two decimals) and `total_cost_cents` (whole cents) are required; optional `parts` (`[{part_id, quantity, unit_cost_cents}]`, each part once), `maintenance_type` (default `corrective`), `status` (`scheduled`, `open` (default) or `in_progress`), `priority`, `scheduled_at`, `odometer_km`, `workshop`, `notes`. A fractional number in **any** money-like field (`total_cost_cents`, `unit_cost_cents`, or a stray `totalCost`/`price`/`amount`) is `400 VALIDATION_FLOAT_IN_MONEY_PATH`. A vehicle outside the caller's depots is `400 references_missing_record`; a retired one `409`.
+- **Create:** `vehicle_id`, `description`, `labour_hours` (at most two decimals) and `total_cost_cents` (whole cents) are required; optional `parts` (`[{part_id, quantity, unit_cost_cents}]`, each part once), `maintenance_type` (default `corrective`), `status` (`scheduled`, `open` (default) or `in_progress`), `priority`, `scheduled_at`, `odometer_km`, `workshop`, `notes`, `service_program_id` (FMS-129: preventive work only, `400` `needs_preventive`; an active program covering the vehicle, else `references_missing_record` or `program_not_applicable`; also on `PATCH`, `null` to clear). Completing the record starts the program's count again on the vehicle. A fractional number in **any** money-like field (`total_cost_cents`, `unit_cost_cents`, or a stray `totalCost`/`price`/`amount`) is `400 VALIDATION_FLOAT_IN_MONEY_PATH`. A vehicle outside the caller's depots is `400 references_missing_record`; a retired one `409`.
 - **Maintenance flag:** creating a record sets the vehicle's `maintenance_flag` in the same transaction. Completing (`completed_at`, `status: completed` or `POST .../complete`) or cancelling it clears the flag in the same transaction, unless other work on the vehicle is still `scheduled`, `open` or `in_progress`. Writes lock the vehicle row, so two completions cannot race the flag. Completed and cancelled records cannot change (`409`).
 - **Parts:** each part used is taken off `inventory_parts.stock_quantity`, listed on the record at the cost charged, and written to the inventory ledger (`consumption`, referencing the record). A part must be stocked (`400 references_missing_record`) and shared or in the vehicle's depot (`part_in_other_depot`). Stock never goes below zero (FMS-23): a repair that uses more than the stock record holds is still saved in full, stock stops at 0, and `meta.warnings` includes `{ warning: "LOW_STOCK", part_id, part_number, stock_quantity, shortfall }`. A total below the parts' cost adds `{ warning: "COST_BELOW_PARTS", ... }`.
 - **Completion:** `completed_at` is not in the future (5 minutes' clock skew allowed) nor before `started_at`; `completed_by` is the caller. `status: in_progress` sets `started_at`. A `corrective` repair is completed only with at least one failure record (FMS-125): otherwise `400` with `{ field: "failures", reason: "failure_required" }`, and the record stays open.
 - **Failures (FMS-125, [maintenance.md](maintenance.md)):** what broke, recorded as `failures` on create, on `POST .../complete` (same transaction) or one at a time on `POST .../failures` (open or completed work; cancelled is `409`). `FailureInput`: `component` and `failure_mode` from fixed catalogues (anything else is `400`), `unplanned` (required), `detected_by` (default `technician`), `occurred_at` (default the repair's opening; not in the future), `odometer_km` (default the repair's), `incident_id` (the same vehicle's: else `incident_other_vehicle`), `notes`. `FailureEvent` adds `id`, `vehicle_id`, `registration_number`, `maintenance_record_id`, `recorded_by`, `created_at`. Never edited.
-- **`MaintenanceRecord`:** `id`, `vehicle_id`, `registration_number`, `maintenance_type`, `description`, `status`, `priority`, `scheduled_at`, `started_at`, `completed_at`, `odometer_km`, `labour_hours`, `total_cost_cents`, `parts_cost_cents`, `workshop`, `notes`, `completed_by`, `parts[]`, `failures[]` (`FailureEvent`, oldest first), `version` (ETag; `If-Match` on `PUT`/`PATCH`), `created_at`, `updated_at`. Lists are newest first (`sort_order=asc` for oldest), filterable by `vehicle_id`, `status`, `open`, `maintenance_type`.
+- **`MaintenanceRecord`:** `id`, `vehicle_id`, `registration_number`, `maintenance_type`, `description`, `status`, `priority`, `scheduled_at`, `started_at`, `completed_at`, `odometer_km`, `labour_hours`, `total_cost_cents`, `parts_cost_cents`, `workshop`, `notes`, `completed_by`, `service_program` (`{id, name}` or `null`: the program this preventive work carries out, FMS-129), `parts[]`, `failures[]` (`FailureEvent`, oldest first), `version` (ETag; `If-Match` on `PUT`/`PATCH`), `created_at`, `updated_at`. Lists are newest first (`sort_order=asc` for oldest), filterable by `vehicle_id`, `status`, `open`, `maintenance_type`.
 - **Events:** `MaintenanceRecordOpened`, `MaintenanceRecordUpdated` (with `changed_fields`) and `MaintenanceRecordCompleted`, each with `maintenance_record_id`, `vehicle_id` and `maintenance_flag_cleared`; `MaintenanceRecordCompleted` also carries `odometer_km` (or `null`) and `completed_at`, an odometer reading (FMS-126). `FailureRecorded` once per failure, on the vehicle's aggregate.
 
 Inventory rules (FMS-23):
@@ -684,6 +684,42 @@ X-Internal-Token: <ML_SERVICE_TOKEN>
 - **Correlation:** `X-Request-Id` is echoed (one is made when none is sent) and returned as `meta.request_id`.
 
 The ML service never directly updates fleet master data. The Node.js core validates the result and persists `maintenance.maintenance_predictions`. This preserves the selected modular-monolith boundary with one specialized service.
+
+### 10.4 Preventive service programs (FMS-129)
+
+| Method + path | Purpose | Auth / permission | Request / response |
+|---|---|---|---|
+| `GET /service-programs` | Service programs | `maintenance:read` | `status` (`active` default, `retired`, `all`), `depot_id` -> Paged `ServiceProgram[]`, by name |
+| `POST /service-programs` | Define a program | `service-program:write` | `ServiceProgramCreate` -> `201 ServiceProgram` |
+| `GET /service-programs/{program_id}` | Program detail | `maintenance:read` | `ServiceProgram` |
+| `PATCH /service-programs/{program_id}` | Change, retire or restore a program | `service-program:write` | Fields sent, `is_active` -> `ServiceProgram`; `If-Match` |
+| `GET /service-due` | Vehicles' service due | `vehicle:read` | `status` (comma-separated; `due,overdue` default), `vehicle_id`, `program_id`, `depot_id` -> Paged `ServiceDue[]`, most urgent first |
+| `GET /vehicles/{vehicle_id}/service-due` | One vehicle's service due | `vehicle:read` | `ServiceDue[]`: every program covering it, most urgent first |
+
+Service program rules ([service-programs.md](service-programs.md)):
+
+- **Who:** `service-program:write` is admin, fleet manager and depot admin. A depot-scoped caller's programs are their depot's. Creating or changing a fleet-wide one is `403` with `{ field: "depot_id", reason: "fleet_wide_not_allowed" }`. Another depot's program is `404`. Service due is limited to vehicles in the caller's depots.
+- **`ServiceProgramCreate`:** `name` (1-120) is required.
+  - **Coverage:** `description`; `depot_id` (left out: the caller's depot, or fleet-wide for one who sees every depot; `null`: fleet-wide); `vehicle_type`, `fuel_type`, `make`, `model` (each `null` matches any; a model needs its make: `400`, `make` `required`).
+  - **Intervals:** `interval_km` (1-1,000,000), `interval_days` (1-3,650) and `interval_engine_hours` (1-100,000), whole numbers. At least one is required: `400`, `interval_required`. The service falls due at whichever comes first.
+  - **Lead windows:** `lead_km`, `lead_days`, `lead_engine_hours`, each below its interval (`not_below_interval`) and only with it (`interval_missing`). Left out: a tenth of the interval.
+  - **Checklist:** `tasks`, up to 30 names of up to 200 characters, each once (`duplicate_task`).
+  - **Names:** one active name per depot, and one fleet-wide: `409 CONFLICT_DUPLICATE` on `name`.
+- **`ServiceProgram`:** the fields above, plus:
+  - `id`, `is_active`;
+  - `vehicles` (`total`, `upcoming`, `due`, `overdue`: the caller's vehicles it covers, as last computed);
+  - `version` (ETag), `created_at`, `updated_at`.
+- **`ServiceDue`:**
+  - `vehicle_id`, `registration_number`, `depot_id`;
+  - `program` (`id`, `name`, `tasks`);
+  - `status` (`upcoming`, `due` within a lead window, `overdue` past an interval) and `due_by` (the measures at that status: `km`, `days`, `engine_hours`);
+  - `last_service` (`maintenance_record_id`, `completed_at`; `null` when none is on record and the count runs from the vehicle's first reading);
+  - `since`, `next_due` and `readings` (`odometer_km`, `at`, `engine_hours`);
+  - `remaining` (`km`, `days`, `engine_hours`; negative when overdue);
+  - `open_record` (open preventive work booked for the program: `id`, `status`, `scheduled_at`);
+  - `status_changed_at`, `computed_at`.
+- **Computed** by the `service-due` job (01:30), when a program is created or changed (its vehicles), and when a preventive repair for a program is completed (that vehicle: the count starts again from the repair). All on the writer's transaction.
+- **Events:** `ServiceDue` and `ServiceOverdue`, published once per move into that status. Each becomes a `service_due` alert about the vehicle: medium when due, high when overdue, one alert per vehicle and program.
 
 ## 11. Tracking and Command Center API
 

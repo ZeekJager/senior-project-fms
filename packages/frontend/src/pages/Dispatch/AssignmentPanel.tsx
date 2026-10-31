@@ -1,6 +1,7 @@
 import { AlertCircle, AlertTriangle, CalendarClock, CheckCircle2, Clock, Navigation, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button, Card, cn } from '@/components/ui'
+import type { ServiceDueSummary } from '@/features/service-due'
 import { ApiError } from '@/lib/api/errors'
 import { useTrip } from './api'
 import { formatDay, formatTime, formatWindow, reasonText, tripEnds, tripTitle, VEHICLE_TYPE_LABELS } from './format'
@@ -54,6 +55,7 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
       </div>
       <div className="space-y-2">
         {error == null && vehicle?.open_work && <WorkOrder work={vehicle.open_work} />}
+        {error == null && vehicle?.service_due && <ServiceWarning registration={vehicle.registration_number} due={vehicle.service_due} />}
         {error == null && licenceGap && (
           <Note tone="warning" icon={<AlertTriangle />}>
             {driver.full_name}’s licence ({driver.license_categories.join(', ') || 'none'}) does not cover a {(VEHICLE_TYPE_LABELS[vehicle.vehicle_type] ?? vehicle.vehicle_type).toLowerCase()}.
@@ -168,6 +170,24 @@ export function Note({ tone, icon, title, children }: { tone: 'danger' | 'warnin
         {children}
       </div>
     </div>
+  )
+}
+
+/**
+ * Preventive service due or overdue (FMS-129): said, not enforced. The vehicle can still be assigned; the
+ * dispatcher decides whether this trip can wait for the workshop.
+ */
+function ServiceWarning({ registration, due }: { registration: string; due: ServiceDueSummary }) {
+  const overdue = due.status === 'overdue'
+  return (
+    <Note tone={overdue ? 'danger' : 'warning'} icon={<CalendarClock />} title={overdue ? 'Service overdue' : 'Service due'}>
+      <p className="text-ink">
+        {due.programs.map((p) => `${p.name} (${p.status})`).join(', ')}
+      </p>
+      <p className="mt-0.5 text-xs">
+        {overdue ? `${registration} is past its scheduled service. You can still assign it; book it into the workshop as soon as the trip allows.` : `${registration} is due for service soon. You can assign it.`}
+      </p>
+    </Note>
   )
 }
 
