@@ -53,6 +53,8 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
   useSearchShortcut()
   useHelpShortcut(() => setHelpOpen(true))
   const portal = portalOf(location.pathname)
+  // A page outside the menu (Settings) is not part of its portal's section: the header names it alone.
+  const standalone = portal?.routes.find((r) => r.path === location.pathname)?.title
   const page = sections
     .flatMap((s) => s.routes)
     .find((r) => location.pathname === r.path || location.pathname.startsWith(`${r.path}/`))?.nav?.label
@@ -71,7 +73,7 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
             </div>
           </div>
           <p className="hidden items-center gap-2 text-sm md:flex">
-            <span className={page ? 'text-ink-subtle' : 'font-semibold text-ink'}>{portal?.name ?? ''}</span>
+            <span className={page ? 'text-ink-subtle' : 'font-semibold text-ink'}>{standalone ?? portal?.name ?? ''}</span>
             {page && (
               <>
                 <span aria-hidden="true" className="text-ink-subtle">

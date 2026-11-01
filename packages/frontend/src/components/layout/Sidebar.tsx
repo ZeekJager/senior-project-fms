@@ -1,7 +1,7 @@
-import { LogOut, PanelLeftClose, PanelLeftOpen, Truck } from 'lucide-react'
+import { LogOut, PanelLeftClose, PanelLeftOpen, Settings, Truck } from 'lucide-react'
 import { useCallback, useSyncExternalStore } from 'react'
 import { NavLink } from 'react-router-dom'
-import { cn, IconButton } from '@/components/ui'
+import { cn, IconButton, iconButtonClass } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import type { NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
@@ -162,6 +162,15 @@ export function UserCard({ rail = false, collapsed = false }: { rail?: boolean; 
         <p className={cn('truncate text-sm font-medium', rail ? 'text-white' : 'text-ink')}>{name}</p>
         <p className={cn('truncate text-xs', rail ? 'text-side-ink' : 'text-ink-subtle')}>{role || session?.user.email}</p>
       </div>
+      {/* S-29 (FMS-93): how alerts reach them, and push for this browser. */}
+      <NavLink
+        to="/notification-settings"
+        aria-label="Notification settings"
+        title="Notification settings"
+        className={cn(iconButtonClass('ghost', 'sm'), rail && 'text-side-ink hover:bg-white/10 hover:text-white', rail && (collapsed ? 'hidden' : 'md:hidden lg:inline-flex'))}
+      >
+        <Settings aria-hidden="true" />
+      </NavLink>
       <IconButton label="Sign out" icon={<LogOut />} size="sm" onClick={() => void logout()} className={rail ? 'text-side-ink hover:bg-white/10 hover:text-white' : undefined} />
     </div>
   )

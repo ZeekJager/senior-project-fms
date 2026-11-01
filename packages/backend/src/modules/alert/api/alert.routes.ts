@@ -5,6 +5,7 @@ import { pageQuery } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { AlertService } from '../application/alert.service';
+import type { DeliveryService } from '../application/delivery.service';
 import { alertNotFound, SEVERITIES, STATUSES } from '../domain/alert';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,7 +38,7 @@ function alertId(req: Request): string {
  * alerts; an alert no depot owns is seen by those who see every depot). Acknowledge: alert:ack.
  * Resolve: alert:resolve.
  */
-export function alertRouter(service: AlertService): Router {
+export function alertRouter(service: AlertService, delivery: DeliveryService): Router {
   const router = Router();
 
   router.get(
@@ -55,6 +56,15 @@ export function alertRouter(service: AlertService): Router {
     authorize('alert:read'),
     asyncHandler(async (req, res) => {
       res.json({ data: await service.get(req.user!, alertId(req)), meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // Every notification of the alert, in the inbox and by email, SMS and push, with its delivery status (FMS-93).
+  router.get(
+    '/alerts/:alertId/deliveries',
+    authorize('alert:read'),
+    asyncHandler(async (req, res) => {
+      res.json({ data: await delivery.deliveries(req.user!, alertId(req)), meta: { request_id: req.correlationId } });
     }),
   );
 

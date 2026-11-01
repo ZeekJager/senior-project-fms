@@ -58,6 +58,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 052 | `settings`, `auth` | Settings (FMS-80): the `settings` schema and `settings.settings` (one row per setting changed from its default, `value` NULL back to it; `ux_settings_key`, `chk_settings_key`), `settings:write` for admins (the settings screen and the telemetry rules' thresholds) |
 | 053 | `trip` | Live arrival times (FMS-86, docs/eta.md): `trip_stops.eta`; `trip_etas` (one row per trip estimated: `arrival_at`, `remaining_km`, `remaining_seconds`, `position_at`, `computed_at`, and `checked_at_position`, which spaces estimates 30 seconds of position time apart), a table of its own so an estimate never bumps the trip's `version` |
 | 054 | `analytics` | Reports and exports (FMS-91, docs/reports.md): read-only views `maintenance_facts` (type, status, created and completed, labour, cost), `trip_history_facts` (trip with route, depot, driver and plan), `driver_directory` (name, home depot), `telemetry_flag_facts` (flags with their trip's driver), `incident_facts` and `depot_directory` (name, code), so the reports read `analytics.*` only |
+| 055 | `alert` | Notification channels (FMS-93, docs/notification-channels.md): `alert.push_subscriptions` (a browser's Web Push endpoint, key and auth secret, one owner per endpoint) and on `alert.notifications` `next_attempt_at` (when a queued email, SMS or push is due) and `push_subscription_id`, with a partial index over the queued ones for the delivery job |
 
 ## Important
 

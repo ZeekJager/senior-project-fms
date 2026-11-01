@@ -1,5 +1,5 @@
 import CircuitBreaker from 'opossum';
-import { ProviderCallError } from '../domain/adapter';
+import { DeliveryRefused, ProviderCallError } from '../domain/adapter';
 import type { CircuitState, CircuitView } from '../domain/provider';
 
 export interface BreakerSettings {
@@ -102,7 +102,8 @@ export class ProviderBreaker {
       rollingCountBuckets: 10,
       enableSnapshots: false,
       // True means "not the provider's fault": the call still fails, but is not counted.
-      errorFilter: (err: unknown) => err instanceof ProviderCallError && !err.countsAgainstProvider,
+      // A message refused for good (a bad address, an expired push subscription) is not the provider failing either.
+      errorFilter: (err: unknown) => (err instanceof ProviderCallError && !err.countsAgainstProvider) || err instanceof DeliveryRefused,
     });
     this.breaker.on('open', () => {
       this.openedAt = new Date();

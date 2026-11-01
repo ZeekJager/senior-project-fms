@@ -1538,6 +1538,38 @@ paths:
           description: NOT_FOUND (no such alert in your depots).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /alerts/{alert_id}/deliveries:
+    get:
+      tags: [Alerts]
+      operationId: listAlertDeliveries
+      summary: Every notification of an alert, with its delivery status (FMS-93)
+      description: >
+        One row per recipient and channel: the inbox (in_app), and for a critical or high alert the email, SMS and
+        push messages (docs/notification-channels.md). Each shows its status (queued, sent, failed, cancelled; in_app
+        rows are delivered), attempts, the provider that took it and its message id, and while queued after a failed
+        attempt why it failed and when the next is due. Who it was for, never their email address or phone number.
+        In the caller's depot scope, like the alert.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        '200':
+          description: The alert's notifications, by channel then recipient.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AlertDelivery' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such alert in your depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /alerts/{alert_id}/acknowledge:
     post:
       tags: [Alerts]
@@ -3047,6 +3079,152 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /notifications/channels:
+    get:
+      tags: [Notifications]
+      operationId: getNotificationChannels
+      summary: Which alerts reach the caller on which channel (FMS-93)
+      description: >
+        The channel rules by severity, limited to the channels that are on (a channel is on when an active
+        notification provider delivers it), and where the caller is reached: their own email address and phone
+        number, and how many browsers they turned push on in. For the settings screen.
+      responses:
+        '200':
+          description: The rules and the caller's channels.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/NotificationChannels' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /notifications/push/subscriptions:
+    post:
+      tags: [Notifications]
+      operationId: subscribeToPush
+      summary: Turn push on for this browser (FMS-93)
+      description: >
+        Saves the browser's Web Push subscription (`PushSubscription.toJSON()`) for the caller. The endpoint must be
+        an https address of a browser push service. A browser has one owner: if another account had this endpoint, it
+        moves to the caller. 201 when new, 200 when it was already saved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushSubscriptionInput' }
+      responses:
+        '200':
+          description: Already saved for the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [id, created_at]
+                    properties:
+                      id: { type: string, format: uuid }
+                      created_at: { type: string, format: date-time }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [id, created_at]
+                    properties:
+                      id: { type: string, format: uuid }
+                      created_at: { type: string, format: date-time }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (not a subscription, keys of the wrong size, or an endpoint that is not a push service's https address; reason not_https, unknown_push_service, credentials_in_url, not_a_url).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503':
+          description: UPSTREAM_UNAVAILABLE (push is not set up on this server).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /notifications/push/unsubscribe:
+    post:
+      tags: [Notifications]
+      operationId: unsubscribeFromPush
+      summary: Turn push off for this browser (FMS-93)
+      description: Removes the caller's subscription with this endpoint; another account's is left alone. Safe to repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [endpoint]
+              properties:
+                endpoint: { type: string, maxLength: 2048 }
+      responses:
+        '200':
+          description: How many it removed (0 or 1).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [removed]
+                    properties:
+                      removed: { type: integer, minimum: 0 }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /notifications/push/test:
+    post:
+      tags: [Notifications]
+      operationId: testPush
+      summary: Send a test push to each of the caller's browsers (FMS-93)
+      description: Sends now, not through the queue, and reports how many the push services took. Takes no body.
+      responses:
+        '200':
+          description: The caller's devices and how many took the push.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [devices, sent, failed]
+                    properties:
+                      devices: { type: integer, minimum: 0 }
+                      sent: { type: integer, minimum: 0 }
+                      failed: { type: integer, minimum: 0 }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a body was sent).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503':
+          description: UPSTREAM_UNAVAILABLE (push is not set up on this server).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /notifications/{notification_id}/read:
     patch:
       tags: [Notifications]
@@ -4190,6 +4368,83 @@ components:
         read: { type: boolean }
         read_at: { type: [string, 'null'], format: date-time }
         created_at: { type: string, format: date-time, description: When it reached the inbox. }
+
+    AlertDelivery:
+      type: object
+      required: [id, channel, status, type, recipient, attempts, provider, provider_message_id, queued_at, sent_at, failed_at, next_attempt_at, failure_reason, read_at]
+      properties:
+        id: { type: string, format: uuid }
+        channel: { type: string, enum: [in_app, email, sms, push] }
+        status: { type: string, enum: [queued, sent, delivered, failed, cancelled] }
+        type: { type: string, description: 'alert or alert_escalated.' }
+        recipient:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: [string, 'null'], format: uuid }
+            name: { type: [string, 'null'] }
+        attempts: { type: integer, minimum: 0, maximum: 5 }
+        provider: { type: [string, 'null'], description: The code of the provider that took (or last tried) it. }
+        provider_message_id: { type: [string, 'null'] }
+        queued_at: { type: string, format: date-time }
+        sent_at: { type: [string, 'null'], format: date-time }
+        failed_at: { type: [string, 'null'], format: date-time }
+        next_attempt_at: { type: [string, 'null'], format: date-time, description: While queued, when it is next due. }
+        failure_reason: { type: [string, 'null'], description: 'The last failure in our words, e.g. "POST /messages answered 503."; why it was cancelled.' }
+        read_at: { type: [string, 'null'], format: date-time, description: in_app only. }
+
+    NotificationChannels:
+      type: object
+      required: [rules, email, sms, push]
+      properties:
+        rules:
+          type: array
+          description: By severity, most severe first; in_app always, the others only while they are on.
+          items:
+            type: object
+            required: [severity, channels]
+            properties:
+              severity: { type: string, enum: [critical, high, medium, low] }
+              channels:
+                type: array
+                items: { type: string, enum: [in_app, email, sms, push] }
+        email:
+          type: object
+          required: [available, address]
+          properties:
+            available: { type: boolean }
+            address: { type: string }
+        sms:
+          type: object
+          required: [available, phone]
+          properties:
+            available: { type: boolean }
+            phone: { type: [string, 'null'] }
+        push:
+          type: object
+          required: [available, public_key, devices, device_keys]
+          properties:
+            available: { type: boolean }
+            public_key: { type: [string, 'null'], description: The VAPID public key to subscribe with (applicationServerKey). }
+            devices: { type: integer, minimum: 0, description: The caller's browsers with push on. }
+            device_keys:
+              type: array
+              description: "Each one's endpoint fingerprint: the first 22 characters of base64url(SHA-256(endpoint)), so a browser can tell whether its own subscription is the caller's."
+              items: { type: string }
+
+    PushSubscriptionInput:
+      type: object
+      required: [endpoint, keys]
+      properties:
+        endpoint: { type: string, maxLength: 2048, description: 'An https address of a browser push service.' }
+        expirationTime: { type: [number, 'null'], description: Ignored. }
+        keys:
+          type: object
+          additionalProperties: false
+          required: [p256dh, auth]
+          properties:
+            p256dh: { type: string, minLength: 80, maxLength: 100, description: base64url P-256 public key. }
+            auth: { type: string, minLength: 16, maxLength: 32, description: base64url auth secret. }
 
     Alert:
       type: object

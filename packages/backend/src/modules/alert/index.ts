@@ -6,16 +6,19 @@ import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { userDirectory } from '../auth';
 import { alertRefs, incidentRefs } from '../fleet';
+import { notificationGateway } from '../integration';
 import { tripLookups } from '../trip';
 import { alertRouter } from './api/alert.routes';
 import { incidentRouter } from './api/incident.routes';
 import { notificationRouter } from './api/notification.routes';
 import { AlertService } from './application/alert.service';
+import { DeliveryService } from './application/delivery.service';
 import { IncidentService } from './application/incident.service';
 import { InboxService } from './application/inbox.service';
 import type { IncidentType } from './domain/incident';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
+import { DeliveryRepository } from './infrastructure/delivery.repository';
 import { IncidentRepository } from './infrastructure/incident.repository';
 import { NotificationRepository } from './infrastructure/notification.repository';
 
@@ -36,6 +39,22 @@ const inbox = new InboxService({
 });
 
 const repo = new AlertRepository(pool);
+
+// Alerts by email, SMS and push (FMS-93): queued with the alert, sent through the integration gateway by the
+// delivery job. Only this module reads the recipients' email addresses and phone numbers.
+const delivery = new DeliveryService({
+  repo: new DeliveryRepository(pool),
+  gateway: notificationGateway,
+  users: {
+    accounts: async (db, ids) =>
+      new Map(
+        (await userDirectory.findByIds(db, ids)).map((u) => [u.id, { publicId: u.publicId, fullName: u.fullName, email: u.email, phone: u.phone, active: u.status === 'active' }]),
+      ),
+  },
+  alerts: repo,
+  appUrl: config.app.publicUrl,
+});
+
 const service = new AlertService({
   repo,
   refs: {
@@ -50,6 +69,7 @@ const service = new AlertService({
   },
   events: eventBus,
   inbox,
+  delivery,
   escalationMinutes: config.alerts.escalationMinutes,
 });
 
@@ -76,9 +96,9 @@ for (const type of Object.keys(ALERT_RULES)) {
 }
 
 const router = Router();
-router.use(alertRouter(service));
+router.use(alertRouter(service, delivery));
 router.use(incidentRouter(incidentService));
-router.use(notificationRouter(inbox));
+router.use(notificationRouter(inbox, delivery));
 
 export const alertModule: AppModule = {
   name: 'alert',
@@ -91,7 +111,19 @@ export const alertModule: AppModule = {
       leaseMs: 5 * 60_000,
       run: ({ now, correlationId }) => service.escalate({ now, correlationId }),
     },
+    {
+      // Emails, SMS and pushes that are due (FMS-93): new ones, and retries of failed attempts (1, 5, 15, 60 minutes).
+      name: 'notification-delivery',
+      every: 1,
+      leaseMs: 5 * 60_000,
+      run: async ({ now, correlationId }) => ({ ...(await delivery.drain({ now, correlationId })) }),
+    },
   ],
+};
+
+/** For tests: send the emails, SMS and pushes due by `now`, as the delivery job does. */
+export const notificationDelivery = {
+  drain: (now: Date, correlationId: string) => delivery.drain({ now, correlationId }),
 };
 
 /** For tests and the escalation job's callers: run escalation as of `now`. */

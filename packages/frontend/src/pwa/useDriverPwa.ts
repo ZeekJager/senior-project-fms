@@ -6,8 +6,9 @@ import { useConnectivity } from './useConnectivity'
 
 /**
  * The driver app (FMS-34): installable, and its pages open without a
- * connection. Used by the driver portal only, so staff never get a service
- * worker or an install offer:
+ * connection. Used by the driver portal only, so staff never get an install
+ * offer (a staff member who turns push on gets the service worker for that,
+ * FMS-93, src/lib/push.ts):
  *
  * - links the web app manifest (and the theme colour and touch icon) while
  *   the driver portal is on screen;

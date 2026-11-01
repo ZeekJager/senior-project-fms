@@ -87,13 +87,14 @@ export class HttpProviderClient implements ProviderClient {
     const { method, path } = request;
     const { timeoutMs } = this.opts.settings;
     const headers: Record<string, string> = { accept: 'application/json', 'x-request-id': this.opts.correlationId, ...request.headers };
-    if (request.body !== undefined) headers['content-type'] = 'application/json';
+    if (request.body !== undefined && request.bytes === undefined) headers['content-type'] = 'application/json';
+    const body = request.bytes ?? (request.body === undefined ? undefined : JSON.stringify(request.body));
     try {
       // The signal covers reading the body too: a provider that sends headers and then stalls still times out.
       const res = await this.fetch(url, {
         method,
         headers,
-        body: request.body === undefined ? undefined : JSON.stringify(request.body),
+        body,
         signal: AbortSignal.timeout(timeoutMs),
         redirect: 'error',
       });

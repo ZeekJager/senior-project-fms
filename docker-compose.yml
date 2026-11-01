@@ -126,6 +126,12 @@ services:
       # Road routing (FMS-84, docs/routing.md): OSRM, started by `make routing`.
       # Not running, routes save with the distance typed in; ROUTING_URL= (empty) in .env switches it off.
       ROUTING_URL: "${ROUTING_URL-http://osrm:5000}"
+      # Alerts by email, SMS and push (FMS-93, docs/notification-channels.md): the link in alert emails, and the
+      # notification providers' secrets by code. Empty, a channel's provider has no secret.
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
+      INTEGRATION_SMTP_EMAIL_API_KEY: "${INTEGRATION_SMTP_EMAIL_API_KEY:-}"
+      INTEGRATION_SMS_GATEWAY_API_KEY: "${INTEGRATION_SMS_GATEWAY_API_KEY:-}"
+      INTEGRATION_WEB_PUSH_API_KEY: "${INTEGRATION_WEB_PUSH_API_KEY:-}"
     healthcheck:
       # 200 when the API can reach PostgreSQL (GET /health/ready); a Redis
       # outage shows as "degraded" but keeps it healthy.

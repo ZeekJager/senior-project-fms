@@ -41,6 +41,10 @@ export interface AlertServiceDeps {
   events: EventBus;
   /** Tells the people just notified their unread count changed (FMS-48), in the same transaction. */
   inbox: { announce(tx: PoolClient, userIds: readonly string[], reason: 'delivered', ctx: MutationContext): Promise<unknown> };
+  /** Queues their email, SMS and push by the alert's severity (FMS-93), in the same transaction. */
+  delivery?: {
+    queue(tx: PoolClient, ctx: MutationContext, alert: Pick<AlertRow, 'id' | 'severity'>, recipients: readonly string[], content: { type: string; title: string; message: string }): Promise<number>;
+  };
   /** A critical alert unacknowledged this long escalates to the next tier, and again after as long. */
   escalationMinutes: number;
 }
@@ -280,6 +284,8 @@ export class AlertService {
     const notified = await repo.notify(client, ctx, alert.id, recipients, { type, title, message });
     // Their inbox grew: the count reaches their open screens with this commit (FMS-48).
     if (notified > 0) await this.deps.inbox.announce(client, recipients, 'delivered', ctx);
+    // A critical or high alert also goes out by email, SMS and push, sent by the delivery job (FMS-93).
+    await this.deps.delivery?.queue(client, ctx, alert, recipients, { type, title, message });
     return notified;
   }
 

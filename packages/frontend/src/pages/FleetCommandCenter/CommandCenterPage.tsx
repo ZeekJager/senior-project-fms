@@ -13,6 +13,7 @@ import { POLL_MS, useAlertAction, useFocusDriver, useLiveFleet, useLiveOverview,
 import { FocusLayers, FocusPanel } from './DriverFocus'
 import { FleetList } from './FleetList'
 import { addisDayStart, extendTrack, focusedVehicle, plannedLine } from './focus'
+import { DeliveryDrawer } from './DeliveryDrawer'
 import { IncidentDrawer } from './IncidentDrawer'
 import { IncidentsPanel } from './IncidentsPanel'
 import { byPlate, liveState, needsAttention, routeLabel, toMapVehicle, type LiveState } from './liveFleet'
@@ -95,6 +96,7 @@ export function CommandCenterPage() {
     alertAction.mutate({ id, action }, { onError: (err) => setAlertErrors((m) => new Map(m).set(id, err)) })
   }
   const [incidentId, setIncidentId] = useState<string | null>(null)
+  const [deliveryOf, setDeliveryOf] = useState<{ id: string; title: string } | null>(null)
   const openIncident = incidents?.items.find((i) => i.id === incidentId) ?? null
   // The list's "last seen" counts up every second; the map keeps its own, slower clock.
   const now = useNow(1000)
@@ -276,6 +278,7 @@ export function CommandCenterPage() {
                   onAction={actOnAlert}
                   onShowVehicle={select}
                   onMap={onMap}
+                  onDelivery={hasPermission('alert:read') ? (a) => setDeliveryOf({ id: a.id, title: a.title }) : undefined}
                 />
               ) : panel === 'incidents' && incidents ? (
                 <IncidentsPanel incidents={incidents.items} now={now} onOpen={setIncidentId} />
@@ -326,6 +329,8 @@ export function CommandCenterPage() {
           )}
         </Card>
       </div>
+
+      {deliveryOf && <DeliveryDrawer alert={deliveryOf} onClose={() => setDeliveryOf(null)} />}
 
       <IncidentDrawer
         incident={openIncident}
