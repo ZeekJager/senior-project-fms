@@ -1,13 +1,14 @@
-import { Building2, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { Building2, Download } from 'lucide-react'
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Button, FilterSelect, IconButton, useToast, ViewTabs } from '@/components/ui'
+import { MonthStepper } from '@/components/shared'
+import { Button, FilterSelect, useToast, ViewTabs } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { downloadCsv, toCsv } from '@/lib/csv'
 import { AnomaliesTab } from './AnomaliesTab'
 import { AnomalyDrawer } from './AnomalyDrawer'
-import { currentMonth, monthLabel, readState, shiftMonth, useAnomaly, useAnomalyCounts, useReconciliation, writeState, type DataFreshness, type ScreenState, type Tab } from './api'
+import { monthLabel, readState, useAnomaly, useAnomalyCounts, useReconciliation, writeState, type DataFreshness, type ScreenState, type Tab } from './api'
 import { CSV_HEADERS, csvRow, formatTime } from './describe'
 import { VehiclesTab } from './VehiclesTab'
 
@@ -23,20 +24,6 @@ function Freshness({ freshness }: { freshness: DataFreshness | undefined }) {
       Data as of {formatTime(freshness.as_of, lagging)}
       {lagging && <span className="text-warning"> · {freshness.lag_seconds.toLocaleString()} s behind live</span>}
     </p>
-  )
-}
-
-/** "‹ September 2026 ›": the period is a calendar month, as the monthly reconciliation reads it; no month not yet begun. */
-function MonthStepper({ month, onChange }: { month: string; onChange: (month: string) => void }) {
-  const latest = currentMonth()
-  return (
-    <div className="flex h-9 items-center rounded-control border border-line bg-surface coarse:h-11" role="group" aria-label="Month">
-      <IconButton label="Previous month" size="sm" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => onChange(shiftMonth(month, -1))} />
-      <span className="tabular min-w-[9.5rem] px-1 text-center text-sm font-medium text-ink" aria-live="polite">
-        {monthLabel(month)}
-      </span>
-      <IconButton label="Next month" size="sm" icon={<ChevronRight className="h-4 w-4" />} disabled={month >= latest} onClick={() => onChange(shiftMonth(month, 1))} />
-    </div>
   )
 }
 

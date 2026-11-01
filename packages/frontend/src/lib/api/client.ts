@@ -1,6 +1,7 @@
 import { ApiError, toApiError } from './errors'
 
-const API_BASE = '/api/v1'
+/** Where the API answers; a download link (FMS-91) points here too. */
+export const API_BASE = '/api/v1'
 
 /** Auth endpoints answer 401 for their own reasons; they never trigger a refresh-and-retry. */
 const AUTH_PATHS = ['/auth/login', '/auth/refresh', '/auth/logout']

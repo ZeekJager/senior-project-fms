@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, FileChartColumn, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -14,6 +14,7 @@ import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
 import { DashboardPage } from '@/pages/placeholders'
+import { ReportsPage } from '@/pages/Reports'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
 import { SettingsPage } from '@/pages/Settings'
@@ -135,6 +136,14 @@ export const portals: Portal[] = [
         element: <FuelReconciliationPage />,
         permission: 'fuel-anomaly:read',
         nav: { label: 'Fuel reconciliation', icon: Fuel },
+      },
+      {
+        // S-28 (FMS-91): monthly reports to preview and download. analytics:read: admin, fleet manager, dispatcher,
+        // finance clerk, compliance officer, fleet owner; every report is in the user's depot scope.
+        path: '/reports',
+        element: <ReportsPage />,
+        permission: 'analytics:read',
+        nav: { label: 'Reports', icon: FileChartColumn },
       },
     ],
   },
