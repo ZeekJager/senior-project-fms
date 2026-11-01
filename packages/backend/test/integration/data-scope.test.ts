@@ -128,6 +128,14 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
   if (await none('maintenance.service_programs WHERE depot_id = $1', [depotId])) {
     await pool.query("INSERT INTO maintenance.service_programs (depot_id, name, interval_km, lead_km) VALUES ($1, 'Depot B service', 10000, 1000)", [depotId]);
   }
+  // A downtime period (FMS-131) on the vehicle the samples name: the first by id.
+  if (await none('fleet.downtime_periods WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.vehicles])) {
+    await pool.query(
+      `INSERT INTO fleet.downtime_periods (vehicle_id, opened_by, started_at, derived_reason)
+       VALUES ((SELECT MIN(x) FROM unnest($1::bigint[]) x), 'scope-audit', now() - interval '1 hour', 'other')`,
+      [ids.vehicles],
+    );
+  }
   if (await none('alert.notifications WHERE recipient_user_id = ANY($1::bigint[])', [ids.users])) {
     await pool.query("INSERT INTO alert.notifications (recipient_user_id, notification_type, title, message, channel, status) VALUES ($1, 'alert', 'Depot B', 'For depot B', 'in_app', 'delivered')", [user]);
   }
@@ -153,6 +161,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     partId: await one('SELECT public_id::text AS id FROM maintenance.inventory_parts WHERE depot_id = $1 ORDER BY id', [depotId]),
     alertId: await one('SELECT public_id::text AS id FROM alert.alerts WHERE depot_id = $1 ORDER BY id', [depotId]),
     incidentId: await one('SELECT public_id::text AS id FROM alert.incident_reports WHERE depot_id = $1 ORDER BY id', [depotId]),
+    periodId: await one('SELECT public_id::text AS id FROM fleet.downtime_periods WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x) ORDER BY id', [ids.vehicles]),
     notificationId: await one('SELECT public_id::text AS id FROM alert.notifications WHERE recipient_user_id = ANY($1::bigint[]) ORDER BY id', [ids.users]),
     programId: await one('SELECT public_id::text AS id FROM maintenance.service_programs WHERE depot_id = $1 ORDER BY id', [depotId]),
   };

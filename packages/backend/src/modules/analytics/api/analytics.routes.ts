@@ -12,6 +12,13 @@ const analyticsQuery = z.object({
   depot_id: z.uuid().optional(),
 });
 
+/** A month in Addis Ababa (YYYY-MM), a depot and a vehicle by public id (FMS-131). */
+const downtimeQuery = z.object({
+  month: z.string().optional(),
+  depot_id: z.uuid().optional(),
+  vehicle_id: z.uuid().optional(),
+});
+
 const REPORTS: readonly Report[] = ['fleet-summary', 'utilisation', 'fuel-efficiency', 'maintenance-risk', 'trips', 'alerts'];
 
 /**
@@ -31,5 +38,15 @@ export function analyticsRouter(service: AnalyticsService): Router {
       }),
     );
   }
+  // Availability, MTBF and MTTR for a month (FMS-131): live from the downtime periods, not the cache.
+  router.get(
+    '/analytics/downtime',
+    authorize('analytics:read'),
+    asyncHandler(async (req, res) => {
+      const { data, meta } = await service.downtime(req.user, parseInput(downtimeQuery, req.query));
+      res.json({ data, meta: { ...meta, request_id: req.correlationId } });
+    }),
+  );
+
   return router;
 }

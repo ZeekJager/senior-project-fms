@@ -1,5 +1,6 @@
 import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
+import type { DowntimeFact, ServiceSpan } from '../domain/downtime';
 import { ON_TIME_GRACE_MINUTES, shiftDay, type DayFigures } from '../domain/kpis';
 
 /** Whose figures: the caller's depots, narrowed to one depot (an internal id) when asked. */
@@ -198,6 +199,33 @@ export class AnalyticsRepository {
       [publicId, ...s.params],
     );
     return res.rows[0]?.id ?? null;
+  }
+
+  /** When each vehicle joined the fleet and was retired (FMS-131). */
+  async serviceSpans(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceSpan>> {
+    const res = await db.query<{ vehicle_id: string; joined_at: Date; retired_at: Date | null }>(
+      'SELECT vehicle_id::text, joined_at, retired_at FROM analytics.vehicle_service_spans WHERE vehicle_id = ANY($1::bigint[])',
+      [vehicleIds],
+    );
+    return new Map(res.rows.map((r) => [r.vehicle_id, { joinedAt: r.joined_at, retiredAt: r.retired_at }]));
+  }
+
+  /** Each vehicle's downtime periods touching [from, to): under way in it, or begun or ended in it (FMS-131). */
+  async downtimeFacts(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<Map<string, Omit<DowntimeFact, 'unplanned'>[]>> {
+    const res = await db.query<{ vehicle_id: string; started_at: Date; ended_at: Date | null; reason: string }>(
+      `SELECT vehicle_id::text, started_at, ended_at, reason::text
+         FROM analytics.downtime_facts
+        WHERE vehicle_id = ANY($1::bigint[]) AND started_at < $3 AND (ended_at IS NULL OR ended_at >= $2)
+        ORDER BY vehicle_id, started_at`,
+      [vehicleIds, from, to],
+    );
+    const byVehicle = new Map<string, Omit<DowntimeFact, 'unplanned'>[]>();
+    for (const r of res.rows) {
+      const list = byVehicle.get(r.vehicle_id) ?? [];
+      list.push({ startedAt: r.started_at, endedAt: r.ended_at, reason: r.reason });
+      byVehicle.set(r.vehicle_id, list);
+    }
+    return byVehicle;
   }
 
   /** The audience's vehicles, retired ones included (they count in the status breakdown). */

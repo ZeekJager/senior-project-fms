@@ -237,6 +237,38 @@ export class MaintenanceRepository extends Repository {
     return res.rows;
   }
 
+  /**
+   * What a vehicle's downtime is derived from (FMS-131, fleet): the records asked for (public ids) and those with a
+   * failure on these vehicles (internal ids), and every failure on them.
+   */
+  async downtimeSources(
+    db: Queryable,
+    vehicleIds: readonly string[],
+    recordIds: readonly string[],
+  ): Promise<{
+    records: { id: string; type: string; status: string; completedAt: Date | null }[];
+    failures: { vehicleId: string; id: string; recordId: string | null; occurredAt: Date; unplanned: boolean; detectedBy: string }[];
+  }> {
+    if (vehicleIds.length === 0) return { records: [], failures: [] };
+    const failures = await db.query<{ vehicleId: string; id: string; recordId: string | null; occurredAt: Date; unplanned: boolean; detectedBy: string }>(
+      `SELECT f.vehicle_id AS "vehicleId", f.public_id AS id, r.public_id AS "recordId", f.occurred_at AS "occurredAt",
+              f.unplanned, f.detected_by::text AS "detectedBy"
+         FROM maintenance.failure_events f
+         LEFT JOIN maintenance.maintenance_records r ON r.id = f.maintenance_record_id
+        WHERE f.vehicle_id = ANY($1::bigint[])
+        ORDER BY f.occurred_at, f.id`,
+      [vehicleIds],
+    );
+    const records = await db.query<{ id: string; type: string; status: string; completedAt: Date | null }>(
+      `SELECT r.public_id AS id, r.maintenance_type::text AS type, r.status::text AS status, r.completed_at AS "completedAt"
+         FROM maintenance.maintenance_records r
+        WHERE r.public_id = ANY($2::uuid[])
+           OR r.id IN (SELECT f.maintenance_record_id FROM maintenance.failure_events f WHERE f.vehicle_id = ANY($1::bigint[]))`,
+      [vehicleIds, recordIds],
+    );
+    return { records: records.rows, failures: failures.rows };
+  }
+
   /** Completed repairs with an odometer, completed at or after `since` (null: all): meter readings (FMS-126). */
   async completedOdometers(db: Queryable, since: Date | null): Promise<{ vehicleId: string; ref: string; odometerKm: number; at: Date }[]> {
     const res = await db.query<{ vehicleId: string; ref: string; odometerKm: number; at: Date }>(

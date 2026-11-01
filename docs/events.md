@@ -98,6 +98,7 @@ Today's projections (`eventBus.project`): they run inside `publish`, on the tran
 
 | Projection | Reacts to | Does | Rebuilt by |
 |---|---|---|---|
+| `fleet.downtime` | `VehicleStatusChanged`, `FailureRecorded`, `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted` | Re-derives the vehicle's downtime periods in `fleet.downtime_periods` from its status history and its repairs and failures (FMS-131, [downtime.md](downtime.md)), under an advisory lock per vehicle. A staff member's reason is kept | `downtime-sync` (daily, logs drift); `rebuildReadModels()` |
 | `fleet.trip-assignments` | Every trip event (`TRIP_EVENTS`: `TripCreated`, `TripUpdated`, `TripCancelled`, `TripAssigned`, `TripStarted`, `TripCompleted`) | Re-reads the trip from the trip module and updates `fleet.trip_assignments`, the availability read model (FMS-76). The event says which trip; the trip says what is true | `trip-assignment-sync` (daily, logs drift); `rebuildReadModels()` |
 
 ## Redis channels
