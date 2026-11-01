@@ -11,6 +11,10 @@ const PLANNABLE: readonly AttendanceStatus[] = ['on_leave', 'other'];
 /** How far ahead leave can be recorded. */
 export const MAX_DAYS_AHEAD = 60;
 
+/** How a check-in or check-out was recorded (FMS-141): the driver scanned the depot's code, or staff entered it. */
+export const CHECK_METHODS = ['qr', 'manual'] as const;
+export type CheckMethod = (typeof CHECK_METHODS)[number];
+
 /** Statuses that make a driver a dispatch risk for the day (FMS-33 shows a warning, not a block). */
 export const UNAVAILABLE_STATUSES: readonly AttendanceStatus[] = ['absent', 'on_leave', 'sick'];
 
@@ -22,6 +26,11 @@ export interface AttendanceView {
   date: string;
   status: AttendanceStatus;
   notes: string | null;
+  /** When the driver arrived and left (FMS-141), and how each was recorded. */
+  check_in_at: Date | null;
+  check_in_method: CheckMethod | null;
+  check_out_at: Date | null;
+  check_out_method: CheckMethod | null;
   /** Public id and name of whoever recorded it last. */
   logged_by: string;
   logged_by_name: string;
@@ -66,6 +75,32 @@ export function checkAttendanceDate(date: string, status: AttendanceStatus, toda
     throw validationFailed([{ field: 'date', reason: 'too_far_ahead' }], `Leave can be recorded at most ${MAX_DAYS_AHEAD} days ahead.`);
   }
 }
+
+/** A clock may run a little fast: a time this far ahead of the server is still now. */
+const CLOCK_SKEW_MS = 2 * 60_000;
+
+/**
+ * Check-in and check-out times entered by hand (FMS-141): on the record's day in Addis Ababa, not in the
+ * future, a check-out only after a check-in and not before it.
+ */
+export function checkManualTimes(date: string, times: { in: Date | null; out: Date | null }, now: Date = new Date()): void {
+  for (const [field, at] of [
+    ['check_in_at', times.in],
+    ['check_out_at', times.out],
+  ] as const) {
+    if (!at) continue;
+    if (at.getTime() > now.getTime() + CLOCK_SKEW_MS) throw validationFailed([{ field, reason: 'in_future' }], 'A check-in or check-out time cannot be in the future.');
+    if (operatingToday(at) !== date) throw validationFailed([{ field, reason: 'not_on_date' }], `The time must be on ${date} (Addis Ababa).`);
+  }
+  if (times.out && !times.in) throw validationFailed([{ field: 'check_out_at', reason: 'without_check_in' }], 'A check-out needs a check-in first.');
+  if (times.out && times.in && times.out < times.in) throw validationFailed([{ field: 'check_out_at', reason: 'before_check_in' }], 'The check-out is before the check-in.');
+}
+
+/** A driver records their arrival by scanning at the depot, never by typing a time (FMS-141). */
+export const timesByScanOnly = () =>
+  new AppError(403, 'FORBIDDEN_INSUFFICIENT_ROLE', 'Check in and out by scanning the depot code; times are not entered by hand.', [
+    { field: 'check_in_at', reason: 'scan_only' },
+  ]);
 
 export const attendanceNotFound = () => new AppError(404, 'NOT_FOUND', 'Attendance record not found.');
 

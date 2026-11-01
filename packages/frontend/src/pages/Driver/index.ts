@@ -1,3 +1,4 @@
+export { DriverCheckIn } from './CheckIn'
 export { DriverFuel } from './Fuel'
 export { DriverHome } from './Home'
 export { DriverIncident } from './Incident'

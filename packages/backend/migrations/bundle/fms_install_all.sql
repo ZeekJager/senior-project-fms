@@ -2881,3 +2881,39 @@ SELECT
     (SELECT MIN(h.changed_at) FROM fleet.vehicle_status_history h
       WHERE h.vehicle_id = v.id AND h.to_status = 'retired') AS retired_at
 FROM fleet.vehicles v;
+
+-- ===== 051_attendance_check_in.sql =====
+ALTER TABLE fleet.depots
+    ADD COLUMN IF NOT EXISTS work_starts_at     TIME     NOT NULL DEFAULT '08:00',
+    ADD COLUMN IF NOT EXISTS late_after_minutes SMALLINT NOT NULL DEFAULT 15;
+
+ALTER TABLE fleet.driver_attendance
+    ADD COLUMN IF NOT EXISTS check_in_at      TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS check_in_method  VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS check_out_at     TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS check_out_method VARCHAR(10);
+
+DO $$ BEGIN
+    ALTER TABLE fleet.depots
+        ADD CONSTRAINT chk_depot_late_after CHECK (late_after_minutes BETWEEN 0 AND 240);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE fleet.driver_attendance
+        ADD CONSTRAINT chk_attendance_check_in
+            CHECK ((check_in_at IS NULL) = (check_in_method IS NULL) AND (check_in_method IS NULL OR check_in_method IN ('qr', 'manual'))),
+        ADD CONSTRAINT chk_attendance_check_out
+            CHECK ((check_out_at IS NULL) = (check_out_method IS NULL) AND (check_out_method IS NULL OR check_out_method IN ('qr', 'manual'))
+                   AND (check_out_at IS NULL OR (check_in_at IS NOT NULL AND check_out_at >= check_in_at)));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('attendance:check-in', 'Check in and out by scanning the depot''s attendance code'),
+    ('attendance:qr', 'Show the depot''s attendance code for drivers to scan')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE (r.name IN ('admin', 'driver') AND p.code = 'attendance:check-in')
+    OR (r.name IN ('admin', 'fleet_manager', 'dispatcher', 'depot_admin') AND p.code = 'attendance:qr')
+ON CONFLICT DO NOTHING;

@@ -32,6 +32,12 @@ const fields = {
   latitude: z.number().min(-90).max(90).nullable().optional(),
   longitude: z.number().min(-180).max(180).nullable().optional(),
   capacity: z.number().int().min(0).max(100_000).nullable().optional(),
+  // FMS-141: a check-in after work_starts_at plus late_after_minutes is late.
+  work_starts_at: z
+    .string()
+    .refine((s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s), { message: 'A time as HH:MM, e.g. 08:00.', params: { reason: 'invalid_time' } })
+    .optional(),
+  late_after_minutes: z.number().int().min(0).max(240).optional(),
 };
 
 /** POST /depots and PUT /depots/{id}: name and location required. */

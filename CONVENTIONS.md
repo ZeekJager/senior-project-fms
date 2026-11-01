@@ -179,7 +179,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `VehicleRegistered`, `VehicleUpdated`, `VehicleRetired` | fleet (FMS-15) | vehicle | `vehicle_id`, `depot_id`; `changed_fields` on update | |
 | `DriverRegistered`, `DriverUpdated`, `DriverTransferred`, `DriverRetired`, `DriverReinstated` | fleet (FMS-16) | driver | `driver_id`, `user_id`, `depot_id`; `changed_fields` on update; `from_depot_id`, `to_depot_id` on transfer | |
 | `DepotCreated`, `DepotUpdated`, `DepotDeactivated`, `DepotReactivated` | fleet (FMS-20) | depot | `depot_id`; `changed_fields` on update | |
-| `AttendanceRecorded` | fleet (FMS-21) | attendance | `attendance_id`, `driver_id`, `date`, `status`, `previous_status` | |
+| `AttendanceRecorded` | fleet (FMS-21; check-in by scan FMS-141) | attendance | `attendance_id`, `driver_id`, `date`, `status`, `previous_status`, `check_in_at`, `check_in_method`, `check_out_at`, `check_out_method` | |
 | `DocumentUploaded` | fleet (FMS-17) | document | `document_id`, `owner_type`, `owner_id`, `document_type`, `expires_on` | `fleet.document-expiry` |
 | `DocumentExpiring`, `LicenceExpiring` | fleet (FMS-26) | document, driver | `level` (amber, red), `days_left`, the expiry date, owner or driver ids | `alert.engine` |
 | `VehicleStatusChanged` | fleet (FMS-76) | vehicle | `vehicle_id`, `depot_id`, `previous_status`, `new_status`, `changed_at`, `changed_by`, `reason`, `source` (`manual`, or `maintenance` as work starts and ends), `maintenance_record_id` (also on `DELETE /vehicles`, with `VehicleRetired`) | |
