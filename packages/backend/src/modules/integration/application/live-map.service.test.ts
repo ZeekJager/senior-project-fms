@@ -44,7 +44,26 @@ function service() {
     trips: {
       liveForVehicles: vi.fn(
         async () =>
-          new Map([['10', { tripId: 't-1', routeName: 'Bole - Adama', origin: null, destination: null, driverId: '7', actualStart: new Date('2026-10-21T08:00:00Z'), scheduledEnd: null }]]),
+          new Map([
+            [
+              '10',
+              {
+                tripId: 't-1',
+                routeName: 'Bole - Adama',
+                origin: null,
+                destination: null,
+                driverId: '7',
+                actualStart: new Date('2026-10-21T08:00:00Z'),
+                scheduledEnd: null,
+                eta: {
+                  arrivalAt: new Date('2026-10-21T09:40:00Z'),
+                  remainingKm: 61.2,
+                  updatedAt: new Date('2026-10-21T08:30:00Z'),
+                  nextStop: { name: 'Mojo', eta: new Date('2026-10-21T09:05:00Z') },
+                },
+              },
+            ],
+          ]),
       ),
     },
   };
@@ -63,7 +82,14 @@ describe('LiveMapService', () => {
     const { live } = service();
     const rows = await live.current(user(['fleet_manager']), {});
     expect(rows.map((r) => r.vehicle_id)).toEqual(['v-moving']);
-    expect(rows[0].trip).toMatchObject({ trip_id: 't-1', route_name: 'Bole - Adama', started_at: '2026-10-21T08:00:00.000Z', driver: { driver_id: 'drv-7', full_name: 'Abebe' } });
+    expect(rows[0].trip).toMatchObject({
+      trip_id: 't-1',
+      route_name: 'Bole - Adama',
+      started_at: '2026-10-21T08:00:00.000Z',
+      driver: { driver_id: 'drv-7', full_name: 'Abebe' },
+      // FMS-86: the trip's latest arrival estimate, with its next stop.
+      eta: { arrival_at: '2026-10-21T09:40:00.000Z', remaining_km: 61.2, next_stop: { name: 'Mojo', eta: '2026-10-21T09:05:00.000Z' }, updated_at: '2026-10-21T08:30:00.000Z' },
+    });
     expect(rows[0].position).toMatchObject({ speed_kmh: 50, recorded_at: '2026-10-21T09:00:00.000Z' });
   });
 

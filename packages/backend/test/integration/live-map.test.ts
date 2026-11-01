@@ -100,6 +100,8 @@ describe('GET /tracking/vehicles/current', () => {
         started_at: expect.any(String),
         scheduled_end: expect.any(String),
         driver: { driver_id: driver.public_id, full_name: 'Abebe Kebede' },
+        // No routing engine here, so no arrival estimate (FMS-86, trip-eta.test.ts has them).
+        eta: null,
       },
       flags: [{ flag_type: 'speeding', severity: 'high', observed_at: expect.any(String) }],
     });

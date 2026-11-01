@@ -41,6 +41,13 @@ make routing        # once: downloads the map (about 130 MB, checked against Geo
 - `GET /routes/{route_id}/geometry` (`route:read`, depot scope) returns the road as a GeoJSON LineString (`[longitude, latitude]` pairs), or `data: null` while it is not measured. It is kept out of `Route` because lists should not carry tens of kilobytes per route.
 - `RouteUpdated.changed_fields` names `geometry` when the road was measured again.
 
+## Arrival times and stop order (FMS-86)
+
+The engine also gives trips under way their arrival times and suggests the order of a route's stops. Both are described in [eta.md](eta.md).
+
+- **Arrival times.** OSRM's `route` service with `overview=false` (legs only), from the vehicle's position through the stops ahead to the destination. At most one request per trip per 30 seconds of position time, never cached.
+- **Stop order.** OSRM's `table` service with `annotations=distance,duration`, for every pair of origin, stops and destination (27 points at most).
+
 ## The route-roads job
 
 `route-roads` runs every hour. It measures up to 50 active routes that have both ends and no road yet: routes saved while the engine was down or before it was set up. A typed distance stays; the road is added. It stops at the first engine failure, and the next run tries again. Its run history counts `measured`, `no_road` and `failed`.

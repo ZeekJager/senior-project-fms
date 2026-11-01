@@ -16,6 +16,7 @@ import {
   type RouteView,
 } from '../domain/route';
 import type { AvailabilityAnswer } from '../domain/assignment';
+import { optimiseOrder, orderLength, routeNotOptimisable, routingUnavailable } from '../domain/optimise';
 import { waypointKey, waypointsOf, type LineString, type RoadPlan } from '../domain/road';
 import { RoutingError, type RoadPlanner } from '../infrastructure/osrm.planner';
 import type { RouteRepository, RouteRow, RouteWrite } from '../infrastructure/route.repository';
@@ -40,6 +41,22 @@ export interface RouteCreate {
 
 /** PATCH: the fields sent. is_active false retires the route; true brings it back. */
 export type RouteUpdate = Partial<RouteCreate> & { is_active?: boolean };
+
+/** POST /routes/{id}/optimise (FMS-86): a suggested order of the saved stops. Nothing is saved. */
+export interface RouteOptimisation {
+  route_id: string;
+  /** The version the order was worked out for: saving it (PATCH /routes/{id} with the stops) sends If-Match on it. */
+  version: number;
+  /** False when the saved order is already the shortest found: `stops` is then the saved order. */
+  changed: boolean;
+  /** Where each saved stop goes: 0-based indexes into the saved stops, in the suggested order. */
+  order: number[];
+  /** The stops in the suggested order. */
+  stops: RouteStop[];
+  /** Along the road from origin through the stops to destination, in the saved order and in the suggested one. */
+  original: { distance_km: number; duration_seconds: number };
+  optimised: { distance_km: number; duration_seconds: number };
+}
 
 export interface RouteListQuery {
   page: number;
@@ -245,6 +262,48 @@ export class RouteService {
       if (line === undefined) throw routeNotFound();
       return line;
     });
+  }
+
+  /**
+   * The order of the saved stops that makes the road from origin to destination shortest (FMS-86, docs/eta.md):
+   * the routing engine's distance table, nearest neighbour then 2-opt, never longer than the saved order. Every
+   * stop and both ends need coordinates. A suggestion only: the route editor saves it with PATCH like any edit.
+   */
+  async optimise(caller: Caller, routeId: string): Promise<RouteOptimisation> {
+    const { routes } = this.deps;
+    const row = await routes.inTransaction((client) => routes.findVisible(client, routeId, depotScope(caller.user)));
+    if (!row) throw routeNotFound();
+    const origin = point(row.originLatitude, row.originLongitude);
+    const destination = point(row.destinationLatitude, row.destinationLongitude);
+    if (!origin) throw routeNotOptimisable('route_without_ends', 'origin');
+    if (!destination) throw routeNotOptimisable('route_without_ends', 'destination');
+    const stops = row.stops.map((s) => point(s.latitude, s.longitude));
+    if (stops.some((s) => s === null)) throw routeNotOptimisable('stop_without_coordinates');
+
+    const planner = this.deps.roads();
+    if (!planner) throw routingUnavailable();
+    let table;
+    try {
+      table = await planner.table([origin, ...(stops as Coordinates[]), destination], caller.correlationId);
+    } catch (err) {
+      if (!(err instanceof RoutingError)) throw err;
+      this.deps.warn({ err, route_id: row.publicId }, 'route optimise: the routing engine could not be asked');
+      throw routingUnavailable();
+    }
+    if (!table) throw routeNotOptimisable('no_road');
+
+    const result = optimiseOrder(table.metres);
+    const saved = row.stops.map((_, i) => i);
+    const measure = (order: number[], metres: number) => ({ distance_km: Math.round(metres) / 1000, duration_seconds: Math.round(orderLength(table.seconds, order)) });
+    return {
+      route_id: row.publicId,
+      version: row.version,
+      changed: result.changed,
+      order: result.order,
+      stops: result.order.map((i) => row.stops[i]),
+      original: measure(saved, result.originalLength),
+      optimised: measure(result.order, result.optimisedLength),
+    };
   }
 
   /**

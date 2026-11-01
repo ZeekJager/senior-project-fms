@@ -65,6 +65,10 @@ describe('RealtimeProvider (FMS-43)', () => {
     invalidate.mockClear()
     fake.serverEvent('something.else', {})
     expect(invalidate).not.toHaveBeenCalled()
+    // A new arrival estimate (FMS-86) re-reads nothing: the screens patch the trip, and the handlers still hear it.
+    fake.serverEvent('trip.updated', { trip_id: 't1', status: 'en_route', change: 'TripEtaUpdated', eta: null })
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(seen).toHaveLength(2)
   })
 
   it('signed out: no socket at all', async () => {

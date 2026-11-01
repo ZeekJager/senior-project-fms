@@ -5,6 +5,7 @@ import { TripMap, type LatLng } from '@/components/TripMap'
 import type { Depot } from '@/features/depots'
 import { ApiError } from '@/lib/api/errors'
 import { roadPoints, useCreateRoute, useRouteRoad, useUpdateRoute, type Route } from './api'
+import { StopOrder } from './StopOrder'
 import {
   EMPTY_FORM,
   MAX_STOPS,
@@ -228,6 +229,7 @@ export function RouteFormDrawer({ open, onClose, route, depots, defaultDepotId, 
             </ol>
           )}
           {errors.stops && <p className="text-xs text-danger">{errors.stops}</p>}
+          {route && !retired && route.stops.length >= 2 && <StopOrder route={route} stops={values.stops} onReorder={(next) => setStops(() => next)} />}
           <Button variant="secondary" size="sm" leadingIcon={<Plus className="h-4 w-4" />} onClick={() => setStops((stops) => [...stops, newStop()])} disabled={values.stops.length >= MAX_STOPS}>
             Add stop
           </Button>

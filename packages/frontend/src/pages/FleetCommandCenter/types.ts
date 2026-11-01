@@ -1,3 +1,5 @@
+import type { TripEta } from '@/features/trip-eta'
+
 // The live map's data (FMS-45): GET /tracking/vehicles/current and the socket's vehicle.location.updated
 // (api-contract §11, docs/realtime.md).
 
@@ -22,6 +24,8 @@ export interface LiveTrip {
   started_at: string | null
   scheduled_end: string | null
   driver: { driver_id: string; full_name: string | null } | null
+  /** Its latest arrival estimate (FMS-86), patched by trip.updated as new ones come; null before the first. */
+  eta: TripEta | null
 }
 
 /** One vehicle on the live map. */

@@ -142,6 +142,33 @@ export function useCreateRoute() {
   })
 }
 
+/** Road length of origin, the stops in one order, and destination. */
+export interface RoadLength {
+  distance_km: number
+  duration_seconds: number
+}
+
+/** POST /routes/{id}/optimise (FMS-86): a shorter order of the saved stops, never longer. Nothing is saved. */
+export interface RouteOptimisation {
+  route_id: string
+  version: number
+  /** False when the saved order is already the shortest found. */
+  changed: boolean
+  /** The saved stops' indexes, in the suggested order. */
+  order: number[]
+  stops: RouteStop[]
+  original: RoadLength
+  optimised: RoadLength
+}
+
+/** Asks the routing engine for the shortest order of a route's saved stops (route:write). */
+export function useOptimiseRoute() {
+  const { api } = useAuth()
+  return useMutation({
+    mutationFn: (id: string) => api.request<RouteOptimisation>(`/routes/${id}/optimise`, { method: 'POST' }),
+  })
+}
+
 /** PATCH with If-Match: someone else's change in between is a 409, never silently overwritten. Retiring is `{ is_active: false }`. */
 export function useUpdateRoute() {
   const { api } = useAuth()

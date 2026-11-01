@@ -39,11 +39,11 @@ function located(id: string, plate: string, lat: number, lng: number, overrides:
 }
 
 const onTrip = located('v-1', 'AA 3-10001', 9.0, 38.75, {
-  trip: { trip_id: 't-1', route_name: 'Bole - Adama', origin: null, destination: null, started_at: ago(1800), scheduled_end: null, driver: { driver_id: 'dr-1', full_name: 'Abebe Kebede' } },
+  trip: { trip_id: 't-1', route_name: 'Bole - Adama', origin: null, destination: null, started_at: ago(1800), scheduled_end: null, driver: { driver_id: 'dr-1', full_name: 'Abebe Kebede' }, eta: null },
 })
 const speeding = located('v-2', 'AA 3-10002', 9.02, 38.77, {
   flags: [{ flag_type: 'speeding', severity: 'high', observed_at: ago(10) }],
-  trip: { trip_id: 't-2', route_name: null, origin: 'Piassa', destination: 'Kality', started_at: ago(600), scheduled_end: null, driver: { driver_id: 'dr-2', full_name: 'Sara Haile' } },
+  trip: { trip_id: 't-2', route_name: null, origin: 'Piassa', destination: 'Kality', started_at: ago(600), scheduled_end: null, driver: { driver_id: 'dr-2', full_name: 'Sara Haile' }, eta: null },
 })
 const quiet = located('v-3', 'AA 3-10003', 9.04, 38.79, { position: { ...onTrip.position!, recorded_at: ago(110) } })
 
@@ -192,6 +192,27 @@ describe('Fleet Command Center (FMS-45)', () => {
       { timeout: 500 },
     )
     expect(Date.now() - sent).toBeLessThan(500)
+  })
+
+  it('a new arrival estimate on the socket shows on the card at once, without re-reading the snapshot (FMS-86)', async () => {
+    const requests = serve([onTrip, speeding])
+    signedInAs(dispatcher)
+    const socket = open()
+    await waitFor(() => expect(card('AA 3-10001')).toBeInTheDocument())
+    expect(card('AA 3-10001')).not.toHaveTextContent('Arrives')
+    const loads = requests.length
+
+    // 14:32 and 14:05 in Addis Ababa.
+    socket.emit('trip.updated', {
+      trip_id: 't-1',
+      depot_id: DEPOT,
+      status: 'en_route',
+      change: 'TripEtaUpdated',
+      eta: { arrival_at: '2026-11-02T11:32:00Z', remaining_km: 61.2, remaining_seconds: 4320, next_stop: { stop_id: 's-1', name: 'Mojo', eta: '2026-11-02T11:05:00Z' }, position_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    })
+    await waitFor(() => expect(card('AA 3-10001')).toHaveTextContent('Arrives 14:32 · 61.2 km to go · next Mojo 14:05'))
+    expect(card('AA 3-10002')).not.toHaveTextContent('Arrives')
+    expect(requests.length).toBe(loads)
   })
 
   it('a vehicle with no ping for 2 minutes turns grey and its card says OFFLINE, without a reload', async () => {

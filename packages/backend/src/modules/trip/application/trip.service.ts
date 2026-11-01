@@ -114,7 +114,7 @@ export interface TripAssignment {
 export interface TripServiceDeps {
   trips: Pick<
     TripRepository,
-    'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop' | 'overlapping' | 'underWay' | 'clashing'
+    'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'etas' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop' | 'overlapping' | 'underWay' | 'clashing'
   >;
   /** One-off routes for unplanned trips (FMS-139). */
   routes: Pick<RouteRepository, 'insert'>;
@@ -211,6 +211,7 @@ export class TripService {
       scheduled_end: v.scheduled_end,
       actual_start: v.actual_start,
       actual_end: v.actual_end,
+      eta: v.eta,
       version: v.version,
       updated_at: v.updated_at,
     };
@@ -666,7 +667,12 @@ export class TripService {
     const vehicles = await fleet.vehicles.publicIds(db, ids((r) => r.vehicleId));
     const drivers = await fleet.drivers.publicIds(db, ids((r) => r.driverId));
     const stops = await this.deps.trips.stops(db, rows.map((r) => r.id));
-    return rows.map((r) => ({
+    const etas = await this.deps.trips.etas(db, rows.filter((r) => r.status === 'en_route').map((r) => r.id));
+    return rows.map((r) => {
+      const own = stops.filter((s) => s.tripId === r.id);
+      const eta = r.status === 'en_route' ? etas.get(String(r.id)) : undefined;
+      const next = own.find((s) => s.eta !== null);
+      return {
       id: r.publicId,
       route_id: r.routePublicId,
       route_name: r.routeName,
@@ -683,22 +689,32 @@ export class TripService {
       actual_start: r.actualStart,
       actual_end: r.actualEnd,
       actual_distance_km: r.actualDistanceKm,
-      stops: stops
-        .filter((s) => s.tripId === r.id)
-        .map((s) => ({
-          id: s.id,
-          sequence_number: s.sequenceNumber,
-          name: s.name,
-          latitude: s.latitude,
-          longitude: s.longitude,
-          status: s.status,
-          planned_arrival: s.plannedArrival,
-          actual_arrival: s.actualArrival,
-        })),
+      stops: own.map((s) => ({
+        id: s.id,
+        sequence_number: s.sequenceNumber,
+        name: s.name,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        status: s.status,
+        planned_arrival: s.plannedArrival,
+        actual_arrival: s.actualArrival,
+        eta: eta ? s.eta : null,
+      })),
+      eta: eta
+        ? {
+            arrival_at: eta.arrivalAt,
+            remaining_km: eta.remainingKm,
+            remaining_seconds: eta.remainingSeconds,
+            next_stop: next ? { stop_id: next.id, name: next.name, eta: next.eta! } : null,
+            position_at: eta.positionAt,
+            updated_at: eta.computedAt,
+          }
+        : null,
       version: r.version,
       created_at: r.createdAt,
       updated_at: r.updatedAt,
-    }));
+      };
+    });
   }
 }
 

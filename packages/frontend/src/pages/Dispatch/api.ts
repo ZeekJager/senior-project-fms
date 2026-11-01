@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
+import { etaEventOf } from '@/features/trip-eta'
+import { useRealtimeEvent } from '@/lib/realtime/context'
 import type { Coordinates, Route } from '@/pages/Routes/api'
 import type { AssignmentWarning, DispatchBoard, ShiftedTrip, Trip } from './types'
 
@@ -49,6 +51,20 @@ export function useUnderWayTrips(depotId: string) {
     },
     enabled: depotId !== '',
     refetchInterval: POLL_MS,
+  })
+}
+
+/**
+ * New arrival estimates (FMS-86) patched into the under-way trips as they come: the socket's trip.updated with
+ * change TripEtaUpdated, which re-reads nothing (RealtimeProvider). The stops' own times come with the list's
+ * 30-second refresh, as often as the API works them out.
+ */
+export function useLiveEtas(depotId: string) {
+  const queryClient = useQueryClient()
+  useRealtimeEvent('trip.updated', (payload) => {
+    const e = etaEventOf(payload)
+    if (!e || (e.depot_id && e.depot_id !== depotId)) return
+    queryClient.setQueryData<Trip[]>(keys.underWay(depotId), (trips) => trips?.map((t) => (t.id === e.trip_id ? { ...t, eta: e.eta } : t)))
   })
 }
 

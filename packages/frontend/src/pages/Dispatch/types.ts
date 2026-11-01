@@ -1,4 +1,5 @@
 import type { ServiceDueSummary } from '@/features/service-due'
+import type { TripEta } from '@/features/trip-eta'
 
 // Shapes of the trip (api-contract §7.2) and dispatch board (FMS-33)
 // resources the console reads. Public ids only.
@@ -20,7 +21,24 @@ export interface Trip {
   scheduled_end: string | null
   /** Set when the driver starts the trip: an en-route trip keeps its start (FMS-139). */
   actual_start: string | null
+  /** Copied from the route; under way, each has its arrival time (FMS-86). */
+  stops?: TripStop[]
+  /** Under way: the latest arrival estimate (FMS-86); null before the first, or not under way. */
+  eta?: TripEta | null
   version: number
+}
+
+export interface TripStop {
+  id: string
+  sequence_number: number
+  name: string
+  latitude: number | null
+  longitude: number | null
+  status: 'planned' | 'arrived' | 'completed' | 'skipped'
+  /** When the vehicle came within 150 m of it. */
+  actual_arrival: string | null
+  /** Expected arrival; null once reached, without coordinates, or behind the vehicle. */
+  eta: string | null
 }
 
 /** A trip moved later to make room for a change (PATCH /trips/{id} meta.shifted, FMS-139). */

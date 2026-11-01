@@ -22,6 +22,14 @@ const STALE: Record<string, readonly (readonly string[])[]> = {
   'vehicle.flag.changed': [['tracking']],
 }
 
+/**
+ * Events that make nothing stale: a new arrival estimate (trip.updated with change TripEtaUpdated, FMS-86) comes
+ * for every trip under way every 30 seconds, and the screens showing it patch the trip in place.
+ */
+const QUIET: Record<string, (payload: unknown) => boolean> = {
+  'trip.updated': (payload) => (payload as { change?: unknown } | null)?.change === 'TripEtaUpdated',
+}
+
 /** A refused handshake that a renewed session can fix (the access token ran out). */
 const RENEWABLE = ['AUTH_TOKEN_EXPIRED', 'AUTH_TOKEN_INVALID']
 /** Renewals in a row without getting connected before giving up until the next sign-in. */
@@ -78,7 +86,7 @@ export function RealtimeProvider({ children, connect = connectToApi }: { childre
       if (RENEWABLE.includes(err.message)) void renew()
     })
     socket.onAny((event: string, payload: unknown) => {
-      for (const key of STALE[event] ?? []) void queryClient.invalidateQueries({ queryKey: [...key] })
+      if (!QUIET[event]?.(payload)) for (const key of STALE[event] ?? []) void queryClient.invalidateQueries({ queryKey: [...key] })
       handlers.current.get(event)?.forEach((handler) => handler(payload))
     })
 

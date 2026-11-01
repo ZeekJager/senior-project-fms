@@ -1,6 +1,7 @@
-import { ArrowRight, CalendarClock, Truck, UserRound } from 'lucide-react'
+import { ArrowRight, CalendarClock, Clock, Truck, UserRound } from 'lucide-react'
 import { StatusBadge } from '@/components/shared'
 import { cn, Skeleton } from '@/components/ui'
+import { etaSummary } from '@/features/trip-eta'
 import { formatWindow, tripEnds, tripTitle } from './format'
 import type { Trip } from './types'
 
@@ -32,6 +33,7 @@ export function TripList({ trips, isLoading, selectedId, onSelect, driverName, p
       {trips.map((trip) => {
         const selected = trip.id === selectedId
         const ends = tripEnds(trip)
+        const arrival = trip.status === 'en_route' ? etaSummary(trip.eta) : null
         return (
           <li key={trip.id}>
             <button
@@ -60,6 +62,12 @@ export function TripList({ trips, isLoading, selectedId, onSelect, driverName, p
                 <CalendarClock className="h-3.5 w-3.5 text-ink-subtle" aria-hidden="true" />
                 {formatWindow(trip.scheduled_start, trip.scheduled_end)}
               </p>
+              {arrival && (
+                <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-brand-ink">
+                  <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                  {arrival}
+                </p>
+              )}
               {(trip.status === 'assigned' || trip.status === 'en_route') && (
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
                   <span className="inline-flex items-center gap-1">

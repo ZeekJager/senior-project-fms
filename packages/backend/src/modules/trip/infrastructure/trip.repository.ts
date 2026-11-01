@@ -4,7 +4,8 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { Slot } from '../domain/schedule';
 import { Repository } from '../../../shared/infrastructure/repository';
 import type { TripCursor, TripStatus } from '../domain/trip';
-import type { RouteStop } from '../domain/route';
+import type { Coordinates, RouteStop } from '../domain/route';
+import { ETA_INTERVAL_SECONDS, type EtaResult, type EtaStop } from '../domain/eta';
 
 /**
  * Which trips a caller sees (FMS-30). Staff see their depots' trips through
@@ -49,6 +50,27 @@ export interface StopRow {
   status: 'planned' | 'arrived' | 'completed' | 'skipped';
   plannedArrival: Date | null;
   actualArrival: Date | null;
+  /** Expected arrival from the vehicle's latest position (FMS-86); null once reached or before an estimate. */
+  eta: Date | null;
+}
+
+/** A trip's latest estimate (FMS-86), keyed by internal trip id. */
+export interface EtaRow {
+  tripId: string;
+  arrivalAt: Date | null;
+  remainingKm: number | null;
+  remainingSeconds: number | null;
+  positionAt: Date;
+  computedAt: Date;
+}
+
+/** A trip as its estimate needs it: state, the route's destination and the stops. */
+export interface EtaTrip {
+  id: string;
+  publicId: string;
+  status: TripStatus;
+  destination: Coordinates | null;
+  stops: EtaStop[];
 }
 
 /** A route as a trip needs it: scope, state and the plan to copy. */
@@ -189,11 +211,89 @@ export class TripRepository extends Repository {
     const res = await db.query<StopRow>(
       `SELECT s.public_id AS id, s.trip_id AS "tripId", s.sequence_number AS "sequenceNumber", s.name,
               s.latitude::float8 AS latitude, s.longitude::float8 AS longitude, s.status,
-              s.planned_arrival AS "plannedArrival", s.actual_arrival AS "actualArrival"
+              s.planned_arrival AS "plannedArrival", s.actual_arrival AS "actualArrival", s.eta
          FROM trip.trip_stops s WHERE s.trip_id = ANY($1::bigint[]) ORDER BY s.trip_id, s.sequence_number`,
       [tripIds],
     );
     return res.rows;
+  }
+
+  /** The latest estimate of these trips (internal ids), for those that have one. */
+  async etas(db: Queryable, tripIds: readonly string[]): Promise<Map<string, EtaRow>> {
+    if (tripIds.length === 0) return new Map();
+    const res = await db.query<EtaRow>(
+      `SELECT trip_id AS "tripId", arrival_at AS "arrivalAt", remaining_km::float8 AS "remainingKm", remaining_seconds AS "remainingSeconds",
+              position_at AS "positionAt", computed_at AS "computedAt"
+         FROM trip.trip_etas WHERE trip_id = ANY($1::bigint[]) AND computed_at IS NOT NULL`,
+      [tripIds],
+    );
+    return new Map(res.rows.map((r) => [String(r.tripId), { ...r, tripId: String(r.tripId) }]));
+  }
+
+  /** A trip by public id with what its estimate needs (FMS-86). The destination is the route's, as its stops were copied from it. */
+  async etaTrip(db: Queryable, publicId: string): Promise<EtaTrip | null> {
+    const trip = await db.query<{ id: string; publicId: string; status: TripStatus; lat: number | null; lng: number | null }>(
+      `SELECT t.id, t.public_id AS "publicId", t.status, r.destination_latitude::float8 AS lat, r.destination_longitude::float8 AS lng
+         FROM trip.trips t LEFT JOIN trip.routes r ON r.id = t.route_id WHERE t.public_id = $1`,
+      [publicId],
+    );
+    const row = trip.rows[0];
+    if (!row) return null;
+    const stops = await db.query<{ id: string; sequenceNumber: number; lat: number | null; lng: number | null; actualArrival: Date | null }>(
+      `SELECT public_id AS id, sequence_number AS "sequenceNumber", latitude::float8 AS lat, longitude::float8 AS lng, actual_arrival AS "actualArrival"
+         FROM trip.trip_stops WHERE trip_id = $1 ORDER BY sequence_number`,
+      [row.id],
+    );
+    const point = (lat: number | null, lng: number | null): Coordinates | null => (lat === null || lng === null ? null : { latitude: lat, longitude: lng });
+    return {
+      id: String(row.id),
+      publicId: row.publicId,
+      status: row.status,
+      destination: point(row.lat, row.lng),
+      stops: stops.rows.map((s) => ({ id: s.id, sequenceNumber: s.sequenceNumber, coordinates: point(s.lat, s.lng), actualArrival: s.actualArrival })),
+    };
+  }
+
+  /**
+   * Claims the next estimate of a trip for a position: true when none was looked at yet, or the last one was
+   * ETA_INTERVAL_SECONDS of position time before it. Locks the trip's estimate row until the transaction ends,
+   * so two positions handled at once make one estimate.
+   */
+  async claimEstimate(db: Queryable, tripId: string, positionAt: Date): Promise<boolean> {
+    const res = await db.query(
+      `INSERT INTO trip.trip_etas (trip_id, checked_at_position) VALUES ($1, $2)
+       ON CONFLICT (trip_id) DO UPDATE SET checked_at_position = EXCLUDED.checked_at_position
+        WHERE trip.trip_etas.checked_at_position <= EXCLUDED.checked_at_position - make_interval(secs => $3)
+       RETURNING trip_id`,
+      [tripId, positionAt, ETA_INTERVAL_SECONDS],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  /** Stops the vehicle has reached (public ids): arrived at `at`, no estimate any more. One already reached keeps its time. */
+  async markStopsReached(db: Queryable, tripId: string, stopIds: readonly string[], at: Date): Promise<void> {
+    if (stopIds.length === 0) return;
+    await db.query(
+      `UPDATE trip.trip_stops SET status = 'arrived', actual_arrival = $3, eta = NULL
+        WHERE trip_id = $1 AND public_id = ANY($2::uuid[]) AND actual_arrival IS NULL`,
+      [tripId, stopIds, at],
+    );
+  }
+
+  /** A new estimate: each stop ahead gets its time, every other stop none, and the trip its arrival and what is left. */
+  async saveEstimate(db: Queryable, tripId: string, result: EtaResult, positionAt: Date, computedAt: Date): Promise<void> {
+    await db.query(
+      `UPDATE trip.trip_stops s SET eta = v.eta
+         FROM (SELECT s2.id, e.eta FROM trip.trip_stops s2
+                 LEFT JOIN unnest($2::uuid[], $3::timestamptz[]) AS e(public_id, eta) ON e.public_id = s2.public_id
+                WHERE s2.trip_id = $1) v
+        WHERE s.id = v.id AND s.eta IS DISTINCT FROM v.eta`,
+      [tripId, result.stops.map((s) => s.id), result.stops.map((s) => s.eta)],
+    );
+    await db.query(
+      `UPDATE trip.trip_etas SET arrival_at = $2, remaining_km = $3, remaining_seconds = $4, position_at = $5, computed_at = $6 WHERE trip_id = $1`,
+      [tripId, result.arrivalAt, result.remainingKm, result.remainingSeconds, positionAt, computedAt],
+    );
   }
 
   /** A route by public id with its plan, if it is in the depot scope (null depotId: any depot). Share-locked: it cannot be retired mid-create. */

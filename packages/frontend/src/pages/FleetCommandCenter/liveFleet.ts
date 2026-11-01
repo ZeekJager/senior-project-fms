@@ -1,4 +1,5 @@
 import { markerState, type FleetMapVehicle, type MarkerState } from '@/components/FleetMap'
+import type { TripEtaEvent } from '@/features/trip-eta'
 import type { LocationUpdate, LiveTrip, VehicleLocation } from './types'
 
 // The live fleet as the command center keeps it (FMS-45): the server's snapshot, moved on by the
@@ -21,6 +22,20 @@ export function mergeSnapshot(previous: Fleet, snapshot: readonly VehicleLocatio
     next.set(fresh.vehicle_id, newer ? { ...fresh, position: known } : fresh)
   }
   return next
+}
+
+/**
+ * A new arrival estimate (FMS-86, trip.updated with change TripEtaUpdated) on the vehicle whose trip it is. The
+ * same fleet when no vehicle shown is on that trip.
+ */
+export function applyEta(fleet: Fleet, update: TripEtaEvent): Fleet {
+  for (const vehicle of fleet.values()) {
+    if (vehicle.trip?.trip_id !== update.trip_id) continue
+    const next = new Map(fleet)
+    next.set(vehicle.vehicle_id, { ...vehicle, trip: { ...vehicle.trip, eta: update.eta } })
+    return next
+  }
+  return fleet
 }
 
 /**

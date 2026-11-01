@@ -40,6 +40,14 @@ export interface VehicleLocation {
     started_at: string | null;
     scheduled_end: string | null;
     driver: { driver_id: string; full_name: string | null } | null;
+    /** Its latest arrival estimate (FMS-86, docs/eta.md); null before the first. */
+    eta: {
+      /** At the destination; null when the route has no destination coordinates. */
+      arrival_at: string | null;
+      remaining_km: number | null;
+      next_stop: { name: string; eta: string } | null;
+      updated_at: string;
+    } | null;
   } | null;
   /** Open telemetry flags (speeding, idling; FMS-46), the newest of each type. */
   flags: { flag_type: string; severity: string; observed_at: string }[];

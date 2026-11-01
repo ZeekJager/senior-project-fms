@@ -2957,3 +2957,20 @@ INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM auth.roles r, auth.permissions p
  WHERE r.name = 'admin' AND p.code = 'settings:write'
 ON CONFLICT DO NOTHING;
+
+-- ===== 053_trip_eta.sql =====
+ALTER TABLE trip.trip_stops ADD COLUMN IF NOT EXISTS eta TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS trip.trip_etas (
+    trip_id             BIGINT PRIMARY KEY REFERENCES trip.trips(id)
+                        ON DELETE CASCADE ON UPDATE CASCADE,
+    -- NULL when the route has no destination coordinates: only its stops are estimated.
+    arrival_at          TIMESTAMPTZ,
+    remaining_km        NUMERIC(12,3) CHECK (remaining_km IS NULL OR remaining_km >= 0),
+    remaining_seconds   INTEGER CHECK (remaining_seconds IS NULL OR remaining_seconds >= 0),
+    -- The position the values were worked out from; NULL until the first estimate.
+    position_at         TIMESTAMPTZ,
+    computed_at         TIMESTAMPTZ,
+    checked_at_position TIMESTAMPTZ NOT NULL,
+    CONSTRAINT chk_trip_etas_computed CHECK ((position_at IS NULL) = (computed_at IS NULL))
+);
