@@ -1,7 +1,9 @@
 /// <reference lib="webworker" />
 // The driver app's service worker (FMS-34). Built by build/pwa.ts into /sw.js,
-// with the files to precache and the build id injected. Registered only from
-// the driver portal (src/pwa/useDriverPwa.ts), never for staff accounts.
+// with the files to precache and the build id injected. Registered by the
+// driver portal (src/pwa/useDriverPwa.ts), and for anyone who turns push on in
+// Settings (FMS-93, src/lib/push.ts): staff pages are never cached by it, and
+// it keeps no staff session.
 //
 // - The app shell (index.html, scripts, styles, fonts, icons, the offline
 //   page) is cached at install, per build.
@@ -14,6 +16,9 @@
 // - Submissions the driver made offline (FMS-81) are sent from here on a
 //   Background Sync, so they go when the signal returns even with the app
 //   closed; the page sends them too, whichever comes first.
+// - Push (FMS-93): an alert pushed by the server is shown as a system
+//   notification, even with FMS closed; clicking it opens the screen it is
+//   about, in an FMS tab if one is open.
 
 import { APP_SHELL, NAVIGATION_TIMEOUT_MS, OFFLINE_PAGE, SESSION_KEY, SESSION_MESSAGE, cacheNames, isDriverSession, routeFor, sessionUsable } from './pwa/routing'
 import { announce, flushQueue, outcomeOf, requestFor, SYNC_TAG, type Outcome, type Submission } from './lib/offlineQueue'
@@ -66,6 +71,52 @@ self.addEventListener('message', (event) => {
 self.addEventListener('sync', (event) => {
   const sync = event as SyncEvent
   if (sync.tag === SYNC_TAG) sync.waitUntil(sendQueue())
+})
+
+/** What the server pushes (backend alert/domain/delivery.ts pushContent). */
+interface PushMessage {
+  title?: string
+  body?: string
+  data?: { url?: string; tag?: string; severity?: string }
+}
+
+self.addEventListener('push', (event) => {
+  const message = ((): PushMessage => {
+    try {
+      return (event.data?.json() as PushMessage | undefined) ?? {}
+    } catch {
+      return {}
+    }
+  })()
+  const data = message.data ?? {}
+  event.waitUntil(
+    self.registration.showNotification(message.title || 'FMS alert', {
+      body: message.body,
+      tag: data.tag,
+      data: { url: typeof data.url === 'string' && data.url.startsWith('/') ? data.url : '/' },
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      // A critical alert stays on screen until it is dealt with.
+      requireInteraction: data.severity === 'critical',
+    }),
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = new URL((event.notification.data as { url?: string } | null)?.url ?? '/', self.location.origin).href
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      const open = windows.find((w) => new URL(w.url).origin === self.location.origin)
+      if (open) {
+        await open.focus()
+        await open.navigate(url).catch(() => undefined)
+        return
+      }
+      await self.clients.openWindow(url)
+    })(),
+  )
 })
 
 self.addEventListener('fetch', (event) => {

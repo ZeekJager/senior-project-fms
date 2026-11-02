@@ -104,21 +104,23 @@ export class ProviderRegistry {
     return this.breakers.get(provider.id)?.breaker.view() ?? null;
   }
 
-  /** What an adapter gets for one operation: a client behind the provider's breaker, and its API key. */
+  /**
+   * What an adapter gets for one operation: a client behind the provider's breaker, its API key, and the
+   * breaker itself for a call that is not HTTP (FMS-93: SMTP).
+   */
   context(provider: ProviderRow, correlationId: string): AdapterContext {
-    const client = new HttpProviderClient({
-      code: provider.code,
-      baseUrl: provider.baseUrl,
-      settings: this.settingsFor(provider).client,
-      breaker: this.breakerFor(provider),
-      correlationId,
-      fetch: this.fetchImpl,
-    });
+    const settings = this.settingsFor(provider).client;
+    const breaker = this.breakerFor(provider);
+    const clientFor = (baseUrl: string | null) =>
+      new HttpProviderClient({ code: provider.code, baseUrl, settings, breaker, correlationId, fetch: this.fetchImpl });
     return {
-      client,
+      client: clientFor(provider.baseUrl),
       provider: { code: provider.code, type: provider.providerType, baseUrl: provider.baseUrl, configuration: provider.configuration },
       apiKey: this.secretsFor(provider.code).apiKey,
       correlationId,
+      timeoutMs: settings.timeoutMs,
+      guard: (action) => breaker.fire(action),
+      clientFor,
     };
   }
 

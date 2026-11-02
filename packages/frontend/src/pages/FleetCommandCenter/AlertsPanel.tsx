@@ -1,4 +1,4 @@
-import { BellOff, Check, CheckCheck, Crosshair, TrendingUp } from 'lucide-react'
+import { BellOff, Check, CheckCheck, Crosshair, Send, TrendingUp } from 'lucide-react'
 import { EmptyState } from '@/components/shared'
 import { Badge, Button, cn, type BadgeTone } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
@@ -28,6 +28,8 @@ interface AlertsPanelProps {
   /** Offered when the alert's vehicle is on the map. */
   onShowVehicle?: (vehicleId: string) => void
   onMap: (vehicleId: string) => boolean
+  /** How the alert reached people, by email, SMS and push (FMS-93): offered with alert:read. */
+  onDelivery?: (alert: OverviewAlert) => void
 }
 
 function failure(error: unknown): string {
@@ -35,7 +37,7 @@ function failure(error: unknown): string {
   return 'That did not go through. Try again.'
 }
 
-export function AlertsPanel({ alerts, now, canAck, canResolve, pending, errors, onAction, onShowVehicle, onMap }: AlertsPanelProps) {
+export function AlertsPanel({ alerts, now, canAck, canResolve, pending, errors, onAction, onShowVehicle, onMap, onDelivery }: AlertsPanelProps) {
   if (alerts.length === 0) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto border-t border-line px-3 py-3">
@@ -111,6 +113,11 @@ export function AlertsPanel({ alerts, now, canAck, canResolve, pending, errors, 
                     aria-label={`Resolve: ${a.title}`}
                   >
                     Resolve
+                  </Button>
+                )}
+                {onDelivery && (a.severity === 'critical' || a.severity === 'high') && (
+                  <Button size="sm" variant="ghost" onClick={() => onDelivery(a)} leadingIcon={<Send className="h-3.5 w-3.5" />} aria-label={`Delivery: ${a.title}`}>
+                    Delivery
                   </Button>
                 )}
                 {onShowVehicle && a.vehicle_id && onMap(a.vehicle_id) && (

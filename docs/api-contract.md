@@ -858,13 +858,20 @@ An alert is a business event requiring attention. A notification is a delivery a
 |---|---|---|---|
 | `GET /alerts` | Search alerts | `alert:read` | `status`, `severity`, `type` (comma-separated), `vehicle_id`, `depot_id`, `sort` (`newest`, `priority`), `page`, `page_size` -> Paged `Alert[]`; depot scope |
 | `GET /alerts/{alert_id}` | Alert detail | `alert:read` | `Alert` |
+| `GET /alerts/{alert_id}/deliveries` | How the alert reached people (FMS-93) | `alert:read` | -> `AlertDelivery[]` by channel then recipient: `channel` (`in_app`, `email`, `sms`, `push`), `status`, `recipient` `{id, name}`, `attempts`, `provider` (code), `provider_message_id`, `queued_at`, `sent_at`, `failed_at`, `next_attempt_at`, `failure_reason`, `read_at`; never an email address or phone number; depot scope |
 | `POST /alerts/{alert_id}/acknowledge` | Acknowledge alert | `alert:ack` | `{comment?}` -> `Alert`; only an `open` alert (`409 CONFLICT_INVALID_STATE_TRANSITION` otherwise) |
 | `POST /alerts/{alert_id}/resolve` | Resolve alert | `alert:resolve` | `{comment?}` -> `Alert`; an `open` or `acknowledged` alert |
 | `GET /notifications` | The caller's in-app inbox | `notification:read` | `status` (`all` default, `unread`, `read`), `type` (comma-separated), `page`, `page_size` -> Paged `Notification[]`, newest first; `meta.unread_count` is the whole inbox's |
 | `PATCH /notifications/{notification_id}/read` | Mark one read | `notification:read` | No body -> `Notification`; `meta.unread_count`; safe to repeat |
 | `POST /notifications/read-all` | Mark all read | `notification:read` | No body -> `{updated}`; `meta.unread_count` is 0 |
+| `GET /notifications/channels` | Where alerts reach the caller (FMS-93) | `notification:read` | -> `{rules: [{severity, channels}], email: {available, address}, sms: {available, phone}, push: {available, public_key, devices, device_keys}}` |
+| `POST /notifications/push/subscriptions` | Push on for this browser | `notification:read` | `PushSubscription.toJSON()` -> `{id, created_at}`, `201` new, `200` known (an endpoint another user had moves to the caller); `400` an endpoint that is not a push service's https address; `503 UPSTREAM_UNAVAILABLE` with no push provider |
+| `POST /notifications/push/unsubscribe` | Push off for this browser | `notification:read` | `{endpoint}` -> `{removed}`; the caller's only; safe to repeat |
+| `POST /notifications/push/test` | Test push to the caller's browsers | `notification:read` | No body -> `{devices, sent, failed}` |
 
 **Alert engine (FMS-92).** Alerts are raised from domain events by rule, de-duplicated per source within a window, notified in-app to the roles of the alert's depot, and escalated when critical and unacknowledged (fleet managers after `ALERT_ESCALATION_MINUTES`, 15, then admins). Rules, recipients and escalation: [docs/alerts.md](alerts.md).
+
+**Email, SMS and push (FMS-93).** A critical alert also goes to the same people by email, SMS (to those with a phone number) and push; a high one by push. The messages are queued with the alert and sent by a job every minute through the integration gateway's notification providers. A failed attempt is retried after 1, 5, 15 and 60 minutes, and fails after the fifth; `GET /alerts/{alert_id}/deliveries` shows each message's status and why it failed. Rules, providers and push: [docs/notification-channels.md](notification-channels.md).
 
 **Inbox rules (FMS-48).**
 

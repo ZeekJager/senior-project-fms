@@ -21,15 +21,17 @@ import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
 import { RuleThresholdService } from './application/rule-threshold.service';
+import { NotificationGateway } from './application/notification-gateway';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
 import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
-import type { AdapterContext, ProviderAdapter, ProviderClient } from './domain/adapter';
+import type { AdapterContext, NotificationChannel, OutboundMessage, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
 import { INTEGRATION_EVENTS } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
 import { IntegrationRepository } from './infrastructure/integration.repository';
+import { notificationAdapter } from './infrastructure/notification.adapter';
 import { MemoryRuleStateStore, RedisRuleStateStore } from './infrastructure/rule-state.store';
 import { RuleThresholdRepository } from './infrastructure/rule-threshold.repository';
 import { TelemetryFlagRepository } from './infrastructure/telemetry-flag.repository';
@@ -45,6 +47,9 @@ const service = new IntegrationService({ repo, registry, events: eventBus, log: 
 
 // Telematics providers without an adapter of their own speak the FMS telematics format (FMS-88).
 registry.registerForType('telematics', fmsTelematicsAdapter);
+// Notification providers (FMS-93): SMTP email, the FMS SMS format, or Web Push, by their configuration.channel.
+registry.registerForType('notification', (code) => notificationAdapter(code));
+const notifications = new NotificationGateway({ repo, registry, log: logger });
 
 const devices = new DeviceRepository(pool);
 const tracking = new TrackingRepository();
@@ -153,6 +158,19 @@ export const integrationGateway = {
 };
 
 /**
+ * The notification channels (FMS-93, docs/notification-channels.md), for the alert engine: which of email, SMS and
+ * push are on, and one message at a time through the channel's provider.
+ */
+export const notificationGateway = {
+  channels: (db?: Queryable): Promise<Set<NotificationChannel>> => notifications.channels(db),
+  pushPublicKey: (db?: Queryable): Promise<string | null> => notifications.pushPublicKey(db),
+  destinationProblem: (channel: NotificationChannel, to: OutboundMessage['to'], db?: Queryable): Promise<string | null> =>
+    notifications.destinationProblem(channel, to, db),
+  send: (message: OutboundMessage, correlationId: string) => notifications.send(message, correlationId),
+  codes: (db: Queryable, ids: readonly string[]): Promise<Map<string, string>> => notifications.codes(db, ids),
+};
+
+/**
  * The legacy socket `location_update` (api-contract §11.2, off unless REALTIME_LEGACY_LOCATION): one position,
  * stamped on arrival, for the driver's own trip under way, through the same ingestion as the API.
  */
@@ -198,11 +216,17 @@ export const webhookDeliveries = {
 
 export { keepsRawBody, WEBHOOK_PATHS } from './api/integration.routes';
 export {
+  DeliveryRefused,
+  NOTIFICATION_CHANNELS,
   PROVIDER_TYPES,
   ProviderCallError,
   WebhookPayloadError,
   type AdapterContext,
+  type DeliveryReceipt,
   type NormalizedWebhook,
+  type NotificationChannel,
+  type OutboundMessage,
+  type PushTarget,
   type ProviderAdapter,
   type ProviderClient,
   type ProviderRequest,
@@ -217,3 +241,6 @@ export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-
 export { fmsTelematicsAdapter } from './infrastructure/fms-telematics.adapter';
 export { REPLAY_WINDOW_MS, SIGNATURE_HEADER, TIMESTAMP_HEADER, signWebhook } from './domain/webhook-signature';
 export { mockProviderAdapter } from './infrastructure/mock-provider';
+export { notificationAdapter, type NotificationAdapterOptions } from './infrastructure/notification.adapter';
+export type { SendOutcome } from './application/notification-gateway';
+export { generateVapidKeys, vapidKeysMatch, type VapidKeys } from './domain/web-push';

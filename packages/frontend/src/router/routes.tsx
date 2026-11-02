@@ -18,6 +18,7 @@ import { ReportsPage } from '@/pages/Reports'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
 import { SettingsPage } from '@/pages/Settings'
+import { NotificationSettingsPage } from '@/pages/NotificationSettings'
 import { UsersPage } from '@/pages/Users'
 import { VehicleHistoryPage } from '@/pages/VehicleHistory'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -29,6 +30,8 @@ export interface AppRoute {
   permission?: PermissionRule
   /** Shown in the menu when set and the user holds the permission. */
   nav?: { label: string; icon: LucideIcon }
+  /** The header's name for a page outside the menu (Settings), shown instead of its portal's. */
+  title?: string
 }
 
 export type PortalId = 'fleet' | 'command' | 'admin' | 'driver'
@@ -196,6 +199,9 @@ export const portals: Portal[] = [
         permission: 'settings:write',
         nav: { label: 'Settings', icon: SlidersHorizontal },
       },
+      // S-29 (FMS-93): how alerts reach the user, and push for this browser. Every signed-in user; opened from the
+      // account card, not the menu.
+      { path: '/notification-settings', element: <NotificationSettingsPage />, title: 'Notification settings' },
     ],
   },
   {

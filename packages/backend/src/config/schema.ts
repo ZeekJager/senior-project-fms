@@ -70,6 +70,8 @@ const appSchema = z
     ML_SERVICE_TOKEN: z.string().optional(),
     // Road routing (FMS-84, docs/routing.md): OSRM's base URL. Unset or empty, routes keep the distance typed in.
     ROUTING_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
+    // The web app's public address (FMS-93): alert emails link to it. Unset, they carry no link.
+    APP_PUBLIC_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
     // The feature spec the core's extractor implements, shared with the ML service (FMS-127). Relative to the working directory.
     ML_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec.json'),
   })
@@ -129,6 +131,8 @@ export interface AppConfig {
   ml: MlConfig;
   /** Road routing (FMS-84): OSRM's base URL, or null when ROUTING_URL is not set and routes keep the distance typed in. */
   routing: { url: string } | null;
+  /** The web app's public address, without a trailing slash, for links in alert emails (FMS-93); null leaves them out. */
+  app: { publicUrl: string | null };
 }
 
 /** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
@@ -266,6 +270,7 @@ export function loadAppConfig(env: Env): AppConfig {
       featureSpecPath: e.ML_FEATURE_SPEC_PATH,
     },
     routing: e.ROUTING_URL ? { url: e.ROUTING_URL.replace(/\/+$/, '') } : null,
+    app: { publicUrl: e.APP_PUBLIC_URL ? e.APP_PUBLIC_URL.replace(/\/+$/, '') : null },
   };
 }
 

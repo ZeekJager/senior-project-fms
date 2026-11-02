@@ -15,6 +15,8 @@ Every call to an outside system, and every webhook from one, goes through this m
 | Webhook signatures | `domain/webhook-signature.ts` | HMAC-SHA256 over the timestamp and raw body; 5-minute replay window |
 | Service | `application/integration.service.ts` | Provider status, manual sync, webhook receipt; a sync log for each |
 | Mock provider | `infrastructure/mock-provider.ts` | A complete adapter used by the tests; the template for a real one |
+| Notification adapter | `infrastructure/notification.adapter.ts` | Email (SMTP), SMS (the FMS SMS format) and Web Push for `notification` providers, by `configuration.channel` (FMS-93, [notification-channels.md](notification-channels.md)) |
+| Notification gateway | `application/notification-gateway.ts` | Which channels are on, and one message at a time through the channel's provider: sent, refused, paused (breaker open) or failed |
 
 ## Adding a provider
 
@@ -35,6 +37,7 @@ Every call to an outside system, and every webhook from one, goes through this m
    - Send `ctx.apiKey` the way the provider wants it, and never log it.
    - `normalize(body)` must be pure. Convert units to the system's (integer km/h, millilitres, cents) and pick the provider's event id as `eventId`, the de-duplication key. Throw `WebhookPayloadError(field, reason)` for a body it cannot read.
    A telematics provider needs no adapter of its own if it sends the FMS telematics format ([gps-ingestion.md](gps-ingestion.md)): `registerForType('telematics', fmsTelematicsAdapter)` covers every telematics provider without one. Its devices are registered with `--provider <code>` (`npm run device:register`).
+   A notification provider (FMS-93) is the same: `registerForType('notification', notificationAdapter)` sends SMTP email, the FMS SMS format or Web Push by the row's `configuration.channel` ([notification-channels.md](notification-channels.md)). An adapter that delivers implements `deliver(ctx, message)`, throwing `DeliveryRefused` for a message that can never go (it does not count against the breaker). A call that is not HTTP (SMTP) goes through `ctx.guard(...)`, the provider's breaker; a provider whose address comes with each message (a push endpoint) gets a client with `ctx.clientFor(origin)`, behind the same breaker, and checks the host itself.
 4. **Consume the deliveries.** Subscribe to `IntegrationWebhookReceived` in the module that owns the data (telematics: `integration.telematics-pings`, FMS-88, ingests `positions`). Read the delivery with `webhookDeliveries.find(tx, payload.sync_log_id)`, which returns `{ provider_code, provider_type, kind, occurred_at, data }`. Insert with the business table's own de-duplication key (api-contract §15) and `ON CONFLICT DO NOTHING`, since delivery is at least once.
 
 Another module that calls a provider directly (the mapping adapter, FMS-84) gets the client with `integrationGateway.contextFor(code, correlationId)`.

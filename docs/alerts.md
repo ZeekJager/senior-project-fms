@@ -50,6 +50,8 @@ Tier 0 is the rule's roles; escalation then tells fleet managers (tier 1), then 
 
 Anyone already told about the alert is skipped. A batch of notifications is one statement and one audit entry (`alert.notified`, with the count).
 
+**Beyond the app (FMS-93).** The same people get a critical alert by email, SMS and push as well, and a high one by push: [notification-channels.md](notification-channels.md). An escalation goes out the same way to the next tier.
+
 ## Acknowledge and resolve
 
 | Call | Permission | From | To |
