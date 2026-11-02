@@ -5,6 +5,7 @@ import { Badge, Button, cn, Skeleton } from '@/components/ui'
 import type { Depot } from '@/features/depots'
 import { daysBetween, formatDate, today, type DocumentHealth } from '@/features/documents/expiry'
 import type { Driver, LicenseStatus } from './types'
+import { Avatar } from '@/components/shared'
 
 export interface ColumnContext {
   depots: Map<string, Depot>
@@ -21,11 +22,6 @@ const UNAVAILABLE: Partial<Record<NonNullable<Driver['attendance_today']>, strin
   absent: 'Absent today',
   on_leave: 'On leave today',
   sick: 'Sick today',
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean)
-  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?'
 }
 
 /**
@@ -67,12 +63,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       sortKey: 'full_name',
       cell: (d) => (
         <div className="flex min-w-0 items-center gap-3">
-          <div
-            className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink sm:flex"
-            aria-hidden="true"
-          >
-            {initials(d.full_name)}
-          </div>
+          <Avatar name={d.full_name} src={d.photo_url} className="hidden sm:inline-flex" />
           <div className="min-w-0">
             <p className="truncate font-semibold text-ink">{d.full_name}</p>
             {d.attendance_today && UNAVAILABLE[d.attendance_today] ? (

@@ -10,6 +10,8 @@ export interface User {
   id: string
   email: string
   full_name: string
+  /** The photo (docs/photos.md), or null: a placeholder is shown. */
+  photo_url?: string | null
   phone: string | null
   depot_id: string | null
   status: UserStatus

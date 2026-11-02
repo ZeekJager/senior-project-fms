@@ -1,4 +1,5 @@
 import { Activity, AlertTriangle, ArrowRight, Bike, Bus, Car, CarFront, FileText, History, MapPin, Paperclip, Pencil, Truck, type LucideIcon } from 'lucide-react'
+import { VehiclePhoto } from '@/components/shared'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
 import { Badge, Button, cn, IconButton, iconButtonClass, Skeleton } from '@/components/ui'
@@ -44,12 +45,16 @@ export function vehicleColumns(ctx: ColumnContext): Column<Vehicle>[] {
       sortKey: 'registration_number',
       cell: (v) => (
         <div className="flex min-w-0 items-center gap-3">
+          {v.photo_url ? (
+            <VehiclePhoto src={v.photo_url} vehicleType={v.vehicle_type} className={cn('hidden sm:inline-flex', v.maintenance_flag && 'ring-2 ring-warning/40')} />
+          ) : (
           <div className={cn('hidden h-9 w-9 shrink-0 items-center justify-center rounded-control ring-1 ring-inset sm:flex', v.maintenance_flag ? 'bg-warning-soft text-warning ring-warning/25' : 'bg-surface-sunken text-ink-muted ring-line')}>
             {(() => {
               const Icon = TYPE_ICONS[v.vehicle_type]
               return <Icon className="h-4 w-4" aria-hidden="true" />
             })()}
           </div>
+          )}
           <div className="min-w-0">
             <p className="plate flex flex-wrap items-center gap-x-2 text-ink">
               <span className="whitespace-nowrap">{v.registration_number}</span>

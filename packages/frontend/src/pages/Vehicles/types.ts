@@ -20,6 +20,8 @@ export interface VehicleTrip {
 export interface Vehicle {
   id: string
   registration_number: string
+  /** The photo (docs/photos.md), or null: a placeholder is shown. */
+  photo_url?: string | null
   vin: string | null
   make: string
   model: string

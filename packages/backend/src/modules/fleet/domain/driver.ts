@@ -79,6 +79,8 @@ export interface DriverView {
   id: string;
   user_id: string;
   full_name: string;
+  /** The driver's account photo (docs/photos.md), or null: the screens show the initials. */
+  photo_url: string | null;
   email: string;
   phone: string | null;
   depot_id: string | null;

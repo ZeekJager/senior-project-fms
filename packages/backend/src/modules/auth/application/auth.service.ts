@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { photoUrl } from '../../../shared/storage/photo';
 import type { Pool } from 'pg';
 import { withTransaction } from '../../../shared/infrastructure/transaction';
 import type { RequestUser } from '../../../types/express';
@@ -199,9 +200,9 @@ export class AuthService {
     const profile = await users.findProfile(db, userId);
     const principal = await users.findPrincipalById(db, userId);
     if (!profile || !principal) throw tokenInvalid();
-    const { depotId, ...rest } = profile;
+    const { depotId, photoUpdatedAt, ...rest } = profile;
     const depot_id = depotId === null ? null : await this.deps.depots.publicIdOf(depotId);
-    return { user: { ...rest, depot_id }, roles: principal.roles, permissions: principal.permissions };
+    return { user: { ...rest, depot_id, photo_url: photoUrl('users', rest.id, photoUpdatedAt) }, roles: principal.roles, permissions: principal.permissions };
   }
 
   private async issue(principal: Principal, familyId: string, refreshToken: string): Promise<IssuedSession> {

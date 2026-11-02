@@ -22,6 +22,8 @@ export interface UserView {
   /** False until a password is set (accounts created without one sign in only after the setup link). */
   has_password: boolean;
   last_login_at: Date | null;
+  /** The photo's URL (docs/photos.md), or null: the screens show the initials. */
+  photo_url: string | null;
   created_at: Date;
   updated_at: Date;
 }

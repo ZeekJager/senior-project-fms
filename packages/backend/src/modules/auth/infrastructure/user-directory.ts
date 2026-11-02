@@ -16,11 +16,13 @@ export interface UserAccount {
   /** Home depot (internal fleet.depots id), or null. */
   depotId: string | null;
   roles: string[];
+  /** When the photo last changed (docs/photos.md); null without one. */
+  photoUpdatedAt: Date | null;
 }
 
 const ACCOUNT_SQL = `
   SELECT u.id, u.public_id AS "publicId", u.full_name AS "fullName", u.email, u.phone, u.status,
-         u.depot_id AS "depotId",
+         u.depot_id AS "depotId", u.photo_updated_at AS "photoUpdatedAt",
          COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
     FROM auth.users u
     LEFT JOIN auth.user_roles ur ON ur.user_id = u.id

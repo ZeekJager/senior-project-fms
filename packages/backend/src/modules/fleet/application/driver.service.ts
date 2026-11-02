@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { photoUrl } from '../../../shared/storage/photo';
 import { depotInScope, depotScope, type Scope } from '../../../shared/authz/scope';
 import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
 import { AppError, validationFailed } from '../../../shared/errors/app-error';
@@ -206,6 +207,16 @@ export class DriverService {
       const view = row && (await this.views(client, [row]))[0];
       if (!view || !(await this.inScope(client, caller, row.userId))) throw driverNotFound();
       return view;
+    });
+  }
+
+  /** The internal user id of a driver in the caller's scope, for their photo (docs/photos.md); 404 otherwise. */
+  async accountOf(caller: Caller, driverId: string): Promise<string> {
+    const { drivers } = this.deps;
+    return drivers.inTransaction(async (client) => {
+      const row = await drivers.findByPublicId(client, driverId);
+      if (!row || !(await this.inScope(client, caller, row.userId))) throw driverNotFound();
+      return row.userId;
     });
   }
 
@@ -456,6 +467,7 @@ export class DriverService {
         id: r.publicId,
         user_id: account.publicId,
         full_name: account.fullName,
+        photo_url: photoUrl('users', account.publicId, account.photoUpdatedAt),
         email: account.email,
         phone: account.phone,
         depot_id: account.depotId === null ? null : (depots.get(account.depotId) ?? null),

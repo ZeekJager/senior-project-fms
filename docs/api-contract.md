@@ -546,6 +546,23 @@ Document rules (FMS-17):
 - **Delete:** soft. `DELETE` marks the document deleted (`deleted_at`, `deleted_by`, one audit row) and returns `204`; it then reads as `404` and its links stop working. The file itself is kept for retention (`retain_until`); purging it is a later job.
 - **Events:** `DocumentUploaded`, with `document_id`, `owner_type`, `owner_id`, `document_type` and `expires_on`. `DocumentExpiring` (the same ids plus `expires_on`, `days_left` and `level`: `amber` within 30 days of `expires_on`, `red` within 7) comes from the daily expiry check (07:00 Addis Ababa) and at once on upload when the date is already that close; once per level and expiry date (FMS-26, [jobs.md](jobs.md)).
 
+### 8.2 Photos of people and vehicles
+
+| Method + path | Purpose | Auth / permission | Request / response |
+|---|---|---|---|
+| `PUT /auth/me/photo` | Set your own photo | Any signed-in user | multipart `file` (JPEG, PNG or WebP by its bytes, 2 MB at most) -> `{photo_url}`; `413 PAYLOAD_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE` |
+| `DELETE /auth/me/photo` | Remove your own photo | Any signed-in user | `204`; safe to repeat |
+| `PUT /users/{user_id}/photo` | Set anyone's photo | `users:write` | As `PUT /auth/me/photo` |
+| `DELETE /users/{user_id}/photo` | Remove anyone's photo | `users:write` | `204` |
+| `GET /users/{user_id}/photo` | The photo | Signed in: your own, or anyone's with `users:read` or `driver:read` | The image (`Cache-Control: private, max-age=86400`, `nosniff`); `404` with none, or when you may not see it |
+| `PUT /drivers/{driver_id}/photo` | Set a driver's photo (their account's) | `driver:write`, depot scope | As `PUT /auth/me/photo` |
+| `DELETE /drivers/{driver_id}/photo` | Remove it | `driver:write`, depot scope | `204` |
+| `PUT /vehicles/{vehicle_id}/photo` | Set a vehicle's photo | `vehicle:write`, depot scope | As `PUT /auth/me/photo` |
+| `DELETE /vehicles/{vehicle_id}/photo` | Remove it | `vehicle:write`, depot scope | `204` |
+| `GET /vehicles/{vehicle_id}/photo` | The photo | `vehicle:read`, depot scope | The image; `404` with none |
+
+`User`, `Driver`, `Vehicle` and `/auth/me`'s `user` carry `photo_url`: the URL to show, versioned by when the photo changed (`?v=`), or `null`, when the screens show a placeholder (initials, or the vehicle type's icon). The browser crops and shrinks a picture before sending it. Files live in the document storage, never in PostgreSQL; a replaced photo's file is removed. Every change is audited (`photo.updated`, `photo.removed`). Details: [photos.md](photos.md).
+
 ## 9. Fuel Tracking and Reconciliation API
 
 ### 9.1 Fuel logs and anomalies

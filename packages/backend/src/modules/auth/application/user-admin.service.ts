@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { photoUrl } from '../../../shared/storage/photo';
 import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -306,6 +307,7 @@ export class UserAdminService {
       roles: row.roles,
       has_password: row.hasPassword,
       last_login_at: row.lastLoginAt,
+      photo_url: photoUrl('users', row.publicId, row.photoUpdatedAt),
       created_at: row.createdAt,
       updated_at: row.updatedAt,
     };

@@ -18,6 +18,8 @@ export interface CurrentUser {
     status: string
     depot_id: string | null
     last_login_at: string | null
+    /** The user's photo (docs/photos.md), or null: the initials are shown instead. */
+    photo_url?: string | null
   }
   roles: string[]
   permissions: string[]
@@ -33,6 +35,8 @@ export interface AuthContextValue {
   logout(options?: { reason?: 'idle' }): Promise<void>
   /** Any one of the codes (a string or a list), or every code in `{ all: [...] }`. */
   hasPermission(permission: PermissionRule): boolean
+  /** After the user changes their own photo: the header and menu show it at once. */
+  setOwnPhoto(photoUrl: string | null): void
   /** The API client this session uses (tests pass their own to AuthProvider). */
   api: ApiClient
 }
@@ -122,9 +126,12 @@ export function AuthProvider({ children, api = defaultApi, idleTimeoutMs = IDLE_
 
   const hasPermission = useCallback((permission: PermissionRule) => (session ? permits(session.permissions, permission) : false), [session])
 
+  // A new or removed photo of one's own shows at once in the header and menu, without a refetch of /auth/me.
+  const setOwnPhoto = useCallback((photoUrl: string | null) => setSession((s) => (s ? { ...s, user: { ...s.user, photo_url: photoUrl } } : s)), [])
+
   const value = useMemo(
-    () => ({ status, session, login, logout, hasPermission, api }),
-    [status, session, login, logout, hasPermission, api],
+    () => ({ status, session, login, logout, hasPermission, setOwnPhoto, api }),
+    [status, session, login, logout, hasPermission, setOwnPhoto, api],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

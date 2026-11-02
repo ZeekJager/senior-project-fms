@@ -41,6 +41,8 @@ export interface VehicleView {
   current_trip: VehicleTrip | null;
   /** Bumped on every change; also the ETag. Send it back in `If-Match` to refuse a stale PATCH. */
   version: number;
+  /** The vehicle's photo (docs/photos.md), or null: the screens show the vehicle type's placeholder. */
+  photo_url: string | null;
   created_at: Date;
   updated_at: Date;
 }

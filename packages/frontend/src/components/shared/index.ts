@@ -16,3 +16,5 @@ export { StatCard, StatShare, type StatCardProps, type StatTone } from './StatCa
 export { STATUSES, STATUS_STYLES, StatusBadge, StatusText, type Status } from './StatusBadge'
 export { useCursorPages } from './useCursorPages'
 export { SavedViews } from './SavedViews'
+export { Avatar, VehiclePhoto, initialsOf, toneOf, type AvatarSize, type VehiclePhotoSize } from './Avatar'
+export { PhotoUploader } from './PhotoUploader'

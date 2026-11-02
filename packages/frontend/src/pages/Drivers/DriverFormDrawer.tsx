@@ -1,4 +1,7 @@
 import { AlertCircle, Info, Mail, Phone, UserMinus } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Avatar, PhotoUploader } from '@/components/shared'
+import { useAuth } from '@/context/AuthContext'
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, cn, Drawer, SelectField, TextField, useToast } from '@/components/ui'
 import type { Depot } from '@/features/depots'
@@ -41,6 +44,8 @@ const USER_ID_MESSAGES: Record<string, string> = {
 export function DriverFormDrawer({ open, onClose, driver, forUser, depots, defaultDepotId, onRetire }: DriverFormDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
   const [values, setValues] = useState<DriverFormValues>(EMPTY_FORM)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
@@ -141,6 +146,20 @@ export function DriverFormDrawer({ open, onClose, driver, forUser, depots, defau
         </>
       }
     >
+      {driver && (
+        // The driver's photo is their account's (docs/photos.md): saved at once, apart from the form.
+        <section aria-label="Photo" className="mb-6 border-b border-line pb-6">
+          <PhotoUploader
+            subject={driver.full_name}
+            shape="portrait"
+            current={driver.photo_url ?? null}
+            renderPreview={(src) => <Avatar name={driver.full_name} src={src} size="lg" />}
+            upload={(formData) => api.request<{ photo_url: string }>(`/drivers/${driver.id}/photo`, { method: 'PUT', formData })}
+            remove={() => api.request(`/drivers/${driver.id}/photo`, { method: 'DELETE' })}
+            onChange={() => void queryClient.invalidateQueries({ queryKey: ['drivers'] })}
+          />
+        </section>
+      )}
       <form id={formId} onSubmit={onSubmit} noValidate className="space-y-6">
         <div role="alert" className="empty:-mb-6">
           {formError && (

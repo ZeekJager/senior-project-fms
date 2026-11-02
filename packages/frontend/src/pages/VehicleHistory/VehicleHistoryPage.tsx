@@ -1,7 +1,7 @@
 import { AlertTriangle, ArrowLeft, Truck } from 'lucide-react'
 import { useMemo } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { EmptyState, ErrorState, StatusBadge } from '@/components/shared'
+import { EmptyState, ErrorState, StatusBadge, VehiclePhoto } from '@/components/shared'
 import { Badge, Skeleton, ViewTabs, type ViewOption } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
@@ -110,7 +110,15 @@ function Header({ vehicle, onHealth, onService }: { vehicle: Vehicle; onHealth?:
   return (
     <header className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-start gap-4">
+          <VehiclePhoto
+            src={vehicle.photo_url}
+            vehicleType={vehicle.vehicle_type}
+            size="lg"
+            className="hidden sm:inline-flex"
+            label={vehicle.photo_url ? `Photo of ${vehicle.registration_number}` : undefined}
+          />
+          <div className="min-w-0">
           <h1 className="plate flex flex-wrap items-center gap-x-3 gap-y-2 text-2xl font-semibold tracking-tight text-ink">
             <span>{vehicle.registration_number}</span>
             {vehicle.status !== 'active' && <StatusBadge status={vehicle.status} />}
@@ -130,6 +138,7 @@ function Header({ vehicle, onHealth, onService }: { vehicle: Vehicle; onHealth?:
             {vehicle.year ? ` · ${vehicle.year}` : ''} · {VEHICLE_TYPE_LABELS[vehicle.vehicle_type]}
             {vehicle.vin ? <span className="tabular text-ink-subtle"> · VIN {vehicle.vin}</span> : null}
           </p>
+          </div>
         </div>
         {/* A vehicle never scored has nothing to say here; its Health section explains why. */}
         {vehicle.health_score !== null && <HealthBadge score={vehicle.health_score} updatedAt={vehicle.health_score_updated_at} onOpen={onHealth} />}

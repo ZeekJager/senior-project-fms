@@ -1,4 +1,6 @@
 import { AlertCircle, Building2, Check, KeyRound, Lock, ShieldAlert } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Avatar, PhotoUploader } from '@/components/shared'
 import { useEffect, useId, useMemo, useState, type FormEvent } from 'react'
 import { ConfirmDialog } from '@/components/shared'
 import { Button, cn, Drawer, SelectField, Skeleton, TextField, useToast } from '@/components/ui'
@@ -56,7 +58,8 @@ interface UserFormDrawerProps {
 /** Create an account (no password: it gets an invitation link) or edit one: profile, roles, depot, status. */
 export function UserFormDrawer({ open, user, onClose, onLink }: UserFormDrawerProps) {
   const formId = useId()
-  const { session } = useAuth()
+  const { session, api, hasPermission, setOwnPhoto } = useAuth()
+  const queryClient = useQueryClient()
   const { toast } = useToast()
   const roles = useRoles(open)
   const depots = useDepots()
@@ -236,6 +239,24 @@ export function UserFormDrawer({ open, user, onClose, onLink }: UserFormDrawerPr
           </>
         }
       >
+        {user && !locked && hasPermission('users:write') && (
+          // Saved at once, apart from the form (docs/photos.md).
+          <section aria-label="Photo" className="mb-7 border-b border-line pb-6">
+            <PhotoUploader
+              subject={user.full_name}
+              shape="portrait"
+              current={user.photo_url ?? null}
+              renderPreview={(src) => <Avatar name={user.full_name} src={src} size="lg" />}
+              upload={(formData) => api.request<{ photo_url: string }>(`/users/${user.id}/photo`, { method: 'PUT', formData })}
+              remove={() => api.request(`/users/${user.id}/photo`, { method: 'DELETE' })}
+              onChange={(url) => {
+                if (user.id === session?.user.id) setOwnPhoto(url)
+                void queryClient.invalidateQueries({ queryKey: ['users'] })
+                void queryClient.invalidateQueries({ queryKey: ['drivers'] })
+              }}
+            />
+          </section>
+        )}
         <form id={formId} onSubmit={onSubmit} noValidate className="space-y-7">
           <div role="alert" className="empty:-mb-6">
             {formError && (
