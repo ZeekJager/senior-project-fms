@@ -423,6 +423,7 @@ Settings rules (FMS-80, [settings.md](settings.md)):
 | `GET /routes/{route_id}` | Get route | `route:read` | `Route` |
 | `PATCH /routes/{route_id}` | Update route | `route:write` | `RouteUpdate` -> `Route` |
 | `GET /routes/{route_id}/geometry` | The road the route follows (FMS-84) | `route:read` | GeoJSON `LineString` (`[longitude, latitude]` pairs), or `null` until measured |
+| `POST /routes/{route_id}/optimise` | A shorter order of the saved stops (FMS-86) | `route:write` | `RouteOptimisation`: `changed`, `order`, `stops`, `original` and `optimised` (`distance_km`, `duration_seconds`), `version`. Nothing is saved |
 
 Route rules (FMS-83):
 
@@ -433,6 +434,7 @@ Route rules (FMS-83):
 - **Road (FMS-84):** changing the origin, destination or stops measures the road again; a typed distance stays. Sending `distance_km: null` takes the road's distance. Other changes do not ask the routing engine. The hourly `route-roads` job measures routes saved without a road.
 - **Retire:** `PATCH {"is_active": false}`. Routes are never deleted: a retired route leaves the default list (`status=active`) and is not offered for new trips, while trips that used it keep their reference and their own copy of the plan (origin, destination, planned distance, stops). Its name is free for a new route; `{"is_active": true}` restores it unless the name has been taken (`409`).
 - **List:** `GET /routes` filters by `depot_id`, `search` (name, origin, destination), `status` (`active` default, `retired`, `all`); sorts by `name` (default), `distance_km` or `updated_at` (`sort_order`). Paged (§18). One-off routes (`is_adhoc: true`, made by `POST /trips` for an unplanned trip, FMS-139) are never listed; `GET /routes/{route_id}` still reads one, and its name does not count against the depot's unique names.
+- **Stop order (FMS-86, [eta.md](eta.md)):** `POST /routes/{route_id}/optimise` orders the saved stops for the shortest road from origin to destination (the routing engine's distance table, nearest neighbour then 2-opt, ends fixed). The result is never longer than the saved order; `changed: false` means the saved order is already the shortest found. It is a suggestion: the editor saves it with `PATCH` and `If-Match` like any edit. Every stop and both ends need coordinates (`400`: `route_without_ends`, `stop_without_coordinates`, `no_road`). Without a routing engine, or with it down, the answer is `503 UPSTREAM_UNAVAILABLE` with `Retry-After`.
 - **Events:** `RouteCreated` (`route_id`, `depot_id`, `name`, `distance_km`) and `RouteUpdated` (`route_id`, `depot_id`, `changed_fields`, `is_active`), ordered per route (FMS-73). `changed_fields` names `geometry` when the road was measured again.
 
 ### 7.2 Trips
@@ -493,6 +495,16 @@ Trip lifecycle (FMS-32):
 - **End** (`POST /trips/{id}/end`, or `/status` with `completed`): `en_route` → `completed`, `actual_end` = now (never before `actual_start`), and the actual duration is stored.
 - **`/status`:** `{ "status" }` is one of `scheduled` (a draft with both times; without them `409`, `reason: "schedule_required"`), `assigned` (always `409`, `reason: "assign_required"`: use `POST /trips/{id}/assign`, which runs the assignment rules), `en_route` (start), `completed` (end), `cancelled`. `draft` or anything else is `400`.
 - **Requests:** start and end take no body (`{}` or none; any field is `400`). All three take `If-Match` (a trip changed since is `409 CONFLICT_CONCURRENT_MODIFICATION`) and `Idempotency-Key` (a retry replays the first answer). Every move is audited.
+- **Arrival times (FMS-86, [eta.md](eta.md)):**
+  - **What.** A trip under way has `eta`:
+    - `arrival_at` at the destination (`null` without destination coordinates);
+    - `remaining_km` and `remaining_seconds`;
+    - `next_stop` (`stop_id`, `name`, `eta`);
+    - `position_at` and `updated_at`.
+
+    Each stop has `eta`. A stop within 150 m of the vehicle's position is marked `arrived`, with `actual_arrival`.
+  - **When.** The estimate is worked out from the vehicle's newest position and the road ahead, at most every 30 seconds of position time per trip, and published as `TripEtaUpdated`.
+  - **Otherwise.** A trip that is not under way has `eta: null`.
 - **Events:** `TripStarted` (`trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`), `TripCompleted` (the same, with `actual_end` and `duration_seconds`), `TripCancelled` (as for `PATCH`), and `TripUpdated` (`changed_fields: ["status"]`) when a draft is scheduled. Fleet's availability and the cached vehicle follow them.
 
 ### 7.3 Trip creation example
@@ -833,7 +845,7 @@ Real-time rules (FMS-43; details in docs/realtime.md):
 - **Connection:** Socket.IO at `/api/v1/socket.io` on the API's server. The handshake carries the session cookie and is checked like any API call (`connect_error` message `AUTH_TOKEN_INVALID`, `AUTH_TOKEN_EXPIRED`, `AUTH_TOKEN_REVOKED` or `AUTH_ACCOUNT_DISABLED`). A browser `Origin` must be the API's own or listed in `REALTIME_ALLOWED_ORIGINS`. The server closes the socket when the access token expires and when the account is deactivated or its roles or account change; the client renews the session and reconnects.
 - **Who receives what:** the same permission and scope as the REST data. `vehicle.location.updated` and `vehicle.flag.changed` need `tracking:read`, `vehicle.status.changed` `vehicle:read`, `alert.*` `alert:read`, `trip.updated` `trip:read`, `incident.created` and `incident.updated` `incident:read`. Staff receive their depot's events (depot-unscoped roles: every depot). A driver receives their own trips' `trip.updated` and their depot's `vehicle.status.changed`.
 - **Notifications:** `notifications.unread` is not a channel anyone subscribes to: it goes to the room of the one user it is about, which only that user's own sockets join, so no permission or role (an admin's included) receives another user's count.
-- **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, version, updated_at` and `change` (the domain event). `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
+- **Payloads** carry public ids, never personal data. `trip.updated` is the trip summary: `trip_id, status, route_name, depot_id, vehicle_id, driver_id, scheduled_start, scheduled_end, actual_start, actual_end, eta, version, updated_at` and `change` (the domain event). `change: "TripEtaUpdated"` brings only a new arrival estimate (FMS-86), at most every 30 seconds per trip under way; clients patch the trip's `eta` rather than re-reading. `vehicle.status.changed` also carries `previous_status, source, changed_at`. `alert.updated` follows acknowledge and resolve. Events are hints: a client reloads its data over the API after reconnecting, and late events are dropped (positions after 30 s, others after 5 minutes).
 - **Client -> server:** only the legacy `location_update`, off unless `REALTIME_LEGACY_LOCATION=true`, acknowledged `{ok}` or `{ok: false, error: {code, message}}`. Every client event is rate limited (5 at once, then 1 per second; `RATE_LIMITED`); a socket that keeps exceeding it is closed.
 
 ## 12. Alerts, Notifications and Incidents
@@ -1025,7 +1037,15 @@ Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING
   "actual_start": "2026-10-05T08:03:12Z",
   "actual_end": null,
   "version": 3,
-  "stops": []
+  "stops": [],
+  "eta": {
+    "arrival_at": "2026-10-05T10:12:00Z",
+    "remaining_km": 61.2,
+    "remaining_seconds": 4380,
+    "next_stop": null,
+    "position_at": "2026-10-05T08:59:30Z",
+    "updated_at": "2026-10-05T08:59:31Z"
+  }
 }
 ```
 

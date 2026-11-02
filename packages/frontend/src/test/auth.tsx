@@ -7,6 +7,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { AuthProvider, type CurrentUser } from '@/context/AuthContext'
 import { createApiClient, type ApiClient } from '@/lib/api/client'
 import { createQueryClient } from '@/lib/query'
+import { RealtimeContext, type RealtimeValue } from '@/lib/realtime/context'
 import { AppRouter } from '@/router/AppRouter'
 import { server } from './msw/server'
 
@@ -54,14 +55,20 @@ export function LocationProbe() {
   return <div data-testid="location">{pathname + search}</div>
 }
 
-export function renderApp(path: string, options: { idleTimeoutMs?: number; api?: ApiClient; children?: ReactNode } = {}) {
+/** `realtime`: a stand-in socket the test plays server events through (none by default: the hooks do nothing). */
+export function renderApp(path: string, options: { idleTimeoutMs?: number; api?: ApiClient; children?: ReactNode; realtime?: RealtimeValue } = {}) {
+  const app = (
+    <>
+      <LocationProbe />
+      <AppRouter />
+      {options.children}
+    </>
+  )
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={[path]}>
         <AuthProvider api={options.api ?? testApi()} idleTimeoutMs={options.idleTimeoutMs}>
-          <LocationProbe />
-          <AppRouter />
-          {options.children}
+          {options.realtime ? <RealtimeContext.Provider value={options.realtime}>{app}</RealtimeContext.Provider> : app}
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,

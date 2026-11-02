@@ -1,8 +1,9 @@
-import { Crosshair, Gauge, HeartPulse, MapPinOff, Route as RouteIcon, Search, UserRound } from 'lucide-react'
+import { Clock, Crosshair, Gauge, HeartPulse, MapPinOff, Route as RouteIcon, Search, UserRound } from 'lucide-react'
 import { memo, useEffect, useRef } from 'react'
 import { lastSeenLabel } from '@/components/FleetMap'
 import { EmptyState } from '@/components/shared'
 import { Badge, cn, Skeleton, type BadgeTone } from '@/components/ui'
+import { etaClock, etaSummary } from '@/features/trip-eta'
 import { routeLabel, type LiveState } from './liveFleet'
 import type { VehicleLocation } from './types'
 
@@ -49,6 +50,8 @@ const VehicleCard = memo(function VehicleCard({ vehicle, state, seen, selected, 
     if (selected) ref.current?.scrollIntoView?.({ block: 'nearest' })
   }, [selected])
   const route = routeLabel(vehicle.trip)
+  const eta = vehicle.trip?.eta ?? null
+  const arrival = etaSummary(eta)
   const offline = state === 'offline'
   const driver = vehicle.trip?.driver ?? null
   return (
@@ -88,6 +91,15 @@ const VehicleCard = memo(function VehicleCard({ vehicle, state, seen, selected, 
               <span className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-muted">
                 <RouteIcon className="h-3.5 w-3.5 shrink-0 text-ink-subtle" aria-hidden="true" />
                 <span className="truncate">{route}</span>
+              </span>
+            )}
+            {arrival && (
+              <span className="mt-0.5 flex items-center gap-1.5 text-xs text-ink">
+                <Clock className="h-3.5 w-3.5 shrink-0 text-ink-subtle" aria-hidden="true" />
+                <span className="truncate">
+                  {arrival}
+                  {eta?.arrival_at && eta.next_stop && <span className="text-ink-muted">{` · next ${eta.next_stop.name} ${etaClock(eta.next_stop.eta)}`}</span>}
+                </span>
               </span>
             )}
           </>

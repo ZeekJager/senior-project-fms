@@ -173,6 +173,19 @@ export function changedFields(input: RouteInput, original: Route): Partial<Route
 }
 
 /** API error fields (`origin.latitude`, `stops.2`) to form fields. */
+/** Whether the stops as typed are the route's saved ones, in the saved order (the optimiser orders those). */
+export function sameStops(stops: readonly StopValues[], route: Route): boolean {
+  const saved = formFromRoute(route).stops
+  return stops.length === saved.length && stops.every((s, i) => s.name.trim() === saved[i].name && s.coordinates.trim() === saved[i].coordinates)
+}
+
+/** Why a route's stops cannot be ordered yet; null when they can. */
+export function optimiseBlocker(route: Route): string | null {
+  if (!route.origin || !route.destination) return 'Give the origin and destination coordinates to find the shortest order of the stops.'
+  if (route.stops.some((s) => s.latitude === null || s.longitude === null)) return 'Give every stop coordinates to find the shortest order.'
+  return null
+}
+
 export function formField(apiField: string | undefined): FieldName | undefined {
   if (!apiField) return undefined
   const [head, index] = apiField.split('.')

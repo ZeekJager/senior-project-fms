@@ -126,8 +126,11 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const pick = (from: Record<string, unknown>, keys: readonly string[]) => Object.fromEntries(keys.filter((k) => k in from).map((k) => [k, from[k]]));
 
-/** The trip events (TRIP_EVENTS): each becomes `trip.updated` with the trip as it is now. */
-const TRIP_TYPES = ['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted'] as const;
+/**
+ * The trip events (TRIP_EVENTS), and a new arrival estimate (TripEtaUpdated, FMS-86, at most every 30 s per trip):
+ * each becomes `trip.updated` with the trip as it is now, its `eta` included, and `change` naming the event.
+ */
+const TRIP_TYPES = ['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted', 'TripEtaUpdated'] as const;
 
 const tripUpdated: Forwarder = async (event, lookups) => {
   const tripId = str(event.payload.trip_id);

@@ -7,6 +7,7 @@ import { lastSeenLabel, type FleetMapVehicle } from '@/components/FleetMap'
 import { EmptyState } from '@/components/shared'
 import type { LatLng } from '@/components/TripMap'
 import { Button, Skeleton } from '@/components/ui'
+import { etaClock, formatKm } from '@/features/trip-eta'
 import { formatDay, formatTime } from '@/pages/Dispatch/format'
 import { LiveBadge } from './FleetList'
 import { routeLabel, type LiveState } from './liveFleet'
@@ -123,6 +124,17 @@ export function FocusPanel({ vehicle, state, now, loading, driver, planned, trac
               )}
               <Row label="Started">{trip.started_at ? `${formatDay(trip.started_at)}, ${formatTime(trip.started_at)}` : '—'}</Row>
               <Row label="Due to end">{trip.scheduled_end ? `${formatDay(trip.scheduled_end)}, ${formatTime(trip.scheduled_end)}` : '—'}</Row>
+              {trip.eta?.arrival_at && (
+                <Row label="Arrives">
+                  <span className="tabular font-medium text-ink">{etaClock(trip.eta.arrival_at)}</span>
+                  {trip.eta.remaining_km !== null && trip.eta.remaining_km > 0 && <span className="text-ink-muted"> · {formatKm(trip.eta.remaining_km)} to go</span>}
+                </Row>
+              )}
+              {trip.eta?.next_stop && (
+                <Row label="Next stop">
+                  {trip.eta.next_stop.name} <span className="tabular text-ink-muted">{etaClock(trip.eta.next_stop.eta)}</span>
+                </Row>
+              )}
               <Row label="Speed">
                 <span className="tabular">{vehicle.position ? `${vehicle.position.speed_kmh} km/h` : '—'}</span>
               </Row>

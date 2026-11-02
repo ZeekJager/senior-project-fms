@@ -123,6 +123,17 @@ export function routeRouter(service: RouteService): Router {
     }),
   );
 
+  // FMS-86: a shorter order of the saved stops (routing engine's distance table), never longer than the saved one.
+  // route:write, as it is part of editing the route; nothing is saved until the editor saves the stops with PATCH.
+  router.post(
+    '/routes/:routeId/optimise',
+    authorize('route:write'),
+    asyncHandler(async (req, res) => {
+      const suggestion = await service.optimise(caller(req), routeId(req));
+      res.json({ data: suggestion, meta: { request_id: req.correlationId } });
+    }),
+  );
+
   router.patch(
     '/routes/:routeId',
     authorize('route:write'),

@@ -6,6 +6,7 @@ import type { TripMapProps } from '@/components/TripMap'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
 import type { Route } from './api'
+import { savingText } from './StopOrder'
 
 // Leaflet does not draw in jsdom: the road map shows what it was given.
 vi.mock('@/components/TripMap', async (importOriginal) => ({
@@ -252,5 +253,100 @@ describe('Routes (FMS-83)', () => {
     renderApp('/routes')
     await screen.findByRole('button', { name: 'Notifications' })
     expect(screen.getByRole('main')).toBeEmptyDOMElement()
+  })
+})
+
+describe('Shortest order of the stops (FMS-86)', () => {
+  const stop = (name: string, latitude: number | null, longitude: number | null) => ({ name, latitude, longitude })
+  const shuffled = () =>
+    route({ name: 'Addis Ababa - Adama via stops', stops: [stop('Adama gate', 8.55, 39.25), stop('Bishoftu', 8.75, 38.98), stop('Mojo', 8.6, 39.12)] })
+
+  async function openEditor(r: Route) {
+    const user = userEvent.setup()
+    await openRoutes(r.name)
+    await user.click(within(rowOf(r.name)).getByRole('button', { name: `Edit ${r.name}` }))
+    return { user, drawer: await screen.findByRole('dialog', { name: `Edit ${r.name}` }) }
+  }
+  const stopNames = (drawer: HTMLElement) => [1, 2, 3].map((i) => (within(drawer).getByLabelText(`Stop ${i} name`) as HTMLInputElement).value)
+
+  it('reorders the stops in the form with what it saves, and Save changes sends the new order with If-Match', async () => {
+    const r = shuffled()
+    const { writes } = serveRoutes([r])
+    let asked = 0
+    server.use(
+      http.post(`/api/v1/routes/${r.id}/optimise`, () => {
+        asked += 1
+        return envelope({
+          route_id: r.id,
+          version: r.version,
+          changed: true,
+          order: [1, 2, 0],
+          stops: [r.stops[1], r.stops[2], r.stops[0]],
+          original: { distance_km: 131.4, duration_seconds: 7800 },
+          optimised: { distance_km: 99.1, duration_seconds: 6000 },
+        })
+      }),
+    )
+    const { user, drawer } = await openEditor(r)
+    await user.click(within(drawer).getByRole('button', { name: 'Shortest order' }))
+
+    expect(await within(drawer).findByText(/32\.3 km shorter \(about 30 min less\)/)).toBeInTheDocument()
+    expect(stopNames(drawer)).toEqual(['Bishoftu', 'Mojo', 'Adama gate'])
+    expect(asked).toBe(1)
+    expect(writes).toEqual([]) // nothing saved yet
+
+    // Undo puts the saved order back; asking again and saving sends it.
+    await user.click(within(drawer).getByRole('button', { name: 'Undo' }))
+    expect(stopNames(drawer)).toEqual(['Adama gate', 'Bishoftu', 'Mojo'])
+    await user.click(within(drawer).getByRole('button', { name: 'Shortest order' }))
+    await within(drawer).findByText(/km shorter/)
+    await user.click(within(drawer).getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(writes).toHaveLength(1))
+    expect(writes[0]).toMatchObject({ method: 'PATCH', ifMatch: '"3"', body: { stops: [r.stops[1], r.stops[2], r.stops[0]] } })
+  })
+
+  it('says when the order is already the shortest, and when the routing engine is down', async () => {
+    const r = shuffled()
+    serveRoutes([r])
+    let down = false
+    server.use(
+      http.post(`/api/v1/routes/${r.id}/optimise`, () =>
+        down
+          ? errorEnvelope(503, 'UPSTREAM_UNAVAILABLE', 'The routing engine is not available.', [{ field: 'routing', reason: 'routing_unavailable' }])
+          : envelope({ route_id: r.id, version: 3, changed: false, order: [0, 1, 2], stops: r.stops, original: { distance_km: 99, duration_seconds: 6000 }, optimised: { distance_km: 99, duration_seconds: 6000 } }),
+      ),
+    )
+    const { user, drawer } = await openEditor(r)
+    await user.click(within(drawer).getByRole('button', { name: 'Shortest order' }))
+    expect(await within(drawer).findByText('This is already the shortest order found.')).toBeInTheDocument()
+    expect(stopNames(drawer)).toEqual(['Adama gate', 'Bishoftu', 'Mojo'])
+
+    down = true
+    await user.click(within(drawer).getByRole('button', { name: 'Shortest order' }))
+    expect(await within(drawer).findByText('The routing engine is not available right now. Try again in a minute.')).toBeInTheDocument()
+  })
+
+  it('needs every stop and both ends on the map, and the saved stops: edits to them are saved first', async () => {
+    const r = route({ name: 'Unmapped stops', stops: [stop('Mojo', 8.6, 39.12), stop('Somewhere', null, null)] })
+    const mapped = shuffled()
+    serveRoutes([r, mapped])
+    const { user, drawer } = await openEditor(r)
+    expect(within(drawer).getByRole('button', { name: 'Shortest order' })).toBeDisabled()
+    expect(within(drawer).getByText('Give every stop coordinates to find the shortest order.')).toBeInTheDocument()
+    await user.click(within(drawer).getByRole('button', { name: 'Cancel' }))
+
+    await user.click(within(rowOf(mapped.name)).getByRole('button', { name: `Edit ${mapped.name}` }))
+    const editor = await screen.findByRole('dialog', { name: `Edit ${mapped.name}` })
+    expect(within(editor).getByRole('button', { name: 'Shortest order' })).toBeEnabled()
+    await user.click(within(editor).getByRole('button', { name: 'Move stop 1 down' }))
+    expect(within(editor).getByRole('button', { name: 'Shortest order' })).toBeDisabled()
+    expect(within(editor).getByText(/Save your changes to the stops first/)).toBeInTheDocument()
+  })
+})
+
+describe('savingText (FMS-86)', () => {
+  it('says what the new order saves, in hours past the hour', () => {
+    expect(savingText({ original: { distance_km: 195.9, duration_seconds: 9000 }, optimised: { distance_km: 77.5, duration_seconds: 3000 } })).toBe('118.4 km shorter (about 1 h 40 min less)')
+    expect(savingText({ original: { distance_km: 10, duration_seconds: 600 }, optimised: { distance_km: 9.6, duration_seconds: 600 } })).toBe('0.4 km shorter')
   })
 })

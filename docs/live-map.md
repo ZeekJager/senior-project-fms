@@ -49,7 +49,7 @@ GET /tracking/vehicles/current      once, then every 30 s, and when something ch
 
 **The snapshot** (api-contract §11.1). Every vehicle in scope that is not retired and has a position or a trip under way. Each has:
 - its newest position (and `stopped_since` while at 0 km/h, so idling shows as soon as the page opens);
-- its trip under way, with route and driver;
+- its trip under way, with route and driver, and its arrival estimate (`eta`: `arrival_at`, `remaining_km`, `next_stop`, `updated_at`; FMS-86, [eta.md](eta.md)), which the card and the focus panel show, patched in place by `trip.updated` with `change: TripEtaUpdated`;
 - its open telemetry flags.
 
 It is cached in Redis for 5 seconds (`LIVE_MAP_CACHE_TTL_SECONDS`): one snapshot per depot shown, or one for all depots, shared by everyone who sees it (`fms:cache:integration:live-map:<depot public id>`). Trip and vehicle events drop the cache after they commit.

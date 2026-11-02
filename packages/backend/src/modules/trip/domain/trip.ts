@@ -13,6 +13,22 @@ export interface TripStopView {
   status: 'planned' | 'arrived' | 'completed' | 'skipped';
   planned_arrival: Date | null;
   actual_arrival: Date | null;
+  /** Expected arrival from the vehicle's latest position (FMS-86); null once reached, without coordinates, or not under way. */
+  eta: Date | null;
+}
+
+/** A trip under way's latest arrival estimate (FMS-86, docs/eta.md): from its newest position, at most every 30 s. */
+export interface TripEta {
+  /** At the destination; null when the route has no destination coordinates. */
+  arrival_at: Date | null;
+  /** Along the road from the position, through the stops ahead, to the destination (or the last stop without one). */
+  remaining_km: number | null;
+  remaining_seconds: number | null;
+  /** The next stop ahead that has an estimate, if any. */
+  next_stop: { stop_id: string; name: string; eta: Date } | null;
+  /** The position the estimate is from, and when it was worked out. */
+  position_at: Date;
+  updated_at: Date;
 }
 
 /** A trip as the API returns it (api-contract §16.2). Public ids only. */
@@ -31,6 +47,8 @@ export interface TripSummary {
   scheduled_end: Date | null;
   actual_start: Date | null;
   actual_end: Date | null;
+  /** While under way (FMS-86); null otherwise or before the first estimate. */
+  eta: TripEta | null;
   version: number;
   updated_at: Date;
 }
@@ -56,6 +74,8 @@ export interface TripView {
   actual_end: Date | null;
   actual_distance_km: number | null;
   stops: TripStopView[];
+  /** While under way (FMS-86); null otherwise or before the first estimate. */
+  eta: TripEta | null;
   version: number;
   created_at: Date;
   updated_at: Date;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyPositions, liveState, mergeSnapshot, needsAttention, routeLabel, toMapVehicle } from './liveFleet'
+import { applyEta, applyPositions, liveState, mergeSnapshot, needsAttention, routeLabel, toMapVehicle } from './liveFleet'
 import type { LocationUpdate, VehicleLocation } from './types'
 
 const NOW = Date.parse('2026-10-21T09:00:00Z')
@@ -14,7 +14,7 @@ function vehicle(overrides: Partial<VehicleLocation> = {}): VehicleLocation {
     maintenance_flag: false,
     depot_id: 'd-1',
     position: { lat: 9, lng: 38.7, speed_kmh: 40, heading: 90, accuracy_m: 5, ignition_on: true, recorded_at: at(20), stopped_since: null },
-    trip: { trip_id: 't-1', route_name: 'Bole - Adama', origin: 'Bole', destination: 'Adama', started_at: at(3600), scheduled_end: null, driver: { driver_id: 'dr-1', full_name: 'Abebe Kebede' } },
+    trip: { trip_id: 't-1', route_name: 'Bole - Adama', origin: 'Bole', destination: 'Adama', started_at: at(3600), scheduled_end: null, driver: { driver_id: 'dr-1', full_name: 'Abebe Kebede' }, eta: null },
     flags: [],
     ...overrides,
   }
@@ -84,6 +84,22 @@ describe('applyPositions', () => {
   it('gives a vehicle on a trip its first position', () => {
     const { fleet } = applyPositions(fleetOf(vehicle({ position: null })), [update()])
     expect(fleet.get('v-1')!.position).toMatchObject({ lat: 9.01, stopped_since: null })
+  })
+})
+
+describe('applyEta (FMS-86)', () => {
+  const eta = { arrival_at: '2026-11-02T11:32:00Z', remaining_km: 61.2, next_stop: null, updated_at: '2026-11-02T11:00:00Z' }
+
+  it('puts a new arrival estimate on the vehicle whose trip it is', () => {
+    const fleet = new Map([['v-1', vehicle()]])
+    const next = applyEta(fleet, { trip_id: 't-1', depot_id: 'd-1', eta })
+    expect(next.get('v-1')!.trip!.eta).toEqual(eta)
+    expect(fleet.get('v-1')!.trip!.eta).toBeNull()
+  })
+
+  it('leaves the fleet as it is for a trip no vehicle shown is on', () => {
+    const fleet = new Map([['v-1', vehicle()]])
+    expect(applyEta(fleet, { trip_id: 't-9', depot_id: 'd-1', eta })).toBe(fleet)
   })
 })
 

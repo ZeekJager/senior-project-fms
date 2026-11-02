@@ -1430,6 +1430,46 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /routes/{route_id}/optimise:
+    post:
+      tags: [Trips]
+      operationId: optimiseRouteStops
+      summary: A shorter order of the route's stops (FMS-86)
+      description: >
+        The order of the saved stops that makes the road from origin to destination shortest: the routing engine's
+        distance table (OSRM), nearest neighbour then 2-opt, with the ends fixed. Never longer than the saved order:
+        when nothing shorter is found, `changed` is false and the saved order comes back. A suggestion only: nothing
+        is saved; the route editor saves it with PATCH /routes/{route_id} (If-Match on `version`). Needs route:write,
+        in the caller's depot scope; another depot's route is a 404. docs/eta.md.
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The suggested order, with the road length of both orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/RouteOptimisation' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED: the route has no origin or destination coordinates (route_without_ends, on origin or
+            destination), a stop has none (stop_without_coordinates), or the engine found no road between some of
+            them (no_road).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: UPSTREAM_UNAVAILABLE (routing_unavailable) with Retry-After, when no routing engine is set up or it cannot be reached.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /alerts:
     get:
       tags: [Alerts]
@@ -3588,10 +3628,78 @@ components:
               longitude: { type: [number, 'null'] }
               status: { type: string, enum: [planned, arrived, completed, skipped] }
               planned_arrival: { type: [string, 'null'], format: date-time }
-              actual_arrival: { type: [string, 'null'], format: date-time }
+              actual_arrival:
+                type: [string, 'null']
+                format: date-time
+                description: When the vehicle came within 150 m of the stop while the trip was under way (FMS-86).
+              eta:
+                type: [string, 'null']
+                format: date-time
+                description: >
+                  Expected arrival from the vehicle's latest position (FMS-86); null once reached, for a stop
+                  without coordinates or behind the vehicle, or when the trip is not under way.
+        eta:
+          description: The latest arrival estimate while the trip is under way (FMS-86); null otherwise or before the first.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TripEta'
         version: { type: integer }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    TripEta:
+      type: object
+      description: >
+        From the vehicle's newest position and the road ahead (routing engine), worked out at most every 30 seconds
+        of position time per trip. docs/eta.md.
+      required: [arrival_at, remaining_km, remaining_seconds, next_stop, position_at, updated_at]
+      properties:
+        arrival_at: { type: [string, 'null'], format: date-time, description: At the destination; null when the route has no destination coordinates. }
+        remaining_km: { type: [number, 'null'], description: Along the road through the stops ahead to the destination (or the last stop without one). }
+        remaining_seconds: { type: [integer, 'null'] }
+        next_stop:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [stop_id, name, eta]
+              properties:
+                stop_id: { type: string, format: uuid }
+                name: { type: string }
+                eta: { type: string, format: date-time }
+        position_at: { type: string, format: date-time, description: When the vehicle was at the position the estimate is from. }
+        updated_at: { type: string, format: date-time }
+
+    RouteOptimisation:
+      type: object
+      required: [route_id, version, changed, order, stops, original, optimised]
+      properties:
+        route_id: { type: string, format: uuid }
+        version: { type: integer, description: The route version the order was worked out for. }
+        changed: { type: boolean, description: False when the saved order is already the shortest found. }
+        order:
+          type: array
+          description: 0-based indexes of the saved stops, in the suggested order.
+          items: { type: integer, minimum: 0 }
+        stops:
+          type: array
+          description: The stops in the suggested order.
+          items:
+            type: object
+            required: [name, latitude, longitude]
+            properties:
+              name: { type: string }
+              latitude: { type: [number, 'null'] }
+              longitude: { type: [number, 'null'] }
+        original: { $ref: '#/components/schemas/RoadLength' }
+        optimised: { $ref: '#/components/schemas/RoadLength' }
+
+    RoadLength:
+      type: object
+      description: Along the road from origin through the stops to destination, in one order.
+      required: [distance_km, duration_seconds]
+      properties:
+        distance_km: { type: number }
+        duration_seconds: { type: integer }
 
     AssignmentWarning:
       oneOf:
@@ -3983,6 +4091,24 @@ components:
                       properties:
                         driver_id: { type: string, format: uuid }
                         full_name: { type: [string, 'null'] }
+                eta:
+                  description: The trip's latest arrival estimate (FMS-86); null before the first.
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      required: [arrival_at, remaining_km, next_stop, updated_at]
+                      properties:
+                        arrival_at: { type: [string, 'null'], format: date-time }
+                        remaining_km: { type: [number, 'null'] }
+                        next_stop:
+                          oneOf:
+                            - type: 'null'
+                            - type: object
+                              required: [name, eta]
+                              properties:
+                                name: { type: string }
+                                eta: { type: string, format: date-time }
+                        updated_at: { type: string, format: date-time }
         flags:
           description: Open, unresolved telemetry flags (FMS-46), the newest of each type.
           type: array

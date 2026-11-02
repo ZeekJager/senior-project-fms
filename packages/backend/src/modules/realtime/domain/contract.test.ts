@@ -208,6 +208,20 @@ describe('event mapping (api-contract §11.2)', () => {
     expect(await deliveriesFor(envelope('TripUpdated', { trip_id: 't9' }), noTrips)).toEqual([]);
   });
 
+  it('a new arrival estimate (FMS-86) is a trip update too, the trip with its eta, change TripEtaUpdated', async () => {
+    const eta = { arrival_at: '2026-11-02T09:40:00.000Z', remaining_km: 61.2, remaining_seconds: 4200, next_stop: null, position_at: '2026-11-02T08:30:00.000Z', updated_at: '2026-11-02T08:30:01.000Z' };
+    const lookups = { tripSummary: async (id: string) => ({ trip_id: id, status: 'en_route', depot_id: DEPOT_A, driver_id: 'd2', eta }) };
+    const [d] = await deliveriesFor(envelope('TripEtaUpdated', { trip_id: 't1', arrival_at: eta.arrival_at }), lookups);
+    expect(d).toEqual({
+      event: 'trip.updated',
+      channel: 'trips',
+      depotId: DEPOT_A,
+      driverIds: ['d2'],
+      payload: { trip_id: 't1', status: 'en_route', depot_id: DEPOT_A, driver_id: 'd2', eta, change: 'TripEtaUpdated' },
+    });
+    expect(FORWARDED_TYPES).toContain('TripEtaUpdated');
+  });
+
   it('anything else is not forwarded; account events close sessions instead', async () => {
     expect(await deliveriesFor(envelope('FuelLogged', { fuel_log_id: 'f1' }), noTrips)).toEqual([]);
     expect(FORWARDED_TYPES).not.toContain('FuelLogged');

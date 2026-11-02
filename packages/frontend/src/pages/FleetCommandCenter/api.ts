@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useRealtimeEvent, useRealtimeStatus } from '@/lib/realtime/context'
-import { applyPositions, mergeSnapshot, type Fleet } from './liveFleet'
+import { etaEventOf } from '@/features/trip-eta'
+import { applyEta, applyPositions, mergeSnapshot, type Fleet } from './liveFleet'
 import {
   addAlert,
   addIncident,
@@ -116,6 +117,14 @@ export function useLiveFleet(depotId: string) {
       if (result.changed) commit(result.fleet)
       if (result.stale.length > 0) refresh()
     }, FLUSH_MS)
+  })
+
+  // A new arrival estimate (FMS-86) re-reads nothing: it is applied to the vehicle on that trip.
+  useRealtimeEvent('trip.updated', (payload) => {
+    const update = etaEventOf(payload)
+    if (!update) return
+    const next = applyEta(latest.current, update)
+    if (next !== latest.current) commit(next)
   })
 
   // Events missed while the socket was down: re-read once it is back.

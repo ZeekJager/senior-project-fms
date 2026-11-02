@@ -9,8 +9,10 @@ import { tripRouter } from './api/trip.routes';
 import { config } from '../../config';
 import { cache } from '../../shared/cache';
 import { logger } from '../../shared/logging/logger';
+import { EtaService } from './application/eta.service';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
 import { TripService } from './application/trip.service';
+import { LOCATION_UPDATED } from './domain/eta';
 import { OsrmRoadPlanner, type RoadPlanner, type RoutingGatewayClient } from './infrastructure/osrm.planner';
 import { RouteRepository } from './infrastructure/route.repository';
 import { TripRepository } from './infrastructure/trip.repository';
@@ -70,6 +72,16 @@ const tripService = new TripService({
   overrunGraceMinutes: config.trips.overrunGraceMinutes,
 });
 
+// Live arrival times (FMS-86, docs/eta.md): each announced position of a trip under way, at most every 30 seconds
+// of position time per trip, marks the stops reached and measures the road ahead; TripEtaUpdated follows.
+const etaService = new EtaService({
+  trips: tripRepository,
+  events: eventBus,
+  roads: () => roadPlanner,
+  warn: (fields, message) => logger.warn(fields, message),
+});
+eventBus.subscribe(LOCATION_UPDATED, 'trip.eta', (event, tx) => etaService.onLocationUpdated(tx, event));
+
 const router = Router();
 router.use(routeRouter(routeService));
 router.use(tripRouter(tripService));
@@ -104,6 +116,7 @@ export const tripLookups = {
 export { ROUTE_EVENTS } from './domain/route';
 export { ROUTING_TIMEOUT_MS } from './infrastructure/osrm.planner';
 export { TRIP_EVENTS, type TripSummary } from './domain/trip';
+export { TRIP_ETA_UPDATED } from './domain/eta';
 
 /**
  * For other modules: whether a vehicle or driver is on an assigned or

@@ -5,6 +5,7 @@ import type { ServiceDueSummary } from '@/features/service-due'
 import { ApiError } from '@/lib/api/errors'
 import { useTrip } from './api'
 import { formatDay, formatTime, formatWindow, reasonText, tripEnds, tripTitle, VEHICLE_TYPE_LABELS } from './format'
+import { TripArrival } from './TripArrival'
 import type { AssignmentWarning, BoardDriver, BoardVehicle, OpenWork, Trip } from './types'
 
 interface AssignmentPanelProps {
@@ -131,6 +132,7 @@ export function UnderWayPanel({ trip, driverName, plate, onChangeTimes }: UnderW
         <Slot icon={<UserRound />} label="Driver" value={driverName} hint={trip.actual_start ? `Started ${formatDay(trip.actual_start)} at ${formatTime(trip.actual_start)}` : 'Started'} />
         <Slot icon={<Truck />} label="Vehicle" value={plate} hint="On this trip until it ends" />
       </div>
+      <TripArrival trip={trip} />
       <p className="mt-4 text-sm text-ink-muted">Running late or finishing early? Move its end: the driver’s app shows it at once, and their next trip can move with it.</p>
     </Card>
   )

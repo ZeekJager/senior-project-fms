@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { RealtimeHandler, RealtimeValue } from '@/lib/realtime/context'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
 import { POLL_MS } from './api'
@@ -83,6 +84,23 @@ async function chooseTrip(user: ReturnType<typeof userEvent.setup>, name = /Addi
 }
 
 afterEach(() => vi.useRealTimers())
+
+/** A socket stand-in: what the console subscribes to, and a way to play server events. */
+function fakeSocket(): RealtimeValue & { emit(event: string, payload: unknown): void } {
+  const handlers = new Map<string, Set<RealtimeHandler>>()
+  return {
+    status: 'live',
+    subscribe(event, handler) {
+      const set = handlers.get(event) ?? new Set()
+      set.add(handler)
+      handlers.set(event, set)
+      return () => void set.delete(handler)
+    },
+    emit(event, payload) {
+      act(() => handlers.get(event)?.forEach((h) => h(payload)))
+    },
+  }
+}
 
 describe('Dispatcher trip console (S-07)', () => {
   it("lists unassigned trips; choosing one asks who is free for its window and shows the card's colours", async () => {
@@ -412,5 +430,79 @@ describe('Flexible dispatch (FMS-139)', () => {
     expect(within(drawer).getByText(/cannot be moved for you/)).toBeInTheDocument()
     expect(within(drawer).queryByRole('button', { name: /min later and save/ })).not.toBeInTheDocument()
     expect(sent).toEqual({ scheduled_end: '2026-11-02T11:00:00.000Z', reason: 'Road closed at Mojo' })
+  })
+})
+
+describe('Arrival times (FMS-86)', () => {
+  const now = () => new Date().toISOString()
+  // Addis Ababa: 10:05 reached Mojo, 10:40 at Bishoftu, 11:15 at Adama.
+  const underWay = () =>
+    trip({
+      status: 'en_route',
+      driver_id: 'd-1',
+      vehicle_id: 'v-1',
+      actual_start: '2026-11-02T06:05:00Z',
+      stops: [
+        { id: 's-1', sequence_number: 1, name: 'Mojo', latitude: 8.6, longitude: 39.12, status: 'arrived', actual_arrival: '2026-11-02T07:05:00Z', eta: null },
+        { id: 's-2', sequence_number: 2, name: 'Bishoftu', latitude: 8.75, longitude: 38.98, status: 'planned', actual_arrival: null, eta: '2026-11-02T07:40:00Z' },
+        { id: 's-3', sequence_number: 3, name: 'Unmapped yard', latitude: null, longitude: null, status: 'planned', actual_arrival: null, eta: null },
+      ],
+      eta: {
+        arrival_at: '2026-11-02T08:15:00Z',
+        remaining_km: 61.2,
+        remaining_seconds: 4500,
+        next_stop: { stop_id: 's-2', name: 'Bishoftu', eta: '2026-11-02T07:40:00Z' },
+        position_at: now(),
+        updated_at: now(),
+      },
+    })
+
+  it('a trip under way says when it arrives on its card, and each stop in the panel', async () => {
+    serve([underWay()])
+    const user = userEvent.setup()
+    await openConsole()
+    await user.click(screen.getByRole('button', { name: /^Under way/ }))
+    expect(await within(await trips()).findByText('Arrives 11:15 · 61.2 km to go')).toBeInTheDocument()
+    await chooseTrip(user)
+
+    const panel = await screen.findByRole('region', { name: 'Trip under way' })
+    const arrival = within(panel).getByRole('region', { name: 'Arrival' })
+    expect(arrival).toHaveTextContent(/11:15\s*at Adama · (in .+|due now) · 61\.2 km left/)
+    const stops = within(within(arrival).getByRole('list', { name: 'Stops' })).getAllByRole('listitem')
+    expect(stops.map((li) => li.textContent)).toEqual(['MojoReached 10:05', 'Bishoftu10:40', 'Unmapped yardNo coordinates', 'Adama11:15'])
+    expect(within(arrival).queryByText(/may have lost signal/)).not.toBeInTheDocument()
+  })
+
+  it('a new estimate on the socket moves the time at once, without re-reading the trips; an old position says so', async () => {
+    let reads = 0
+    serve([underWay()])
+    server.use(
+      http.get('/api/v1/trips', ({ request }) => {
+        reads += 1
+        const statuses = new URL(request.url).searchParams.get('status')?.split(',') ?? []
+        return envelope([underWay()].filter((t) => statuses.includes(t.status)))
+      }),
+    )
+    const socket = fakeSocket()
+    const user = userEvent.setup()
+    signedInAs(dispatcher)
+    renderApp('/dispatch?view=under-way', { realtime: socket })
+    await within(await trips()).findByText('Arrives 11:15 · 61.2 km to go')
+    await chooseTrip(user)
+    const before = reads
+
+    const old = new Date(Date.now() - 5 * 60_000).toISOString()
+    socket.emit('trip.updated', {
+      trip_id: underWay().id,
+      depot_id: DEPOT,
+      status: 'en_route',
+      change: 'TripEtaUpdated',
+      eta: { arrival_at: '2026-11-02T08:30:00Z', remaining_km: 58.4, remaining_seconds: 5400, next_stop: null, position_at: old, updated_at: old },
+    })
+    expect(await within(await trips()).findByText('Arrives 11:30 · 58.4 km to go')).toBeInTheDocument()
+    const arrival = within(screen.getByRole('region', { name: 'Trip under way' })).getByRole('region', { name: 'Arrival' })
+    expect(arrival).toHaveTextContent('11:30')
+    expect(within(arrival).getByText(/may have lost signal/)).toBeInTheDocument()
+    expect(reads).toBe(before)
   })
 })

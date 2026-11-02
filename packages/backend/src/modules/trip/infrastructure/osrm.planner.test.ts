@@ -103,3 +103,45 @@ describe('OSRM road planner (FMS-84)', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('OSRM legs and distance table (FMS-86)', () => {
+  test('legs: the route service without its line, one leg per pair of waypoints, never cached', async () => {
+    const { calls, factory } = gateway(async () => recorded);
+    const planner = new OsrmRoadPlanner(factory, memoryCache());
+    expect(await planner.legs([BOLE, MEGENAGNA], 'f')).toEqual([{ distanceKm: 8.748, durationSeconds: 571 }]);
+    await planner.legs([BOLE, MEGENAGNA], 'g');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      method: 'GET',
+      path: '/route/v1/driving/38.757800,8.980600;38.800800,9.020300',
+      query: { overview: 'false', steps: 'false', alternatives: 'false' },
+    });
+  });
+
+  test('legs: no road, or legs that do not match the waypoints, is null; an engine that is down is a RoutingError', async () => {
+    const noRoad = gateway(async () => {
+      throw failure('answered 400.', 400);
+    });
+    expect(await new OsrmRoadPlanner(noRoad.factory, new NoCache()).legs([BOLE, MEGENAGNA], 'h')).toBeNull();
+    const short = gateway(async () => ({ code: 'Ok', routes: [{ legs: [] }] }));
+    expect(await new OsrmRoadPlanner(short.factory, new NoCache()).legs([BOLE, MEGENAGNA], 'h')).toBeNull();
+    const down = gateway(async () => {
+      throw failure('could not reach the provider.');
+    });
+    await expect(new OsrmRoadPlanner(down.factory, new NoCache()).legs([BOLE, MEGENAGNA], 'h')).rejects.toBeInstanceOf(RoutingError);
+  });
+
+  test('table: road distance and time between every pair, [from][to]', async () => {
+    const answer = { code: 'Ok', distances: [[0, 8748.2], [9012.5, 0]], durations: [[0, 570.5], [601, 0]] };
+    const { calls, factory } = gateway(async () => answer);
+    expect(await new OsrmRoadPlanner(factory, new NoCache()).table([BOLE, MEGENAGNA], 'i')).toEqual({ metres: answer.distances, seconds: answer.durations });
+    expect(calls).toEqual([{ method: 'GET', path: '/table/v1/driving/38.757800,8.980600;38.800800,9.020300', query: { annotations: 'distance,duration' } }]);
+  });
+
+  test('table: a pair with no road between it (null) is null for the whole table; nonsense is a RoutingError', async () => {
+    const gap = gateway(async () => ({ code: 'Ok', distances: [[0, null], [1, 0]], durations: [[0, 1], [1, 0]] }));
+    expect(await new OsrmRoadPlanner(gap.factory, new NoCache()).table([BOLE, MEGENAGNA], 'j')).toBeNull();
+    const nonsense = gateway(async () => ({ code: 'Ok', distances: 'far' }));
+    await expect(new OsrmRoadPlanner(nonsense.factory, new NoCache()).table([BOLE, MEGENAGNA], 'j')).rejects.toBeInstanceOf(RoutingError);
+  });
+});

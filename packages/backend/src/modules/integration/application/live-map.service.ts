@@ -25,6 +25,7 @@ export interface LiveMapTripRef {
   driverId: string | null;
   actualStart: Date | null;
   scheduledEnd: Date | null;
+  eta: { arrivalAt: Date | null; remainingKm: number | null; updatedAt: Date; nextStop: { name: string; eta: Date } | null } | null;
 }
 
 /** What the live map needs from fleet and trip (connected in integration/index.ts). */
@@ -132,6 +133,14 @@ export class LiveMapService {
               started_at: iso(t.actualStart),
               scheduled_end: iso(t.scheduledEnd),
               driver: driver ? { driver_id: driver.publicId, full_name: driver.fullName } : null,
+              eta: t.eta
+                ? {
+                    arrival_at: iso(t.eta.arrivalAt),
+                    remaining_km: t.eta.remainingKm,
+                    next_stop: t.eta.nextStop ? { name: t.eta.nextStop.name, eta: t.eta.nextStop.eta.toISOString() } : null,
+                    updated_at: t.eta.updatedAt.toISOString(),
+                  }
+                : null,
             }
           : null,
         flags: flagsOf.get(v.id) ?? [],

@@ -133,6 +133,7 @@ function harness(options: Options = {}) {
     },
     findById: async () => assigned,
     stops: async () => [],
+    etas: async () => new Map(),
     overlapping: async (_db, column, id, start, end, exceptTripId) => {
       calls.push(`overlap:${column}`);
       queried[`overlap:${column}`] = [id, start, end, exceptTripId];

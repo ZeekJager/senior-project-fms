@@ -182,22 +182,48 @@ export interface LiveTrip {
   driverId: string | null;
   actualStart: Date | null;
   scheduledEnd: Date | null;
+  /** Its latest arrival estimate (FMS-86), null before the first. */
+  eta: LiveTripEta | null;
+}
+
+export interface LiveTripEta {
+  arrivalAt: Date | null;
+  remainingKm: number | null;
+  updatedAt: Date;
+  nextStop: { name: string; eta: Date } | null;
 }
 
 /** The en-route trip of each vehicle (internal ids) that has one, keyed by vehicle id. */
 export async function liveTripsForVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, LiveTrip>> {
   if (vehicleIds.length === 0) return new Map();
-  const res = await db.query<LiveTrip>(
+  type Row = Omit<LiveTrip, 'eta'> & { etaUpdatedAt: Date | null; arrivalAt: Date | null; remainingKm: number | null; nextStopName: string | null; nextStopEta: Date | null };
+  const res = await db.query<Row>(
     `SELECT DISTINCT ON (t.vehicle_id)
             t.vehicle_id AS "vehicleId", t.public_id AS "tripId", r.name AS "routeName", t.origin, t.destination,
-            t.driver_id AS "driverId", t.actual_start AS "actualStart", t.scheduled_end AS "scheduledEnd"
+            t.driver_id AS "driverId", t.actual_start AS "actualStart", t.scheduled_end AS "scheduledEnd",
+            e.computed_at AS "etaUpdatedAt", e.arrival_at AS "arrivalAt", e.remaining_km::float8 AS "remainingKm",
+            ns.name AS "nextStopName", ns.eta AS "nextStopEta"
        FROM trip.trips t
        LEFT JOIN trip.routes r ON r.id = t.route_id
+       LEFT JOIN trip.trip_etas e ON e.trip_id = t.id AND e.computed_at IS NOT NULL
+       LEFT JOIN LATERAL (
+            SELECT s.name, s.eta FROM trip.trip_stops s
+             WHERE s.trip_id = t.id AND s.eta IS NOT NULL ORDER BY s.sequence_number LIMIT 1) ns ON TRUE
       WHERE t.vehicle_id = ANY($1::bigint[]) AND t.status = 'en_route'
       ORDER BY t.vehicle_id, t.actual_start DESC NULLS LAST, t.id DESC`,
     [vehicleIds],
   );
-  return new Map(res.rows.map((r) => [r.vehicleId, r]));
+  return new Map(
+    res.rows.map(({ etaUpdatedAt, arrivalAt, remainingKm, nextStopName, nextStopEta, ...r }) => [
+      r.vehicleId,
+      {
+        ...r,
+        eta: etaUpdatedAt
+          ? { arrivalAt, remainingKm, updatedAt: etaUpdatedAt, nextStop: nextStopName !== null && nextStopEta !== null ? { name: nextStopName, eta: nextStopEta } : null }
+          : null,
+      },
+    ]),
+  );
 }
 
 /** A trip's public id and its driver (internal id), for an event about something that happened on it (FMS-46). */

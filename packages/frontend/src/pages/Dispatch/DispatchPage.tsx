@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { ApiError } from '@/lib/api/errors'
 import { useRealtimeStatus } from '@/lib/realtime/context'
-import { POLL_MS, useAssignTrip, useDispatchBoard, useDispatchTrips, useUnderWayTrips } from './api'
+import { POLL_MS, useAssignTrip, useDispatchBoard, useDispatchTrips, useLiveEtas, useUnderWayTrips } from './api'
 import { AssignmentPanel, UnderWayPanel } from './AssignmentPanel'
 import { CandidatesSkeleton, DriverList, VehicleList } from './Candidates'
 import { formatTime, tripTitle } from './format'
@@ -51,6 +51,7 @@ export function DispatchPage() {
   const live = useRealtimeStatus() === 'live'
   const trips = useDispatchTrips(depotId)
   const underWay = useUnderWayTrips(depotId)
+  useLiveEtas(depotId)
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null)
   const allTrips = trips.data ?? []
   const underWayTrips = underWay.data ?? []
