@@ -36,6 +36,9 @@ function harness(options: { insertFails?: boolean; ownerVisible?: boolean } = {}
     },
     storage: {
       put: async (key) => void storage.put.push(key),
+      putFile: async () => {
+        throw new Error('not used');
+      },
       get: async () => {
         throw new Error('not used');
       },

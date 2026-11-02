@@ -20,6 +20,8 @@ const MODULE_SCHEMAS = {
   audit: ['audit'],
   // Settings an administrator tunes (FMS-80): read by other modules through its index.ts.
   settings: ['settings'],
+  // Database backups (FMS-144): pg_dump runs and restore drills.
+  backup: ['backup'],
   'command-center': [],
   // The Socket.IO gateway (FMS-43): forwards domain events, stores nothing.
   realtime: [],

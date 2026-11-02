@@ -3078,6 +3078,73 @@ CREATE INDEX IF NOT EXISTS idx_alert_notifications_due
     ON alert.notifications (next_attempt_at)
     WHERE status = 'queued' AND channel <> 'in_app';
 
+-- ===== 056_database_backups.sql =====
+CREATE SCHEMA IF NOT EXISTS backup;
+
+CREATE TABLE IF NOT EXISTS backup.backups (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id        UUID         NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    kind             VARCHAR(10)  NOT NULL,
+    status           VARCHAR(10)  NOT NULL DEFAULT 'queued',
+    database_name    VARCHAR(100) NOT NULL,
+    requested_by     BIGINT       REFERENCES auth.users (id) ON DELETE SET NULL,
+    requested_at     TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at       TIMESTAMPTZ,
+    finished_at      TIMESTAMPTZ,
+    storage_key      VARCHAR(200),
+    size_bytes       BIGINT,
+    checksum_sha256  CHAR(64),
+    error            TEXT,
+    expires_at       TIMESTAMPTZ,
+    correlation_id   UUID         NOT NULL,
+    CONSTRAINT chk_backup_kind CHECK (kind IN ('scheduled', 'manual')),
+    CONSTRAINT chk_backup_status CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'expired')),
+    -- A finished backup has its file's facts; a failed one says why.
+    CONSTRAINT chk_backup_succeeded CHECK (status NOT IN ('succeeded', 'expired') OR (storage_key IS NOT NULL AND size_bytes IS NOT NULL AND checksum_sha256 IS NOT NULL AND finished_at IS NOT NULL)),
+    CONSTRAINT chk_backup_failed CHECK (status <> 'failed' OR (error IS NOT NULL AND finished_at IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_backups_recent ON backup.backups (requested_at DESC);
+-- The runner's queue: what is waiting or under way.
+CREATE INDEX IF NOT EXISTS idx_backups_pending ON backup.backups (requested_at) WHERE status IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS backup.restore_drills (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id        UUID         NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    backup_id        BIGINT       NOT NULL REFERENCES backup.backups (id),
+    target_database  VARCHAR(100) NOT NULL,
+    status           VARCHAR(10)  NOT NULL,
+    started_at       TIMESTAMPTZ  NOT NULL,
+    finished_at      TIMESTAMPTZ  NOT NULL,
+    tables_restored  INTEGER,
+    error            TEXT,
+    run_by           VARCHAR(100) NOT NULL,
+    CONSTRAINT chk_restore_drill_status CHECK (status IN ('succeeded', 'failed'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_restore_drills_recent ON backup.restore_drills (finished_at DESC);
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('backup:read', 'See database backups and download one'),
+    ('backup:write', 'Start a database backup')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+  FROM auth.roles r CROSS JOIN auth.permissions p
+ WHERE r.name = 'admin' AND p.code IN ('backup:read', 'backup:write')
+ON CONFLICT DO NOTHING;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        GRANT USAGE ON SCHEMA backup TO fms_app;
+        GRANT SELECT, INSERT, UPDATE ON backup.backups TO fms_app;
+        GRANT SELECT, INSERT ON backup.restore_drills TO fms_app;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA backup TO fms_app;
+    END IF;
+END $$;
+
 -- ===== 057_photos.sql =====
 ALTER TABLE auth.users
     ADD COLUMN IF NOT EXISTS photo_key        VARCHAR(200),

@@ -1,10 +1,11 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, FileChartColumn, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, FileChartColumn, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage, CheckInCodePage } from '@/pages/Attendance'
 import { AuditLogPage } from '@/pages/AuditLog'
 import { DepotsPage } from '@/pages/Depots'
+import { BackupsPage } from '@/pages/Backups'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
@@ -202,6 +203,13 @@ export const portals: Portal[] = [
       // S-29 (FMS-93): how alerts reach the user, and push for this browser. Every signed-in user; opened from the
       // account card, not the menu.
       { path: '/notification-settings', element: <NotificationSettingsPage />, title: 'Notification settings' },
+      {
+        // S-30 (FMS-144): database backups, Back up now and downloads. backup:read: admin only.
+        path: '/backups',
+        element: <BackupsPage />,
+        permission: 'backup:read',
+        nav: { label: 'Backups', icon: DatabaseBackup },
+      },
     ],
   },
   {

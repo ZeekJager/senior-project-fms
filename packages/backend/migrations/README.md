@@ -59,6 +59,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 053 | `trip` | Live arrival times (FMS-86, docs/eta.md): `trip_stops.eta`; `trip_etas` (one row per trip estimated: `arrival_at`, `remaining_km`, `remaining_seconds`, `position_at`, `computed_at`, and `checked_at_position`, which spaces estimates 30 seconds of position time apart), a table of its own so an estimate never bumps the trip's `version` |
 | 054 | `analytics` | Reports and exports (FMS-91, docs/reports.md): read-only views `maintenance_facts` (type, status, created and completed, labour, cost), `trip_history_facts` (trip with route, depot, driver and plan), `driver_directory` (name, home depot), `telemetry_flag_facts` (flags with their trip's driver), `incident_facts` and `depot_directory` (name, code), so the reports read `analytics.*` only |
 | 055 | `alert` | Notification channels (FMS-93, docs/notification-channels.md): `alert.push_subscriptions` (a browser's Web Push endpoint, key and auth secret, one owner per endpoint) and on `alert.notifications` `next_attempt_at` (when a queued email, SMS or push is due) and `push_subscription_id`, with a partial index over the queued ones for the delivery job |
+| 056 | `backup`, `auth` | Database backups (FMS-144, docs/backups.md): `backup.backups` (each pg_dump the runner took: `kind` scheduled or manual, `status` queued, running, succeeded, failed or expired, who requested it, its storage key, size, SHA-256, error and when the file expires; `chk_backup_succeeded` and `chk_backup_failed`) and `backup.restore_drills` (each restore into an empty database, `npm run backup:restore -- --drill`); `backup:read` and `backup:write` for admin |
 | 057 | `auth`, `fleet` | Photos of people and vehicles (docs/photos.md): `photo_key`, `photo_type` (`image/jpeg`, `image/png`, `image/webp`) and `photo_updated_at` on `auth.users` and `fleet.vehicles`, all set or all null (`chk_user_photo`, `chk_vehicle_photo`); the image itself is in the document storage |
 
 ## Important
@@ -156,7 +157,7 @@ Examples:
 
 ## Backup / recovery
 
-The database architecture expects:
+Backups from the admin screen and the nightly job (FMS-144) are described in [docs/backups.md](../../../docs/backups.md). The database architecture expects:
 
 - nightly full backups
 - continuous WAL archiving

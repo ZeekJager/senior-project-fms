@@ -104,6 +104,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `integration` | integration | external_providers, gps_devices, fuel_card_transactions, sync_logs |
 | `analytics` | analytics | analytics_cache and read-only views |
 | `audit` | audit | audit_logs |
+| `backup` | backup | backups, restore_drills (FMS-144, migration 056) |
 | `tracking` | integration | gps_pings (default partition included), telemetry_flags, vehicle_current_location. `trip` reads positions through the integration module's `index.ts` |
 | `document` | fleet | documents |
 | `settings` | settings | settings (values an administrator changed from their defaults, migration 052, FMS-80). Other modules read them through its `index.ts` |

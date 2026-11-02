@@ -110,7 +110,8 @@ services:
       # Reporting reads (FMS-94): the replica, as the same fms_app role.
       DB_READ_HOST: postgres-replica
       DB_READ_PORT: "5432"
-      # Used only by `make migrate`, which runs inside this container.
+      # Used by `make migrate`, which runs inside this container, and by database backups (FMS-144,
+      # docs/backups.md): pg_dump connects as this role, as fms_app may not read every table.
       DB_ADMIN_USER: fms_admin
       DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       LOG_LEVEL: ${LOG_LEVEL:-info}

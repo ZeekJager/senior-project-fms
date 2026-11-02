@@ -20,6 +20,7 @@ tags:
   - name: Trips
   - name: Routes
   - name: Inspections
+  - name: Backups
   - name: Photos
   - name: Vehicles
   - name: Dispatch
@@ -3650,6 +3651,140 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /system/backups:
+    get:
+      tags: [Backups]
+      operationId: listBackups
+      summary: Database backups, newest first (FMS-144)
+      description: >
+        Every backup the app's runner took, nightly or by Back up now, with its status, size, SHA-256 and who
+        started it. meta says whether this server can take one (available), the retention, the last good backup
+        and the last restore drill. Needs backup:read (admin).
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: A page of backups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Backup' } }
+                  meta: { $ref: '#/components/schemas/BackupsMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Backups]
+      operationId: startBackup
+      summary: Back up now (FMS-144)
+      description: >
+        Queues a manual backup and starts it in the background: the list shows it queued, running, then succeeded
+        or failed. One at a time. Audited. Needs backup:write (admin).
+      responses:
+        '202':
+          description: The backup, queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Backup' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (backup_in_progress) while a backup is queued or running.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '503':
+          description: UPSTREAM_UNAVAILABLE, the server has no database credentials for pg_dump.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /system/backups/{backup_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackup
+      summary: One database backup (FMS-144)
+      parameters:
+        - { name: backup_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The backup.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Backup' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /system/backups/{backup_id}/download-link:
+    post:
+      tags: [Backups]
+      operationId: backupDownloadLink
+      summary: A short-lived download link for a backup (FMS-144)
+      description: >
+        A link to the backup's file, signed for the caller and alive 5 minutes. Only a succeeded backup has a
+        file. Needs backup:read (admin).
+      parameters:
+        - { name: backup_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The link and the file's name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [url, expires_at, filename]
+                    properties:
+                      url: { type: string }
+                      expires_at: { type: string, format: date-time }
+                      filename: { type: string }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, the backup has no file (reason not_succeeded, or expired past retention).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /system/backups/{backup_id}/content:
+    get:
+      tags: [Backups]
+      operationId: downloadBackup
+      summary: A backup's file, by its signed link (FMS-144)
+      description: >
+        Public: the signature, naming the admin it was made for, is the permission. pg_dump's custom format, as an
+        attachment, with Cache-Control private, no-store. Audited as backup.downloaded by that admin.
+      security: []
+      parameters:
+        - { name: backup_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: user, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: expires, in: query, required: true, schema: { type: string } }
+        - { name: signature, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, the backup has no file.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
 components:
   securitySchemes:
     session:
@@ -3835,6 +3970,55 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   schemas:
+    Backup:
+      type: object
+      description: A database backup (FMS-144, docs/backups.md).
+      required: [id, kind, status, database_name, requested_by, requested_at, started_at, finished_at, size_bytes, checksum_sha256, error, expires_at, downloadable]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [scheduled, manual] }
+        status: { type: string, enum: [queued, running, succeeded, failed, expired] }
+        database_name: { type: string }
+        requested_by:
+          type: object
+          nullable: true
+          description: Who pressed Back up now; null for the nightly one.
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        requested_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        size_bytes: { type: integer, nullable: true }
+        checksum_sha256: { type: string, nullable: true, pattern: '^[0-9a-f]{64}$' }
+        error: { type: string, nullable: true, description: "pg_dump's own words, for a failed backup." }
+        expires_at: { type: string, format: date-time, nullable: true, description: When the file is removed (succeeded), or was (expired). }
+        downloadable: { type: boolean }
+    BackupsMeta:
+      type: object
+      required: [page, page_size, total_items, total_pages, available, retention_days, last_succeeded_at, last_restore_drill, request_id]
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total_items: { type: integer }
+        total_pages: { type: integer }
+        available: { type: boolean, description: Whether this server can take a backup (pg_dump's credentials are set). }
+        retention_days: { type: integer }
+        last_succeeded_at: { type: string, format: date-time, nullable: true }
+        last_restore_drill:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string, format: uuid }
+            backup_id: { type: string, format: uuid }
+            target_database: { type: string }
+            status: { type: string, enum: [succeeded, failed] }
+            started_at: { type: string, format: date-time }
+            finished_at: { type: string, format: date-time }
+            tables_restored: { type: integer, nullable: true }
+            error: { type: string, nullable: true }
+            run_by: { type: string }
+        request_id: { type: string, format: uuid }
     PhotoUrl:
       type: object
       required: [photo_url]
