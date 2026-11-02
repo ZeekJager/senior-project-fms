@@ -83,7 +83,7 @@ describe('POST /vehicles', () => {
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
         'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'health_score_updated_at', 'id', 'maintenance_flag',
-        'make', 'model', 'odometer_km', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
+        'make', 'model', 'odometer_km', 'photo_url', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );
     // The odometer it is registered with is its first meter reading (FMS-126).

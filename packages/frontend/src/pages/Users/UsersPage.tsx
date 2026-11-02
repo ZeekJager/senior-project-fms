@@ -1,7 +1,7 @@
 import { Building2, Pencil, Search, ShieldCheck, UserCog, UserPlus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { DataTable, EmptyState, ListToolbar, type Column } from '@/components/shared'
+import { Avatar, DataTable, EmptyState, ListToolbar, type Column } from '@/components/shared'
 import { Badge, Button, FilterSelect } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
@@ -37,11 +37,6 @@ function writeFilters(f: UserFilters): URLSearchParams {
   if (f.depotId) p.set('depot', f.depotId)
   if (f.page > 1) p.set('page', String(f.page))
   return p
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts.at(-1)?.[0] ?? '') : '')).toUpperCase()
 }
 
 const lastSeen = (iso: string | null) =>
@@ -115,12 +110,7 @@ export function UsersPage() {
       header: 'User',
       cell: (u) => (
         <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink"
-          >
-            {initials(u.full_name)}
-          </span>
+          <Avatar name={u.full_name} src={u.photo_url} />
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate font-semibold text-ink">
               <span className="truncate">{u.full_name}</span>

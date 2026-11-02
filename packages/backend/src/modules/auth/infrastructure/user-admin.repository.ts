@@ -18,6 +18,8 @@ export interface AdminUserRow {
   roles: string[];
   hasPassword: boolean;
   lastLoginAt: Date | null;
+  /** When the photo last changed (docs/photos.md); null without one. */
+  photoUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,7 +40,7 @@ export interface UserListFilter extends Page {
 
 const USER_SQL = `
   SELECT u.id, u.public_id AS "publicId", u.email, u.full_name AS "fullName", u.phone, u.depot_id AS "depotId",
-         u.status, u.password_hash AS "passwordHash", u.last_login_at AS "lastLoginAt",
+         u.status, u.password_hash AS "passwordHash", u.last_login_at AS "lastLoginAt", u.photo_updated_at AS "photoUpdatedAt",
          u.created_at AS "createdAt", u.updated_at AS "updatedAt",
          COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
     FROM auth.users u

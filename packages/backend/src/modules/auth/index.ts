@@ -4,12 +4,16 @@ import { pool } from '../../db';
 import { redis, redisKey } from '../../shared/cache';
 import { eventBus } from '../../shared/events/event-bus';
 import type { AppModule } from '../../shared/module';
+import { createDocumentStorage } from '../../shared/storage/document-storage';
+import type { UploadedPhoto } from '../../shared/storage/photo';
 import { authRouter } from './api/auth.routes';
 import { authenticateWith } from './api/authenticate';
 import { authenticatedWith, authorizeWith } from './api/authorize';
 import { userAdminRouter } from './api/user-admin.routes';
+import { userPhotoRouter } from './api/user-photo.routes';
 import { AuthService } from './application/auth.service';
 import { UserAdminService } from './application/user-admin.service';
+import { UserPhotoService, type PhotoActor } from './application/user-photo.service';
 import { InMemoryLoginThrottle, ResilientLoginThrottle } from './application/login-throttle';
 import { TokenService } from './application/token.service';
 import type { DepotDirectory } from './domain/depot-directory';
@@ -116,8 +120,18 @@ const userAdminService = new UserAdminService({
   accountChangedEvent: USER_EVENTS.accountChanged,
 });
 
+// Photos of people (docs/photos.md), in the document storage.
+const userPhotoService = new UserPhotoService({ db: pool, storage: createDocumentStorage(config.storage) });
+
+/** For fleet's PUT and DELETE /drivers/{id}/photo: a driver's photo is their account's (internal user id). */
+export const userPhotos = {
+  set: (actor: PhotoActor, userId: string, photo: UploadedPhoto) => userPhotoService.set(actor, { id: userId }, photo),
+  remove: (actor: PhotoActor, userId: string) => userPhotoService.remove(actor, { id: userId }),
+};
+
 const router = Router();
 router.use(authRouter(authService, authenticate));
 router.use(userAdminRouter(userAdminService, authorize));
+router.use(userPhotoRouter(userPhotoService, authorize, authenticated));
 
 export const authModule: AppModule = { name: 'auth', router };

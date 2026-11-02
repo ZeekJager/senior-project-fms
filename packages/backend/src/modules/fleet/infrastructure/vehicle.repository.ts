@@ -122,7 +122,10 @@ const VIEW_SQL = `
   SELECT v.id AS internal_id, v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
          v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.status, v.maintenance_flag,
          v.health_score, v.health_score_updated_at, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
-         v.version, v.created_at, v.updated_at
+         v.version, v.created_at, v.updated_at,
+         -- The photo's URL (docs/photos.md), versioned by when it changed, as photoUrl() builds it.
+         CASE WHEN v.photo_updated_at IS NULL THEN NULL
+              ELSE '/api/v1/vehicles/' || v.public_id || '/photo?v=' || floor(extract(epoch FROM v.photo_updated_at) * 1000)::bigint END AS photo_url
     FROM fleet.vehicles v
     JOIN fleet.depots d ON d.id = v.depot_id`;
 

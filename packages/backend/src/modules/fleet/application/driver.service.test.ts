@@ -24,6 +24,7 @@ const account = (over: Partial<UserAccount> = {}): UserAccount => ({
   status: 'active',
   depotId: '5',
   roles: ['driver'],
+  photoUpdatedAt: null,
   ...over,
 });
 

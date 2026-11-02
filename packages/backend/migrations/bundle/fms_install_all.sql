@@ -3077,3 +3077,26 @@ ALTER TABLE alert.notifications
 CREATE INDEX IF NOT EXISTS idx_alert_notifications_due
     ON alert.notifications (next_attempt_at)
     WHERE status = 'queued' AND channel <> 'in_app';
+
+-- ===== 057_photos.sql =====
+ALTER TABLE auth.users
+    ADD COLUMN IF NOT EXISTS photo_key        VARCHAR(200),
+    ADD COLUMN IF NOT EXISTS photo_type       VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS photo_updated_at TIMESTAMPTZ;
+
+ALTER TABLE fleet.vehicles
+    ADD COLUMN IF NOT EXISTS photo_key        VARCHAR(200),
+    ADD COLUMN IF NOT EXISTS photo_type       VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS photo_updated_at TIMESTAMPTZ;
+
+DO $$ BEGIN
+    ALTER TABLE auth.users ADD CONSTRAINT chk_user_photo
+        CHECK ((photo_key IS NULL) = (photo_type IS NULL) AND (photo_key IS NULL) = (photo_updated_at IS NULL)
+               AND (photo_type IS NULL OR photo_type IN ('image/jpeg', 'image/png', 'image/webp')));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE fleet.vehicles ADD CONSTRAINT chk_vehicle_photo
+        CHECK ((photo_key IS NULL) = (photo_type IS NULL) AND (photo_key IS NULL) = (photo_updated_at IS NULL)
+               AND (photo_type IS NULL OR photo_type IN ('image/jpeg', 'image/png', 'image/webp')));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

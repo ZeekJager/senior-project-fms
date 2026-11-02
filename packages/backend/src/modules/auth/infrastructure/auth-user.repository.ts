@@ -27,10 +27,12 @@ export interface UserProfile {
   /** The home depot's public_id (resolved by the fleet module). */
   depot_id: string | null;
   last_login_at: Date | null;
+  /** The photo's URL (docs/photos.md), or null. */
+  photo_url: string | null;
 }
 
 /** A UserProfile as stored: the depot is still the internal fleet.depots id. */
-export type UserProfileRow = Omit<UserProfile, 'depot_id'> & { depotId: string | null };
+export type UserProfileRow = Omit<UserProfile, 'depot_id' | 'photo_url'> & { depotId: string | null; photoUpdatedAt: Date | null };
 
 // Roles and permissions come only through active roles.
 const PRINCIPAL_SQL = `
@@ -66,7 +68,7 @@ export class AuthUserRepository {
   async findProfile(db: Queryable, id: string): Promise<UserProfileRow | null> {
     const res = await db.query<UserProfileRow>(
       `SELECT u.public_id AS id, u.email, u.full_name, u.phone, u.status,
-              u.depot_id AS "depotId", u.last_login_at
+              u.depot_id AS "depotId", u.last_login_at, u.photo_updated_at AS "photoUpdatedAt"
          FROM auth.users u
         WHERE u.id = $1`,
       [id],

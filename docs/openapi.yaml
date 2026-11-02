@@ -20,6 +20,7 @@ tags:
   - name: Trips
   - name: Routes
   - name: Inspections
+  - name: Photos
   - name: Vehicles
   - name: Dispatch
   - name: Attendance
@@ -3403,6 +3404,252 @@ paths:
           description: NOT_FOUND (an unknown or deactivated depot, or one without its own thresholds).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /auth/me/photo:
+    put:
+      tags: [Photos]
+      operationId: setOwnPhoto
+      summary: Set your own photo
+      description: >
+        Any signed-in user, every role. Replaces the previous one. Audited (photo.updated).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'JPEG, PNG or WebP (by its bytes), 2 MB at most.' }
+      responses:
+        '200':
+          description: The photo's new URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoUrl' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (no file part, or a malformed body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '413':
+          description: PAYLOAD_TOO_LARGE, over 2 MB.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE, not a JPEG, PNG or WebP image.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Photos]
+      operationId: removeOwnPhoto
+      summary: Remove your own photo
+      responses:
+        '204':
+          description: Removed (or there was none); the screens show the placeholder.
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /users/{user_id}/photo:
+    get:
+      tags: [Photos]
+      operationId: getUserPhoto
+      summary: A user's photo
+      description: >
+        The caller's own, or anyone's for a caller with users:read or driver:read; 404 otherwise, as for no photo.
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: v, in: query, description: The photo's version, from photo_url; any value serves the current photo., schema: { type: string } }
+      responses:
+        '200':
+          description: The image, cached privately for a day (its URL changes with the photo).
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Photos]
+      operationId: setUserPhoto
+      summary: Set a user's photo
+      description: >
+        Needs users:write (admin). Audited as the admin's.
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'JPEG, PNG or WebP (by its bytes), 2 MB at most.' }
+      responses:
+        '200':
+          description: The photo's new URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoUrl' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (no file part, or a malformed body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: PAYLOAD_TOO_LARGE, over 2 MB.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE, not a JPEG, PNG or WebP image.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Photos]
+      operationId: removeUserPhoto
+      summary: Remove a user's photo
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Removed (or there was none); the screens show the placeholder.
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /drivers/{driver_id}/photo:
+    put:
+      tags: [Photos]
+      operationId: setDriverPhoto
+      summary: Set a driver's photo
+      description: >
+        The driver's account photo, so it is the same everywhere they appear. Needs driver:write, in the caller's depots.
+      parameters:
+        - { name: driver_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'JPEG, PNG or WebP (by its bytes), 2 MB at most.' }
+      responses:
+        '200':
+          description: The photo's new URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoUrl' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (no file part, or a malformed body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: PAYLOAD_TOO_LARGE, over 2 MB.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE, not a JPEG, PNG or WebP image.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Photos]
+      operationId: removeDriverPhoto
+      summary: Remove a driver's photo
+      parameters:
+        - { name: driver_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Removed (or there was none); the screens show the placeholder.
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vehicles/{vehicle_id}/photo:
+    get:
+      tags: [Photos]
+      operationId: getVehiclePhoto
+      summary: A vehicle's photo
+      description: >
+        Needs vehicle:read, in the caller's depots.
+      parameters:
+        - { name: vehicle_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: v, in: query, description: The photo's version, from photo_url; any value serves the current photo., schema: { type: string } }
+      responses:
+        '200':
+          description: The image, cached privately for a day (its URL changes with the photo).
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Photos]
+      operationId: setVehiclePhoto
+      summary: Set a vehicle's photo
+      description: >
+        Needs vehicle:write, in the caller's depots. The vehicle's photo_url changes at once.
+      parameters:
+        - { name: vehicle_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'JPEG, PNG or WebP (by its bytes), 2 MB at most.' }
+      responses:
+        '200':
+          description: The photo's new URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoUrl' }
+                  meta: { type: object, properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (no file part, or a malformed body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: PAYLOAD_TOO_LARGE, over 2 MB.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE, not a JPEG, PNG or WebP image.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Photos]
+      operationId: removeVehiclePhoto
+      summary: Remove a vehicle's photo
+      parameters:
+        - { name: vehicle_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Removed (or there was none); the screens show the placeholder.
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     session:
@@ -3588,6 +3835,11 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   schemas:
+    PhotoUrl:
+      type: object
+      required: [photo_url]
+      properties:
+        photo_url: { type: string, description: 'The URL to show the photo from, versioned (?v=) by when it changed (docs/photos.md).' }
     Setting:
       type: object
       description: A setting an administrator tunes (FMS-80, docs/settings.md).

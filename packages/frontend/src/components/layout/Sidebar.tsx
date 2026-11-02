@@ -1,7 +1,8 @@
 import { LogOut, PanelLeftClose, PanelLeftOpen, Settings, Truck } from 'lucide-react'
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { NavLink } from 'react-router-dom'
-import { cn, IconButton, iconButtonClass } from '@/components/ui'
+import { Avatar, PhotoUploader } from '@/components/shared'
+import { cn, Dialog, IconButton, iconButtonClass } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import type { NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
@@ -39,11 +40,6 @@ export function useSidebarCollapsed(): [boolean, () => void] {
     listeners.forEach((l) => l())
   }, [])
   return [collapsed, toggle]
-}
-
-export function initials(name: string | undefined): string {
-  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
-  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?'
 }
 
 /** "fleet_manager" -> "Fleet manager". */
@@ -141,7 +137,8 @@ export function Sections({ sections, onNavigate, rail = false, collapsed = false
 }
 
 export function UserCard({ rail = false, collapsed = false }: { rail?: boolean; collapsed?: boolean }) {
-  const { session, logout } = useAuth()
+  const { session, logout, api, setOwnPhoto } = useAuth()
+  const [photoOpen, setPhotoOpen] = useState(false)
   const name = session?.user.full_name
   const role = roleLabel(session?.roles?.[0])
   return (
@@ -151,13 +148,10 @@ export function UserCard({ rail = false, collapsed = false }: { rail?: boolean; 
         rail ? cn('border border-side-line bg-white/5 md:flex-col md:gap-2 md:p-2', !collapsed && 'lg:flex-row lg:gap-3 lg:p-2.5') : 'border border-line bg-surface-muted',
       )}
     >
-      <div
-        className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold', rail ? 'bg-brand text-white' : 'bg-brand-soft text-brand-ink')}
-        aria-hidden="true"
-        title={rail ? name : undefined}
-      >
-        {initials(name)}
-      </div>
+      {/* Everyone sets their own photo here (docs/photos.md). */}
+      <button type="button" onClick={() => setPhotoOpen(true)} aria-label="Your photo" title={rail ? name : 'Your photo'} className="focus-ring shrink-0 rounded-full">
+        <Avatar name={name} src={session?.user.photo_url} />
+      </button>
       <div className={cn('min-w-0 flex-1', blockClass(rail, collapsed))}>
         <p className={cn('truncate text-sm font-medium', rail ? 'text-white' : 'text-ink')}>{name}</p>
         <p className={cn('truncate text-xs', rail ? 'text-side-ink' : 'text-ink-subtle')}>{role || session?.user.email}</p>
@@ -172,6 +166,17 @@ export function UserCard({ rail = false, collapsed = false }: { rail?: boolean; 
         <Settings aria-hidden="true" />
       </NavLink>
       <IconButton label="Sign out" icon={<LogOut />} size="sm" onClick={() => void logout()} className={rail ? 'text-side-ink hover:bg-white/10 hover:text-white' : undefined} />
+      <Dialog open={photoOpen} onClose={() => setPhotoOpen(false)} title="Your photo" description="Shown beside your name across FMS, to the people who manage staff and drivers.">
+        <PhotoUploader
+          subject="you"
+          shape="portrait"
+          current={session?.user.photo_url ?? null}
+          renderPreview={(src) => <Avatar name={name} src={src} size="lg" />}
+          upload={(formData) => api.request<{ photo_url: string }>('/auth/me/photo', { method: 'PUT', formData })}
+          remove={() => api.request('/auth/me/photo', { method: 'DELETE' })}
+          onChange={setOwnPhoto}
+        />
+      </Dialog>
     </div>
   )
 }

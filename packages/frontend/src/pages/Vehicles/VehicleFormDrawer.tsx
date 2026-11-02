@@ -1,4 +1,7 @@
 import { AlertCircle, Archive, CheckCircle2, XCircle } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { PhotoUploader, VehiclePhoto } from '@/components/shared'
+import { useAuth } from '@/context/AuthContext'
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, Drawer, SelectField, Spinner, TextField, useToast } from '@/components/ui'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
@@ -43,6 +46,8 @@ const CONFLICT_MESSAGES: Record<string, string> = {
 export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepotId, onDecommission }: VehicleFormDrawerProps) {
   const formId = useId()
   const { toast } = useToast()
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
   const [values, setValues] = useState<VehicleFormValues>(EMPTY_FORM)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
@@ -149,6 +154,20 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
         </>
       }
     >
+      {vehicle && (
+        // Saved at once, apart from the form (docs/photos.md).
+        <section aria-label="Photo" className="mb-6 border-b border-line pb-6">
+          <PhotoUploader
+            subject={vehicle.registration_number}
+            shape="vehicle"
+            current={vehicle.photo_url ?? null}
+            renderPreview={(src) => <VehiclePhoto src={src} vehicleType={vehicle.vehicle_type} size="lg" />}
+            upload={(formData) => api.request<{ photo_url: string }>(`/vehicles/${vehicle.id}/photo`, { method: 'PUT', formData })}
+            remove={() => api.request(`/vehicles/${vehicle.id}/photo`, { method: 'DELETE' })}
+            onChange={() => void queryClient.invalidateQueries({ queryKey: ['vehicles'] })}
+          />
+        </section>
+      )}
       <form id={formId} onSubmit={onSubmit} noValidate className="space-y-6">
         <div role="alert" className="empty:-mb-6">
           {formError && (

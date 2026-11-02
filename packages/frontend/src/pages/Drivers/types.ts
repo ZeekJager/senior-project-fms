@@ -29,6 +29,8 @@ export interface Driver {
   id: string
   user_id: string
   full_name: string
+  /** The photo (docs/photos.md), or null: a placeholder is shown. */
+  photo_url?: string | null
   email: string
   phone: string | null
   depot_id: string | null

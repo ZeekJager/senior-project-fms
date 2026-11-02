@@ -14,9 +14,10 @@ import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferen
 import { isDriverPortalUser, navSections, portalOf, type NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
 import { HelpDialog } from './HelpDialog'
-import { Brand, initials, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
+import { Brand, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
 import { ThemeToggle } from './ThemeToggle'
 import { useHelpShortcut, useSearchShortcut } from './useSearchShortcut'
+import { Avatar } from '@/components/shared'
 
 function SkipLink() {
   return (
@@ -128,9 +129,9 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
             type="button"
             onClick={() => setAccountOpen(true)}
             aria-label="Account"
-            className="focus-ring flex h-10 w-10 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink"
+            className="focus-ring flex h-10 w-10 items-center justify-center rounded-full"
           >
-            {initials(session?.user.full_name)}
+            <Avatar name={session?.user.full_name} src={session?.user.photo_url} className="h-10 w-10" />
           </button>
         </div>
       </header>

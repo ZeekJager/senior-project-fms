@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { photoRouter } from './api/photo.routes';
+import { FleetPhotoService } from './application/photo.service';
 import { Router } from 'express';
 import type { PoolClient } from 'pg';
 import { config } from '../../config';
@@ -10,7 +12,7 @@ import { createDocumentStorage } from '../../shared/storage/document-storage';
 import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
-import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
+import { USER_EVENTS, userDirectory, userPhotos, type DepotDirectory, type Scope } from '../auth';
 import { settings } from '../settings';
 import { depotInScope } from '../../shared/authz/scope';
 import {
@@ -210,6 +212,16 @@ const driverService = new DriverService({
   events: eventBus,
 });
 
+// Photos of vehicles and drivers (docs/photos.md); a driver's is their account's, kept by the auth module.
+const photoService = new FleetPhotoService({
+  db: pool,
+  storage: createDocumentStorage(config.storage),
+  vehicles: { findRef: (db, by, scope) => vehicleRepository.findRef(db, by, scope) },
+  invalidate: (vehicleId) => vehicleService.invalidate(vehicleId),
+  driverAccount: (caller, driverId) => driverService.accountOf(caller, driverId),
+  userPhotos,
+});
+
 const documentService = new DocumentService({
   documents: new DocumentRepository(pool),
   storage: createDocumentStorage(config.storage),
@@ -287,6 +299,7 @@ router.use(dispatchRouter(dispatchService));
 router.use(attendanceRouter(attendanceService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
+router.use(photoRouter(photoService));
 router.use(documentRouter(documentService));
 router.use(dvirRouter(dvirService));
 router.use(meterRouter(meterService));

@@ -39,6 +39,10 @@ const REVIEWED_PUBLIC = [
  */
 const REVIEWED_AUTHENTICATED = [
   'GET /api/v1/auth/me',
+  // Photos (docs/photos.md): the caller's own; a colleague's only with users:read or driver:read, checked in the service.
+  'PUT /api/v1/auth/me/photo',
+  'DELETE /api/v1/auth/me/photo',
+  'GET /api/v1/users/:userId/photo',
   'GET /api/v1/depots',
   'GET /api/v1/depots/:depotId',
   'GET /api/v1/drivers/me',
