@@ -10,7 +10,7 @@ export interface Audience {
 }
 
 /** The SQL condition on a depot column for an audience, and its values from `$next` on. */
-function audience(a: Audience, column: string, next: number): { sql: string; params: string[] } {
+export function audience(a: Audience, column: string, next: number): { sql: string; params: string[] } {
   const scope = scopeClause(a.scope, column, next);
   if (!a.depotId) return scope;
   return { sql: `${scope.sql} AND ${column} = $${next + scope.params.length}`, params: [...scope.params, a.depotId] };

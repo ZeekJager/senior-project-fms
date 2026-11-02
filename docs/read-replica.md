@@ -84,6 +84,7 @@ The primary restarts with the new client rules and the replica copies it. The da
 |---|---|
 | `GET /fuel-reconciliation`, `GET /vehicles/{id}/fuel-summary` and the monthly `fuel-reconciliation` job (FMS-41) | A month of trips and fill-ups for every vehicle |
 | `GET /audit-logs` (FMS-28) | The largest table, searched by many filters |
+| `GET /reports/{report}` (FMS-91, [reports.md](reports.md)) | A month of fuel, repairs, trips, flags and incidents for every vehicle and driver, as JSON, CSV or PDF |
 
 **Every response from these reads carries `meta.data_freshness`:**
 

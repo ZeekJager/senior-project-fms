@@ -8,6 +8,7 @@ import { describe, expect, test } from 'vitest';
 import { runSeed } from '../../scripts/seed/apply';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
+import { REPORT_KINDS } from '../../src/modules/analytics/domain/reports';
 import { hashPassword } from '../../src/modules/auth';
 import { routeRegistry } from '../../src/shared/authz/route-policy';
 import { createUser, type RoleName } from '../support/factories';
@@ -24,6 +25,14 @@ const DEPOT_ROLES: RoleName[] = ['dispatcher', 'technician', 'depot_admin', 'fin
  * signed-in user may read any depot's name and address (api-contract §6.1); `in_scope=true` narrows the list.
  */
 const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId']);
+
+/**
+ * Path parameters naming a kind of answer, not a record: each value is swept as a list route of its own, with `query`.
+ * A report (FMS-91) is asked for the seed's month, when depot B's vehicles and drivers have figures.
+ */
+const KIND_PARAMS: Record<string, { values: readonly string[]; query: string }> = {
+  report: { values: REPORT_KINDS, query: `month=${SEED.anchor.slice(0, 7)}` },
+};
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 const IS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -186,7 +195,13 @@ const permissionsOf = async (email: string) =>
 
 const endpoints = routeRegistry(app)
   .filter((r) => !r.policies.some((p) => p.kind === 'public'))
-  .map((r) => ({ ...r, needs: r.policies.flatMap((p) => (p.kind === 'permission' ? [p.codes] : [])), params: [...r.path.matchAll(/:([A-Za-z]+)/g)].map((m) => m[1]) }));
+  .map((r) => ({ ...r, needs: r.policies.flatMap((p) => (p.kind === 'permission' ? [p.codes] : [])), params: [...r.path.matchAll(/:([A-Za-z]+)/g)].map((m) => m[1]) }))
+  .flatMap((e) => {
+    const kind = e.params.find((p) => p in KIND_PARAMS);
+    if (!kind) return [{ ...e, query: '' }];
+    const { values, query } = KIND_PARAMS[kind];
+    return values.map((v) => ({ ...e, path: e.path.replace(`:${kind}`, v), params: e.params.filter((p) => p !== kind), query }));
+  });
 type Endpoint = (typeof endpoints)[number];
 
 /** Filters that would ask for depot B outright; a route that does not know one answers 400, which is fine. */
@@ -215,8 +230,9 @@ async function sweep(who: string, cookie: string, grants: Set<string>, forbidden
     };
     if (e.params.length === 0) {
       for (const query of method === 'get' && options.lists ? probes(sample) : []) {
-        const res = await send(`${e.path}${query}`);
-        scan(`${who} GET ${e.path}${query} ${res.status}`, res.text, []);
+        const url = e.query ? `${e.path}?${e.query}${query.replace('?', '&')}` : `${e.path}${query}`;
+        const res = await send(url);
+        scan(`${who} GET ${url} ${res.status}`, res.text, []);
       }
       continue;
     }

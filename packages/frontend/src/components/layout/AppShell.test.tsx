@@ -23,7 +23,7 @@ describe('portals', () => {
 
     const menu = mainMenu()
     expect(within(menu).getAllByRole('heading').map((h) => h.textContent)).toEqual(['Fleet management', 'Command center'])
-    expect(within(menu).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Dispatch', 'Live map'])
+    expect(within(menu).getAllByRole('link').map((a) => a.textContent)).toEqual(['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Reports', 'Dispatch', 'Live map'])
     // Not the driver's portal, though dispatchers hold trip:execute.
     expect(within(menu).queryByRole('link', { name: 'My day' })).not.toBeInTheDocument()
     expect(within(menu).getByRole('link', { name: 'Dispatch' })).toHaveAttribute('aria-current', 'page')

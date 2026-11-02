@@ -2103,6 +2103,55 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /reports/{report}:
+    get:
+      tags: [Analytics]
+      operationId: getReport
+      summary: A monthly report, as JSON, CSV or PDF (FMS-91)
+      description: >
+        One of five monthly reports for an Addis Ababa month and the caller's depots, or one of them: fuel (per
+        vehicle filled or driven: fill-ups, litres, cost, km, consumption against rated, cost per km), maintenance
+        (per vehicle: repairs completed by type, still open at the month's end, labour, cost), cost (per vehicle: km,
+        fuel and repair cost, cost per km), trips (every trip scheduled in the month, with vehicle, driver, times,
+        distances and whether it ended on time) and drivers (trips, km, driving time, on-time share, speeding and
+        idling flags, incidents). Live from the analytics views on the read replica (docs/reports.md). Values are
+        integers in base units (ml, cents, metres, minutes); the CSV and PDF write them in litres, birr, km and
+        hours, Addis Ababa time, with a totals row. Needs analytics:read; a driver sees nothing.
+      parameters:
+        - name: report
+          in: path
+          required: true
+          schema: { type: string, enum: [fuel, maintenance, cost, trips, drivers] }
+        - { name: month, in: query, description: 'An Addis Ababa month, YYYY-MM. Default: this month, up to now.', schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives an empty report.', schema: { type: string, format: uuid } }
+        - { name: format, in: query, description: 'json (default) for the screen; csv or pdf to download, as an attachment named for the report, month and depot.', schema: { type: string, enum: [json, csv, pdf], default: json } }
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Report' }
+                  meta:
+                    type: object
+                    required: [data_freshness, request_id]
+                    properties:
+                      data_freshness: { $ref: '#/components/schemas/DataFreshness' }
+                      request_id: { type: string }
+            text/csv:
+              schema: { type: string, description: 'A header row, the rows and a totals row; CRLF; UTF-8 with a byte-order mark.' }
+            application/pdf:
+              schema: { type: string, format: binary, description: 'Landscape A4, the header repeated on each page, totals on the last.' }
+        '400':
+          description: VALIDATION_FAILED (month not YYYY-MM or not yet begun, an unknown format, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /analytics/downtime:
     get:
       tags: [Analytics]
@@ -4238,6 +4287,55 @@ components:
         computed_at: { type: [string, 'null'], format: date-time, description: "The cache's last refresh." }
         stale: { type: boolean, description: 'True when the last refresh is more than 25 hours old, or the cache was never filled.' }
         data_freshness: { $ref: '#/components/schemas/DataFreshness' }
+    Report:
+      type: object
+      description: A monthly report (FMS-91) as a table. Each row has a value for every column's key.
+      required: [report, title, month, period, depot, columns, rows, totals, generated_at]
+      properties:
+        report: { type: string, enum: [fuel, maintenance, cost, trips, drivers] }
+        title: { type: string }
+        month: { type: string, description: YYYY-MM. }
+        period:
+          type: object
+          description: The month as instants, from inclusive, to exclusive; up to now for the current month.
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        depot:
+          description: The depot chosen; null for every depot in the caller's scope.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, name, code]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                code: { type: string }
+        columns:
+          type: array
+          items:
+            type: object
+            required: [key, label, kind]
+            properties:
+              key: { type: string }
+              label: { type: string }
+              kind:
+                type: string
+                enum: [text, count, litres, etb, km, l_per_100km, pct, hours, datetime]
+                description: >
+                  How the values are kept: litres in ml, etb in cents, km in metres, l_per_100km in ml per km, hours in
+                  minutes, pct a whole percentage, datetime an ISO instant.
+        rows:
+          type: array
+          items: { type: object, additionalProperties: { type: [string, number, 'null'] } }
+        totals:
+          description: Sums and overall ratios; null when there are no rows.
+          oneOf:
+            - type: 'null'
+            - { type: object, additionalProperties: { type: [string, number, 'null'] } }
+        generated_at: { type: string, format: date-time }
+
     DataFreshness:
       type: object
       description: Which database answered a reporting read, and how far behind the primary it was (FMS-94, docs/read-replica.md).

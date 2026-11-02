@@ -5,14 +5,19 @@ import type { JobContext } from '../../shared/jobs/job';
 import type { AppModule } from '../../shared/module';
 import { analyticsRouter } from './api/analytics.routes';
 import { AnalyticsService } from './application/analytics.service';
+import { ReportService } from './application/report.service';
 import { AnalyticsRepository } from './infrastructure/analytics.repository';
+import { ReportRepository } from './infrastructure/report.repository';
 
 // Fleet KPIs (FMS-50): analytics_cache, refreshed hourly (today and yesterday) and nightly (35 days back), read
 // through the read replica and kept in Redis per audience and range.
 const analyticsService = new AnalyticsService({ db: pool, reads, repo: new AnalyticsRepository(), cache });
 
+// Monthly reports and exports (FMS-91): live from the analytics views on the read replica, as JSON, CSV or PDF.
+const reportService = new ReportService({ reads, repo: new ReportRepository() });
+
 const router = Router();
-router.use(analyticsRouter(analyticsService));
+router.use(analyticsRouter(analyticsService, reportService));
 
 export const analyticsModule: AppModule = {
   name: 'analytics',
