@@ -8,6 +8,7 @@
  *   passwords and JWT secret, with host defaults for a `make dev` stack.
  * - DB_NAME is always the dedicated test database, never the dev database.
  */
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,10 +52,14 @@ export function applyTestEnv(): void {
   setDefault('DB_PASSWORD', process.env.DB_APP_PASSWORD ?? dotEnv.DB_APP_PASSWORD);
   setDefault('JWT_SECRET', dotEnv.JWT_SECRET);
   // Redis (FMS-72) only when REDIS_HOST is given (CI sets it; the dev stack's
-  // Redis is not published to the host). Test keys live under their own prefix.
+  // Redis is not published to the host). Test keys live under their own prefix,
+  // and each test file under its own below it: the files share one Redis, and a
+  // rolled-back test does not empty it, so a snapshot one file cached (the live
+  // map's fleet-wide one, 5 s) was read by another that had just added vehicles.
   if (process.env.REDIS_HOST) {
     setDefault('REDIS_PASSWORD', dotEnv.REDIS_PASSWORD);
-    setDefault('REDIS_KEY_PREFIX', 'fms-test');
+    setDefault('TEST_REDIS_KEY_PREFIX', process.env.REDIS_KEY_PREFIX ?? 'fms-test');
+    process.env.REDIS_KEY_PREFIX = `${process.env.TEST_REDIS_KEY_PREFIX}-${randomBytes(4).toString('hex')}`;
   }
   // The integration gateway's mock provider (FMS-85): a webhook secret and an API key for the code
   // test/integration/integrations.test.ts gives its providers.
