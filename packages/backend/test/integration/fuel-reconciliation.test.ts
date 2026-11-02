@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterEach, describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
-import { config } from '../../src/config';
 import { pool } from '../../src/db';
 import { fuelReconciliation } from '../../src/modules/fuel';
+import { settings } from '../../src/modules/settings';
 import { addisDay, previousMonth, roundDiv } from '../../src/modules/fuel/domain/reconciliation';
 import { createDepot, createDriver, createUser, createVehicle, type RoleName } from '../support/factories';
 import { deliverEvents, publishedEvents } from '../support/events';
@@ -21,10 +21,8 @@ const DAY_MS = 24 * HOUR_MS;
 type Row = Record<string, unknown> & { id: string; public_id: string };
 type Depot = Awaited<ReturnType<typeof createDepot>>;
 
-const savedThreshold = config.fuel.varianceThresholdPct;
-afterEach(() => {
-  config.fuel.varianceThresholdPct = savedThreshold;
-});
+// A test that changes the threshold rolls it back; the settings' cached copy goes with it.
+afterEach(() => settings.forget());
 
 async function signIn(roles: RoleName[], depot: Depot | null = null): Promise<string> {
   const user = await createUser({ roles, depot, password: PASSWORD });
@@ -178,8 +176,9 @@ describe('the monthly reconciliation', () => {
     expect(await publishedEvents('FuelAnomalyDetected')).toEqual([]);
   });
 
-  test('the threshold comes from config (FUEL_VARIANCE_THRESHOLD_PCT)', async () => {
-    config.fuel.varianceThresholdPct = 10;
+  test('the threshold is the fuel_variance_threshold_pct setting (FMS-80)', async () => {
+    await pool.query(`INSERT INTO settings.settings (key, value) VALUES ('fuel_variance_threshold_pct', 10)`);
+    settings.forget();
     const depot = await createDepot();
     const { driver } = await createDriver({ depot });
     const vehicle = await vehicleWith(depot, driver as Row, 368_000);

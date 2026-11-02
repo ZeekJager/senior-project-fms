@@ -1,9 +1,10 @@
-import { Activity, Boxes, CalendarCheck, CalendarClock, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
 import { AttendancePage, CheckInCodePage } from '@/pages/Attendance'
 import { AuditLogPage } from '@/pages/AuditLog'
+import { DepotsPage } from '@/pages/Depots'
 import { DriversPage } from '@/pages/Drivers'
 import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
@@ -15,6 +16,7 @@ import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
 import { DashboardPage } from '@/pages/placeholders'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
+import { SettingsPage } from '@/pages/Settings'
 import { UsersPage } from '@/pages/Users'
 import { VehicleHistoryPage } from '@/pages/VehicleHistory'
 import { VehiclesPage } from '@/pages/Vehicles'
@@ -170,6 +172,20 @@ export const portals: Portal[] = [
         element: <AuditLogPage />,
         permission: 'audit:read',
         nav: { label: 'Audit log', icon: ScrollText },
+      },
+      {
+        // S-26 (FMS-80; FMS-20 left the screen to it). depot:write: admin and fleet owner.
+        path: '/depots',
+        element: <DepotsPage />,
+        permission: 'depot:write',
+        nav: { label: 'Depots', icon: Building2 },
+      },
+      {
+        // S-27 (FMS-80): the rules' thresholds. settings:write: admin only.
+        path: '/settings',
+        element: <SettingsPage />,
+        permission: 'settings:write',
+        nav: { label: 'Settings', icon: SlidersHorizontal },
       },
     ],
   },

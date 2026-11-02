@@ -8,19 +8,23 @@ import { useDepots } from '@/features/depots'
 import { useActiveModel } from '@/features/health/api'
 import { HealthBadge } from '@/features/health/HealthBadge'
 import { BAND_LABELS, formatAge, formatScoredAt, healthViewOf, type HealthView } from '@/features/health/health'
+import { useSetting } from '@/features/settings'
 import type { Vehicle } from '@/pages/Vehicles/types'
 import { readFilters, useHealthCounts, useHealthList, writeFilters, type HealthFilters, type HealthSort } from './api'
 import { HealthPanel } from './HealthPanel'
 
-const VIEW_HINTS: Record<HealthView, string> = {
-  at_risk: 'Health score below 75: a technician has been alerted',
-  watch: 'Health score 75 to 84',
-  healthy: 'Health score 85 and above',
-  stale: 'Scored more than 25 hours ago: the last nightly scoring missed it',
-  unscored: 'Not scored yet',
+/** What each view holds; the alert line is a setting (health_alert_below, FMS-80). */
+function viewHints(line: number): Record<HealthView, string> {
+  return {
+    at_risk: `Health score below ${line}: a technician has been alerted`,
+    watch: `Health score ${line} to 84`,
+    healthy: 'Health score 85 and above',
+    stale: 'Scored more than 25 hours ago: the last nightly scoring missed it',
+    unscored: 'Not scored yet',
+  }
 }
 
-/** What a score means for the next 30 days, in a word, for a fresh score. */
+/** What a score means for the next 30 days, in a word, for a fresh score: the ML service's risk levels (api-contract §10.3). */
 function riskWord(v: Vehicle): string {
   const view = healthViewOf(v.health_score, v.health_score_updated_at)
   if (view === 'unscored' || view === 'stale' || v.health_score === null) return '—'
@@ -33,6 +37,8 @@ function riskWord(v: Vehicle): string {
  * Needs prediction:read (fleet managers, technicians, depot admins, administrators).
  */
 export function PredictiveMaintenancePage() {
+  const line = useSetting('health_alert_below')
+  const hints = viewHints(line)
   const [params, setParams] = useSearchParams()
   const filters = useMemo(() => readFilters(params), [params])
   const update = (patch: Partial<HealthFilters>, keepPage = false) =>
@@ -167,14 +173,14 @@ export function PredictiveMaintenancePage() {
                     label: BAND_LABELS[view],
                     count: counts.counts[view],
                     isLoading: counts.isLoading,
-                    hint: VIEW_HINTS[view],
+                    hint: hints[view],
                   })),
                   ...(['stale', 'unscored'] as const).map((view) => ({
                     value: view,
                     label: BAND_LABELS[view],
                     count: counts.counts[view],
                     isLoading: counts.isLoading,
-                    hint: VIEW_HINTS[view],
+                    hint: hints[view],
                     archived: true,
                   })),
                 ],
@@ -197,7 +203,7 @@ export function PredictiveMaintenancePage() {
           rowHeight="stacked3"
           tableId="vehicle-health"
           rowLabel={(v) => v.registration_number}
-          rowClassName={(v) => (healthViewOf(v.health_score, v.health_score_updated_at) === 'at_risk' ? 'bg-danger-soft/25' : undefined)}
+          rowClassName={(v) => (healthViewOf(v.health_score, v.health_score_updated_at, Date.now(), line) === 'at_risk' ? 'bg-danger-soft/25' : undefined)}
           onRowClick={setOpen}
           columns={columns}
           data={list.data?.vehicles}
@@ -226,7 +232,7 @@ export function PredictiveMaintenancePage() {
               <EmptyState
                 icon={<Search />}
                 heading={filters.view ? `No vehicles are ${BAND_LABELS[filters.view].toLowerCase()}` : 'No vehicles match'}
-                description={filters.view === 'at_risk' ? 'No vehicle scored below 75 last night.' : 'Try another view or search, or clear the filters.'}
+                description={filters.view === 'at_risk' ? `No vehicle scored below ${line} last night.` : 'Try another view or search, or clear the filters.'}
                 action={
                   <Button
                     variant="secondary"

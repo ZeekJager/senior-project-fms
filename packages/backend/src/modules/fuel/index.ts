@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { config } from '../../config';
 import { pool, reads } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
@@ -7,6 +6,7 @@ import type { JobContext } from '../../shared/jobs/job';
 import type { AppModule } from '../../shared/module';
 import { userDirectory } from '../auth';
 import { fuelRefs } from '../fleet';
+import { settings } from '../settings';
 import { completedTripMetres, tripLookups } from '../trip';
 import { fuelAnomalyRouter } from './api/fuel-anomaly.routes';
 import { fuelLogRouter } from './api/fuel-log.routes';
@@ -34,7 +34,7 @@ const reconciliationService = new ReconciliationService({
   anomalies: fuelAnomalies,
   refs: { vehicles: fuelRefs.vehicles, depots: fuelRefs.depots, trips: { completedMetres: completedTripMetres } },
   events: eventBus,
-  settings: config.fuel,
+  settings: { varianceThresholdPct: () => settings.value('fuel_variance_threshold_pct') },
 });
 
 // FMS-42: the finance screen lists anomalies and closes them, so they are read on the primary.

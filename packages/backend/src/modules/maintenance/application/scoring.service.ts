@@ -60,6 +60,8 @@ export interface ScoringServiceDeps {
   sources: ScoringSources;
   events: EventBus;
   log: { info(obj: object, msg: string): void; warn(obj: object, msg: string): void; error(obj: object, msg: string): void };
+  /** The health score below which a risk event is raised: a setting (FMS-80), RISK_ALERT_BELOW by default. */
+  healthAlertBelow: () => Promise<number>;
   batchSize?: number;
 }
 
@@ -136,6 +138,7 @@ export class ScoringService {
     const facts = await this.facts(todo, t);
 
     const size = this.deps.batchSize ?? SCORING_BATCH_SIZE;
+    const alertBelow = await this.deps.healthAlertBelow();
     for (let i = 0; i < todo.length; i += size) {
       const batch = todo.slice(i, i + size);
       const items: PredictRequest[] = batch.map((v) => ({
@@ -156,7 +159,7 @@ export class ScoringService {
         log.error({ event: 'maintenance.scoring_batch_failed', reason: err.message, vehicles: batch.length }, 'nightly scoring: a batch was not scored');
         continue;
       }
-      result.risk_events += await this.store(context, check.model, t, batch, items, predictions);
+      result.risk_events += await this.store(context, check.model, t, batch, items, predictions, alertBelow);
       result.scored += batch.length;
     }
 
@@ -214,6 +217,7 @@ export class ScoringService {
     batch: readonly ScoringVehicle[],
     items: readonly PredictRequest[],
     predictions: readonly MlPrediction[],
+    alertBelow: number,
   ): Promise<number> {
     const { predictions: repo, sources, events } = this.deps;
     const ctx: MutationContext = { userId: null, correlationId: context.correlationId };
@@ -241,7 +245,7 @@ export class ScoringService {
           asOf: t,
         });
         await sources.setHealthScore(client, ctx, vehicle.id, p.healthScore, context.now);
-        if (!raisesRiskEvent(p.healthScore, vehicle.healthScore)) continue;
+        if (!raisesRiskEvent(p.healthScore, vehicle.healthScore, alertBelow)) continue;
         risks.push(
           createEvent(
             PREDICTION_EVENTS.riskDetected,

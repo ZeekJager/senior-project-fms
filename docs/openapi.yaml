@@ -32,6 +32,7 @@ tags:
   - name: Maintenance
   - name: Notifications
   - name: Analytics
+  - name: Settings
 
 paths:
   /trips:
@@ -1679,7 +1680,7 @@ paths:
       description: >
         For each vehicle in the caller's depots: the completed trips' distance in the period (by actual_end), the fuel
         it needed at the vehicle's fuel_efficiency_ml_per_km, the fuel logged (by recorded_at) and the variance,
-        integers throughout (ml, cents, whole percent, rounded half away from zero). Beyond FUEL_VARIANCE_THRESHOLD_PCT
+        integers throughout (ml, cents, whole percent, rounded half away from zero). Beyond the fuel_variance_threshold_pct setting (FMS-80)
         (default 20) either way is above or below; electric vehicles, vehicles without a rating and under 100 km of
         trips are not_judged. Furthest from expected first. The period defaults to last calendar month (Addis Ababa);
         at most 366 days. Only reads, from the read replica when it is up (meta.data_freshness); the monthly job writes
@@ -2992,6 +2993,149 @@ paths:
           description: NOT_FOUND (no such notification, or it is someone else's; the answer is the same for both).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /settings:
+    get:
+      tags: [Settings]
+      operationId: listSettings
+      summary: Every setting's value, default and range (FMS-80)
+      description: >
+        The thresholds an administrator tunes without a code change. Any signed-in user reads them: screens draw
+        their lines from them (the health score's alert line).
+      responses:
+        '200':
+          description: Every setting, in a fixed order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      tags: [Settings]
+      operationId: updateSettings
+      summary: Change settings (FMS-80)
+      description: >
+        One or more settings, each a whole number within its range, or null to go back to the default (sending
+        the default does the same). All are checked before any is written, and written in one transaction, each
+        an audited change. Takes effect within a minute. Needs settings:write (admin).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                fuel_variance_threshold_pct: { type: [integer, 'null'], minimum: 1, maximum: 100 }
+                health_alert_below: { type: [integer, 'null'], minimum: 50, maximum: 84 }
+                expiry_warning_days: { type: [integer, 'null'], minimum: 8, maximum: 180 }
+      responses:
+        '200':
+          description: Every setting, after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (out_of_range per field, an unknown key, a fraction, an empty body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /settings/telemetry-rules:
+    get:
+      tags: [Settings]
+      operationId: getRuleThresholds
+      summary: The speeding and idling thresholds (FMS-46, FMS-80)
+      description: The fleet's, and each depot's that replace them for its vehicles. Any signed-in user.
+      responses:
+        '200':
+          description: The thresholds.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/RuleThresholdList' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /settings/telemetry-rules/fleet:
+    put:
+      tags: [Settings]
+      operationId: setFleetRuleThresholds
+      summary: Set the fleet's speeding and idling thresholds (FMS-80)
+      description: All four values; audited; the rules use them within a minute. Needs settings:write (admin).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RuleThresholds' } } }
+      responses:
+        '200':
+          description: Every threshold row, after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/RuleThresholdList' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a value out of range or missing).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /settings/telemetry-rules/depots/{depot_id}:
+    parameters:
+      - { name: depot_id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Settings]
+      operationId: setDepotRuleThresholds
+      summary: Set a depot's own speeding and idling thresholds (FMS-80)
+      description: Creates or replaces the depot's row, which replaces the fleet's for its vehicles; audited. Needs settings:write (admin).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RuleThresholds' } } }
+      responses:
+        '200':
+          description: Every threshold row, after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/RuleThresholdList' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a value out of range or missing).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Settings]
+      operationId: removeDepotRuleThresholds
+      summary: Put a depot back on the fleet's thresholds (FMS-80)
+      description: Deletes the depot's own row (the audit keeps it). Needs settings:write (admin).
+      responses:
+        '204': { description: The depot follows the fleet's thresholds again. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (an unknown or deactivated depot, or one without its own thresholds).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
 components:
   securitySchemes:
     session:
@@ -3177,6 +3321,54 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   schemas:
+    Setting:
+      type: object
+      description: A setting an administrator tunes (FMS-80, docs/settings.md).
+      required: [key, value, default_value, is_default, unit, min, max, updated_by, updated_by_name, updated_at]
+      properties:
+        key: { type: string, enum: [fuel_variance_threshold_pct, health_alert_below, expiry_warning_days] }
+        value: { type: integer }
+        default_value: { type: integer }
+        is_default: { type: boolean }
+        unit: { type: string, enum: [percent, score, days] }
+        min: { type: integer }
+        max: { type: integer }
+        updated_by: { type: [string, 'null'], format: uuid, description: Who changed it last; null while never changed. }
+        updated_by_name: { type: [string, 'null'] }
+        updated_at: { type: [string, 'null'], format: date-time }
+    RuleThresholds:
+      type: object
+      description: The telemetry rules' thresholds (FMS-46).
+      additionalProperties: false
+      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes]
+      properties:
+        speed_limit_kmh: { type: integer, minimum: 20, maximum: 200 }
+        speeding_pings: { type: integer, minimum: 1, maximum: 20, description: Consecutive pings over the limit that raise a speeding flag. }
+        clear_pings: { type: integer, minimum: 1, maximum: 20, description: Consecutive pings at or under the limit that resolve it. }
+        idle_minutes: { type: integer, minimum: 1, maximum: 120, description: Minutes at 0 km/h, engine not reported off, that raise an idling flag. }
+    RuleThresholdRow:
+      allOf:
+        - { $ref: '#/components/schemas/RuleThresholds' }
+        - type: object
+          required: [updated_by, updated_by_name, updated_at]
+          properties:
+            updated_by: { type: [string, 'null'], format: uuid }
+            updated_by_name: { type: [string, 'null'] }
+            updated_at: { type: [string, 'null'], format: date-time }
+    RuleThresholdList:
+      type: object
+      required: [fleet, depots]
+      properties:
+        fleet: { $ref: '#/components/schemas/RuleThresholdRow' }
+        depots:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/RuleThresholdRow' }
+              - type: object
+                required: [depot_id]
+                properties:
+                  depot_id: { type: string, format: uuid }
     NullablePoint:
       type: [object, 'null']
       additionalProperties: false

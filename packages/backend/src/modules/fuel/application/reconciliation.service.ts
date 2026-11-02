@@ -64,8 +64,8 @@ export interface ReconciliationServiceDeps {
   anomalies: Pick<FuelAnomalyRepository, 'inTransaction' | 'forPeriod' | 'openCount' | 'insertReconciliation'>;
   refs: ReconciliationRefs;
   events: EventBus;
-  /** config.fuel: read on every call, so a change takes effect without a restart in tests. */
-  settings: { varianceThresholdPct: number };
+  /** The variance threshold, a setting (FMS-80): read on every call, so a change takes effect within a minute. */
+  settings: { varianceThresholdPct(): Promise<number> };
 }
 
 export interface ReconciliationQuery {
@@ -159,7 +159,7 @@ export class ReconciliationService {
   ): Promise<{ items: ReconciliationView[]; total: number; summary: ReconciliationSummary; from: Date; to: Date; thresholdPct: number; freshness: DataFreshness }> {
     const { refs, anomalies } = this.deps;
     const { from, to } = periodOf(query.from, query.to, () => previousMonth(addisDay(new Date())));
-    const thresholdPct = this.deps.settings.varianceThresholdPct;
+    const thresholdPct = await this.deps.settings.varianceThresholdPct();
     const scope = staffScope(caller);
     const reads = await this.deps.reads.session();
     const empty = { items: [], total: 0, summary: summarise([]), from, to, thresholdPct, freshness: reads.freshness() };
@@ -173,7 +173,7 @@ export class ReconciliationService {
     }
     const vehicles = await refs.vehicles.forReconciliation(reads, scope, { publicId: query.vehicle_id, depotId });
     // A retired vehicle with nothing in the period is not part of it; one named on purpose always is.
-    const lines = (await this.lines(reads, vehicles, from, to)).filter((l) => query.vehicle_id || l.vehicle.isActive || l.usage.trips > 0 || l.usage.fuelLogs > 0);
+    const lines = (await this.lines(reads, vehicles, from, to, thresholdPct)).filter((l) => query.vehicle_id || l.vehicle.isActive || l.usage.trips > 0 || l.usage.fuelLogs > 0);
     const flagged = await anomalies.forPeriod(reads, lines.map((l) => l.vehicle.id), from, to);
 
     const matching = lines.filter((l) => !query.status || l.judgement.status === query.status).sort(worstFirst);
@@ -194,7 +194,7 @@ export class ReconciliationService {
     const reads = await this.deps.reads.session();
     const [vehicle] = await refs.vehicles.forReconciliation(reads, depotScope(caller.user), { publicId: vehiclePublicId });
     if (!vehicle) throw vehicleNotFound();
-    const thresholdPct = this.deps.settings.varianceThresholdPct;
+    const thresholdPct = await this.deps.settings.varianceThresholdPct();
     const [{ usage, judgement }] = await this.lines(reads, [vehicle], from, to, thresholdPct);
     const perKm = (amount: number) => (usage.distanceM > 0 ? roundDiv(amount * 1000, usage.distanceM) : null);
     const summary: FuelSummaryView = {
@@ -232,7 +232,7 @@ export class ReconciliationService {
     const started = Date.now();
     const { refs, anomalies, events } = this.deps;
     const { from, to } = previousMonth(context.runKey);
-    const thresholdPct = this.deps.settings.varianceThresholdPct;
+    const thresholdPct = await this.deps.settings.varianceThresholdPct();
     const reads = await this.deps.reads.session();
 
     const vehicles = await refs.vehicles.forReconciliation(reads, { kind: 'all' });
@@ -322,7 +322,7 @@ export class ReconciliationService {
   }
 
   /** Each vehicle's trips and fuel over [from, to), and its judgement. One query per source, for every vehicle at once. */
-  private async lines(db: Queryable, vehicles: ReconciledVehicle[], from: Date, to: Date, thresholdPct = this.deps.settings.varianceThresholdPct): Promise<Line[]> {
+  private async lines(db: Queryable, vehicles: ReconciledVehicle[], from: Date, to: Date, thresholdPct: number): Promise<Line[]> {
     const ids = vehicles.map((v) => v.id);
     // One after another: they may share one connection.
     const trips = await this.deps.refs.trips.completedMetres(db, ids, from, to);

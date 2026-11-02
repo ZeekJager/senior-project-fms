@@ -18,6 +18,8 @@ The same badge everywhere a score is shown:
 | 85 and up | green |
 | 75 to 84 | amber |
 | below 75 | red: a technician has been alerted ([alerts.md](alerts.md)) |
+
+75 is the alert line, the `health_alert_below` setting (FMS-80, [settings.md](settings.md)): an administrator may move it between 50 and 84, and the red and amber bands, the views and the gauge's tick move with it on every screen.
 | scored more than 25 hours ago | grey, **STALE**, the old score struck through, whatever its value |
 | never scored | a dash ("Not scored yet" for screen readers) |
 
@@ -51,7 +53,7 @@ A Health column between Status and Current trip, sortable by score. It is hidden
 
 A drawer, from either screen:
 
-- **The gauge.** A 0 to 100 arc in the band's colour, drawn in when the drawer opens; reduced motion shows it at once. A tick marks 75, the alert line. It is grey for a stale score, which also gets a note that last night's scoring missed the vehicle.
+- **The gauge.** A 0 to 100 arc in the band's colour, drawn in when the drawer opens; reduced motion shows it at once. A tick marks the alert line (75 unless changed). It is grey for a stale score, which also gets a note that last night's scoring missed the vehicle.
 - **The facts.** Risk level, the breakdown chance within 30 days, when it was scored (date and age, in the user's calendar), and the model version.
 - **What drives it.** Up to 3 inputs that raise this vehicle's risk most, largest effect first, each with the vehicle's value when scored ("Time since last service · 100 days", "Distance since oil change · 17,380 km"). They come from the ML service's `factors`: each one, set back to a typical vehicle's value, lowers the risk the most. A healthy vehicle has none, and the drawer says nothing stands out.
 - **What the inspection found (FMS-128).** Under the breakdown of a **high-risk** vehicle (medium and low are not asked about: only a flag is judged) the panel asks what the inspection found, so the system can tell whether the prediction was right ([ml-scoring.md](ml-scoring.md#feedback-from-technicians-fms-128)):

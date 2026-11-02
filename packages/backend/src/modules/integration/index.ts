@@ -6,17 +6,21 @@ import { cache, redis } from '../../shared/cache';
 import { validationFailed } from '../../shared/errors/app-error';
 import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
+import { withTransaction } from '../../shared/infrastructure/transaction';
 import { logger } from '../../shared/logging/logger';
 import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
+import { userDirectory } from '../auth';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
 import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
+import { ruleThresholdRouter } from './api/rule-threshold.routes';
 import { trackingRouter } from './api/tracking.routes';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
+import { RuleThresholdService } from './application/rule-threshold.service';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
 import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
@@ -27,6 +31,7 @@ import { DeviceRepository } from './infrastructure/device.repository';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
 import { IntegrationRepository } from './infrastructure/integration.repository';
 import { MemoryRuleStateStore, RedisRuleStateStore } from './infrastructure/rule-state.store';
+import { RuleThresholdRepository } from './infrastructure/rule-threshold.repository';
 import { TelemetryFlagRepository } from './infrastructure/telemetry-flag.repository';
 import { TrackingRepository } from './infrastructure/tracking.repository';
 
@@ -100,6 +105,15 @@ const telemetryRules = new TelemetryRulesService({
 });
 eventBus.subscribe(TRACKING_EVENTS.locationUpdated, 'integration.telemetry-rules', (event, tx) => telemetryRules.onLocationUpdated(tx, event));
 
+// Their thresholds from the settings screen (FMS-80): the fleet's and each depot's, admin only.
+const ruleThresholds = new RuleThresholdService({
+  db: pool,
+  thresholds: new RuleThresholdRepository(),
+  transaction: (fn) => withTransaction(pool, fn),
+  refs: { depots: trackingRefs.depots, users: userDirectory },
+  onChange: () => telemetryRules.forgetThresholds(),
+});
+
 // A vehicle's GPS history (FMS-136): its stored pings, a page at a time, for the vehicle page's trip map.
 const trackHistory = new TrackHistoryService({
   db: pool,
@@ -116,6 +130,7 @@ const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
 router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
+router.use(ruleThresholdRouter(ruleThresholds));
 
 export const integrationModule: AppModule = { name: 'integration', router };
 

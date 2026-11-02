@@ -12,7 +12,10 @@ export const PREDICTION_TYPE = 'failure_within_30_days';
 export const RISK_LEVELS = ['low', 'medium', 'high'] as const;
 export type RiskLevel = (typeof RISK_LEVELS)[number];
 
-/** A health score below this raises a risk event (CFG-3). The ML service's `low` starts here, so they agree. */
+/**
+ * A health score below this raises a risk event (CFG-3): the default of the health_alert_below setting (FMS-80).
+ * The ML service's `low` starts here, so by default they agree.
+ */
 export const RISK_ALERT_BELOW = 75;
 
 /** Vehicles per call to the ML service, which takes 1 to 500. */
@@ -185,9 +188,10 @@ export function riskLevelOf(healthScore: number): RiskLevel {
 /**
  * A risk event is raised when a vehicle's score falls below the line (from at or above it, or unscored), or
  * its risk level rises (medium to high). One that stays below raises none: its alert stays open until resolved.
+ * The line is the health_alert_below setting (FMS-80).
  */
-export function raisesRiskEvent(healthScore: number, previousScore: number | null): boolean {
-  if (healthScore >= RISK_ALERT_BELOW) return false;
-  if (previousScore === null || previousScore >= RISK_ALERT_BELOW) return true;
+export function raisesRiskEvent(healthScore: number, previousScore: number | null, alertBelow = RISK_ALERT_BELOW): boolean {
+  if (healthScore >= alertBelow) return false;
+  if (previousScore === null || previousScore >= alertBelow) return true;
   return RISK_LEVELS.indexOf(riskLevelOf(healthScore)) > RISK_LEVELS.indexOf(riskLevelOf(previousScore));
 }

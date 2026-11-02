@@ -6,7 +6,12 @@ const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString()
 
 describe('health score bands (FMS-56)', () => {
   it('colours below 75 at risk, 75 to 84 watch, 85 and up healthy', () => {
-    expect([0, 60, 74, 75, 84, 85, 100].map(bandOf)).toEqual(['at_risk', 'at_risk', 'at_risk', 'watch', 'watch', 'healthy', 'healthy'])
+    expect([0, 60, 74, 75, 84, 85, 100].map((score) => bandOf(score))).toEqual(['at_risk', 'at_risk', 'at_risk', 'watch', 'watch', 'healthy', 'healthy'])
+  })
+
+  it('the at-risk line moves with the health_alert_below setting (FMS-80); healthy stays at 85', () => {
+    expect([79, 80, 84, 85].map((score) => bandOf(score, 80))).toEqual(['at_risk', 'watch', 'watch', 'healthy'])
+    expect(healthViewOf(78, hoursAgo(2), NOW, 80)).toBe('at_risk')
   })
 
   it('a score more than 25 hours old is stale whatever its value; none is unscored', () => {

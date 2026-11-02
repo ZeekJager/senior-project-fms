@@ -163,4 +163,10 @@ describe('risk', () => {
     expect(raisesRiskEvent(30, 35)).toBe(false);
     expect(raisesRiskEvent(60, 30)).toBe(false);
   });
+
+  test('the line is the health_alert_below setting (FMS-80)', () => {
+    expect(raisesRiskEvent(78, 90, 80)).toBe(true);
+    expect(raisesRiskEvent(72, null, 70)).toBe(false);
+    expect(raisesRiskEvent(65, 72, 70)).toBe(true);
+  });
 });

@@ -10,6 +10,7 @@ import type { AppModule } from '../../shared/module';
 import { incidentLookup } from '../alert';
 import { userDirectory } from '../auth';
 import { depotRefs, HEALTH_BANDS, scoringRefs, serviceRefs, vehicleMaintenance } from '../fleet';
+import { settings } from '../settings';
 import { fuelUsage } from '../fuel';
 import { integrationGateway } from '../integration';
 import { completedDistanceAfter, completedTripUsage } from '../trip';
@@ -117,6 +118,7 @@ const scoringService = new ScoringService({
   },
   events: eventBus,
   log: logger,
+  healthAlertBelow: () => settings.value('health_alert_below'),
 });
 
 // What a technician found when they inspected a flagged vehicle (FMS-128).

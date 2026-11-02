@@ -18,6 +18,7 @@ import {
 import type { AvailabilityService } from './availability.service';
 import type { Caller } from './caller';
 import {
+  HEALTH_BANDS,
   VEHICLE_EVENTS,
   depotNotFound,
   fuelEfficiencyRequired,
@@ -96,6 +97,8 @@ export interface VehicleServiceDeps {
   maintenance: () => { openRecordFor(db: Queryable, vehicleId: string): Promise<string | null> } | null;
   /** A person setting the odometer is a manual meter reading (FMS-126). Optional for tests that do not look at readings. */
   meters?: { manual(client: PoolClient, ctx: MutationContext, vehicleId: string, odometerKm: number, at: Date): Promise<void> };
+  /** Where `at_risk` ends (the health_alert_below setting, FMS-80). HEALTH_BANDS' when not given (tests). */
+  healthAlertBelow?: () => Promise<number>;
   now?: () => Date;
 }
 
@@ -149,7 +152,8 @@ export class VehicleService {
 
   async list(caller: Caller, query: VehicleListQuery): Promise<{ items: VehicleView[]; total: number }> {
     const { vehicles } = this.deps;
-    const page = await vehicles.inTransaction((client) => vehicles.list(client, query, depotScope(caller.user)));
+    const alertBelow = query.health && this.deps.healthAlertBelow ? await this.deps.healthAlertBelow() : HEALTH_BANDS.atRiskBelow;
+    const page = await vehicles.inTransaction((client) => vehicles.list(client, query, depotScope(caller.user), alertBelow));
     return { ...page, items: page.items.map((v) => forCaller(caller, v)) };
   }
 

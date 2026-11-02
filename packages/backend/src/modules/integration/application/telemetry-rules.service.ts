@@ -46,8 +46,11 @@ export interface TelemetryRulesServiceDeps {
 
 /** At most this many pings are read for one event; the rest wait for the vehicle's next event. */
 export const MAX_PINGS_PER_RUN = 1000;
-/** Thresholds are re-read from the database at most this often per depot. */
-export const THRESHOLDS_TTL_MS = 60_000;
+/**
+ * Thresholds are re-read from the database at most this often per depot. A change from the settings screen
+ * (FMS-80) clears them at once on the instance that saved it; the others follow within this.
+ */
+export const THRESHOLDS_TTL_MS = 30_000;
 
 /** A flag as GET /vehicles/{vehicle_id}/telemetry-flags returns it. */
 export interface TelemetryFlagView {
@@ -134,7 +137,12 @@ export class TelemetryRulesService {
     }));
   }
 
-  /** Thresholds for a depot, cached for a minute: they change rarely, and pings arrive every few seconds. */
+  /** Forgets the cached thresholds, after a change (FMS-80): the next ping reads them again. */
+  forgetThresholds(): void {
+    this.thresholdCache.clear();
+  }
+
+  /** Thresholds for a depot, cached for THRESHOLDS_TTL_MS: they change rarely, and pings arrive every few seconds. */
   private async thresholds(db: Queryable, depotId: string | null): Promise<RuleThresholds> {
     const key = depotId ?? 'fleet';
     const hit = this.thresholdCache.get(key);

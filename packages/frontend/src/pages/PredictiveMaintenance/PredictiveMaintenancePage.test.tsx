@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
+import { DEFAULT_SETTINGS } from '@/test/msw/handlers'
 import { server } from '@/test/msw/server'
 import type { MaintenanceRisk, PredictionFeedback } from '@/features/health/health'
 import type { Vehicle } from '@/pages/Vehicles/types'
@@ -121,6 +122,18 @@ describe('Vehicle health (S-19)', () => {
     expect(staleBadge).toHaveTextContent('Stale')
     expect(within(rowFor(unscored.registration_number)).getByText('Not scored yet')).toBeInTheDocument()
     expect(screen.getByText(/model pm-2026\.10/)).toBeInTheDocument()
+  })
+
+  it('the at-risk line is the health_alert_below setting (FMS-80): moved to 82, a score of 80 is at risk', async () => {
+    const watch = vehicle(80)
+    serveHealth([watch])
+    server.use(http.get('/api/v1/settings', () => envelope(DEFAULT_SETTINGS.map((s) => (s.key === 'health_alert_below' ? { ...s, value: 82, is_default: false } : s)))))
+    signedInAs(technician)
+    renderApp('/predictive-maintenance')
+
+    await within(await screen.findByRole('table', { name: 'Vehicle health' })).findByText(watch.registration_number)
+    await waitFor(() => expect(within(rowFor(watch.registration_number)).getByRole('button', { name: /Health score 80, at risk/ })).toHaveClass('bg-danger-soft'))
+    expect(within(screen.getByRole('group', { name: 'Health views' })).getByRole('button', { name: /At risk/ })).toHaveAttribute('title', 'Health score below 82: a technician has been alerted')
   })
 
   it('filters by view, with each view counted', async () => {

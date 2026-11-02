@@ -3,7 +3,11 @@ import { CALENDAR_KEY, getPreference, type CalendarSystem } from '@/lib/preferen
 // The health score (FMS-55, FMS-56): round((1 - p) * 100), where p is the chance of an unplanned
 // breakdown within 30 days. Set every night by the scoring job; never by hand.
 
-/** As the API's `health` filter (fleet HEALTH_BANDS): below 75 at risk (the alert line), 75-84 watch, 85 and up healthy. */
+/**
+ * As the API's `health` filter (fleet HEALTH_BANDS): below 75 at risk (the alert line), 75-84 watch, 85 and up
+ * healthy. The alert line is a setting (health_alert_below, FMS-80): this is its default; screens pass the
+ * current one from useSetting('health_alert_below').
+ */
 export const AT_RISK_BELOW = 75
 export const HEALTHY_FROM = 85
 /** A score older than this is stale: the night's scoring did not reach the vehicle. */
@@ -23,8 +27,8 @@ export const BAND_LABELS: Record<HealthView, string> = {
 
 export const RISK_LABELS: Record<RiskLevel, string> = { high: 'High risk', medium: 'Medium risk', low: 'Low risk' }
 
-export function bandOf(score: number): HealthBand {
-  if (score < AT_RISK_BELOW) return 'at_risk'
+export function bandOf(score: number, alertBelow: number = AT_RISK_BELOW): HealthBand {
+  if (score < alertBelow) return 'at_risk'
   return score < HEALTHY_FROM ? 'watch' : 'healthy'
 }
 
@@ -33,9 +37,9 @@ export function isStale(updatedAt: string | null, now: number = Date.now()): boo
 }
 
 /** Which view a vehicle's score falls in, as the badge shows it: a stale score is stale whatever its value. */
-export function healthViewOf(score: number | null, updatedAt: string | null, now: number = Date.now()): HealthView {
+export function healthViewOf(score: number | null, updatedAt: string | null, now: number = Date.now(), alertBelow: number = AT_RISK_BELOW): HealthView {
   if (score === null) return 'unscored'
-  return isStale(updatedAt, now) ? 'stale' : bandOf(score)
+  return isStale(updatedAt, now) ? 'stale' : bandOf(score, alertBelow)
 }
 
 /** GET /vehicles/{id}/maintenance-risk (api-contract §10.2). */

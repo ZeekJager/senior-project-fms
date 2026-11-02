@@ -4,7 +4,7 @@ import type { EventBus } from '../../../shared/events/event-bus';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { withTransaction } from '../../../shared/infrastructure/transaction';
 import { operatingToday } from '../domain/attendance';
-import { EXPIRY_EVENTS, EXPIRY_WINDOW_DAYS, expiryLevel, type ExpiryRunResult } from '../domain/expiry';
+import { EXPIRY_EVENTS, expiryLevel, type ExpiryRunResult } from '../domain/expiry';
 import type { ExpiryRepository } from '../infrastructure/expiry.repository';
 
 export interface ExpiryServiceDeps {
@@ -14,6 +14,8 @@ export interface ExpiryServiceDeps {
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string; depotId: string | null }[]> };
   depots: { publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> };
   events: EventBus;
+  /** Days ahead of an expiry the first (amber) warning comes: the expiry_warning_days setting (FMS-80). */
+  warningDays: () => Promise<number>;
 }
 
 /** Who runs a check: a scheduled job (its run's correlation id) or the upload that triggered it. */
@@ -24,7 +26,7 @@ export interface ExpiryCheck {
 
 /**
  * Raises DocumentExpiring and LicenceExpiring (FMS-26): amber within 30
- * days of the expiry date, red within 7. A level is raised once per subject
+ * days of the expiry date (the expiry_warning_days setting), red within 7. A level is raised once per subject
  * and expiry date (fleet.expiry_notices), so re-running a check publishes
  * nothing new. Events go into the outbox with the notices, with actor null
  * (the system) and ids derived from the fact, so a consumer that sees one
@@ -40,12 +42,13 @@ export class ExpiryService {
   async checkDocuments(check: ExpiryCheck, documentId?: string, tx?: PoolClient): Promise<ExpiryRunResult> {
     const { db, expiry } = this.deps;
     const today = operatingToday(check.now);
+    const windowDays = await this.deps.warningDays();
     const run = <T>(fn: (client: PoolClient) => Promise<T>) => (tx ? fn(tx) : withTransaction(db, fn));
     return run(async (client) => {
-      const due = await expiry.documentsDue(client, today, EXPIRY_WINDOW_DAYS, documentId);
+      const due = await expiry.documentsDue(client, today, windowDays, documentId);
       const raised: DomainEvent[] = [];
       for (const doc of due) {
-        const level = expiryLevel(doc.daysLeft)!;
+        const level = expiryLevel(doc.daysLeft, windowDays)!;
         const recorded = await expiry.recordNotice(client, {
           subject: 'document',
           subjectId: doc.id,
@@ -84,11 +87,12 @@ export class ExpiryService {
   async checkLicences(check: ExpiryCheck): Promise<ExpiryRunResult> {
     const { db, expiry, users, depots } = this.deps;
     const today = operatingToday(check.now);
+    const windowDays = await this.deps.warningDays();
     return withTransaction(db, async (client) => {
-      const due = await expiry.licencesDue(client, today, EXPIRY_WINDOW_DAYS);
+      const due = await expiry.licencesDue(client, today, windowDays);
       const fresh: { licence: (typeof due)[number]; level: 'amber' | 'red' }[] = [];
       for (const licence of due) {
-        const level = expiryLevel(licence.daysLeft)!;
+        const level = expiryLevel(licence.daysLeft, windowDays)!;
         const recorded = await expiry.recordNotice(client, {
           subject: 'licence',
           subjectId: licence.id,

@@ -18,6 +18,8 @@ const MODULE_SCHEMAS = {
   integration: ['integration', 'tracking'],
   analytics: ['analytics'],
   audit: ['audit'],
+  // Settings an administrator tunes (FMS-80): read by other modules through its index.ts.
+  settings: ['settings'],
   'command-center': [],
   // The Socket.IO gateway (FMS-43): forwards domain events, stores nothing.
   realtime: [],

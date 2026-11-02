@@ -27,7 +27,7 @@ For a vehicle and a period:
 
 | Variance | Status |
 |---|---|
-| More than `FUEL_VARIANCE_THRESHOLD_PCT` above (default 20) | `above`: fuel bought that the driving does not explain |
+| More than the threshold above: the `fuel_variance_threshold_pct` setting ([settings.md](settings.md); default `FUEL_VARIANCE_THRESHOLD_PCT`, 20) | `above`: fuel bought that the driving does not explain |
 | More than the threshold below | `below`: fill-ups missing, or distance recorded that was not driven |
 | Anything else, the threshold itself included | `within` |
 

@@ -1,5 +1,6 @@
 import { Clock } from 'lucide-react'
 import { cn } from '@/components/ui'
+import { useSetting } from '@/features/settings'
 import { BAND_LABELS, formatAge, healthViewOf, type HealthView } from './health'
 
 const TONE: Record<HealthView, string> = {
@@ -19,12 +20,13 @@ interface HealthBadgeProps {
 }
 
 /**
- * A vehicle's health score (FMS-56): green at 85 and up, amber 75 to 84, red below 75. A score more than
+ * A vehicle's health score (FMS-56): green at 85 and up, amber from the alert line (75 unless an
+ * administrator moved it, FMS-80) to 84, red below it. A score more than
  * 25 hours old is grey and says STALE, whatever its value; a vehicle never scored shows a dash. The number
  * and the words carry the meaning, the colour repeats it.
  */
 export function HealthBadge({ score, updatedAt, onOpen, className }: HealthBadgeProps) {
-  const view = healthViewOf(score, updatedAt)
+  const view = healthViewOf(score, updatedAt, Date.now(), useSetting('health_alert_below'))
   if (view === 'unscored') {
     return (
       <span className={cn('text-ink-subtle', className)}>

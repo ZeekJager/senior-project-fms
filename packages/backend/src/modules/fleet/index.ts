@@ -11,6 +11,7 @@ import type { MutationContext } from '../../shared/infrastructure/audited-mutati
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import type { AppModule } from '../../shared/module';
 import { USER_EVENTS, userDirectory, type DepotDirectory, type Scope } from '../auth';
+import { settings } from '../settings';
 import { depotInScope } from '../../shared/authz/scope';
 import {
   activeAssignments,
@@ -123,6 +124,7 @@ const vehicleService: VehicleService = new VehicleService({
   users: userDirectory,
   maintenance: () => maintenanceLookup,
   meters: meterService,
+  healthAlertBelow: () => settings.value('health_alert_below'),
 });
 
 // Fleet's read model of the trips holding a vehicle or driver (FMS-76): a
@@ -236,6 +238,7 @@ const expiryService = new ExpiryService({
   users: userDirectory,
   depots: { publicIds: depotPublicIds },
   events: eventBus,
+  warningDays: () => settings.value('expiry_warning_days'),
 });
 
 // A document uploaded already inside the 30-day window is flagged at once,

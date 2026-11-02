@@ -36,7 +36,8 @@ export interface OverviewServiceDeps {
   db: Queryable;
   refs: OverviewRefs;
   cache: Cache;
-  bands: HealthBands;
+  /** Fleet's HEALTH_BANDS, `atRiskBelow` from the health_alert_below setting (FMS-80). */
+  bands: () => Promise<HealthBands>;
   now?: () => Date;
 }
 
@@ -53,7 +54,7 @@ export class OverviewService {
     const { db, refs, cache } = this.deps;
     const scope = depotScope(user);
     // Someone who can be placed in no depot sees an empty overview, never another depot's.
-    if (scope.kind === 'none') return forCaller(this.empty(), user.permissions);
+    if (scope.kind === 'none') return forCaller(await this.empty(), user.permissions);
     let depotId: string | null = null;
     let shown: string | null = null;
     if (query.depotId) {
@@ -63,7 +64,7 @@ export class OverviewService {
     } else if (scope.kind === 'depot') {
       depotId = scope.depotId;
       shown = (await refs.depots.publicIds(db, [depotId])).get(depotId) ?? null;
-      if (!shown) return forCaller(this.empty(), user.permissions);
+      if (!shown) return forCaller(await this.empty(), user.permissions);
     }
     const overview = await cache.getOrSet(cache.key('command-center', 'overview', shown ?? 'all'), OVERVIEW_CACHE_TTL_SECONDS, () =>
       this.load(depotId, shown),
@@ -82,7 +83,8 @@ export class OverviewService {
 
   /** One depot's (internal id, already checked against the caller's scope), or every depot's. */
   private async load(depotId: string | null, shown: string | null): Promise<CommandCenterOverview> {
-    const { db, refs, bands } = this.deps;
+    const { db, refs } = this.deps;
+    const bands = await this.deps.bands();
     const now = this.now();
     const { day, from, to } = addisDayOf(now);
     // One after another: a transaction's client (tests, a caller's own) runs one query at a time anyway.
@@ -94,8 +96,8 @@ export class OverviewService {
     return summarise({ depotId: shown, now, bands, vehicles, drivers, trips, alerts, incidents });
   }
 
-  private empty(): CommandCenterOverview {
+  private async empty(): Promise<CommandCenterOverview> {
     const empty = { items: [], counts: [] };
-    return summarise({ depotId: null, now: this.now(), bands: this.deps.bands, vehicles: [], drivers: [], trips: { today: [], underWay: [] }, alerts: empty, incidents: empty });
+    return summarise({ depotId: null, now: this.now(), bands: await this.deps.bands(), vehicles: [], drivers: [], trips: { today: [], underWay: [] }, alerts: empty, incidents: empty });
   }
 }

@@ -23,7 +23,7 @@ The job `maintenance-scoring` runs daily at 02:00 (Addis Ababa), after `engine-h
 5. **Each batch** is stored in one transaction:
    - the prediction;
    - the vehicle's health score;
-   - a risk event where the score fell below 75.
+   - a risk event where the score fell below the alert line (75 unless changed, [settings.md](settings.md)).
 
 The run's result goes into the job history. It holds counts: `vehicles`, `scored`, `already_scored`, `skipped`, `risk_events`, `batches_failed`, `model_version`, `blocked`, `duration_ms`.
 
@@ -75,12 +75,12 @@ The service is reached through the integration gateway (FMS-85, [integrations.md
 
 ## Risk events
 
-A score below 75 (`RISK_ALERT_BELOW`, CFG-3) raises `MaintenanceRiskDetected` when either holds:
+A score below the alert line raises `MaintenanceRiskDetected` when either holds. The line is the `health_alert_below` setting (FMS-80, [settings.md](settings.md)), 75 by default (`RISK_ALERT_BELOW`, CFG-3), read once per run:
 
-- the vehicle's previous score was 75 or more, or it had none;
+- the vehicle's previous score was on or above the line, or it had none;
 - its risk level rose, from medium to high.
 
-A vehicle that stays below 75 at the same level raises no new event. Its alert stays open until someone resolves it.
+A vehicle that stays below the line at the same level raises no new event. Its alert stays open until someone resolves it.
 
 | Score | Previous | Event |
 |---|---|---|

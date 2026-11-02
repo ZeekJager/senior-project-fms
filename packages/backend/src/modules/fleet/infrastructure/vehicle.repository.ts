@@ -201,7 +201,8 @@ export class VehicleRepository extends Repository {
     return view;
   }
 
-  async list(db: Queryable, query: VehicleListQuery, scope: Scope): Promise<{ items: VehicleView[]; total: number }> {
+  /** `healthAlertBelow`: where the `at_risk` band ends, the health_alert_below setting (FMS-80). */
+  async list(db: Queryable, query: VehicleListQuery, scope: Scope, healthAlertBelow: number = HEALTH_BANDS.atRiskBelow): Promise<{ items: VehicleView[]; total: number }> {
     const params: unknown[] = [];
     const where: string[] = [];
     const add = (value: unknown) => {
@@ -236,11 +237,13 @@ export class VehicleRepository extends Repository {
       }
     }
     if (query.health) {
+      // A whole number from the settings, never input, like the constants beside it.
+      const line = Math.trunc(healthAlertBelow);
       const fresh = `v.health_score_updated_at >= now() - make_interval(hours => ${HEALTH_BANDS.staleAfterHours})`;
       where.push(
         {
-          at_risk: `${fresh} AND v.health_score < ${HEALTH_BANDS.atRiskBelow}`,
-          watch: `${fresh} AND v.health_score >= ${HEALTH_BANDS.atRiskBelow} AND v.health_score < ${HEALTH_BANDS.healthyFrom}`,
+          at_risk: `${fresh} AND v.health_score < ${line}`,
+          watch: `${fresh} AND v.health_score >= ${line} AND v.health_score < ${HEALTH_BANDS.healthyFrom}`,
           healthy: `${fresh} AND v.health_score >= ${HEALTH_BANDS.healthyFrom}`,
           stale: `v.health_score IS NOT NULL AND NOT (${fresh})`,
           unscored: 'v.health_score IS NULL',

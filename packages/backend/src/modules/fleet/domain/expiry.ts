@@ -4,7 +4,10 @@
 // or the check on upload never repeats one, and a new expiry date (a renewed
 // licence, a replacement document) starts again.
 
-/** Raised from this many days before the expiry date (amber). */
+/**
+ * Raised from this many days before the expiry date (amber): the default of the expiry_warning_days setting
+ * (FMS-80), which the daily check uses. The vehicle list's "expiring" filter keeps this.
+ */
 export const EXPIRY_WINDOW_DAYS = 30;
 /** From this many days before (red). The expiry day itself is day 0, still red. */
 export const RED_WITHIN_DAYS = 7;
@@ -17,8 +20,8 @@ export type ExpirySubject = 'document' | 'licence';
  * expiry already past is not "expiring": dispatch checks block it already,
  * and these warnings exist to come before that point.
  */
-export function expiryLevel(daysLeft: number): ExpiryLevel | null {
-  if (daysLeft < 0 || daysLeft > EXPIRY_WINDOW_DAYS) return null;
+export function expiryLevel(daysLeft: number, windowDays = EXPIRY_WINDOW_DAYS): ExpiryLevel | null {
+  if (daysLeft < 0 || daysLeft > windowDays) return null;
   return daysLeft <= RED_WITHIN_DAYS ? 'red' : 'amber';
 }
 
