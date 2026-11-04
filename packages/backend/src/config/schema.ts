@@ -74,6 +74,16 @@ const appSchema = z
     APP_PUBLIC_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
     // The feature spec the core's extractor implements, shared with the ML service (FMS-127). Relative to the working directory.
     ML_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec.json'),
+    // Database backups (FMS-144, docs/backups.md): pg_dump needs a role that may read every table, which fms_app may
+    // not. BACKUP_DB_USER/PASSWORD, else the schema owner's DB_ADMIN_USER/PASSWORD; neither set, backups are off.
+    BACKUP_DB_USER: z.string().trim().min(1).optional(),
+    BACKUP_DB_PASSWORD: z.string().min(1).optional(),
+    DB_ADMIN_USER: z.string().trim().min(1).optional(),
+    DB_ADMIN_PASSWORD: z.string().min(1).optional(),
+    // Where pg_dump and pg_restore are, when not on PATH.
+    BACKUP_PG_BIN_DIR: z.string().trim().min(1).optional(),
+    // Development only: run pg_dump in this PostgreSQL container (docker exec), for a machine without the client tools.
+    BACKUP_PG_CONTAINER: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, 'a container name').optional(),
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_DRIVER === 's3') {
@@ -87,7 +97,11 @@ const appSchema = z
     if (env.ML_SERVICE_URL && (env.ML_SERVICE_TOKEN ?? '').length < MIN_ML_SERVICE_TOKEN_LENGTH) {
       ctx.addIssue({ code: 'custom', path: ['ML_SERVICE_TOKEN'], message: `must be at least ${MIN_ML_SERVICE_TOKEN_LENGTH} characters when ML_SERVICE_URL is set` });
     }
+    if (env.BACKUP_DB_USER && !env.BACKUP_DB_PASSWORD) {
+      ctx.addIssue({ code: 'custom', path: ['BACKUP_DB_PASSWORD'], message: 'is required when BACKUP_DB_USER is set' });
+    }
     if (env.NODE_ENV !== 'production') return;
+    if (env.BACKUP_PG_CONTAINER) ctx.addIssue({ code: 'custom', path: ['BACKUP_PG_CONTAINER'], message: 'is for development only' });
     if (!env.REDIS_HOST) ctx.addIssue({ code: 'custom', path: ['REDIS_HOST'], message: 'is required in production' });
     for (const key of ['DB_PASSWORD', 'JWT_SECRET'] as const) {
       if (env[key].includes(PLACEHOLDER)) {
@@ -133,6 +147,8 @@ export interface AppConfig {
   routing: { url: string } | null;
   /** The web app's public address, without a trailing slash, for links in alert emails (FMS-93); null leaves them out. */
   app: { publicUrl: string | null };
+  /** Database backups (FMS-144): who pg_dump connects as (null: backups are off), and where the tools are. */
+  backup: { credentials: { user: string; password: string } | null; binDir: string | null; container: string | null };
 }
 
 /** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
@@ -271,6 +287,15 @@ export function loadAppConfig(env: Env): AppConfig {
     },
     routing: e.ROUTING_URL ? { url: e.ROUTING_URL.replace(/\/+$/, '') } : null,
     app: { publicUrl: e.APP_PUBLIC_URL ? e.APP_PUBLIC_URL.replace(/\/+$/, '') : null },
+    backup: {
+      credentials: e.BACKUP_DB_USER
+        ? { user: e.BACKUP_DB_USER, password: e.BACKUP_DB_PASSWORD! }
+        : e.DB_ADMIN_USER && e.DB_ADMIN_PASSWORD
+          ? { user: e.DB_ADMIN_USER, password: e.DB_ADMIN_PASSWORD }
+          : null,
+      binDir: e.BACKUP_PG_BIN_DIR ?? null,
+      container: e.BACKUP_PG_CONTAINER ?? null,
+    },
   };
 }
 

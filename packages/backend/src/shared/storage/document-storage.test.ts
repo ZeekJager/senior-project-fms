@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -27,6 +27,15 @@ describe('LocalDiskStorage', () => {
     expect(await read(await storage.get('documents/2026/10/abc-123'))).toBe('hello');
     await storage.remove('documents/2026/10/abc-123');
     await expect(storage.get('documents/2026/10/abc-123')).rejects.toThrow();
+  });
+
+  test('stores a file from disk under its key, and never over another', async () => {
+    const storage: DocumentStorage = new LocalDiskStorage(root);
+    const source = path.join(root, 'source.dump');
+    await writeFile(source, 'dump bytes');
+    await storage.putFile('backups/2026/11/abc-123', source, 'application/octet-stream');
+    expect(await read(await storage.get('backups/2026/11/abc-123'))).toBe('dump bytes');
+    await expect(storage.putFile('backups/2026/11/abc-123', source, 'application/octet-stream')).rejects.toThrow();
   });
 
   test('never overwrites an existing object', async () => {

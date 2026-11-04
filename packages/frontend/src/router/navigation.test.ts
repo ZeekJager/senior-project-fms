@@ -32,7 +32,7 @@ describe('menus per role (seeded grants)', () => {
   })
 
   it.each([
-    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles', 'Audit log', 'Depots', 'Settings'] }],
+    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles', 'Audit log', 'Depots', 'Settings', 'Backups'] }],
     ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles'] }],
     ['dispatcher', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Reports'], 'Command center': ['Dispatch', 'Live map'] }],
     // No analytics:read, so no Reports.

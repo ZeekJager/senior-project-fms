@@ -66,6 +66,9 @@ Each run writes `job.started`, then `job.succeeded` (with the result and duratio
 | `notification-delivery` | every minute | Sends the emails, SMS and pushes that are due (new, and retries after 1, 5, 15 and 60 minutes), a batch of 20 at a time, through the integration gateway; records each attempt on its `alert.notifications` row (FMS-93, [notification-channels.md](notification-channels.md)) |
 | `analytics-refresh-nightly` | 02:15 | Recomputes `analytics.analytics_cache` for the last 35 days (Addis Ababa), for fill-ups, trips and repair costs entered late; an empty cache is filled 400 days back. Aggregates on the read replica, writes the primary, then drops the cached analytics answers in Redis (FMS-50, [analytics.md](analytics.md)) |
 | `analytics-refresh-hourly` | every hour | The same for today and yesterday, so the KPIs are at most an hour behind (FMS-50) |
+| `database-backup` | 02:40 | A scheduled backup: pg_dump of the whole database into the backup storage, recorded in `backup.backups` with its size and SHA-256 (FMS-144, [backups.md](backups.md)). Skipped while another is under way, or when the server has no credentials for pg_dump |
+| `backup-runner` | every 5 minutes | Takes a Back up now whose instance stopped before it ran (the request starts it at once otherwise), and fails a run still marked running after 120 minutes (its instance died) (FMS-144) |
+| `backup-retention` | 03:55 | Removes the files of backups older than 30 days; their rows stay, as `expired` (FMS-144) |
 
 ## Expiry levels
 

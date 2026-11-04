@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -14,6 +14,8 @@ import type { StorageConfig } from '../../config/schema';
 export interface DocumentStorage {
   /** Stores a new object. Never overwrites: a key is used once. */
   put(key: string, body: Buffer, contentType: string): Promise<void>;
+  /** Stores a file from disk without reading it into memory (a database backup, FMS-144). Never overwrites. */
+  putFile(key: string, file: string, contentType: string): Promise<void>;
   /** The object's bytes, as a stream. */
   get(key: string): Promise<Readable>;
   /** Removes an object (used to undo an upload whose database write failed). */
@@ -46,6 +48,12 @@ export class LocalDiskStorage implements DocumentStorage {
     const file = this.pathOf(key);
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, body, { flag: 'wx', mode: 0o600 });
+  }
+
+  async putFile(key: string, source: string): Promise<void> {
+    const file = this.pathOf(key);
+    await mkdir(path.dirname(file), { recursive: true });
+    await copyFile(source, file, constants.COPYFILE_EXCL);
   }
 
   async get(key: string): Promise<Readable> {
@@ -81,6 +89,21 @@ export class S3Storage implements DocumentStorage {
     assertKey(key);
     await this.client.send(
       new PutObjectCommand({ Bucket: this.config.bucket, Key: key, Body: body, ContentType: contentType, IfNoneMatch: '*' }),
+    );
+  }
+
+  async putFile(key: string, file: string, contentType: string): Promise<void> {
+    assertKey(key);
+    const { size } = await stat(file);
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.config.bucket,
+        Key: key,
+        Body: createReadStream(file),
+        ContentLength: size,
+        ContentType: contentType,
+        IfNoneMatch: '*',
+      }),
     );
   }
 

@@ -228,6 +228,18 @@ Audit reader rules (FMS-28):
   - `details`.
 - Responses are `Cache-Control: no-store`.
 
+### 5.3 Database backups (FMS-144)
+
+| Method + path | Purpose | Auth / permission | Request / response |
+|---|---|---|---|
+| `GET /system/backups` | Every backup, newest first (screen S-30) | `backup:read` | `page,page_size` -> `Backup[]`: `id`, `kind` (`scheduled`, `manual`), `status` (`queued`, `running`, `succeeded`, `failed`, `expired`), `database_name`, `requested_by` `{id, name}` (null for the nightly one), `requested_at`, `started_at`, `finished_at`, `size_bytes`, `checksum_sha256`, `error` (pg_dump's own words), `expires_at`, `downloadable`; `meta` adds `available` (pg_dump's credentials are set), `retention_days` (30), `last_succeeded_at` and `last_restore_drill` |
+| `POST /system/backups` | Back up now | `backup:write` | No body -> `202` `Backup` (`queued`); the dump runs in the background. `409 CONFLICT_DUPLICATE` (`backup_in_progress`) while one is queued or running; `503 UPSTREAM_UNAVAILABLE` when the server has no credentials for pg_dump |
+| `GET /system/backups/{backup_id}` | One backup | `backup:read` | -> `Backup` |
+| `POST /system/backups/{backup_id}/download-link` | A download link for the caller | `backup:read` | -> `{url, expires_at, filename}`: signed, naming the caller, alive 5 minutes. `409` unless `succeeded` (`reason: expired` past retention) |
+| `GET /system/backups/{backup_id}/content` | The file | Signed link (public route) | `?user&expires&signature` -> `application/octet-stream`, an attachment (pg_dump's custom format). `401 AUTH_TOKEN_EXPIRED` / `AUTH_TOKEN_INVALID` for a stale or altered link; audited as `backup.downloaded` by the admin the link names |
+
+Backups are pg_dump of the whole database in its custom format, compressed, taken by the app's runner one at a time (nightly at 02:40, and on Back up now), stored in the backup storage (never in PostgreSQL or the repository) with their size and SHA-256, and audited (`backup.requested`, `backup.succeeded`, `backup.failed`, `backup.downloaded`, `backup.expired`). Files are removed after 30 days; the record stays as `expired`. Restoring is a command, not an endpoint: it replaces the live data ([backups.md](backups.md)).
+
 ## 6. Fleet Management API
 
 ### 6.1 Depots
