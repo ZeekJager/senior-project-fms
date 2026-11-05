@@ -141,6 +141,20 @@ Unversioned and unauthenticated, for load balancers and container orchestration:
 | `GET /health/live` | `200` while the process is running; checks no dependencies |
 | `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`) |
 
+### 3.8 System health (FMS-143)
+
+The health of the FMS over time, for the admin's screen (S-31, [system-health.md](system-health.md)). Under `/api/v1`, `system:read` (admin only), `Cache-Control: no-store`, read from the primary.
+
+| Method + path | Purpose | Request / response |
+|---|---|---|
+| `GET /system/health` | Each component now and its uptime; outages; failed jobs | -> `SystemHealth`: `generated_at`, `window_end` (the start of the current minute), `sampled_from` (the first sample of the last 30 days, null with none), `components[]`, `outages[]` (the last 30 days, newest first, at most 100) and `outages_total`, `failed_jobs[]` (the last 30 days, at most 50) and `failed_jobs_total` |
+| `GET /system/health/history` | The period over time | `window` (`24h` default, `7d`, `30d`; else `400`) -> `window`, `from`, `to`, `bucket_minutes` (15, 120, 480), `requests` (`requests`, `errors_5xx`, `error_rate_pct`, `p95_ms`, and the same per cell in `cells[]` with its `start`) and `components[]` (`component`, `label`, `cells[]` of `start`, `ok_minutes`, `down_minutes`, `disabled_minutes`, `no_data_minutes`) |
+
+- **`ComponentHealth`:** `component` (`api`, `database`, `replica`, `redis`, `ai_service`, `provider:<code>`), `kind`, `label`, `status` now (`ok`, `down`, `disabled`: not configured, `no_data`: no sample in the last two minutes), `checked_at`, `latency_ms`, `error` (why it is down, in our words) and `uptime` per window (`24h`, `7d`, `30d`): `uptime_pct` (ok / (ok + down) minutes, floored to two decimals; null with neither), `ok_minutes`, `down_minutes`, `disabled_minutes`, `no_data_minutes`.
+- **Samples.** Each API instance checks every component once a minute (each within 3 s) and records `ok`, `down` with the error, or `disabled`; down from any instance wins. A minute with no sample is no data, left out of the uptime; for the API itself a minute between two of its samples with none is down (`No samples: the API was not running`).
+- **`Outage`:** `component`, `label`, `started_at`, `ended_at` (null while it goes on), `duration_minutes`, `error` (its first). **`FailedJobRun`:** `job`, `run_key`, `attempts`, `started_at`, `failed_at`, `error`.
+- **Requests** count every API answer but the health checks, per minute: total, 5xx and a latency histogram, never a path, body, user or id. `p95_ms` is interpolated within its histogram bucket; at least 10000 past 10 s.
+
 ## 4. HTTP Status Contract
 
 | Status | Meaning | Typical use |

@@ -5,6 +5,7 @@ import { config } from './config';
 import { pool } from './db';
 import { modules } from './modules';
 import { attachRealtime } from './modules/realtime';
+import { systemHealth } from './modules/system';
 import { redis, redisKey } from './shared/cache';
 import { createOutboxRelay } from './shared/events/event-bus';
 import { outboxCleanupJob } from './shared/events/outbox-cleanup';
@@ -40,6 +41,10 @@ startScheduler(
     log: (level, message, fields) => logger[level](fields, message),
   },
 );
+
+// Every instance checks the API, the database, the replica, Redis, the AI service and the providers each
+// minute and writes its request counts (FMS-143); not a scheduled job, so a database outage is sampled too.
+systemHealth.start();
 
 // Delivers domain events from the outbox to consumers and Redis (FMS-73).
 // Every instance runs one; an advisory lock lets one relay at a time. With no

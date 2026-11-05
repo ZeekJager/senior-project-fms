@@ -108,6 +108,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `tracking` | integration | gps_pings (default partition included), telemetry_flags, vehicle_current_location. `trip` reads positions through the integration module's `index.ts` |
 | `document` | fleet | documents |
 | `settings` | settings | settings (values an administrator changed from their defaults, migration 052, FMS-80). Other modules read them through its `index.ts` |
+| `system` | system | health_samples, request_rollups (system health, FMS-143, migration 059). Failed job runs are read through `src/shared/jobs/job-runs.ts`, never from `jobs` directly |
 | `api` | platform (`src/shared`) | idempotency_keys, used by the Idempotency-Key middleware (FMS-87) |
 | `shared` | platform | enum types and trigger functions only; no tables |
 

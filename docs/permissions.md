@@ -3,7 +3,7 @@
 Generated from the role grants seeded in `packages/backend/migrations/001_core_identity.sql`. Do not edit by hand: run
 `npm run -s permissions:doc -w fms-backend > docs/permissions.md` after changing a grant. A test fails when this file is stale.
 
-59 permissions, 9 roles. `x` means the role holds the permission.
+60 permissions, 9 roles. `x` means the role holds the permission.
 
 | Permission | admin | fleet_manager | dispatcher | depot_admin | technician | driver | finance_clerk | compliance_officer | fleet_owner |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -55,6 +55,7 @@ Generated from the role grants seeded in `packages/backend/migrations/001_core_i
 | `route:write` | x | x | x | x |  |  |  |  |  |
 | `service-program:write` | x | x |  | x |  |  |  |  |  |
 | `settings:write` | x |  |  |  |  |  |  |  |  |
+| `system:read` | x |  |  |  |  |  |  |  |  |
 | `tracking:ingest` | x |  |  |  |  |  |  |  |  |
 | `tracking:read` | x | x | x | x |  |  |  | x | x |
 | `trip:assign` | x | x | x |  |  |  |  |  |  |

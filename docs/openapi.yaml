@@ -44,6 +44,7 @@ tags:
   - name: Notifications
   - name: Analytics
   - name: Settings
+  - name: System
 
 paths:
   /trips:
@@ -5993,6 +5994,67 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HealthReport' }
 
+  /system/health:
+    get:
+      tags: [System]
+      operationId: getSystemHealth
+      summary: Uptime, outages and failed jobs (FMS-143)
+      description: >
+        The health of the FMS from its own samples: once a minute each API instance checks the API (its own
+        /health/live), the database, the read replica, Redis, the AI service and each active provider's circuit
+        breaker, and records ok, down (with the error) or disabled (not configured). Per component: its status now,
+        its last latency, and its uptime over 24 hours, 7 days and 30 days (ok / (ok + down) minutes, floored to two
+        decimals; minutes with no sample are no data and left out). For the API itself a minute between two of its
+        samples with none is the API down. Also every outage (a run of down minutes) of the last 30 days, and the
+        scheduled job runs that failed. Read from the primary; never cached. Needs system:read (admin).
+      responses:
+        '200':
+          description: The summary.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SystemHealth' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /system/health/history:
+    get:
+      tags: [System]
+      operationId: getSystemHealthHistory
+      summary: Requests, errors, latency and component status over time (FMS-143)
+      description: >
+        A window cut into cells ending at the start of the current minute: 96 cells of 15 minutes over 24 hours, 84
+        of 2 hours over 7 days, 90 of 8 hours over 30 days. Per cell, the API's requests, its 5xx answers, their
+        share and the p95 latency (from a latency histogram, interpolated within its bucket), and each component's
+        ok, down, disabled and no-data minutes for the status strip. Health checks are not counted. Needs
+        system:read (admin).
+      parameters:
+        - { name: window, in: query, required: false, schema: { type: string, enum: [24h, 7d, 30d], default: 24h } }
+      responses:
+        '200':
+          description: The history.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SystemHealthHistory' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a window other than 24h, 7d or 30d).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
 components:
   securitySchemes:
     session:
@@ -6218,6 +6280,112 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   schemas:
+    Uptime:
+      type: object
+      required: [uptime_pct, ok_minutes, down_minutes, disabled_minutes, no_data_minutes]
+      properties:
+        uptime_pct: { type: [number, 'null'], description: 'ok / (ok + down), floored to two decimals; null with neither.' }
+        ok_minutes: { type: integer }
+        down_minutes: { type: integer }
+        disabled_minutes: { type: integer }
+        no_data_minutes: { type: integer, description: Minutes since sampling began with no sample of the component. }
+    ComponentHealth:
+      type: object
+      required: [component, kind, label, status, checked_at, latency_ms, error, uptime]
+      properties:
+        component: { type: string, description: 'api, database, replica, redis, ai_service, or provider:<code>.' }
+        kind: { type: string, enum: [api, database, replica, redis, ai_service, provider] }
+        label: { type: string }
+        status: { type: string, enum: [ok, down, disabled, no_data], description: Its sample of the last minute or the one before. }
+        checked_at: { type: [string, 'null'], format: date-time }
+        latency_ms: { type: [integer, 'null'], description: "The last check's; a provider's is its circuit's mean." }
+        error: { type: [string, 'null'], description: 'Why it is down, in our words (never a request, a user or an id).' }
+        uptime:
+          type: object
+          required: [24h, 7d, 30d]
+          properties:
+            24h: { $ref: '#/components/schemas/Uptime' }
+            7d: { $ref: '#/components/schemas/Uptime' }
+            30d: { $ref: '#/components/schemas/Uptime' }
+    Outage:
+      type: object
+      required: [component, label, started_at, ended_at, duration_minutes, error]
+      properties:
+        component: { type: string }
+        label: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time, description: Null while it goes on. }
+        duration_minutes: { type: integer }
+        error: { type: [string, 'null'], description: 'The first error of the outage; for the API, "No samples: the API was not running".' }
+    FailedJobRun:
+      type: object
+      required: [job, run_key, attempts, started_at, failed_at, error]
+      properties:
+        job: { type: string }
+        run_key: { type: string, description: 'The local day (YYYY-MM-DD) of a daily job, the slot (YYYY-MM-DDTHH:MM) of an interval job.' }
+        attempts: { type: integer }
+        started_at: { type: string, format: date-time }
+        failed_at: { type: string, format: date-time }
+        error: { type: [string, 'null'] }
+    SystemHealth:
+      type: object
+      required: [generated_at, window_end, sampled_from, components, outages, outages_total, failed_jobs, failed_jobs_total]
+      properties:
+        generated_at: { type: string, format: date-time }
+        window_end: { type: string, format: date-time, description: The start of the current minute; every window ends there. }
+        sampled_from: { type: [string, 'null'], format: date-time, description: 'The first sample in the last 30 days; null when there is none.' }
+        components: { type: array, items: { $ref: '#/components/schemas/ComponentHealth' } }
+        outages: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Outage' }, description: 'The last 30 days, newest first.' }
+        outages_total: { type: integer }
+        failed_jobs: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/FailedJobRun' }, description: "The last 30 days, newest first (interval jobs' runs are kept 7 days)." }
+        failed_jobs_total: { type: integer }
+    RequestStats:
+      type: object
+      required: [requests, errors_5xx, error_rate_pct, p95_ms]
+      properties:
+        requests: { type: integer }
+        errors_5xx: { type: integer }
+        error_rate_pct: { type: [number, 'null'] }
+        p95_ms: { type: [integer, 'null'], description: 'At least 10000 when the 95th request took over 10 s.' }
+    SystemHealthHistory:
+      type: object
+      required: [window, from, to, bucket_minutes, requests, components]
+      properties:
+        window: { type: string, enum: [24h, 7d, 30d] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        bucket_minutes: { type: integer, enum: [15, 120, 480] }
+        requests:
+          allOf:
+            - { $ref: '#/components/schemas/RequestStats' }
+            - type: object
+              required: [cells]
+              properties:
+                cells:
+                  type: array
+                  items:
+                    allOf:
+                      - { $ref: '#/components/schemas/RequestStats' }
+                      - { type: object, required: [start], properties: { start: { type: string, format: date-time } } }
+        components:
+          type: array
+          items:
+            type: object
+            required: [component, label, cells]
+            properties:
+              component: { type: string }
+              label: { type: string }
+              cells:
+                type: array
+                items:
+                  type: object
+                  required: [start, ok_minutes, down_minutes, disabled_minutes, no_data_minutes]
+                  properties:
+                    start: { type: string, format: date-time }
+                    ok_minutes: { type: integer }
+                    down_minutes: { type: integer }
+                    disabled_minutes: { type: integer }
+                    no_data_minutes: { type: integer }
     Backup:
       type: object
       description: A database backup (FMS-144, docs/backups.md).

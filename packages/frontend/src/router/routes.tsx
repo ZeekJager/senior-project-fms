@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, FileChartColumn, Fuel, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, FileChartColumn, Fuel, HeartPulse, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -19,6 +19,7 @@ import { ReportsPage } from '@/pages/Reports'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
 import { SettingsPage } from '@/pages/Settings'
+import { SystemHealthPage } from '@/pages/SystemHealth'
 import { NotificationSettingsPage } from '@/pages/NotificationSettings'
 import { UsersPage } from '@/pages/Users'
 import { VehicleHistoryPage } from '@/pages/VehicleHistory'
@@ -209,6 +210,13 @@ export const portals: Portal[] = [
         element: <BackupsPage />,
         permission: 'backup:read',
         nav: { label: 'Backups', icon: DatabaseBackup },
+      },
+      {
+        // S-31 (FMS-143): uptime, outages, failed jobs and request errors. system:read: admin only.
+        path: '/system-health',
+        element: <SystemHealthPage />,
+        permission: 'system:read',
+        nav: { label: 'System health', icon: HeartPulse },
       },
     ],
   },

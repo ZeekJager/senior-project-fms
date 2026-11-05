@@ -22,6 +22,8 @@ const MODULE_SCHEMAS = {
   settings: ['settings'],
   // Database backups (FMS-144): pg_dump runs and restore drills.
   backup: ['backup'],
+  // System health (FMS-143): per-minute samples of each component and request rollups.
+  system: ['system'],
   'command-center': [],
   // The Socket.IO gateway (FMS-43): forwards domain events, stores nothing.
   realtime: [],

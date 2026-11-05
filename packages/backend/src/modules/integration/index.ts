@@ -27,7 +27,7 @@ import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
 import type { AdapterContext, NotificationChannel, OutboundMessage, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
-import { INTEGRATION_EVENTS } from './domain/provider';
+import { INTEGRATION_EVENTS, type CircuitState } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
 import { IntegrationRepository } from './infrastructure/integration.repository';
@@ -154,6 +154,14 @@ export const integrationGateway = {
   settled: (): Promise<void> => service.settled(),
   /** Counts for /health/ready: providers called, circuits open and half-open on this instance. */
   metrics: async (): Promise<Record<string, number>> => registry.metrics(),
+  /** Each active provider's circuit on this instance, for the system health sampler (FMS-143); closed when not called yet. */
+  circuits: async (): Promise<{ code: string; name: string; state: CircuitState; latencyMeanMs: number | null }[]> =>
+    (await repo.listProviders(repo.pool()))
+      .filter((p) => p.isActive)
+      .map((p) => {
+        const circuit = registry.circuitOf(p);
+        return { code: p.code, name: p.name, state: circuit?.state ?? 'closed', latencyMeanMs: circuit && circuit.window.calls > 0 ? circuit.latency_mean_ms : null };
+      }),
   shutdown: (): void => registry.shutdown(),
 };
 
