@@ -3322,3 +3322,36 @@ SELECT r.id, p.id
   FROM auth.roles r CROSS JOIN auth.permissions p
  WHERE r.name = 'admin' AND p.code = 'geofence:write'
 ON CONFLICT DO NOTHING;
+-- ===== 061_telematics_onboarding.sql =====
+ALTER TABLE integration.gps_devices ADD COLUMN IF NOT EXISTS last_error_reason VARCHAR(40);
+ALTER TABLE integration.gps_devices ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS integration.webhook_daily_counts (
+    provider_id          BIGINT NOT NULL REFERENCES integration.external_providers(id)
+                         ON DELETE CASCADE ON UPDATE CASCADE,
+    day                  DATE NOT NULL,
+    deliveries           INTEGER NOT NULL DEFAULT 0,
+    deliveries_rejected  INTEGER NOT NULL DEFAULT 0,
+    positions_accepted   INTEGER NOT NULL DEFAULT 0,
+    positions_rejected   INTEGER NOT NULL DEFAULT 0,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (provider_id, day),
+    CONSTRAINT chk_webhook_counts_non_negative
+        CHECK (deliveries >= 0 AND deliveries_rejected >= 0 AND positions_accepted >= 0 AND positions_rejected >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS integration.unknown_devices (
+    id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    provider_id        BIGINT NOT NULL REFERENCES integration.external_providers(id)
+                       ON DELETE CASCADE ON UPDATE CASCADE,
+    device_identifier  VARCHAR(255) NOT NULL,
+    first_seen_at      TIMESTAMPTZ NOT NULL,
+    last_seen_at       TIMESTAMPTZ NOT NULL,
+    positions          INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (provider_id, device_identifier),
+    CONSTRAINT chk_unknown_device_seen CHECK (last_seen_at >= first_seen_at)
+);
+
+INSERT INTO integration.external_providers (code, name, provider_type, is_active, configuration)
+VALUES ('fms-simulator', 'FMS GPS simulator', 'telematics', FALSE, '{}'::JSONB)
+ON CONFLICT (code) DO NOTHING;

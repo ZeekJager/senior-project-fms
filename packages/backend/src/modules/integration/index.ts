@@ -14,10 +14,12 @@ import type { RequestUser } from '../../types/express';
 import { userDirectory } from '../auth';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
 import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripRoadsByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
+import { deviceRouter } from './api/device.routes';
 import { geofenceRouter } from './api/geofence.routes';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { ruleThresholdRouter } from './api/rule-threshold.routes';
 import { trackingRouter } from './api/tracking.routes';
+import { DeviceService } from './application/device.service';
 import { GeofenceService } from './application/geofence.service';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
@@ -71,15 +73,24 @@ const ingestion = new IngestionService({
   eventIntervalSeconds: config.tracking.eventIntervalSeconds,
 });
 
+// The device registry (FMS-138, docs/telematics.md): which provider device reports for which vehicle.
+const deviceService = new DeviceService({
+  devices,
+  providers: repo,
+  ingestion,
+  refs: { vehicles: { byPublicIds: trackingRefs.vehicles.byPublicIds, idsInScope: trackingRefs.vehicles.idsInScope, refsByIds: trackingRefs.vehicles.refsByIds } },
+});
+
 // A telematics webhook's positions become pings for that provider's devices, after the receipt has
-// committed (at least once: the pings' unique key makes a redelivery a no-op).
+// committed (at least once: the pings' unique key makes a redelivery a no-op). Today's counts get what
+// was stored and refused, and the registry the device ids linked to no vehicle (FMS-138).
 eventBus.subscribe(INTEGRATION_EVENTS.webhookReceived, 'integration.telematics-pings', async (event, tx) => {
   if (event.payload.provider_type !== 'telematics' || event.payload.kind !== POSITIONS_KIND) return;
   const delivery = await repo.delivery(tx, event.payload.sync_log_id as string);
   const provider = delivery && (await repo.findProviderByCode(tx, delivery.providerCode));
   if (!delivery || !provider) return;
   const positions = (delivery.metadata.data?.positions ?? []) as PingInput[];
-  await ingestion.ingest({ kind: 'provider', providerId: provider.id, providerCode: provider.code }, positions, event.correlation_id, tx);
+  await deviceService.ingestDelivery(tx, provider, positions, event.correlation_id);
 });
 
 // The live map's snapshot (FMS-45), cached for a few seconds. A trip starting, ending or changing, or a
@@ -180,6 +191,7 @@ for (const type of [...Object.values(TRIP_EVENTS), ...Object.values(VEHICLE_EVEN
 const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
+router.use(deviceRouter(deviceService));
 router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
 router.use(ruleThresholdRouter(ruleThresholds));
 router.use(geofenceRouter(geofences));
@@ -256,6 +268,15 @@ export const trackingLookups = {
 export const gpsDevices = {
   register: (input: { vehicleId: string; identifier: string; providerId?: string | null; model?: string | null }, ctx: MutationContext) =>
     ingestion.registerDevice(input, ctx),
+  /**
+   * Links a telematics provider's device (provider public id) to a vehicle, as POST /integrations/devices does, for
+   * any vehicle (the GPS simulator, FMS-138). `replace` takes the vehicle's other device out of service.
+   */
+  link: (input: { providerId: string; identifier: string; vehicleId: string; model?: string | null; replace?: boolean }, ctx: MutationContext) =>
+    deviceService.linkAsSystem(
+      { provider_id: input.providerId, device_identifier: input.identifier, vehicle_id: input.vehicleId, device_model: input.model, replace: input.replace ?? false },
+      ctx,
+    ),
 };
 
 /** For the consumer of IntegrationWebhookReceived: the stored delivery its event points at. */

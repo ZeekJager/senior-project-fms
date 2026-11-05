@@ -1078,6 +1078,132 @@ paths:
               schema: { type: integer }
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /integrations/devices:
+    get:
+      tags: [Integrations]
+      operationId: listGpsDevices
+      summary: The device registry (FMS-138)
+      description: >
+        Every GPS device of the vehicles in the caller's depot scope: telematics providers' devices (linked here) and
+        devices with their own token (npm run device:register), with when each last reported and why its last
+        refused position was refused. Active ones first, then by last seen. Never a token or its hash. Needs
+        integration:read (docs/telematics.md).
+      parameters:
+        - { name: provider_id, in: query, schema: { type: string, format: uuid }, description: One provider's devices. }
+        - { name: status, in: query, schema: { type: string, enum: [active, removed, all], default: all } }
+      responses:
+        '200':
+          description: The devices.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/GpsDevice' }
+                  meta:
+                    type: object
+                    required: [request_id, total]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      total: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (a provider_id that is not a UUID, an unknown status).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Integrations]
+      operationId: linkGpsDevice
+      summary: Link a provider's device to a vehicle (FMS-138)
+      description: >
+        From now on the telematics provider's webhook positions naming device_identifier are the vehicle's. The same
+        device again moves it (from another vehicle, or back from removed); it keeps its id. A vehicle has one active
+        device: another one is refused (409, vehicle_has_device, its id as record_id) unless replace is true, which
+        takes that one out of service. Audited. Needs integration:execute; the vehicle in the caller's depot scope.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider_id, device_identifier, vehicle_id]
+              additionalProperties: false
+              properties:
+                provider_id: { type: string, format: uuid, description: A telematics provider. }
+                device_identifier: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$', description: The provider's id for the device (an IMEI, a serial). }
+                vehicle_id: { type: string, format: uuid }
+                device_model: { type: [string, 'null'], maxLength: 255 }
+                replace: { type: boolean, default: false }
+      responses:
+        '201':
+          description: Linked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/GpsDevice' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED: on provider_id, references_missing_record or not_telematics; on vehicle_id,
+            references_missing_record (none in the caller's scope) or vehicle_retired; a device_identifier with spaces.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: >
+            CONFLICT_DUPLICATE: on device_identifier, already_exists (another provider's device, or a token device);
+            on vehicle_id, vehicle_has_device. Or CONFLICT_IDEMPOTENCY_KEY_REUSED / CONFLICT_IDEMPOTENCY_IN_PROGRESS.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /integrations/devices/unknown:
+    get:
+      tags: [Integrations]
+      operationId: listUnknownGpsDevices
+      summary: Device ids providers sent that are linked to no vehicle (FMS-138)
+      description: >
+        From signed deliveries only, newest first, at most 200 (and 1,000 kept per provider). Linking one removes it.
+        Needs integration:read.
+      responses:
+        '200':
+          description: The unknown device ids.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/UnknownGpsDevice' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /integrations/devices/{device_id}:
+    parameters:
+      - { name: device_id, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [Integrations]
+      operationId: unlinkGpsDevice
+      summary: Unlink a device (FMS-138)
+      description: >
+        The device is kept as removed, with its pings; its positions are refused from now on (a provider's are listed
+        as unknown) and a token device's token stops working. Unlinking it again changes nothing. Audited. Needs
+        integration:execute; a device of a vehicle outside the caller's scope, or an id that is not a UUID, is a 404.
+      responses:
+        '204': { description: Unlinked. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /webhooks/telematics/{provider}:
     post:
       tags: [Integrations]
@@ -7754,7 +7880,7 @@ components:
 
     Provider:
       type: object
-      required: [id, code, name, provider_type, is_active, status, capabilities, webhook_secret_configured, last_success_at, last_failure_at, last_error, last_sync, circuit, health]
+      required: [id, code, name, provider_type, is_active, status, capabilities, webhook_secret_configured, last_success_at, last_failure_at, last_error, last_sync, last_delivery_at, today, devices, circuit, health]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
@@ -7782,8 +7908,32 @@ components:
           oneOf:
             - $ref: '#/components/schemas/SyncLog'
             - type: 'null'
+        last_delivery_at: { type: [string, 'null'], format: date-time, description: When its last webhook delivery was stored (FMS-138). }
+        today:
+          type: object
+          description: >
+            Webhook traffic since midnight in Addis Ababa (FMS-138): deliveries stored and refused (a bad signature,
+            a replay, a body it cannot read), and the positions in stored deliveries that became pings (or were
+            already stored) and that were refused (an unlinked device, too old, in the future, imprecise).
+          required: [deliveries, deliveries_rejected, positions_accepted, positions_rejected]
+          properties:
+            deliveries: { type: integer }
+            deliveries_rejected: { type: integer }
+            positions_accepted: { type: integer }
+            positions_rejected: { type: integer }
+        devices:
+          description: A telematics provider's active devices and the unlinked device ids it has sent; null for other types.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [linked, unknown]
+              properties:
+                linked: { type: integer }
+                unknown: { type: integer }
         circuit:
-          description: This API instance's breaker; null until the instance has called the provider.
+          description: >
+            This API instance's breaker; null until the instance has called the provider, so always null for a provider
+            that only sends webhooks.
           oneOf:
             - type: 'null'
             - type: object
@@ -7811,6 +7961,61 @@ components:
                 checked_at: { type: string, format: date-time }
                 healthy: { type: boolean }
                 error: { type: [string, 'null'] }
+
+    GpsDevice:
+      type: object
+      description: A GPS device in the registry (FMS-138). Never its token or the token's hash.
+      required: [id, device_identifier, device_model, provider, credential, vehicle, status, installed_at, removed_at, last_seen_at, last_error]
+      properties:
+        id: { type: string, format: uuid }
+        device_identifier: { type: string }
+        device_model: { type: [string, 'null'] }
+        provider:
+          description: The telematics provider whose webhooks name it; null for a device with its own token.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, code, name]
+              properties:
+                id: { type: string, format: uuid }
+                code: { type: string }
+                name: { type: string }
+        credential: { type: string, enum: [provider, token], description: 'How it reports: its provider''s signed webhooks, or its own token.' }
+        vehicle:
+          type: object
+          required: [id, registration_number]
+          properties:
+            id: { type: string, format: uuid }
+            registration_number: { type: string }
+        status: { type: string, enum: [active, inactive, faulty, removed] }
+        installed_at: { type: [string, 'null'], format: date-time }
+        removed_at: { type: [string, 'null'], format: date-time }
+        last_seen_at: { type: [string, 'null'], format: date-time }
+        last_error:
+          description: Why its last refused position was refused (too_old, future_timestamp, low_accuracy, vehicle_retired), and when.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [reason, at]
+              properties:
+                reason: { type: string }
+                at: { type: string, format: date-time }
+
+    UnknownGpsDevice:
+      type: object
+      required: [provider, device_identifier, first_seen_at, last_seen_at, positions]
+      properties:
+        provider:
+          type: object
+          required: [id, code, name]
+          properties:
+            id: { type: string, format: uuid }
+            code: { type: string }
+            name: { type: string }
+        device_identifier: { type: string }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        positions: { type: integer, description: Positions refused for it so far. }
 
     GpsPoint:
       type: object

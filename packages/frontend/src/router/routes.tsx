@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Radar, RadioTower, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -22,6 +22,7 @@ import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
 import { SettingsPage } from '@/pages/Settings'
 import { SystemHealthPage } from '@/pages/SystemHealth'
+import { TelematicsPage } from '@/pages/Telematics'
 import { NotificationSettingsPage } from '@/pages/NotificationSettings'
 import { UsersPage } from '@/pages/Users'
 import { VehicleHistoryPage } from '@/pages/VehicleHistory'
@@ -230,6 +231,14 @@ export const portals: Portal[] = [
         element: <SystemHealthPage />,
         permission: 'system:read',
         nav: { label: 'System health', icon: HeartPulse },
+      },
+      {
+        // S-34 (FMS-138): the telematics providers' status and the device registry. integration:read: admin and
+        // fleet manager; integration:execute (the same roles) links and unlinks devices.
+        path: '/telematics',
+        element: <TelematicsPage />,
+        permission: 'integration:read',
+        nav: { label: 'Telematics', icon: RadioTower },
       },
     ],
   },

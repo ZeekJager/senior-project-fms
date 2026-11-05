@@ -32,8 +32,8 @@ describe('menus per role (seeded grants)', () => {
   })
 
   it.each([
-    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map', 'Geofences'], Administration: ['Users & roles', 'Audit log', 'Depots', 'Settings', 'Backups', 'System health'] }],
-    ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map', 'Geofences'], Administration: ['Users & roles'] }],
+    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map', 'Geofences'], Administration: ['Users & roles', 'Audit log', 'Depots', 'Settings', 'Backups', 'System health', 'Telematics'] }],
+    ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map', 'Geofences'], Administration: ['Users & roles', 'Telematics'] }],
     ['dispatcher', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Reports'], 'Command center': ['Dispatch', 'Live map', 'Geofences'] }],
     // No analytics:read, so no Reports and no Availability.
     ['depot_admin', { 'Fleet management': FLEET_ALL.filter((s) => s !== 'Reports' && s !== 'Availability'), 'Command center': ['Live map', 'Geofences'] }],
