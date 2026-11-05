@@ -718,6 +718,8 @@ describe('GET /fuel-logs and /fuel-logs/{id}', () => {
       total_cost_cents: 300_000,
       odometer_km: 123.4,
       station_name: 'Noc Mexico',
+      latitude: null,
+      longitude: null,
       source: 'manual',
       recorded_at: expect.any(String),
       created_at: expect.any(String),

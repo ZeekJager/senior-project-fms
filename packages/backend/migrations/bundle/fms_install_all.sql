@@ -3167,3 +3167,26 @@ DO $$ BEGIN
         CHECK ((photo_key IS NULL) = (photo_type IS NULL) AND (photo_key IS NULL) = (photo_updated_at IS NULL)
                AND (photo_type IS NULL OR photo_type IN ('image/jpeg', 'image/png', 'image/webp')));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- ===== 058_fuel_anomaly_rules.sql =====
+ALTER TABLE fleet.vehicles
+    ADD COLUMN IF NOT EXISTS tank_capacity_ml INTEGER;
+
+DO $$ BEGIN
+    ALTER TABLE fleet.vehicles
+        ADD CONSTRAINT chk_vehicle_tank_capacity
+            CHECK (tank_capacity_ml IS NULL OR (tank_capacity_ml > 0 AND tank_capacity_ml <= 2000000));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE fuel.fuel_anomalies
+    ADD COLUMN IF NOT EXISTS details JSONB;
+
+DO $$ BEGIN
+    ALTER TABLE fuel.fuel_anomalies
+        ADD CONSTRAINT chk_fuel_anomaly_details
+            CHECK (details IS NULL OR jsonb_typeof(details) = 'object');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_fuel_anomalies_fill_up_rule
+    ON fuel.fuel_anomalies(fuel_log_id, anomaly_type)
+    WHERE fuel_log_id IS NOT NULL;

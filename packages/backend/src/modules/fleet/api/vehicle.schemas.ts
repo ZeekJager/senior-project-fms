@@ -47,6 +47,13 @@ const fuelEfficiency = z
     params: { reason: 'out_of_range' },
   });
 
+// The tank's size, whole millilitres (a fraction is a float in a fuel path, like the efficiency).
+const MAX_TANK_CAPACITY_ML = 2_000_000;
+const tankCapacity = z
+  .number()
+  .refine(Number.isInteger, { message: 'Whole millilitres.', params: { reason: FLOAT_IN_MONEY_PATH } })
+  .refine((n) => n > 0 && n <= MAX_TANK_CAPACITY_ML, { message: `Between 1 and ${MAX_TANK_CAPACITY_ML}.`, params: { reason: 'out_of_range' } });
+
 // A physical measurement: one decimal at most, as stored (NUMERIC(12,1)).
 const odometer = z
   .number()
@@ -68,6 +75,7 @@ const writable = {
   vehicle_type: z.enum(VEHICLE_TYPES),
   fuel_type: z.enum(FUEL_TYPES),
   fuel_efficiency_ml_per_km: fuelEfficiency.nullable().optional(),
+  tank_capacity_ml: tankCapacity.nullable().optional(),
   depot_id: z.uuid(),
   odometer_km: odometer.optional(),
 };

@@ -617,6 +617,8 @@ Fuel anomaly rules (FMS-42):
 
 `fuel.fuel_logs` stores raw observations. `fuel.fuel_anomalies` stores derived findings. Reconciliation compares actual consumption with expected consumption using trip distance, vehicle efficiency and configured rules. The API must reject floating-point values in money paths; use integer minor units such as cents.
 
+Per-fill-up rules (FMS-82, [fuel-anomaly-rules.md](fuel-anomaly-rules.md)): `POST /fuel-logs` takes optional `latitude` and `longitude` (both or neither); every fill-up is judged on `FuelLogged` for `tank_capacity_exceeded`, `refuel_interval_too_short`, `price_per_litre_out_of_range` and `fill_up_away_from_vehicle`, each an open `FuelAnomaly` with `details`. Vehicles carry `tank_capacity_ml`.
+
 Reconciliation rules (FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md)):
 
 - **Figures:** for each vehicle and period, the distance of its completed trips (`actual_distance_km`, by `actual_end`), the fuel that distance needs at the vehicle's `fuel_efficiency_ml_per_km` (`expected_ml`), the fuel logged (`actual_ml`, by `recorded_at`) and `variance_pct = (actual - expected) / expected`. Integers end to end: distance in metres, fuel in ml, money in cents, the variance in whole percent, each division rounded half away from zero. Nothing passes through a float.

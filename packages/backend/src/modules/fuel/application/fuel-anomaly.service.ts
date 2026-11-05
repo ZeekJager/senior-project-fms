@@ -111,6 +111,7 @@ export class FuelAnomalyService {
         expected_ml: r.expectedMl,
         actual_ml: r.actualMl,
         deviation_pct: r.deviationPct === null ? null : Math.round(r.deviationPct),
+        details: r.details,
         detected_at: r.detectedAt,
         reviewed_by: reviewer?.publicId ?? null,
         reviewed_by_name: reviewer?.fullName ?? null,

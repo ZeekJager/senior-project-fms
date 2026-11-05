@@ -48,6 +48,7 @@ export interface VehicleCreate {
   vehicle_type: VehicleType;
   fuel_type: FuelType;
   fuel_efficiency_ml_per_km?: number | null;
+  tank_capacity_ml?: number | null;
   /** The depot's public id. */
   depot_id: string;
   odometer_km?: number;
@@ -460,6 +461,7 @@ function toColumns(input: VehicleUpdate): VehicleWrite {
   if (input.vehicle_type !== undefined) data.vehicle_type = input.vehicle_type;
   if (input.fuel_type !== undefined) data.fuel_type = input.fuel_type;
   if (input.fuel_efficiency_ml_per_km !== undefined) data.fuel_efficiency_ml_per_km = input.fuel_efficiency_ml_per_km;
+  if (input.tank_capacity_ml !== undefined) data.tank_capacity_ml = input.tank_capacity_ml;
   if (input.odometer_km !== undefined) data.odometer_km = input.odometer_km;
   return data;
 }

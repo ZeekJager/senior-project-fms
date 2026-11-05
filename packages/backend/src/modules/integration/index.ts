@@ -193,6 +193,11 @@ export const ignitionTime = {
   seconds: (db: Queryable, start: Date, end: Date, maxGapSeconds: number) => tracking.ignitionSeconds(db, start, end, maxGapSeconds),
 };
 
+/** For the fuel anomaly rules (FMS-82): where a vehicle (internal id) was around a time, from its stored pings. */
+export const trackingLookups = {
+  positionNear: (db: Queryable, vehicleId: string, at: Date, windowMs: number) => tracking.nearest(db, vehicleId, at, windowMs),
+};
+
 export const gpsDevices = {
   register: (input: { vehicleId: string; identifier: string; providerId?: string | null; model?: string | null }, ctx: MutationContext) =>
     ingestion.registerDevice(input, ctx),

@@ -28,6 +28,9 @@ export interface FuelLogView {
   total_cost_cents: number;
   odometer_km: number | null;
   station_name: string | null;
+  /** Where the fill-up was recorded, when the form or the fuel card sent it (FMS-82); the GPS rule compares it with the vehicle's. */
+  latitude: number | null;
+  longitude: number | null;
   source: FuelSource;
   /** When the fill-up happened: `fueled_at` if given, else when the server received it. */
   recorded_at: Date;

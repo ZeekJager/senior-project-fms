@@ -73,6 +73,7 @@ describe('POST /vehicles', () => {
       vehicle_type: 'truck',
       fuel_type: 'diesel',
       fuel_efficiency_ml_per_km: 320,
+      tank_capacity_ml: null,
       status: 'active',
       maintenance_flag: false,
       health_score: null,
@@ -83,7 +84,7 @@ describe('POST /vehicles', () => {
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
         'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'health_score_updated_at', 'id', 'maintenance_flag',
-        'make', 'model', 'odometer_km', 'photo_url', 'registration_number', 'status', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
+        'make', 'model', 'odometer_km', 'photo_url', 'registration_number', 'status', 'tank_capacity_ml', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );
     // The odometer it is registered with is its first meter reading (FMS-126).
@@ -110,6 +111,21 @@ describe('POST /vehicles', () => {
     const res = await api.post('/vehicles', vehicleBody(depot, { vin: '1HGCM82633A004352' }), cookie);
     expect(res.status).toBe(409);
     expect(res.body.error).toMatchObject({ code: 'CONFLICT_DUPLICATE', details: [{ field: 'vin', reason: 'already_exists' }] });
+  });
+
+  test('the tank capacity (FMS-82) is whole millilitres, 1 to 2,000,000, set on create and changed on update', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    for (const bad of [0, -5, 2_000_001, 200.5]) {
+      const res = await api.post('/vehicles', vehicleBody(depot, { tank_capacity_ml: bad }), cookie);
+      expect(res.status, String(bad)).toBe(400);
+    }
+    const created = await api.post('/vehicles', vehicleBody(depot, { tank_capacity_ml: 200_000 }), cookie);
+    expect(created.status).toBe(201);
+    expect(created.body.data.tank_capacity_ml).toBe(200_000);
+    const cleared = await api.patch(`/vehicles/${created.body.data.id}`, { tank_capacity_ml: null }, cookie);
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.data.tank_capacity_ml).toBeNull();
   });
 
   test('a diesel vehicle without fuel efficiency returns 400 VALIDATION_FAILED; an electric one does not need it', async () => {

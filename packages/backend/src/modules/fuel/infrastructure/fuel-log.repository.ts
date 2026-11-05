@@ -25,6 +25,9 @@ export interface FuelLogRow {
   totalCostCents: number;
   odometerKm: number | null;
   stationName: string | null;
+  /** Where the fill-up was recorded (FMS-82), when it was sent; both or neither. */
+  latitude: number | null;
+  longitude: number | null;
   source: FuelSource;
   recordedAt: Date;
   createdAt: Date;
@@ -40,6 +43,8 @@ export interface FuelLogWrite {
   total_cost_cents: number;
   odometer_km: number;
   station_name: string | null;
+  latitude: number | null;
+  longitude: number | null;
   source: FuelSource;
   /** When the fill-up happened (FMS-115). */
   recorded_at: Date;
@@ -62,7 +67,7 @@ const ROW_SQL = `
   SELECT f.id, f.public_id AS "publicId", f.vehicle_id AS "vehicleId", f.driver_id AS "driverId", f.trip_id AS "tripId",
          f.fuel_type AS "fuelType", f.quantity_ml::float8 AS "quantityMl", f.unit_price_cents AS "unitPriceCents",
          f.total_cost_cents AS "totalCostCents", f.odometer_km::float8 AS "odometerKm", f.station_name AS "stationName",
-         f.source, f.recorded_at AS "recordedAt", f.created_at AS "createdAt"
+         f.latitude::float8 AS latitude, f.longitude::float8 AS longitude, f.source, f.recorded_at AS "recordedAt", f.created_at AS "createdAt"
     FROM fuel.fuel_logs f`;
 
 function visibilitySql(v: FuelVisibility, add: (value: unknown) => string): string {
@@ -118,6 +123,12 @@ export class FuelLogRepository extends Repository {
     };
     const res = await db.query<FuelLogRow>(`${ROW_SQL} WHERE f.public_id = $1 AND ${visibilitySql(visibility, add)}`, params);
     return res.rows[0] ?? null;
+  }
+
+  /** The internal id of the fuel log with this public id, or null (the anomaly rules read it from an event). */
+  async idOfPublic(db: Queryable, publicId: string): Promise<string | null> {
+    const res = await db.query<{ id: string }>('SELECT id FROM fuel.fuel_logs WHERE public_id = $1', [publicId]);
+    return res.rows[0]?.id ?? null;
   }
 
   async findById(db: Queryable, id: string): Promise<FuelLogRow> {

@@ -1,3 +1,4 @@
+import { toBirr, toLitres } from '../../../lib/units';
 import { SEVERITIES, type AlertSeverity } from './alert';
 
 // The alert rules (FMS-92, §34): which events become alerts, how severe, about what, de-duplicated on
@@ -57,6 +58,16 @@ const vehicleName = (names: Names) => names.plate ?? 'a vehicle';
 const daysLabel = (days: number | null) => (days === null ? 'soon' : days <= 0 ? 'today' : days === 1 ? 'in 1 day' : `in ${days} days`);
 const humanize = (s: string | null) => (s ?? 'item').replace(/_/g, ' ');
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** Litres and birr for a sentence, from whole ml and whole cents. */
+const litres = (ml: number) => `${toLitres(ml)} L`;
+const birr = (cents: number) => `${toBirr(cents)} birr`;
+/** What a fill-up anomaly (FMS-82) is called in a title; any other type is a reconciliation's. */
+const FILL_UP_TITLES: Record<string, string> = {
+  tank_capacity_exceeded: 'Fill-up above the tank',
+  refuel_interval_too_short: 'Refuelled too soon',
+  price_per_litre_out_of_range: 'Fuel price out of range',
+  fill_up_away_from_vehicle: 'Fill-up away from the vehicle',
+};
 const HOUR = 60;
 const DAY = 24 * HOUR;
 
@@ -189,7 +200,10 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
       dedupKey: `fuel_anomaly:${str(p, 'vehicle_id')}:${str(p, 'anomaly_type') ?? 'any'}`,
     }),
     windowMinutes: DAY,
-    title: (_p, n) => `Unexpected fuel use on ${vehicleName(n)}`,
+    title: (p, n) => {
+      const fillUp = FILL_UP_TITLES[str(p, 'anomaly_type') ?? ''];
+      return fillUp ? `${fillUp}: ${vehicleName(n)}` : `Unexpected fuel use on ${vehicleName(n)}`;
+    },
     message: (p) => {
       // The monthly reconciliation (FMS-41): a month's fuel against what its trips needed.
       const deviation = num(p, 'deviation_pct');
@@ -201,6 +215,31 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
         return deviation > 0
           ? `Fuel logged in ${month} was ${deviation}% more than its ${driven} of trips needed. Check its fill-ups against its trips.`
           : `Fuel logged in ${month} was ${-deviation}% less than its ${driven} of trips needed: fill-ups may be missing. Check them against its trips.`;
+      }
+      // One fill-up judged on its own (FMS-82): the figures it was judged on are in the payload.
+      const quantity = num(p, 'quantity_ml');
+      switch (str(p, 'anomaly_type')) {
+        case 'tank_capacity_exceeded': {
+          const over = num(p, 'over_ml');
+          const tank = num(p, 'tank_capacity_ml');
+          if (quantity !== null && over !== null && tank !== null) return `A fill-up of ${litres(quantity)} was logged, ${litres(over)} more than the ${litres(tank)} tank holds. Check the fill-up.`;
+          break;
+        }
+        case 'refuel_interval_too_short': {
+          const used = num(p, 'used_ml');
+          if (quantity !== null && km !== null && used !== null) return `${litres(quantity)} was added after only ${km} km since the last fill-up, which needed about ${litres(used)}. Check whether the tank was filled.`;
+          break;
+        }
+        case 'price_per_litre_out_of_range': {
+          const price = num(p, 'price_cents_per_litre');
+          const min = num(p, 'band_min_cents_per_litre');
+          const max = num(p, 'band_max_cents_per_litre');
+          if (price !== null && min !== null && max !== null) return `Fuel was bought at ${birr(price)} a litre, outside the usual ${birr(min)} to ${birr(max)}. Check the receipt.`;
+          break;
+        }
+        case 'fill_up_away_from_vehicle':
+          if (km !== null) return `A fill-up was logged ${km} km from where the vehicle's GPS had it then. Check the fill-up.`;
+          break;
       }
       return `${capitalize(humanize(str(p, 'anomaly_type') ?? 'fuel anomaly'))} detected. Check the fill-up against the trip.`;
     },

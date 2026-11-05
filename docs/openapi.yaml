@@ -1718,6 +1718,8 @@ paths:
                 unit_price_cents: { type: integer, minimum: 0, maximum: 100000000 }
                 odometer_km: { type: number, minimum: 0, description: At most one decimal. }
                 station_name: { type: string, minLength: 1, maxLength: 255, description: Trimmed. }
+                latitude: { type: number, minimum: -90, maximum: 90, description: 'Where the fill-up was recorded (FMS-82), at most 6 decimals. Give both latitude and longitude or neither; with them the fill-up is checked against where the vehicle GPS had it.' }
+                longitude: { type: number, minimum: -180, maximum: 180, description: See latitude. }
                 fueled_at: { type: string, format: date-time, description: 'When the fill-up happened (FMS-115). Default now; not in the future (5 minutes of clock drift allowed), not over 30 days ago.' }
       responses:
         '201':
@@ -4919,7 +4921,7 @@ components:
     FuelLog:
       type: object
       description: A fill-up (FMS-39). Volume in millilitres, money in cents.
-      required: [id, vehicle_id, driver_id, trip_id, fuel_type, quantity_ml, unit_price_cents, total_cost_cents, odometer_km, station_name, source, recorded_at, created_at]
+      required: [id, vehicle_id, driver_id, trip_id, fuel_type, quantity_ml, unit_price_cents, total_cost_cents, odometer_km, station_name, latitude, longitude, source, recorded_at, created_at]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -4931,6 +4933,8 @@ components:
         total_cost_cents: { type: integer }
         odometer_km: { type: [number, 'null'] }
         station_name: { type: [string, 'null'] }
+        latitude: { type: [number, 'null'], description: Where it was recorded (FMS-82); null when not sent. }
+        longitude: { type: [number, 'null'] }
         source: { type: string, enum: [pump, fuel_card, bulk, manual] }
         recorded_at: { type: string, format: date-time, description: When the fill-up happened (fueled_at, else receipt). }
         created_at: { type: string, format: date-time, description: When the server received it. }
@@ -5062,7 +5066,7 @@ components:
     FuelAnomaly:
       type: object
       description: A derived finding about a vehicle's fuel (FMS-41 reconciliation, FMS-82 per fill-up). Integers; distance in km.
-      required: [id, vehicle_id, registration_number, depot_id, depot_name, fuel_log_id, anomaly_type, severity, status, period_from, period_to, distance_km, expected_ml, actual_ml, deviation_pct, detected_at, reviewed_by, reviewed_by_name, reviewed_at, notes]
+      required: [id, vehicle_id, registration_number, depot_id, depot_name, fuel_log_id, anomaly_type, severity, status, period_from, period_to, distance_km, expected_ml, actual_ml, deviation_pct, details, detected_at, reviewed_by, reviewed_by_name, reviewed_at, notes]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -5070,7 +5074,7 @@ components:
         depot_id: { type: string, format: uuid }
         depot_name: { type: string }
         fuel_log_id: { type: [string, 'null'], format: uuid, description: The fill-up a per-event rule flagged; null for a month. }
-        anomaly_type: { type: string, description: 'consumption_above_expected, consumption_below_expected, or a per-fill-up rule.' }
+        anomaly_type: { type: string, description: 'consumption_above_expected, consumption_below_expected, or a per-fill-up rule (FMS-82): tank_capacity_exceeded, refuel_interval_too_short, price_per_litre_out_of_range, fill_up_away_from_vehicle.' }
         severity: { type: string, enum: [low, medium, high, critical] }
         status: { type: string, enum: [open, reviewed, dismissed, resolved] }
         period_from: { type: [string, 'null'], format: date-time }
@@ -5079,6 +5083,7 @@ components:
         expected_ml: { type: [integer, 'null'] }
         actual_ml: { type: [integer, 'null'] }
         deviation_pct: { type: [integer, 'null'] }
+        details: { type: [object, 'null'], additionalProperties: true, description: 'The figures a per-fill-up rule judged on (tank and fill, distance and fuel needed, price and band, distance from the vehicle); null for a month.' }
         detected_at: { type: string, format: date-time }
         reviewed_by: { type: [string, 'null'], format: uuid, description: Who closed it. }
         reviewed_by_name: { type: [string, 'null'] }

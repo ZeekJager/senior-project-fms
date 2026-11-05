@@ -46,6 +46,9 @@ export interface FuelLogCreate {
   unit_price_cents?: number;
   odometer_km: number;
   station_name?: string;
+  /** Where the fill-up was recorded: both or neither (FMS-82). */
+  latitude?: number;
+  longitude?: number;
   /** When the fill-up happened (FMS-115): the form's submit time, however late the offline queue delivers it. Defaults to now. */
   fueled_at?: Date;
 }
@@ -192,6 +195,8 @@ export class FuelLogService {
           total_cost_cents: input.total_cost_cents,
           odometer_km: input.odometer_km,
           station_name: input.station_name ?? null,
+          latitude: input.latitude ?? null,
+          longitude: input.longitude ?? null,
           source: 'manual',
           recorded_at: fueledAt,
         },
@@ -210,6 +215,9 @@ export class FuelLogService {
             quantity_ml: view.quantity_ml,
             total_cost_cents: view.total_cost_cents,
             odometer_km: view.odometer_km,
+            // Where it was recorded, when it was sent (FMS-82); null otherwise.
+            latitude: view.latitude,
+            longitude: view.longitude,
             // The reading of the log before this one in time (null for a vehicle's first): consumption is the distance between the two.
             previous_odometer_km: previous,
             // When the fill-up happened (FMS-115); created_at is when it reached the server.
@@ -271,6 +279,8 @@ export class FuelLogService {
       total_cost_cents: r.totalCostCents,
       odometer_km: r.odometerKm,
       station_name: r.stationName,
+      latitude: r.latitude,
+      longitude: r.longitude,
       source: r.source,
       recorded_at: r.recordedAt,
       created_at: r.createdAt,

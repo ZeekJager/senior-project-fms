@@ -29,6 +29,8 @@ export interface FuelAnomalyView {
   expected_ml: number | null;
   actual_ml: number | null;
   deviation_pct: number | null;
+  /** The figures a per-fill-up rule judged on (FMS-82): the tank and the fill, the distance and the fuel it needed, the price and its band, how far from the vehicle. Null for a reconciliation. */
+  details: Record<string, unknown> | null;
   detected_at: Date;
   /** Who closed it, and when: the user's public id and name. */
   reviewed_by: string | null;

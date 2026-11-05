@@ -76,6 +76,7 @@ describe('GET /fuel-anomalies', () => {
       expected_ml: 320_000,
       actual_ml: 224_000,
       deviation_pct: -30,
+      details: null,
       detected_at: '2026-09-01T01:30:00.000Z',
       reviewed_by: null,
       reviewed_by_name: null,
