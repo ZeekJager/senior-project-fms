@@ -10,7 +10,7 @@ import { responseProblems } from '../support/openapi';
 // it (its work order and failure), and the month's figures, which match FMS-131's hand-computed September.
 
 const app = createApp();
-const PASSWORD = 'Availability-Test-1';
+const PASSWORD = 'Uptime-Test-1';
 
 type Depot = Awaited<ReturnType<typeof createDepot>>;
 type Vehicle = Awaited<ReturnType<typeof createVehicle>>;
