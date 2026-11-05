@@ -39,7 +39,7 @@ export interface VehicleLocation {
   /** Null for a vehicle on a trip that has not reported yet. */
   position: VehiclePosition | null
   trip: LiveTrip | null
-  /** Open telemetry flags (speeding, idling; FMS-46). */
+  /** Open telemetry flags: speeding, idling (FMS-46), geofence_violation, route_deviation (FMS-90). */
   flags: { flag_type: string; severity: string; observed_at: string }[]
 }
 

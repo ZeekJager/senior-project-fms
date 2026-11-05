@@ -3,8 +3,24 @@ import type { Scope } from '../../../shared/authz/scope';
 import { notFound } from '../../../shared/errors/app-error';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
+import { DEFAULT_LOCATION_THRESHOLDS } from '../domain/location-rules';
 import { DEFAULT_THRESHOLDS, type RuleThresholds } from '../domain/telemetry-rules';
 import type { RuleThresholdRepository, ThresholdRow } from '../infrastructure/rule-threshold.repository';
+
+/** Every threshold of a row: speeding and idling (FMS-46), and route deviation (FMS-90). */
+export interface ThresholdSet extends RuleThresholds {
+  routeDeviationM: number;
+  routeDeviationPings: number;
+}
+
+/** A PUT's thresholds: route deviation's left out keep the row's. */
+export type ThresholdInput = RuleThresholds & Partial<Pick<ThresholdSet, 'routeDeviationM' | 'routeDeviationPings'>>;
+
+export const DEFAULT_THRESHOLD_SET: ThresholdSet = {
+  ...DEFAULT_THRESHOLDS,
+  routeDeviationM: DEFAULT_LOCATION_THRESHOLDS.routeDeviationM,
+  routeDeviationPings: DEFAULT_LOCATION_THRESHOLDS.routeDeviationPings,
+};
 
 /** The telemetry rules' thresholds as GET /settings/telemetry-rules returns them. */
 export interface ThresholdsView {
@@ -12,6 +28,8 @@ export interface ThresholdsView {
   speeding_pings: number;
   clear_pings: number;
   idle_minutes: number;
+  route_deviation_m: number;
+  route_deviation_pings: number;
   updated_by: string | null;
   updated_by_name: string | null;
   updated_at: string | null;
@@ -40,8 +58,8 @@ export interface Caller {
 const depotNotFound = () => notFound('Depot not found.');
 
 /**
- * The speeding and idling thresholds (FMS-46) from the settings screen (FMS-80): the fleet's, and a depot's that
- * replace them for its vehicles. Every change is audited; the rules pick it up within a minute on every instance
+ * The speeding, idling (FMS-46) and route deviation (FMS-90) thresholds from the settings screen (FMS-80): the
+ * fleet's, and a depot's that replace them for its vehicles. Every change is audited; the rules pick it up within a minute on every instance
  * (THRESHOLDS_TTL_MS), at once on the one that saved it.
  */
 export class RuleThresholdService {
@@ -58,13 +76,15 @@ export class RuleThresholdService {
     const users = await refs.users.findByIds(db, userIds);
     const byUser = new Map(users.map((u) => [u.id, u]));
     const view = (r: ThresholdRow | undefined): ThresholdsView => {
-      const t = r ?? DEFAULT_THRESHOLDS;
+      const t = r ?? DEFAULT_THRESHOLD_SET;
       const editor = r?.updatedBy ? byUser.get(r.updatedBy) : undefined;
       return {
         speed_limit_kmh: t.speedLimitKmh,
         speeding_pings: t.speedingPings,
         clear_pings: t.clearPings,
         idle_minutes: t.idleMinutes,
+        route_deviation_m: t.routeDeviationM,
+        route_deviation_pings: t.routeDeviationPings,
         updated_by: editor?.publicId ?? null,
         updated_by_name: editor?.fullName ?? null,
         updated_at: r?.updatedBy ? r.updatedAt.toISOString() : null,
@@ -77,12 +97,17 @@ export class RuleThresholdService {
   }
 
   /** PUT /settings/telemetry-rules/fleet, or a depot's (its public id): creates or replaces the row. */
-  async set(caller: Caller, depotPublicId: string | null, t: RuleThresholds): Promise<void> {
+  async set(caller: Caller, depotPublicId: string | null, input: ThresholdInput): Promise<void> {
     const ctx = { userId: caller.user.id, correlationId: caller.correlationId };
     await this.deps.transaction(async (client) => {
       const depotId = depotPublicId === null ? null : await this.deps.refs.depots.resolveInScope(client, depotPublicId, { kind: 'all' });
       if (depotPublicId !== null && depotId === null) throw depotNotFound();
       const current = await this.deps.thresholds.lock(client, depotId);
+      const t: ThresholdSet = {
+        ...input,
+        routeDeviationM: input.routeDeviationM ?? current?.routeDeviationM ?? DEFAULT_THRESHOLD_SET.routeDeviationM,
+        routeDeviationPings: input.routeDeviationPings ?? current?.routeDeviationPings ?? DEFAULT_THRESHOLD_SET.routeDeviationPings,
+      };
       if (!current) await this.deps.thresholds.insert(client, ctx, depotId, t);
       else if (!same(current, t)) await this.deps.thresholds.update(client, ctx, current.id, t);
     });
@@ -103,6 +128,13 @@ export class RuleThresholdService {
   }
 }
 
-function same(a: RuleThresholds, b: RuleThresholds): boolean {
-  return a.speedLimitKmh === b.speedLimitKmh && a.speedingPings === b.speedingPings && a.clearPings === b.clearPings && a.idleMinutes === b.idleMinutes;
+function same(a: ThresholdSet, b: ThresholdSet): boolean {
+  return (
+    a.speedLimitKmh === b.speedLimitKmh &&
+    a.speedingPings === b.speedingPings &&
+    a.clearPings === b.clearPings &&
+    a.idleMinutes === b.idleMinutes &&
+    a.routeDeviationM === b.routeDeviationM &&
+    a.routeDeviationPings === b.routeDeviationPings
+  );
 }

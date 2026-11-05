@@ -13,13 +13,16 @@ import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
 import { userDirectory } from '../auth';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
-import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
+import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripRoadsByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
+import { geofenceRouter } from './api/geofence.routes';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { ruleThresholdRouter } from './api/rule-threshold.routes';
 import { trackingRouter } from './api/tracking.routes';
+import { GeofenceService } from './application/geofence.service';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
+import { LocationRulesService } from './application/location-rules.service';
 import { RuleThresholdService } from './application/rule-threshold.service';
 import { NotificationGateway } from './application/notification-gateway';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
@@ -27,9 +30,11 @@ import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
 import type { AdapterContext, NotificationChannel, OutboundMessage, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
+import type { LocationState } from './domain/location-rules';
 import { INTEGRATION_EVENTS, type CircuitState } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
+import { GeofenceRepository } from './infrastructure/geofence.repository';
 import { IntegrationRepository } from './infrastructure/integration.repository';
 import { notificationAdapter } from './infrastructure/notification.adapter';
 import { MemoryRuleStateStore, RedisRuleStateStore } from './infrastructure/rule-state.store';
@@ -94,10 +99,11 @@ const liveMap = new LiveMapService({
 // idling rules, which open and close tracking.telemetry_flags on the event's transaction. The counters between
 // pings live in Redis (in process without it), so a restart does not reset them. docs/telemetry-rules.md.
 const memoryRuleState = new MemoryRuleStateStore();
+const flagRepository = new TelemetryFlagRepository();
 const telemetryRules = new TelemetryRulesService({
   db: pool,
   tracking,
-  flags: new TelemetryFlagRepository(),
+  flags: flagRepository,
   state: redis
     ? new RedisRuleStateStore(redis, memoryRuleState, (err, op) => logger.warn({ err, op }, 'telemetry rule state: Redis failed; counting in process'))
     : memoryRuleState,
@@ -110,13 +116,53 @@ const telemetryRules = new TelemetryRulesService({
 });
 eventBus.subscribe(TRACKING_EVENTS.locationUpdated, 'integration.telemetry-rules', (event, tx) => telemetryRules.onLocationUpdated(tx, event));
 
+// Geofences and route deviation (FMS-90): the same pings against the depot's fences and the trip's road, with
+// counters of their own in Redis. docs/geofences.md.
+const geofenceRepository = new GeofenceRepository();
+const memoryLocationState = new MemoryRuleStateStore<LocationState>();
+const locationRules = new LocationRulesService({
+  tracking,
+  flags: flagRepository,
+  geofences: geofenceRepository,
+  state: redis
+    ? new RedisRuleStateStore<LocationState>(redis, memoryLocationState, (err, op) => logger.warn({ err, op }, 'location rule state: Redis failed; counting in process'), 'location')
+    : memoryLocationState,
+  refs: {
+    vehicles: { byPublicIds: trackingRefs.vehicles.byPublicIds },
+    trips: { partiesByIds: tripPartiesByIds },
+    drivers: { publicIds: trackingRefs.drivers.publicIds },
+    roads: { forTrips: tripRoadsByIds },
+  },
+  events: eventBus,
+});
+eventBus.subscribe(TRACKING_EVENTS.locationUpdated, 'integration.location-rules', (event, tx) => locationRules.onLocationUpdated(tx, event));
+
+const geofences = new GeofenceService({
+  db: pool,
+  geofences: geofenceRepository,
+  flags: flagRepository,
+  transaction: (fn) => withTransaction(pool, fn),
+  refs: {
+    depots: trackingRefs.depots,
+    vehicles: { byIds: trackingRefs.vehicles.byIds },
+    trips: { partiesByIds: tripPartiesByIds },
+    drivers: { publicIds: trackingRefs.drivers.publicIds },
+    users: userDirectory,
+  },
+  events: eventBus,
+  onChange: () => locationRules.forgetFences(),
+});
+
 // Their thresholds from the settings screen (FMS-80): the fleet's and each depot's, admin only.
 const ruleThresholds = new RuleThresholdService({
   db: pool,
   thresholds: new RuleThresholdRepository(),
   transaction: (fn) => withTransaction(pool, fn),
   refs: { depots: trackingRefs.depots, users: userDirectory },
-  onChange: () => telemetryRules.forgetThresholds(),
+  onChange: () => {
+    telemetryRules.forgetThresholds();
+    locationRules.forgetThresholds();
+  },
 });
 
 // A vehicle's GPS history (FMS-136): its stored pings, a page at a time, for the vehicle page's trip map.
@@ -136,6 +182,7 @@ router.use(integrationRouter(service));
 router.use(webhookRouter(service));
 router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
 router.use(ruleThresholdRouter(ruleThresholds));
+router.use(geofenceRouter(geofences));
 
 export const integrationModule: AppModule = { name: 'integration', router };
 
@@ -250,6 +297,7 @@ export {
 export type { InternalService } from './application/provider-registry';
 export { INTEGRATION_EVENTS } from './domain/provider';
 export { MAX_PINGS_PER_BATCH, TRACKING_EVENTS, type PingInput } from './domain/gps';
+export { GEOFENCE_EVENTS } from './domain/geofence';
 export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-map';
 export { fmsTelematicsAdapter } from './infrastructure/fms-telematics.adapter';
 export { REPLAY_WINDOW_MS, SIGNATURE_HEADER, TIMESTAMP_HEADER, signWebhook } from './domain/webhook-signature';

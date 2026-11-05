@@ -32,18 +32,18 @@ describe('menus per role (seeded grants)', () => {
   })
 
   it.each([
-    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles', 'Audit log', 'Depots', 'Settings', 'Backups', 'System health'] }],
-    ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map'], Administration: ['Users & roles'] }],
-    ['dispatcher', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Reports'], 'Command center': ['Dispatch', 'Live map'] }],
+    ['admin', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map', 'Geofences'], Administration: ['Users & roles', 'Audit log', 'Depots', 'Settings', 'Backups', 'System health'] }],
+    ['fleet_manager', { 'Fleet management': FLEET_ALL, 'Command center': ['Dispatch', 'Live map', 'Geofences'], Administration: ['Users & roles'] }],
+    ['dispatcher', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Routes', 'Reports'], 'Command center': ['Dispatch', 'Live map', 'Geofences'] }],
     // No analytics:read, so no Reports.
-    ['depot_admin', { 'Fleet management': FLEET_ALL.filter((s) => s !== 'Reports'), 'Command center': ['Live map'] }],
+    ['depot_admin', { 'Fleet management': FLEET_ALL.filter((s) => s !== 'Reports'), 'Command center': ['Live map', 'Geofences'] }],
     ['technician', { 'Fleet management': ['Dashboard', 'Vehicles', 'Repair log', 'Service programs', 'Vehicle health', 'Spare parts'] }],
     ['finance_clerk', { 'Fleet management': ['Dashboard', 'Fuel reconciliation', 'Reports'] }],
     [
       'compliance_officer',
-      { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Vehicle health', 'Routes', 'Fuel reconciliation', 'Reports'], Administration: ['Users & roles', 'Audit log'] },
+      { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Vehicle health', 'Routes', 'Fuel reconciliation', 'Reports'], 'Command center': ['Geofences'], Administration: ['Users & roles', 'Audit log'] },
     ],
-    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Service programs', 'Vehicle health', 'Routes', 'Reports'], 'Command center': ['Live map'], Administration: ['Audit log', 'Depots'] }],
+    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Service programs', 'Vehicle health', 'Routes', 'Reports'], 'Command center': ['Live map', 'Geofences'], Administration: ['Audit log', 'Depots'] }],
     ['driver', { Driver: ['My day', 'Check in', 'Inspection', 'Fuel', 'Incident'] }],
   ])('%s sees exactly the screens its permissions open', (role, expected) => {
     expect(menu(role)).toEqual(expected)

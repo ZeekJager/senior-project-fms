@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, FileChartColumn, Fuel, HeartPulse, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, HeartPulse, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -14,6 +14,7 @@ import { DispatchPage } from '@/pages/Dispatch'
 import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
+import { GeofencesPage } from '@/pages/Geofences'
 import { DashboardPage } from '@/pages/placeholders'
 import { ReportsPage } from '@/pages/Reports'
 import { RoutesPage } from '@/pages/Routes'
@@ -166,6 +167,9 @@ export const portals: Portal[] = [
         permission: { all: ['command:read', 'tracking:read'] },
         nav: { label: 'Live map', icon: Radar },
       },
+      // S-32 (FMS-90): the depots' geofences, listed and on a map. tracking:read sees them (as the live map draws
+      // them); geofence:write (admin) draws and changes them.
+      { path: '/geofences', element: <GeofencesPage />, permission: 'tracking:read', nav: { label: 'Geofences', icon: Fence } },
     ],
   },
   {

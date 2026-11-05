@@ -243,7 +243,7 @@ function flagChanged(e: EventEnvelope, change: 'raised' | 'resolved'): Delivery 
     event: SOCKET_EVENTS.flagChanged,
     channel: 'tracking',
     depotId: str(e.payload.depot_id),
-    payload: { ...pick(e.payload, ['flag_id', 'vehicle_id', 'trip_id', 'flag_type', 'severity', 'observed_at']), resolved_at: str(e.payload.resolved_at), change },
+    payload: { ...pick(e.payload, ['flag_id', 'vehicle_id', 'trip_id', 'flag_type', 'geofence_id', 'severity', 'observed_at']), resolved_at: str(e.payload.resolved_at), change },
   };
 }
 

@@ -2,10 +2,10 @@ import type { PoolClient } from 'pg';
 import { auditedMutation, type MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import type { RuleThresholds } from '../domain/telemetry-rules';
+import type { ThresholdSet } from '../application/rule-threshold.service';
 
 /** A row of tracking.rule_thresholds: the fleet's (depotId null) or a depot's. Internal ids. */
-export interface ThresholdRow extends RuleThresholds {
+export interface ThresholdRow extends ThresholdSet {
   id: string;
   depotId: string | null;
   updatedBy: string | null;
@@ -13,15 +13,18 @@ export interface ThresholdRow extends RuleThresholds {
 }
 
 const COLUMNS = `id, depot_id AS "depotId", speed_limit_kmh AS "speedLimitKmh", speeding_pings AS "speedingPings",
-       clear_pings AS "clearPings", idle_minutes AS "idleMinutes", updated_by AS "updatedBy", updated_at AS "updatedAt"`;
+       clear_pings AS "clearPings", idle_minutes AS "idleMinutes", route_deviation_m AS "routeDeviationM",
+       route_deviation_pings AS "routeDeviationPings", updated_by AS "updatedBy", updated_at AS "updatedAt"`;
 
 const TABLE = 'tracking.rule_thresholds';
 
-const columnsOf = (t: RuleThresholds) => ({
+const columnsOf = (t: ThresholdSet) => ({
   speed_limit_kmh: t.speedLimitKmh,
   speeding_pings: t.speedingPings,
   clear_pings: t.clearPings,
   idle_minutes: t.idleMinutes,
+  route_deviation_m: t.routeDeviationM,
+  route_deviation_pings: t.routeDeviationPings,
 });
 
 /** Changes to tracking.rule_thresholds from the settings screen (FMS-80), each audited. */
@@ -39,11 +42,11 @@ export class RuleThresholdRepository {
     return res.rows[0] ?? null;
   }
 
-  async insert(client: PoolClient, ctx: MutationContext, depotId: string | null, t: RuleThresholds): Promise<void> {
+  async insert(client: PoolClient, ctx: MutationContext, depotId: string | null, t: ThresholdSet): Promise<void> {
     await auditedMutation(client, ctx, TABLE, 'INSERT', null, { depot_id: depotId, ...columnsOf(t), updated_by: ctx.userId });
   }
 
-  async update(client: PoolClient, ctx: MutationContext, id: string, t: RuleThresholds): Promise<void> {
+  async update(client: PoolClient, ctx: MutationContext, id: string, t: ThresholdSet): Promise<void> {
     await auditedMutation(client, ctx, TABLE, 'UPDATE', id, { ...columnsOf(t), updated_by: ctx.userId });
   }
 

@@ -238,3 +238,22 @@ export async function tripPartiesByIds(db: Queryable, tripIds: readonly string[]
   const res = await db.query<TripParties & { id: string }>('SELECT id, public_id AS "publicId", driver_id AS "driverId" FROM trip.trips WHERE id = ANY($1::bigint[])', [tripIds]);
   return new Map(res.rows.map(({ id, ...rest }) => [id, rest]));
 }
+
+/** The road a trip follows (FMS-90): its route's public id and measured line (FMS-84), as GeoJSON. */
+export interface TripRoad {
+  routeId: string;
+  line: { type: 'LineString'; coordinates: [number, number][] };
+}
+
+/** The roads of trips by internal id (a ping's `trip_id`); a trip whose route has no road yet is left out. */
+export async function tripRoadsByIds(db: Queryable, tripIds: readonly string[]): Promise<Map<string, TripRoad>> {
+  if (tripIds.length === 0) return new Map();
+  const res = await db.query<TripRoad & { id: string }>(
+    `SELECT t.id, r.public_id AS "routeId", r.geometry AS line
+       FROM trip.trips t
+       JOIN trip.routes r ON r.id = t.route_id
+      WHERE t.id = ANY($1::bigint[]) AND r.geometry IS NOT NULL`,
+    [tripIds],
+  );
+  return new Map(res.rows.map(({ id, ...rest }) => [id, rest]));
+}

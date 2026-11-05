@@ -1,11 +1,10 @@
 import type { PoolClient } from 'pg';
 import { depotScope, type Scope } from '../../../shared/authz/scope';
 import { notFound, validationFailed } from '../../../shared/errors/app-error';
-import { aggregateKey, createEvent, type DomainEvent } from '../../../shared/events/domain-event';
+import type { DomainEvent } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
-import { TRACKING_EVENTS } from '../domain/gps';
 import {
   evaluatePings,
   FLAG_SEVERITY,
@@ -15,16 +14,11 @@ import {
   type RuleThresholds,
 } from '../domain/telemetry-rules';
 import type { RuleStateStore } from '../infrastructure/rule-state.store';
-import type { FlagRecord, TelemetryFlagRepository } from '../infrastructure/telemetry-flag.repository';
+import type { TelemetryFlagRepository } from '../infrastructure/telemetry-flag.repository';
 import type { TrackingRepository } from '../infrastructure/tracking.repository';
+import { publishFlagChanges, type FlagChange, type RulesVehicle } from './flag-events';
 
-/** A vehicle as the rules need it, from the fleet module. */
-export interface RulesVehicle {
-  id: string;
-  publicId: string;
-  depotId: string | null;
-  depotPublicId: string | null;
-}
+export type { RulesVehicle } from './flag-events';
 
 /** What the rules need from fleet and trip (connected in integration/index.ts). */
 export interface TelemetryRulesRefs {
@@ -58,6 +52,8 @@ export interface TelemetryFlagView {
   vehicle_id: string;
   trip_id: string | null;
   flag_type: string;
+  /** The fence of a geofence violation (FMS-90), or null. */
+  geofence: { geofence_id: string; name: string } | null;
   severity: string;
   status: string;
   observed_at: string;
@@ -112,7 +108,7 @@ export class TelemetryRulesService {
     const open = await flags.ongoingTypes(tx, vehicle.id);
     const { state: next, actions } = evaluatePings(base ?? INITIAL_STATE, open, pings, t);
     const changes = await this.apply(tx, vehicle.id, actions);
-    if (changes.length > 0) await this.publish(tx, vehicle, changes, event.correlation_id);
+    await publishFlagChanges(tx, this.deps, vehicle, changes, event.correlation_id);
     await state.save(vehiclePublicId, { eventId: event.id, before: base, after: next });
   }
 
@@ -129,6 +125,7 @@ export class TelemetryRulesService {
       vehicle_id: vehicle.publicId,
       trip_id: r.tripId ? (trips.get(r.tripId)?.publicId ?? null) : null,
       flag_type: r.flagType,
+      geofence: r.geofencePublicId ? { geofence_id: r.geofencePublicId, name: r.geofenceName ?? '' } : null,
       severity: r.severity,
       status: r.status,
       observed_at: r.observedAt.toISOString(),
@@ -153,8 +150,8 @@ export class TelemetryRulesService {
   }
 
   /** Writes the flags the rules decided. One the database already had (or had already closed) changes nothing. */
-  private async apply(tx: PoolClient, vehicleId: string, actions: readonly RuleAction[]): Promise<{ kind: 'raised' | 'resolved'; flag: FlagRecord }[]> {
-    const changes: { kind: 'raised' | 'resolved'; flag: FlagRecord }[] = [];
+  private async apply(tx: PoolClient, vehicleId: string, actions: readonly RuleAction[]): Promise<FlagChange[]> {
+    const changes: FlagChange[] = [];
     for (const action of actions) {
       if (action.kind === 'raise') {
         const flag = await this.deps.flags.raise(tx, {
@@ -172,34 +169,5 @@ export class TelemetryRulesService {
       }
     }
     return changes;
-  }
-
-  /** TelemetryFlagRaised and TelemetryFlagResolved, in public ids, in the order the flags changed. */
-  private async publish(tx: PoolClient, vehicle: RulesVehicle, changes: { kind: 'raised' | 'resolved'; flag: FlagRecord }[], correlationId: string): Promise<void> {
-    const { refs, events } = this.deps;
-    const trips = await refs.trips.partiesByIds(tx, [...new Set(changes.flatMap((c) => (c.flag.tripId ? [c.flag.tripId] : [])))]);
-    const drivers = await refs.drivers.publicIds(tx, [...new Set([...trips.values()].flatMap((t) => (t.driverId ? [t.driverId] : [])))]);
-    await events.publish(
-      tx,
-      changes.map(({ kind, flag }) => {
-        const trip = flag.tripId ? trips.get(flag.tripId) : undefined;
-        const common = {
-          flag_id: flag.publicId,
-          vehicle_id: vehicle.publicId,
-          depot_id: vehicle.depotPublicId,
-          trip_id: trip?.publicId ?? null,
-          driver_id: trip?.driverId ? (drivers.get(trip.driverId) ?? null) : null,
-          flag_type: flag.flagType,
-          severity: flag.severity,
-          observed_at: flag.observedAt.toISOString(),
-        };
-        return createEvent(
-          kind === 'raised' ? TRACKING_EVENTS.flagRaised : TRACKING_EVENTS.flagResolved,
-          kind === 'raised' ? { ...common, details: flag.details } : { ...common, resolved_at: flag.resolvedAt!.toISOString(), details: flag.details },
-          { actor: null, correlationId },
-          { aggregate: aggregateKey('vehicle', vehicle.publicId) },
-        );
-      }),
-    );
   }
 }

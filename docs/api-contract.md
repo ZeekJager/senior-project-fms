@@ -425,7 +425,7 @@ DVIR rules (FMS-36):
 |---|---|---|---|
 | `GET /settings` | Every setting's value, default and range | Authenticated | `Setting[]` |
 | `PATCH /settings` | Change settings | `settings:write` | `{ "<key>": integer or null }` -> `Setting[]` |
-| `GET /settings/telemetry-rules` | Speeding and idling thresholds | Authenticated | `{ fleet, depots[] }` |
+| `GET /settings/telemetry-rules` | Speeding, idling and route deviation thresholds | Authenticated | `{ fleet, depots[] }` |
 | `PUT /settings/telemetry-rules/fleet` | Set the fleet's | `settings:write` | `RuleThresholds` -> `{ fleet, depots[] }` |
 | `PUT /settings/telemetry-rules/depots/{depot_id}` | Set a depot's own | `settings:write` | `RuleThresholds` -> `{ fleet, depots[] }` |
 | `DELETE /settings/telemetry-rules/depots/{depot_id}` | The depot follows the fleet's again | `settings:write` | `204`; `404` when it had none |
@@ -435,7 +435,7 @@ Settings rules (FMS-80, [settings.md](settings.md)):
 - **Who:** anyone signed in reads them (screens draw their lines from them). `settings:write`, admin only, changes them. Every change is audited.
 - **`Setting`:** `key`, `value`, `default_value`, `is_default`, `unit` (`percent`, `score`, `days`), `min`, `max`, `updated_by`, `updated_by_name`, `updated_at` (null while never changed). The keys: `fuel_variance_threshold_pct` (1-100, default `FUEL_VARIANCE_THRESHOLD_PCT`, 20), `health_alert_below` (50-84, default 75), `expiry_warning_days` (8-180, default 30).
 - **`PATCH /settings`:** one or more keys, each a whole number or `null` (back to the default; sending the default does the same). Every value is checked before any is written: out of range is `400` with `reason: "out_of_range"` per field; an unknown key, a fraction or an empty body is `400`.
-- **`RuleThresholds`:** `speed_limit_kmh` (20-200), `speeding_pings` (1-20), `clear_pings` (1-20), `idle_minutes` (1-120), all four required. Each row in the answer adds `updated_by`, `updated_by_name` and `updated_at`; a depot's adds `depot_id`. An unknown or deactivated depot is `404`.
+- **`RuleThresholds`:** `speed_limit_kmh` (20-200), `speeding_pings` (1-20), `clear_pings` (1-20), `idle_minutes` (1-120), all four required; route deviation's (FMS-90) `route_deviation_m` (100-5000, default 500) and `route_deviation_pings` (1-20, default 3), optional: one left out keeps the row's value. Every row in the answer has all six. Each row in the answer adds `updated_by`, `updated_by_name` and `updated_at`; a depot's adds `depot_id`. An unknown or deactivated depot is `404`.
 - **Taking effect:** within a minute on every instance (each caches for 30 s), at once on the one that saved it.
 
 ## 7. Trips and Routes API
@@ -825,7 +825,13 @@ Service program rules ([service-programs.md](service-programs.md)):
 | `GET /tracking/vehicles/current` | Current fleet locations (the live map, FMS-45) | `tracking:read` | `depot_id?` -> `VehicleLocation[]`; cached 5 s |
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
 | `GET /vehicles/{vehicle_id}/tracking` | Historical GPS (FMS-136) | `tracking:read` | `from`, `to` (both included), `limit` (1-1000, default 500), `cursor` -> `TrackPoint[]` oldest first, `meta.next_cursor` for the next page or `null`; depot scope, another depot's vehicle is `404` |
-| `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
+| `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46, FMS-90) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
+| `GET /geofences` | A depot's geofences (FMS-90) | `tracking:read` | `depot_id?`, `status` (`active` default, `inactive`, `all`) -> `Geofence[]`, by depot then name; depot scope |
+| `GET /geofences/{geofence_id}` | One geofence | `tracking:read` | -> `Geofence`, ETag; depot scope, else `404` |
+| `POST /geofences` | Draw one | `geofence:write` | `GeofenceInput` -> `201 Geofence`; Idempotency-Key |
+| `PATCH /geofences/{geofence_id}` | Change one | `geofence:write` | the fields to change, If-Match -> `Geofence` |
+| `DELETE /geofences/{geofence_id}` | Remove one (soft) | `geofence:write` | `204`; its open flags close |
+| `POST /geofences/{geofence_id}/reactivate` | Restore one | `geofence:write` | -> `Geofence` |
 | `GET /command-center/overview` | Operational overview (FMS-89) | `command:read` | `depot_id?` -> `CommandCenterOverview`: vehicles by state and health, drivers, the day's trips, active alerts and incidents; cached 5 s |
 
 **Live map snapshot (FMS-45).** `GET /tracking/vehicles/current` lists the caller's vehicles (depot scope; `depot_id` narrows it, and a depot outside the scope gives `[]`) that are not retired and have a position or a trip under way, by plate. How the command center uses it: [docs/live-map.md](live-map.md).
@@ -854,7 +860,15 @@ Service program rules ([service-programs.md](service-programs.md)):
 
 - **`TelemetryFlag`** (out): `flag_id`, `vehicle_id`, `trip_id`, `flag_type`, `severity` (`high` speeding, `medium` idling), `status` (the review status), `observed_at` (the condition began), `resolved_at` (it ended; null while it lasts), `details` (`speed_limit_kmh`, `speed_kmh`, `consecutive_pings`, `idle_minutes`, `lat`, `lng`, `flagged_at`; on closing `end_reason`, `duration_seconds`, `max_speed_kmh`).
 - **`GET /vehicles/{vehicle_id}/telemetry-flags`:** `flag_type` (comma-separated), `from`/`to` (ISO with offset, on `observed_at`), `ongoing` (`true`/`false`), `limit` (1-200, default 50). Behavioural data (§24.3): `tracking:read` only, never drivers; a vehicle outside the caller's depot scope is `404`. Names the trip, not the driver.
-- **Events.** `TelemetryFlagRaised` (an `unsafe_driving` alert, docs/alerts.md) and `TelemetryFlagResolved`; both reach clients as `vehicle.flag.changed` (§11.2).
+- **Events.** `TelemetryFlagRaised` (an `unsafe_driving` alert for speeding and idling, docs/alerts.md) and `TelemetryFlagResolved`; both reach clients as `vehicle.flag.changed` (§11.2).
+
+**Geofences and route deviation (FMS-90).** A vehicle crossing out of a depot's `keep_in` fence or into a `keep_out` one, and a vehicle on a trip further than 500 m from its route's road for 3 pings in a row, open `tracking.telemetry_flags` of type `geofence_violation` (one per vehicle and fence) and `route_deviation`. How it works: [docs/geofences.md](geofences.md).
+
+- **`Geofence`** (out): `geofence_id`, `depot_id`, `name`, `description`, `kind` (`keep_in`, `keep_out`), `applies` (`always`, `off_trip`: only while the vehicle is on no trip), `polygon` (GeoJSON, one ring, closed), `area_m2`, `is_active`, `version` (the ETag), `created_at`, `updated_at`, `updated_by`, `updated_by_name`.
+- **`GeofenceInput`** (in): `depot_id`, `name` (1-120, unique per depot among active fences, ignoring case: `409 CONFLICT_DUPLICATE`), `description?` (500), `kind`, `applies?` (`always`), `polygon`: one ring of 3-500 `[longitude, latitude]` corners, open or closed. On `polygon`, `400` reasons `too_few_points`, `too_many_points`, `out_of_range`, `self_intersecting`, `too_small` (under 400 m²), `too_large` (over 500 km across); holes are refused. At most 50 active fences per depot (`geofence_limit` on `depot_id`).
+- **Who.** `tracking:read` reads them in its depot scope (a fence or `depot_id` outside it is `404`); `geofence:write`, admin only, writes them. Every change is audited and published as `GeofenceChanged`. A removed fence cannot be changed (`409 CONFLICT_INVALID_STATE_TRANSITION`) until restored; a stale If-Match is `409 CONFLICT_CONCURRENT_MODIFICATION`.
+- **A change** to a fence's `polygon`, `kind`, `applies` or depot, and its removal, close its open flags (`end_reason` `geofence_changed`, `geofence_removed`). Vehicles are judged from their next crossing: a vehicle already on the wrong side is not flagged until it crosses again.
+- **Flags.** `TelemetryFlag` adds `geofence`: `{geofence_id, name}` for a `geofence_violation`, null otherwise. Opening one also publishes `GeofenceViolated` (a high `geofence_violation` alert) or `RouteDeviationDetected` (a medium `route_deviation` alert); `TelemetryFlagRaised` makes no alert of its own for these two types.
 
 **Command center overview (FMS-89).** `GET /command-center/overview` counts what needs attention for the caller's depot, or every depot for a fleet-wide user (`depot_id` narrows it; a depot outside the scope is `404`). How the live map shows it: [docs/live-map.md](live-map.md).
 
@@ -880,7 +894,7 @@ The previous contract defined a client-to-server Socket.IO `location_update` eve
 | `incident.updated` | Server -> client | `incident_id,depot_id,status,previous_status,assigned_to,resolved_at,updated_at,changes` | An incident's status, assignee or notes changed (FMS-89); never the notes |
 | `notifications.unread` | Server -> client | `unread_count,reason,changed_at` | The user's unread in-app count changed (`reason`: `delivered`, `read`, `read_all`). Sent to that user's own sockets only |
 | `trip.updated` | Server -> client | Trip summary | Refresh trip board |
-| `vehicle.flag.changed` | Server -> client | `flag_id,vehicle_id,trip_id,flag_type,severity,observed_at,resolved_at,change` | A speeding or idling flag opened (`raised`) or closed (`resolved`); the live map re-reads (FMS-46) |
+| `vehicle.flag.changed` | Server -> client | `flag_id,vehicle_id,trip_id,flag_type,geofence_id?,severity,observed_at,resolved_at,change` | A telemetry flag opened (`raised`) or closed (`resolved`): speeding, idling (FMS-46), a geofence (with `geofence_id`) or route deviation (FMS-90); the live map re-reads |
 | `location_update` | Client -> server (legacy compatibility only) | `tripId,lat,lng,speedKmh,bearing,accuracyM` | Accepted only if a legacy/mobile client still uses Socket.IO ingestion (`REALTIME_LEGACY_LOCATION`); canonical ingestion is REST/webhook. Goes through GPS ingestion as a phone: `tripId` must be the sender's trip under way |
 | `vehicle_position` | Server -> client (legacy event name) | `vehicleId,tripId,lat,lng,speedKmh,bearing,lastSeen` | Compatibility alias for `vehicle.location.updated` |
 | `alert_created` | Server -> client (legacy event name) | `alertType,entityId,message,severity` | Compatibility alias for `alert.created` |
