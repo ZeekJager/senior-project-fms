@@ -30,6 +30,8 @@ export interface VehicleView {
   vehicle_type: VehicleType;
   fuel_type: FuelType;
   fuel_efficiency_ml_per_km: number | null;
+  /** The tank's size in whole millilitres: the most one fill-up can be (FMS-82). Null while nobody has said. */
+  tank_capacity_ml: number | null;
   status: VehicleStatus;
   maintenance_flag: boolean;
   health_score: number | null;

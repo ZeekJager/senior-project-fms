@@ -66,6 +66,7 @@ export interface VehicleWrite {
   vehicle_type?: string;
   fuel_type?: string;
   fuel_efficiency_ml_per_km?: number | null;
+  tank_capacity_ml?: number | null;
   odometer_km?: number;
 }
 
@@ -120,7 +121,7 @@ type VehicleRow = Omit<VehicleView, 'current_trip'> & { internal_id: string };
 
 const VIEW_SQL = `
   SELECT v.id AS internal_id, v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
-         v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.status, v.maintenance_flag,
+         v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.tank_capacity_ml, v.status, v.maintenance_flag,
          v.health_score, v.health_score_updated_at, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
          v.version, v.created_at, v.updated_at,
          -- The photo's URL (docs/photos.md), versioned by when it changed, as photoUrl() builds it.

@@ -231,6 +231,23 @@ export class TrackingRepository {
     return new Map(res.rows.map((r) => [r.vehicleId, r.seconds]));
   }
 
+  /**
+   * The vehicle's stored ping nearest `at` in time, within `windowMs` either side of it, or null (FMS-82: where the
+   * vehicle was when a fill-up was logged). History pings of a trip that has ended count: it is where it was then.
+   */
+  async nearest(db: Queryable, vehicleId: string, at: Date, windowMs: number): Promise<{ latitude: number; longitude: number; recordedAt: Date } | null> {
+    const res = await db.query<{ latitude: number; longitude: number; recordedAt: Date }>(
+      `SELECT latitude::float8 AS latitude, longitude::float8 AS longitude, recorded_at AS "recordedAt"
+         FROM tracking.gps_pings
+        WHERE vehicle_id = $1
+          AND recorded_at BETWEEN $2::timestamptz - make_interval(secs => $3::float8 / 1000) AND $2::timestamptz + make_interval(secs => $3::float8 / 1000)
+        ORDER BY abs(extract(epoch FROM recorded_at - $2::timestamptz)), id
+        LIMIT 1`,
+      [vehicleId, at, windowMs],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Current positions of vehicles (internal ids), for the simulator's check and tests. */
   async currentLocations(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, { lat: number; lng: number; recordedAt: Date; updatedAt: Date }>> {
     const res = await db.query<{ vehicleId: string; lat: number; lng: number; recordedAt: Date; updatedAt: Date }>(

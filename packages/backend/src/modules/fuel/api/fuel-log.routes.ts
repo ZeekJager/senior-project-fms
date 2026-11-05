@@ -30,6 +30,9 @@ const odometer = z
   .max(MAX_ODOMETER_KM)
   .refine((n) => /^\d+(\.\d)?$/.test(String(n)), { message: 'At most one decimal.', params: { reason: 'too_many_decimals' } });
 
+/** At most 6 decimals, as the column stores them (a longer value would be rounded and then look changed). */
+const sixDecimals = (n: number) => Math.abs(n * 1e6 - Math.round(n * 1e6)) < 1e-6;
+
 /**
  * POST /fuel-logs (api-contract §9.1). `source` is the server's. `fueled_at` is when the fill-up happened
  * (FMS-115): a form sends it so a log queued offline keeps its pump time; without it the log is recorded when
@@ -46,11 +49,19 @@ const createBody = rejectFractionalMoney(
     unit_price_cents: cents.optional(),
     odometer_km: odometer,
     station_name: z.string().trim().min(1).max(255).optional(),
+    // Where the fill-up was recorded (FMS-82): both or neither. At most 6 decimals, as stored.
+    latitude: z.number().min(-90).max(90).refine(sixDecimals, { message: 'At most 6 decimals.', params: { reason: 'too_many_decimals' } }).optional(),
+    longitude: z.number().min(-180).max(180).refine(sixDecimals, { message: 'At most 6 decimals.', params: { reason: 'too_many_decimals' } }).optional(),
     fueled_at: z.iso
       .datetime({ offset: true })
       .transform((s) => new Date(s))
       .optional(),
-  }),
+  })
+    .refine((b) => (b.latitude === undefined) === (b.longitude === undefined), {
+      message: 'Give both latitude and longitude, or neither.',
+      path: ['latitude'],
+      params: { reason: 'incomplete_coordinates' },
+    }),
 );
 
 const listQuery = z

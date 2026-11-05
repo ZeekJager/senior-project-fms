@@ -12,6 +12,8 @@ export interface FuelVehicle {
   fuelType: 'petrol' | 'diesel' | 'hybrid' | 'electric' | 'cng' | 'lpg' | 'other';
   /** Expected consumption, integer ml/km; null only for an electric vehicle. */
   fuelEfficiencyMlPerKm: number | null;
+  /** The tank's size in whole ml, or null while unknown: the limit a fill-up cannot pass (FMS-82). */
+  tankCapacityMl: number | null;
   isActive: boolean;
 }
 
@@ -34,7 +36,7 @@ export async function fuelVehicles(db: Queryable, scope: Scope, filter: { public
   const res = await db.query<FuelVehicle>(
     `SELECT v.id, v.public_id AS "publicId", v.registration_number AS "registrationNumber", d.public_id AS "depotPublicId",
             d.name AS "depotName", v.fuel_type AS "fuelType",
-            v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.is_active AS "isActive"
+            v.fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm", v.tank_capacity_ml AS "tankCapacityMl", v.is_active AS "isActive"
        FROM fleet.vehicles v
        JOIN fleet.depots d ON d.id = v.depot_id
       WHERE ${where.join(' AND ')}

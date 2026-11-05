@@ -19,6 +19,8 @@ export interface FuelAnomalyRow {
   expectedMl: number | null;
   actualMl: number | null;
   deviationPct: number | null;
+  /** The figures a per-fill-up rule judged on (FMS-82); null for a reconciliation. */
+  details: Record<string, unknown> | null;
   detectedAt: Date;
   reviewedBy: string | null;
   reviewedAt: Date | null;
@@ -40,7 +42,7 @@ const ROW_SQL = `
   SELECT a.id, a.public_id AS "publicId", a.vehicle_id AS "vehicleId", f.public_id AS "fuelLogPublicId",
          a.anomaly_type AS "anomalyType", a.severity, a.status, a.period_start AS "periodStart", a.period_end AS "periodEnd",
          a.distance_km::float8 AS "distanceKm", a.expected_ml::text AS "expectedMl", a.actual_ml::text AS "actualMl",
-         a.deviation_percentage::float8 AS "deviationPct", a.detected_at AS "detectedAt", a.reviewed_by AS "reviewedBy",
+         a.deviation_percentage::float8 AS "deviationPct", a.details, a.detected_at AS "detectedAt", a.reviewed_by AS "reviewedBy",
          a.reviewed_at AS "reviewedAt", a.notes
     FROM fuel.fuel_anomalies a
     LEFT JOIN fuel.fuel_logs f ON f.id = a.fuel_log_id`;
@@ -66,6 +68,20 @@ export interface ReconciliationAnomalyWrite {
   actual_consumption_ml_100km: number;
   deviation_percentage: number;
   detected_at: Date;
+}
+
+/** A per-fill-up anomaly to write (FMS-82): about one fuel log. Integers; km to 3 decimals. */
+export interface FillUpAnomalyWrite {
+  fuel_log_id: string;
+  vehicle_id: string;
+  anomaly_type: string;
+  severity: 'medium' | 'high';
+  expected_ml: number | null;
+  actual_ml: number | null;
+  distance_km: number | null;
+  deviation_percentage: number | null;
+  /** The figures the rule judged on, as JSON text. */
+  details: string;
 }
 
 /** fuel.fuel_anomalies: derived findings about fuel (§9.1). Written by the reconciliation (FMS-41) and the per-fill-up rules (FMS-82). */
@@ -126,6 +142,16 @@ export class FuelAnomalyRepository extends Repository {
   /** Closes an anomaly, recording who and when (FMS-42); audited. */
   close(ctx: MutationContext, id: string, outcome: AnomalyOutcome, notes: string | null, at: Date, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'fuel.fuel_anomalies', 'UPDATE', id, { status: outcome, reviewed_by: ctx.userId, reviewed_at: at, notes }, client);
+  }
+
+  /** Whether this fill-up already has an anomaly of this rule: the consumer runs at least once, and a redelivery adds nothing. */
+  async existsForFillUp(db: Queryable, fuelLogId: string, anomalyType: string): Promise<boolean> {
+    const res = await db.query('SELECT 1 FROM fuel.fuel_anomalies WHERE fuel_log_id = $1 AND anomaly_type = $2', [fuelLogId, anomalyType]);
+    return res.rowCount !== 0;
+  }
+
+  insertForFillUp(ctx: MutationContext, data: FillUpAnomalyWrite, client: PoolClient): Promise<Row> {
+    return this.mutate(ctx, 'fuel.fuel_anomalies', 'INSERT', null, { ...data, status: 'open' }, client);
   }
 
   insertReconciliation(ctx: MutationContext, data: ReconciliationAnomalyWrite, client: PoolClient): Promise<Row> {

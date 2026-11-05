@@ -65,6 +65,14 @@ const appSchema = z
     ALERT_ESCALATION_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     // Fuel reconciliation (FMS-41): a month's fuel more than this many percent above or below what its trips needed is an anomaly.
     FUEL_VARIANCE_THRESHOLD_PCT: z.coerce.number().int().min(1).max(100).default(20),
+    // Fuel anomaly rules on one fill-up (FMS-82, docs/fuel-anomaly-rules.md). A fill-up more than this many percent above what the
+    // distance since the vehicle's last fill-up could have used (and by at least 20 litres) is a refuel that came too soon.
+    FUEL_REFUEL_EXCESS_PCT: z.coerce.number().int().min(1).max(1000).default(50),
+    // The band a litre may cost, in cents (ETB); a fill-up whose cost per litre is outside it is flagged.
+    FUEL_PRICE_MIN_CENTS_PER_LITRE: z.coerce.number().int().min(1).max(1_000_000).default(3000),
+    FUEL_PRICE_MAX_CENTS_PER_LITRE: z.coerce.number().int().min(1).max(1_000_000).default(20000),
+    // A fill-up logged with a position that is more than this many km from where the vehicle's GPS had it then is flagged.
+    FUEL_LOCATION_MAX_KM: z.coerce.number().int().min(1).max(1000).default(2),
     // Predictive maintenance service (FMS-54/55/127): unset, nothing is scored.
     ML_SERVICE_URL: z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional(),
     ML_SERVICE_TOKEN: z.string().optional(),
@@ -90,6 +98,9 @@ const appSchema = z
       for (const key of ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const) {
         if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: 'is required when STORAGE_DRIVER=s3' });
       }
+    }
+    if (env.FUEL_PRICE_MIN_CENTS_PER_LITRE >= env.FUEL_PRICE_MAX_CENTS_PER_LITRE) {
+      ctx.addIssue({ code: 'custom', path: ['FUEL_PRICE_MIN_CENTS_PER_LITRE'], message: 'must be below FUEL_PRICE_MAX_CENTS_PER_LITRE' });
     }
     if (env.REDIS_HOST && !env.REDIS_PASSWORD) {
       ctx.addIssue({ code: 'custom', path: ['REDIS_PASSWORD'], message: 'is required when REDIS_HOST is set' });
@@ -140,8 +151,11 @@ export interface AppConfig {
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number };
   alerts: { escalationMinutes: number };
-  /** Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly. */
-  fuel: { varianceThresholdPct: number };
+  /**
+   * Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly.
+   * `rules`: the thresholds of the per-fill-up rules (FMS-82).
+   */
+  fuel: { varianceThresholdPct: number; rules: FuelRulesConfig };
   ml: MlConfig;
   /** Road routing (FMS-84): OSRM's base URL, or null when ROUTING_URL is not set and routes keep the distance typed in. */
   routing: { url: string } | null;
@@ -152,6 +166,17 @@ export interface AppConfig {
 }
 
 /** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
+/** The per-fill-up fuel anomaly rules' thresholds (FMS-82, docs/fuel-anomaly-rules.md). */
+export interface FuelRulesConfig {
+  /** A fill-up this many percent above what the distance since the last one could have used is a refuel that came too soon. */
+  refuelExcessPct: number;
+  /** The band a litre may cost, in cents. */
+  priceMinCentsPerLitre: number;
+  priceMaxCentsPerLitre: number;
+  /** The most a fill-up's position may be from where the vehicle's GPS had it then, in km. */
+  locationMaxKm: number;
+}
+
 export interface MlConfig {
   /** Null when ML_SERVICE_URL is not set: nothing is scored. */
   service: { url: string; token: string } | null;
@@ -280,7 +305,15 @@ export function loadAppConfig(env: Env): AppConfig {
     integrations: { secrets: integrations.secrets },
     tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
-    fuel: { varianceThresholdPct: e.FUEL_VARIANCE_THRESHOLD_PCT },
+    fuel: {
+      varianceThresholdPct: e.FUEL_VARIANCE_THRESHOLD_PCT,
+      rules: {
+        refuelExcessPct: e.FUEL_REFUEL_EXCESS_PCT,
+        priceMinCentsPerLitre: e.FUEL_PRICE_MIN_CENTS_PER_LITRE,
+        priceMaxCentsPerLitre: e.FUEL_PRICE_MAX_CENTS_PER_LITRE,
+        locationMaxKm: e.FUEL_LOCATION_MAX_KM,
+      },
+    },
     ml: {
       service: e.ML_SERVICE_URL ? { url: e.ML_SERVICE_URL.replace(/\/+$/, ''), token: e.ML_SERVICE_TOKEN! } : null,
       featureSpecPath: e.ML_FEATURE_SPEC_PATH,

@@ -380,6 +380,8 @@ export const fuelRefs = {
     publicIds: tripRefs.vehicles.publicIds,
     /** For the reconciliation (FMS-41): a scope's vehicles with their fuel type, rated efficiency and depot. */
     forReconciliation: fuelVehicles,
+    /** For the per-fill-up rules (FMS-82): one vehicle by public id, wherever it is, with its fuel type, rating and tank. Null when unknown. */
+    forFillUpRules: async (db: Queryable, publicId: string) => (await fuelVehicles(db, { kind: 'all' }, { publicId }))[0] ?? null,
   },
   /** The reconciliation's depot filter (FMS-41): a live depot's internal id if it is in the scope, without a lock. */
   depots: { inScope: fuelDepotInScope },
