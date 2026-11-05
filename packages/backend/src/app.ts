@@ -10,6 +10,7 @@ import { requestSource } from './middleware/requestSource';
 import { requestLogger } from './middleware/requestLogger';
 import { modules as defaultModules } from './modules';
 import { integrationGateway, keepsRawBody } from './modules/integration';
+import { requestRollup } from './modules/system';
 import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
 import { cache } from './shared/cache';
 import { outboxHealth } from './shared/events/outbox-health';
@@ -38,6 +39,8 @@ export function createApp(options: AppOptions = {}): Express {
   // Request id first, so every later log line and error carries it.
   app.use(requestContext);
   app.use(requestLogger);
+  // Per-minute request and 5xx counts and latencies for the system health screen (FMS-143): counts only.
+  app.use(requestRollup);
   app.use(cors({ exposedHeaders: ['X-Request-Id'] }));
   app.use(
     express.json({

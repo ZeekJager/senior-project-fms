@@ -62,6 +62,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 056 | `backup`, `auth` | Database backups (FMS-144, docs/backups.md): `backup.backups` (each pg_dump the runner took: `kind` scheduled or manual, `status` queued, running, succeeded, failed or expired, who requested it, its storage key, size, SHA-256, error and when the file expires; `chk_backup_succeeded` and `chk_backup_failed`) and `backup.restore_drills` (each restore into an empty database, `npm run backup:restore -- --drill`); `backup:read` and `backup:write` for admin |
 | 057 | `auth`, `fleet` | Photos of people and vehicles (docs/photos.md): `photo_key`, `photo_type` (`image/jpeg`, `image/png`, `image/webp`) and `photo_updated_at` on `auth.users` and `fleet.vehicles`, all set or all null (`chk_user_photo`, `chk_vehicle_photo`); the image itself is in the document storage |
 | 058 | `fleet`, `fuel` | Per-fill-up fuel anomaly rules (FMS-82): `vehicles.tank_capacity_ml` (the limit one fill-up cannot pass; null while unknown); `fuel_anomalies.details`, the figures a rule judged a fill-up on; one anomaly per fill-up and rule (`ux_fuel_anomalies_fill_up_rule`), so a redelivered `FuelLogged` adds nothing |
+| 059 | `system` | System health (FMS-143, docs/system-health.md): `system.health_samples` (per component and minute: ok, down with its error, or disabled, and the latency; down from any instance wins) and `system.request_rollups` (per minute: requests, 5xx answers and a latency histogram, counts only), both kept 30 days; `system:read` for admin |
 
 ## Important
 

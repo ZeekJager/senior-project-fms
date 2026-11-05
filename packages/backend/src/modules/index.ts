@@ -13,6 +13,7 @@ import { ignitionTime, integrationGateway, integrationModule } from './integrati
 import { auditModule } from './audit';
 import { settingsModule } from './settings';
 import { backupModule } from './backup';
+import { systemModule } from './system';
 
 // Wiring between modules that cannot import each other: fleet imports auth's
 // `authorize` and trip's trip-activity queries, and maintenance imports
@@ -47,6 +48,7 @@ export const modules: AppModule[] = [
   auditModule,
   settingsModule,
   backupModule,
+  systemModule,
 ];
 
 /**
