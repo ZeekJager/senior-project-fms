@@ -925,11 +925,16 @@ paths:
         (from its repair or failure, or a staff member's), whether it counts as a failure (unplanned), its work order
         and failure, and its length in minutes (to now while it lasts). Kept by the fleet.downtime projection and
         rebuilt nightly (docs/downtime.md). Needs vehicle:read, in the caller's depot scope; a vehicle outside it, or
-        an id that is not a UUID, is a 404.
+        an id that is not a UUID, is a 404. With from or to, only the periods overlapping that window (a month on
+        the availability screen, FMS-142); a to before from is 400 (before_from). Each period names the problem
+        behind it, its work order and failure (maintenance_record, failure), only for a caller with
+        maintenance:read: null for anyone else.
       parameters:
         - $ref: '#/components/parameters/VehicleId'
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { name: from, in: query, description: 'Periods still going on at or after this time (ISO 8601 with offset).', schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: 'Periods begun before this time.', schema: { type: string, format: date-time } }
       responses:
         '200':
           description: A page of periods.
@@ -8750,7 +8755,7 @@ components:
     DowntimePeriod:
       type: object
       description: One stretch a vehicle was out of service (FMS-131, docs/downtime.md).
-      required: [id, vehicle_id, started_at, ended_at, duration_minutes, reason, unplanned, derived_reason, reason_note, reason_set_by, reason_set_at, opened_by, maintenance_record_id, failure_event_id]
+      required: [id, vehicle_id, started_at, ended_at, duration_minutes, reason, unplanned, derived_reason, reason_note, reason_set_by, reason_set_at, opened_by, maintenance_record_id, failure_event_id, maintenance_record, failure]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -8766,6 +8771,27 @@ components:
         opened_by: { type: string, enum: [status_change, breakdown, registration], description: What began it. }
         maintenance_record_id: { type: [string, 'null'], format: uuid, description: The work order it belongs to. }
         failure_event_id: { type: [string, 'null'], format: uuid, description: The failure behind its reason. }
+        maintenance_record:
+          type: [object, 'null']
+          description: 'The work order, in words (FMS-142); null without one, or for a caller without maintenance:read.'
+          required: [id, maintenance_type, status, description]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            maintenance_type: { type: string, enum: [corrective, preventive, inspection, predictive, other] }
+            status: { type: string }
+            description: { type: [string, 'null'] }
+        failure:
+          type: [object, 'null']
+          description: 'The failure behind its reason (FMS-125), likewise.'
+          required: [id, component, failure_mode, detected_by, occurred_at]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            component: { type: string }
+            failure_mode: { type: string }
+            detected_by: { type: string }
+            occurred_at: { type: string, format: date-time }
     DowntimeKpis:
       type: object
       description: A month's downtime KPIs, in whole minutes (FMS-131).

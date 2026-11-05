@@ -180,6 +180,9 @@ export const maintenanceRefs = {
   /** For downtime (FMS-131, fleet): the repairs (public ids, and those with a failure) and failures behind it. */
   downtimeSources: (db: Queryable, vehicleIds: readonly string[], recordIds: readonly string[]) =>
     maintenanceRepository.downtimeSources(db, vehicleIds, recordIds),
+  /** For the availability screen (FMS-142, fleet): what the repairs and failures behind downtime periods were. */
+  downtimeProblems: (db: Queryable, recordIds: readonly string[], failureIds: readonly string[]) =>
+    maintenanceRepository.downtimeProblems(db, recordIds, failureIds),
 };
 
 /** For tests and scripts: one run of the service-due job (FMS-129), as the scheduler runs it. */

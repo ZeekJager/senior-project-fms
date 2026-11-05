@@ -185,6 +185,31 @@ export interface DowntimePeriodView {
   opened_by: DowntimeOpenedBy;
   maintenance_record_id: string | null;
   failure_event_id: string | null;
+  /** The problem behind it (FMS-142): its work order, null too for a caller without maintenance:read. */
+  maintenance_record: DowntimeRecordView | null;
+  /** The failure that gave the reason, likewise. */
+  failure: DowntimeFailureView | null;
+}
+
+export interface DowntimeRecordView {
+  id: string;
+  maintenance_type: string;
+  status: string;
+  description: string | null;
+}
+
+export interface DowntimeFailureView {
+  id: string;
+  component: string;
+  failure_mode: string;
+  detected_by: string;
+  occurred_at: Date;
+}
+
+/** What the maintenance module says the repairs and failures behind periods were (public ids, FMS-142). */
+export interface DowntimeProblems {
+  records: { id: string; type: string; status: string; description: string | null }[];
+  failures: { id: string; component: string; mode: string; detectedBy: string; occurredAt: Date }[];
 }
 
 export const downtimeNotFound = () => new AppError(404, 'NOT_FOUND', 'Downtime period not found.');

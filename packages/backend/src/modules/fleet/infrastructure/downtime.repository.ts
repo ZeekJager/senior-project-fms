@@ -131,15 +131,13 @@ export class DowntimeRepository extends Repository {
     return { added, repaired: res.rows.length - added, removed: removed.rowCount ?? 0 };
   }
 
-  /** A vehicle's periods, newest first. */
-  async list(db: Queryable, vehicleId: string, page: Page): Promise<{ items: PeriodRow[]; total: number }> {
+  /** A vehicle's periods, newest first; with `from` or `to`, only those overlapping that window (FMS-142). */
+  async list(db: Queryable, vehicleId: string, page: Page, window: { from?: Date; to?: Date } = {}): Promise<{ items: PeriodRow[]; total: number }> {
     const { limit, offset } = limitOffset(page);
-    const rows = await db.query<PeriodRow>(`${PERIOD_SQL} WHERE p.vehicle_id = $1 ORDER BY p.started_at DESC, p.id DESC LIMIT $2 OFFSET $3`, [
-      vehicleId,
-      limit,
-      offset,
-    ]);
-    const total = await db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM fleet.downtime_periods WHERE vehicle_id = $1', [vehicleId]);
+    const where = 'p.vehicle_id = $1 AND ($2::timestamptz IS NULL OR p.ended_at IS NULL OR p.ended_at > $2) AND ($3::timestamptz IS NULL OR p.started_at < $3)';
+    const params = [vehicleId, window.from ?? null, window.to ?? null];
+    const rows = await db.query<PeriodRow>(`${PERIOD_SQL} WHERE ${where} ORDER BY p.started_at DESC, p.id DESC LIMIT $4 OFFSET $5`, [...params, limit, offset]);
+    const total = await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM fleet.downtime_periods p WHERE ${where}`, params);
     return { items: rows.rows, total: total.rows[0].n };
   }
 

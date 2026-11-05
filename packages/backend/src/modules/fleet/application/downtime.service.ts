@@ -8,6 +8,7 @@ import {
   openedByKind,
   type DowntimeFailure,
   type DowntimePeriodView,
+  type DowntimeProblems,
   type DowntimeReason,
   type DowntimeRecord,
   type DowntimeSources,
@@ -24,12 +25,17 @@ export type DowntimeSourceLookup = (
   recordIds: readonly string[],
 ) => Promise<{ records: DowntimeRecord[]; failures: (DowntimeFailure & { vehicleId: string })[] }>;
 
+/** What the repairs and failures behind periods were (public ids), from the maintenance module (FMS-142). */
+export type DowntimeProblemLookup = (db: Queryable, recordIds: readonly string[], failureIds: readonly string[]) => Promise<DowntimeProblems>;
+
 export interface DowntimeServiceDeps {
   periods: DowntimeRepository;
   vehicles: Pick<VehicleRepository, 'findRef'>;
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   /** Connected by src/modules/index.ts; without it a period knows only the status history. */
   sources: () => DowntimeSourceLookup | null;
+  /** Likewise; without it a period names its work order and failure by id only. */
+  problems?: () => DowntimeProblemLookup | null;
   now?: () => Date;
 }
 
@@ -69,14 +75,17 @@ export class DowntimeService {
     }
   }
 
-  /** GET /vehicles/{id}/downtime: the vehicle's periods, newest first. Out of scope is 404. */
-  async list(caller: Caller, vehiclePublicId: string, page: Page): Promise<{ items: DowntimePeriodView[]; total: number }> {
+  /**
+   * GET /vehicles/{id}/downtime: the vehicle's periods, newest first, those overlapping `from`-`to` when given
+   * (FMS-142). Out of scope is 404. The problem behind each (its work order and failure) only with maintenance:read.
+   */
+  async list(caller: Caller, vehiclePublicId: string, page: Page, window: { from?: Date; to?: Date } = {}): Promise<{ items: DowntimePeriodView[]; total: number }> {
     const { periods, vehicles } = this.deps;
     return periods.inTransaction(async (client) => {
       const vehicle = await vehicles.findRef(client, { publicId: vehiclePublicId }, depotScope(caller.user));
       if (!vehicle) throw vehicleNotFound();
-      const { items, total } = await periods.list(client, vehicle.id, page);
-      return { items: await this.views(client, items), total };
+      const { items, total } = await periods.list(client, vehicle.id, page, window);
+      return { items: await this.views(client, items, mayReadRepairs(caller)), total };
     });
   }
 
@@ -96,7 +105,7 @@ export class DowntimeService {
         note: input.note?.trim() || null,
         setBy: caller.user.id,
       });
-      const [view] = await this.views(client, [(await periods.find(client, vehicle.id, periodPublicId))!]);
+      const [view] = await this.views(client, [(await periods.find(client, vehicle.id, periodPublicId))!], mayReadRepairs(caller));
       return view;
     });
   }
@@ -122,9 +131,14 @@ export class DowntimeService {
     return result;
   }
 
-  private async views(db: Queryable, rows: readonly PeriodRow[]): Promise<DowntimePeriodView[]> {
+  private async views(db: Queryable, rows: readonly PeriodRow[], withProblems: boolean): Promise<DowntimePeriodView[]> {
     const setBy = [...new Set(rows.flatMap((r) => (r.reasonSetBy ? [r.reasonSetBy] : [])))];
     const users = new Map((setBy.length ? await this.deps.users.findByIds(db, setBy) : []).map((u) => [u.id, u.publicId]));
+    const lookup = withProblems ? (this.deps.problems?.() ?? null) : null;
+    const ids = (pick: (r: PeriodRow) => string | null) => [...new Set(rows.flatMap((r) => pick(r) ?? []))];
+    const found = lookup ? await lookup(db, ids((r) => r.maintenanceRecordId), ids((r) => r.failureEventId)) : { records: [], failures: [] };
+    const records = new Map(found.records.map((r) => [r.id, r]));
+    const failures = new Map(found.failures.map((f) => [f.id, f]));
     const now = (this.deps.now ?? (() => new Date()))();
     return rows.map((r) => ({
       id: r.publicId,
@@ -141,6 +155,19 @@ export class DowntimeService {
       opened_by: openedByKind(r.openedBy),
       maintenance_record_id: r.maintenanceRecordId,
       failure_event_id: r.failureEventId,
+      maintenance_record: recordView(r.maintenanceRecordId ? records.get(r.maintenanceRecordId) : undefined),
+      failure: failureView(r.failureEventId ? failures.get(r.failureEventId) : undefined),
     }));
   }
+}
+
+/** Repair descriptions and failures are maintenance data: a dispatcher reads a vehicle's periods, not its repairs. */
+const mayReadRepairs = (caller: Caller) => caller.user.permissions.includes('maintenance:read');
+
+function recordView(r: DowntimeProblems['records'][number] | undefined) {
+  return r ? { id: r.id, maintenance_type: r.type, status: r.status, description: r.description } : null;
+}
+
+function failureView(f: DowntimeProblems['failures'][number] | undefined) {
+  return f ? { id: f.id, component: f.component, failure_mode: f.mode, detected_by: f.detectedBy, occurred_at: f.occurredAt } : null;
 }

@@ -11,7 +11,14 @@ import { vehicleNotFound } from '../domain/vehicle';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const downtimeQuery = z.strictObject({ ...pageQuery });
+/** Paged; `from` and `to` keep the periods overlapping that window, a month on the availability screen (FMS-142). */
+const downtimeQuery = z
+  .strictObject({
+    ...pageQuery,
+    from: z.iso.datetime({ offset: true }).optional(),
+    to: z.iso.datetime({ offset: true }).optional(),
+  })
+  .refine((q) => !q.from || !q.to || Date.parse(q.from) < Date.parse(q.to), { message: '`from` must be before `to`.', path: ['to'], params: { reason: 'before_from' } });
 
 /** A staff member's reason for a period, or null for the one its repair or failure gives. */
 const reasonBody = z.strictObject({
@@ -42,7 +49,8 @@ export function downtimeRouter(service: DowntimeService): Router {
     asyncHandler(async (req, res) => {
       const id = vehicleId(req);
       const query = parseInput(downtimeQuery, req.query);
-      const { items, total } = await service.list(caller(req), id, query);
+      const window = { from: query.from ? new Date(query.from) : undefined, to: query.to ? new Date(query.to) : undefined };
+      const { items, total } = await service.list(caller(req), id, query, window);
       res.json({ data: items, meta: { ...pageMeta(query, total), request_id: req.correlationId } });
     }),
   );
