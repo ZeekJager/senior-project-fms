@@ -39,7 +39,7 @@ interface SimVehicle {
 }
 
 /** How positions reach the API: as a telematics provider's signed webhooks, or each vehicle's own device. */
-type Channel = { via: 'webhook'; code: string; providerId: string; secret: string } | { via: 'device' };
+type Channel = { via: 'webhook'; code: string; providerId: string; hmacKey: string } | { via: 'device' };
 
 const ADDIS: Point = { lat: 9.0108, lng: 38.7613 };
 /** The telematics provider the simulator is by default (migration 061). */
@@ -91,10 +91,10 @@ async function channelFor(opts: ReturnType<typeof options>): Promise<Channel> {
   } else if (!row.is_active) {
     throw new Error(`The provider '${opts.provider}' is switched off (integration.external_providers.is_active).`);
   }
-  const secret = config.integrations.secrets[opts.provider]?.webhookSecret;
+  const hmacKey = config.integrations.secrets[opts.provider]?.webhookSecret;
   const name = `INTEGRATION_${opts.provider.toUpperCase().replace(/-/g, '_')}_WEBHOOK_SECRET`;
-  if (!secret) throw new Error(`Set ${name} (at least 32 characters) for the API and the simulator, or run with --via device.`);
-  return { via: 'webhook', code: opts.provider, providerId: row.public_id, secret };
+  if (!hmacKey) throw new Error(`Set ${name} (at least 32 characters) for the API and the simulator, or run with --via device.`);
+  return { via: 'webhook', code: opts.provider, providerId: row.public_id, hmacKey };
 }
 
 /**
@@ -187,7 +187,7 @@ async function main(): Promise<void> {
   let due: ProviderPosition[] = [];
   const deliver = () => {
     if (channel.via !== 'webhook' || due.length === 0) return;
-    for (const delivery of signedDeliveries(channel.secret, due)) {
+    for (const delivery of signedDeliveries(channel.hmacKey, due)) {
       const t0 = performance.now();
       totals.deliveries++;
       const work = fetch(`${opts.api}/webhooks/telematics/${channel.code}`, { method: 'POST', headers: delivery.headers, body: delivery.raw })
