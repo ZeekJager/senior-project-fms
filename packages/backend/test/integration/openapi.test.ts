@@ -1,96 +1,89 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import request from 'supertest';
 import { describe, expect, test } from 'vitest';
-import { parse } from 'yaml';
 import { createApp } from '../../src/app';
 import { routeRegistry } from '../../src/shared/authz/route-policy';
 import { ERROR_CODES } from '../../src/shared/errors/app-error';
-import { createUser } from '../support/factories';
-import { ALIASES, NOT_YET_DOCUMENTED, OUTSIDE_API_BASE } from '../support/openapi-baseline';
+import { METHODS, documentedShapes, drift, operations, raw, schemaProblems, shape, spec } from '../support/openapi';
 
-// docs/openapi.yaml lists endpoints as their cards are built (FMS-31, FMS-76
-// first). These checks keep it honest, both ways: every operation it lists is
-// mounted, every route the API mounts is listed (a new undocumented one fails,
-// FMS-119), and every error code it names is one the API can send.
+// docs/openapi.yaml is the contract (api-contract §24, FMS-65, FMS-119). These checks keep it true, both ways:
+// every route the API mounts is described and every operation it describes is mounted, so a new undocumented
+// route fails CI; its structure is sound; and every error code it names is one the API can send. That its
+// responses match the real ones is checked in contract.test.ts.
 
-const SPEC_PATH = join(__dirname, '..', '..', '..', '..', 'docs', 'openapi.yaml');
-const raw = readFileSync(SPEC_PATH, 'utf8');
-const spec = parse(raw) as { openapi: string; servers: { url: string }[]; paths: Record<string, Record<string, { operationId?: string }>> };
-const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
-const PASSWORD = 'Openapi-Test-1';
 const app = createApp();
+const mounted = () => routeRegistry(app).map((r) => shape(r.method, r.path));
 
-const operations = Object.entries(spec.paths).flatMap(([path, item]) =>
-  METHODS.filter((m) => item[m]).map((method) => ({ path, method, operationId: item[method]!.operationId })),
-);
-
-/** `GET /trips/{}`: a method and a path under /api/v1, every parameter (`:tripId` or `{trip_id}`) as `{}`. */
-const shape = (method: string, path: string) => `${method.toUpperCase()} ${path.replace(/^\/api\/v1(?=\/)/, '').replace(/(:[A-Za-z]\w*|\{[^}]*\})/g, '{}')}`;
-
-/** What the check reports: routes nobody described, and baseline lines that no longer belong. */
-function drift(mounted: string[], documented: Set<string>, baseline: string[]) {
-  const known = new Set(baseline);
-  return {
-    undocumented: [...new Set(mounted)].filter((route) => !documented.has(route) && !known.has(route)).sort(),
-    stale: [...known].filter((route) => !mounted.includes(route) || documented.has(route)).sort(),
-  };
-}
-
-const documented = new Set(operations.map((o) => shape(o.method, o.path)));
-const baseline = [...OUTSIDE_API_BASE, ...ALIASES, ...NOT_YET_DOCUMENTED];
-
-describe('docs/openapi.yaml', () => {
-  test('is OpenAPI 3.1 with unique operation ids, served under /api/v1', () => {
-    expect(spec.openapi).toBe('3.1.0');
-    expect(spec.servers[0].url).toBe('/api/v1');
-    expect(operations.length).toBeGreaterThan(0);
-    const ids = operations.map((o) => o.operationId);
-    expect(ids.every(Boolean)).toBe(true);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  test('every $ref points at a component that exists', () => {
-    const doc = parse(raw) as Record<string, unknown>;
-    const refs = [...raw.matchAll(/\$ref: '#\/([^']+)'/g)].map((m) => m[1]);
-    for (const ref of refs) {
-      const target = ref.split('/').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], doc);
-      expect(target, ref).toBeDefined();
-    }
-  });
-
-  test('every operation it lists is mounted (an unknown route says "No route for")', async () => {
-    const admin = await createUser({ roles: ['admin'], password: PASSWORD });
-    const login = await request(app).post('/api/v1/auth/login').send({ email: admin.email, password: PASSWORD });
-    const cookie = (login.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
-    for (const { path, method } of operations) {
-      const url = `/api/v1${path.replace(/\{[^}]+\}/g, '00000000-0000-4000-8000-000000000000')}`;
-      const res = await request(app)[method](url).set('Cookie', cookie).send({});
-      expect(res.body.error?.message ?? '', `${method.toUpperCase()} ${path}`).not.toMatch(/^No route for/);
-    }
-  });
-
+describe('docs/openapi.yaml: the routes', () => {
   test('every route the API mounts is described: a new undocumented one fails (add it to docs/openapi.yaml)', () => {
-    const { undocumented } = drift(routeRegistry(app).map((r) => shape(r.method, r.path)), documented, baseline);
-    expect(undocumented, 'Mounted but not in docs/openapi.yaml; describe each one there').toEqual([]);
+    expect(drift(mounted(), documentedShapes).undocumented, 'Mounted but not in docs/openapi.yaml; describe each one there').toEqual([]);
   });
 
-  test('the grandfathered list holds only routes still mounted and still undocumented (delete a line when its operation is described)', () => {
-    const { stale } = drift(routeRegistry(app).map((r) => shape(r.method, r.path)), documented, baseline);
-    expect(stale, 'In test/support/openapi-baseline.ts but removed or now described; delete these lines').toEqual([]);
+  test('every operation it describes is mounted: one for a route that is gone, or misspelt, fails', () => {
+    expect(drift(mounted(), documentedShapes).unmounted, 'In docs/openapi.yaml but not mounted; remove it or fix its path or method').toEqual([]);
   });
 
-  test('the check itself: it names an undocumented route, and a baseline line gone stale', () => {
-    const spec = new Set(['GET /trips', 'GET /trips/{}']);
-    const mounted = ['GET /trips', 'GET /trips/{}', 'POST /trips', 'GET /legacy'];
-    expect(drift(mounted, spec, ['GET /legacy'])).toEqual({ undocumented: ['POST /trips'], stale: [] });
-    expect(drift(mounted, spec, ['GET /legacy', 'POST /trips', 'GET /trips', 'DELETE /gone'])).toEqual({
-      undocumented: [],
-      stale: ['DELETE /gone', 'GET /trips'], // gone from the API, and now described in the spec
+  test('the check itself: it names an undocumented route and an operation with no route, and treats :tripId and {trip_id} alike', () => {
+    expect(drift(['GET /trips', 'POST /trips', 'GET /trips/{}'], ['GET /trips', 'GET /trips/{}', 'DELETE /trips/{}'])).toEqual({
+      undocumented: ['POST /trips'],
+      unmounted: ['DELETE /trips/{}'],
     });
     expect(shape('get', '/api/v1/trips/:tripId/assign')).toBe('GET /trips/{}/assign');
     expect(shape('POST', '/trips/{trip_id}/assign')).toBe('POST /trips/{}/assign');
     expect(shape('GET', '/health/live')).toBe('GET /health/live');
+  });
+});
+
+describe('docs/openapi.yaml: its structure (spec lint)', () => {
+  test('is OpenAPI 3.1, served under /api/v1', () => {
+    expect(spec.openapi).toBe('3.1.0');
+    expect(spec.servers[0].url).toBe('/api/v1');
+    expect(operations.length).toBeGreaterThan(0);
+  });
+
+  test('every operation has a unique operation id, a summary and a declared tag', () => {
+    const declared = new Set(spec.tags.map((t) => t.name));
+    const ids = operations.map((o) => o.op.operationId);
+    expect(operations.filter((o) => !o.op.operationId).map((o) => shape(o.method, o.path))).toEqual([]);
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+    expect(operations.filter((o) => !o.op.summary).map((o) => shape(o.method, o.path))).toEqual([]);
+    expect(operations.filter((o) => !o.op.tags?.length || o.op.tags.some((t) => !declared.has(t))).map((o) => shape(o.method, o.path))).toEqual([]);
+  });
+
+  test('every operation answers with a success and, unless it is public, lists 401 for a missing session', () => {
+    const noSuccess = operations.filter((o) => !Object.keys(o.op.responses ?? {}).some((s) => s.startsWith('2')));
+    expect(noSuccess.map((o) => shape(o.method, o.path))).toEqual([]);
+    const isPublic = (o: (typeof operations)[number]) => Array.isArray(o.op.security) && o.op.security.length === 0;
+    const withoutSession = operations.filter((o) => !isPublic(o) && !o.op.security && !o.op.responses?.['401']);
+    expect(withoutSession.map((o) => shape(o.method, o.path))).toEqual([]);
+  });
+
+  test('every {path parameter} of a path is declared, and none is declared that the path does not have', () => {
+    const named = (list: { $ref?: string; name?: string; in?: string }[] = []) =>
+      list.map((p) => (p.$ref ? spec.components.parameters[p.$ref.split('/').pop()!] : p)).filter((p) => p.in === 'path').map((p) => p.name!);
+    for (const { path, method, item, op } of operations) {
+      const inPath = [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]).sort();
+      const declared = [...named(item.parameters), ...named(op.parameters)].sort();
+      expect(declared, `${method.toUpperCase()} ${path}`).toEqual(inPath);
+    }
+  });
+
+  test('every $ref points at a component that exists', () => {
+    const refs = [...raw.matchAll(/\$ref: '#\/([^']+)'/g)].map((m) => m[1]);
+    expect(refs.length).toBeGreaterThan(0);
+    for (const ref of refs) {
+      const target = ref.split('/').reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], spec);
+      expect(target, ref).toBeDefined();
+    }
+  });
+
+  test('every schema is valid JSON Schema (it compiles)', () => {
+    expect(schemaProblems()).toEqual([]);
+  });
+
+  test('only the five methods the API uses are described', () => {
+    for (const [path, item] of Object.entries(spec.paths)) {
+      const keys = Object.keys(item).filter((k) => !['servers', 'parameters', 'summary', 'description', '$ref'].includes(k));
+      expect(keys.filter((k) => !(METHODS as readonly string[]).includes(k)), path).toEqual([]);
+    }
   });
 
   test('every error code it names is one the API sends (api-contract §3.6)', () => {

@@ -107,14 +107,16 @@ The rules that decide whether a driver and vehicle may be put on a trip are test
 
 The overlap decision is SQL (`tstzrange(..., '[]')`), not a function, so a unit test with a faked repository could only check its own stub. That is why the interval cases run against PostgreSQL. A unit test here answers "does the service do the right thing with that answer", never "is that the right answer".
 
-### The OpenAPI spec, both ways (FMS-119)
+### The OpenAPI spec is the contract (FMS-119, FMS-65)
 
-`test/integration/openapi.test.ts` keeps `docs/openapi.yaml` and the mounted routes in step in both directions:
+`docs/openapi.yaml` is held to the code by two test files and served as Swagger UI:
 
-- **Listed, so mounted.** Every operation in the spec answers on the real app (not "No route for"), every `$ref` resolves and every error code it names is in `ERROR_CODES`.
-- **Mounted, so listed.** The routes are read off the running app (`routeRegistry`, the same walk as the startup access-policy check) and compared with the spec, method and path, with every parameter as `{}` (`:tripId` and `{trip_id}` are the same route). A route in neither the spec nor the exceptions fails: **mounting a route without documenting it fails CI**.
-- **The exceptions only shrink.** `test/support/openapi-baseline.ts` lists the routes that predate the spec (`NOT_YET_DOCUMENTED`), second mounts of a documented operation (`ALIASES`) and routes outside `/api/v1` (health). A line for a route that is gone, or that the spec now describes, fails the test, so documenting an operation means deleting its line. Never add a line for new work.
-- **Is the spec right?** These checks prove an operation exists, not that its schema is true. When you write one, run the real call and validate the response against the schema once (Ajv, from a scratch test); FMS-119's schemas were checked that way.
+- **Routes, both ways** (`test/integration/openapi.test.ts`). The routes are read off the running app (`routeRegistry`, the same walk as the startup access-policy check) and compared with the spec, method and path, with every parameter as `{}` (`:tripId` and `{trip_id}` are the same route). A route the spec does not describe fails (**mounting a route without documenting it fails CI**), and so does an operation the spec describes that is not mounted. There is no list of exceptions: a legacy mount is described as `deprecated: true`, and the health probes (outside `/api/v1`) carry their own `servers` entry.
+- **Structure (the spec lint).** Same file: every operation has a unique operation id, a summary and a declared tag; every operation answers with a success and, unless public (`security: []`), lists `401`; every `{path parameter}` is declared and none is declared that the path lacks; every `$ref` resolves; every schema compiles as JSON Schema 2020-12 (Ajv); every error code named is in `ERROR_CODES`.
+- **Responses, true to the spec** (`test/integration/contract.test.ts`). Each test calls the real API and checks the status against the ones the spec lists for that operation and the body against its schema (`expectContract`, built on `responseProblems` in `test/support/openapi.ts`). The failure message carries the validator's words and the body. When you add an operation, call it there, or in your own test with `expectContract`, so its schema is checked the day it is added: this is how the schemas of the 55 operations written for FMS-65 were found wrong in three places (an upload's response, a document list, a ledger line's id).
+- **The page** (`test/integration/api-docs.test.ts`). `/api-docs` is Swagger UI on the committed file, `/api-docs/openapi.yaml` is that file itself, and neither is served in production.
+
+A mutation worth knowing: change a type in a schema and `contract.test.ts` fails on the first test that returns that object; delete an operation and `openapi.test.ts` names it.
 
 ## Frontend
 

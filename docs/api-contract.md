@@ -1324,6 +1324,8 @@ openapi/
     errors.yaml
 ```
 
+The repository keeps the specification as **one file**, `docs/openapi.yaml`, not the tree above. Every route is described in it, CI compares it with the mounted routes in both directions and with the real responses ([testing.md](testing.md#the-openapi-spec-is-the-contract-fms-119-fms-65)), and Swagger UI serves it at `/api-docs` outside production. One file keeps those checks, the `$ref`s and the page simple; the tags (Auth, Users, Depots, Vehicles, Drivers, Attendance, Documents, Trips, Routes, Fuel, Maintenance, Inventory, Alerts, ...) group it as the tree would.
+
 ## 27. Final API Architecture Decision
 
 The FMS exposes a versioned REST API through the Node.js/Express modular monolith. API modules align with application bounded modules and PostgreSQL schemas. Redis is used for cache and pub/sub, not as a source of truth. The Python/FastAPI predictive-maintenance service is internal and is called only by the core application. Clients never access PostgreSQL directly.
