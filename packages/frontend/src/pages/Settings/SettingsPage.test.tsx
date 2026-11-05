@@ -13,7 +13,7 @@ const owner = currentUser(['fleet_owner'], ['depot:read', 'depot:write', 'audit:
 
 const ADDIS = { id: 'd-1', name: 'Addis Ababa Central', code: 'ADD', location: 'Addis Ababa' }
 const ADAMA = { id: 'd-2', name: 'Adama Hub', code: 'ADM', location: 'Adama' }
-const FLEET = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5 }
+const FLEET = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 500, route_deviation_pings: 3 }
 const never = { updated_by: null, updated_by_name: null, updated_at: null }
 
 /** A fake settings API: thresholds and settings, every write recorded. */
@@ -70,11 +70,31 @@ describe('S-27 Settings (FMS-80)', () => {
     expect(await screen.findByText('Driving rules saved')).toBeInTheDocument()
   })
 
+  it('off route (FMS-90): beyond 500 m for 3 pings at first; under 100 m is refused, 800 m saved with the rest', async () => {
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [] })
+    const { user, rules } = await open()
+    const beyond = within(rules).getByLabelText('Off route beyond')
+    expect(beyond).toHaveValue('500')
+    expect(within(rules).getByLabelText('Off route after')).toHaveValue('3')
+
+    await user.clear(beyond)
+    await user.type(beyond, '50')
+    await user.click(within(rules).getByRole('button', { name: 'Save driving rules' }))
+    expect(within(rules).getByText('From 100 to 5000.')).toBeInTheDocument()
+    expect(writes).toEqual([])
+
+    await user.clear(beyond)
+    await user.type(beyond, '800')
+    await user.click(within(rules).getByRole('button', { name: 'Save driving rules' }))
+    await waitFor(() => expect(writes).toEqual([{ method: 'PUT', path: '/settings/telemetry-rules/fleet', body: { ...FLEET, route_deviation_m: 800 } }]))
+  })
+
   it("a depot's own thresholds: listed, given to another depot, and removed to follow the fleet's again", async () => {
-    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [{ depot_id: 'd-2', speed_limit_kmh: 60, speeding_pings: 2, clear_pings: 3, idle_minutes: 10, ...never }] })
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [{ depot_id: 'd-2', speed_limit_kmh: 60, speeding_pings: 2, clear_pings: 3, idle_minutes: 10, route_deviation_m: 1000, route_deviation_pings: 2, ...never }] })
     const { user } = await open()
     expect(await screen.findByText('Adama Hub')).toBeInTheDocument()
     expect(screen.getByText('60 km/h')).toBeInTheDocument()
+    expect(screen.getByText('1,000 m')).toBeInTheDocument()
 
     // Only a depot without its own can be chosen; it starts from the fleet's.
     await user.click(screen.getByRole('button', { name: 'Thresholds for a depot' }))

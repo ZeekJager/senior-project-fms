@@ -4,23 +4,36 @@ import { notFound } from '../../../shared/errors/app-error';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authenticated, authorize } from '../../auth';
-import type { Caller, RuleThresholdService } from '../application/rule-threshold.service';
-import { THRESHOLD_LIMITS, type RuleThresholds } from '../domain/telemetry-rules';
+import type { Caller, RuleThresholdService, ThresholdInput } from '../application/rule-threshold.service';
+import { LOCATION_THRESHOLD_LIMITS } from '../domain/location-rules';
+import { THRESHOLD_LIMITS } from '../domain/telemetry-rules';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const whole = (limits: { min: number; max: number }) => z.number().int().min(limits.min).max(limits.max);
 
-/** The four thresholds, all of them: a PUT replaces the row. */
+/**
+ * The thresholds: a PUT replaces the row. The four of FMS-46 are required; route deviation's (FMS-90) are optional,
+ * and one left out keeps the row's value (or the starting one), so a client from before them still works.
+ */
 const thresholdsBody = z
   .strictObject({
     speed_limit_kmh: whole(THRESHOLD_LIMITS.speedLimitKmh),
     speeding_pings: whole(THRESHOLD_LIMITS.speedingPings),
     clear_pings: whole(THRESHOLD_LIMITS.clearPings),
     idle_minutes: whole(THRESHOLD_LIMITS.idleMinutes),
+    route_deviation_m: whole(LOCATION_THRESHOLD_LIMITS.routeDeviationM).optional(),
+    route_deviation_pings: whole(LOCATION_THRESHOLD_LIMITS.routeDeviationPings).optional(),
   })
   .transform(
-    (b): RuleThresholds => ({ speedLimitKmh: b.speed_limit_kmh, speedingPings: b.speeding_pings, clearPings: b.clear_pings, idleMinutes: b.idle_minutes }),
+    (b): ThresholdInput => ({
+      speedLimitKmh: b.speed_limit_kmh,
+      speedingPings: b.speeding_pings,
+      clearPings: b.clear_pings,
+      idleMinutes: b.idle_minutes,
+      routeDeviationM: b.route_deviation_m,
+      routeDeviationPings: b.route_deviation_pings,
+    }),
   );
 
 function caller(req: Request): Caller {
@@ -34,7 +47,7 @@ function depotId(req: Request): string {
 }
 
 /**
- * The telemetry rules' thresholds (api-contract §6.5, FMS-80): the fleet's and each depot's that differ. Anyone
+ * The telemetry rules' thresholds (api-contract §6.5, FMS-80, FMS-90): the fleet's and each depot's that differ. Anyone
  * signed in reads them; settings:write (admin) changes them.
  */
 export function ruleThresholdRouter(service: RuleThresholdService): Router {

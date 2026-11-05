@@ -1,0 +1,59 @@
+/*
+ * Geofences on a map (FMS-90). Leaflet draws SVG paths; the classes set their colours from the tokens, so both
+ * themes follow. A yard (keep_in) is an outline with the faintest fill; a no-go zone (keep_out) is dashed danger
+ * with a light fill. The selected one is bolder.
+ */
+
+.geofence-shape {
+  stroke-linejoin: round;
+}
+.geofence-shape--keep_in {
+  stroke: rgb(var(--c-brand));
+  fill: rgb(var(--c-brand));
+  fill-opacity: 0.06;
+}
+.geofence-shape--keep_out {
+  stroke: rgb(var(--c-danger));
+  stroke-dasharray: 6 5;
+  fill: rgb(var(--c-danger));
+  fill-opacity: 0.1;
+}
+.geofence-shape--selected {
+  fill-opacity: 0.16;
+}
+
+/* The editor's outline while it is drawn, and its corners. */
+.geofence-draft {
+  stroke: rgb(var(--c-brand));
+  stroke-dasharray: 4 4;
+  fill: rgb(var(--c-brand));
+  fill-opacity: 0.08;
+}
+.geofence-corner {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid rgb(var(--c-brand));
+  background: rgb(var(--c-surface));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  cursor: grab;
+}
+.geofence-corner--first {
+  background: rgb(var(--c-brand));
+}
+
+/* The legend's samples. */
+.geofence-key {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+}
+.geofence-key--keep_in {
+  border: 2px solid rgb(var(--c-brand));
+  background: rgb(var(--c-brand) / 0.08);
+}
+.geofence-key--keep_out {
+  border: 2px dashed rgb(var(--c-danger));
+  background: rgb(var(--c-danger) / 0.12);
+}

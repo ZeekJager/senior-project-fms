@@ -36,6 +36,7 @@ tags:
   - name: Attendance
   - name: Integrations
   - name: Tracking
+  - name: Geofences
   - name: Command center
   - name: Fuel
   - name: Alerts
@@ -1310,9 +1311,10 @@ paths:
     get:
       tags: [Tracking]
       operationId: listVehicleTelemetryFlags
-      summary: A vehicle's speeding and idling flags (FMS-46)
+      summary: A vehicle's telemetry flags (FMS-46, FMS-90)
       description: >
-        The telemetry rules' flags of one vehicle, newest first (docs/telemetry-rules.md). Behavioural data: needs
+        The telemetry rules' flags of one vehicle, newest first: speeding and idling (docs/telemetry-rules.md),
+        geofence violations and route deviation (docs/geofences.md). Behavioural data: needs
         tracking:read (never drivers), in the caller's depot scope; a vehicle outside it, or an id that is not a
         UUID, is a 404. Names the trip, not the driver.
       parameters:
@@ -1355,6 +1357,178 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /geofences:
+    get:
+      tags: [Geofences]
+      operationId: listGeofences
+      summary: The depots' geofences (FMS-90)
+      description: >
+        Polygons a depot's vehicles must stay inside (keep_in: a yard, an operating area) or out of (keep_out: a
+        no-go zone), by depot then name (docs/geofences.md). Needs tracking:read, in the caller's depot scope; a
+        depot_id outside it is a 404. Removed fences only with status inactive or all.
+      parameters:
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [active, inactive, all], default: active } }
+      responses:
+        '200':
+          description: The geofences.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Geofence' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a depot_id that is not a UUID, an unknown status or query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Geofences]
+      operationId: createGeofence
+      summary: Draw a geofence (FMS-90)
+      description: >
+        Needs geofence:write (admin). The ring is stored closed, rounded to 6 decimals, repeated corners dropped. At
+        most 50 active fences per depot; names are unique per depot among active ones. Audited; GeofenceChanged. A
+        vehicle already on the wrong side is flagged only once it crosses again.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GeofenceInput' } } }
+      responses:
+        '201':
+          description: Drawn.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Geofence' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED: a field missing or unknown; on polygon, too_few_points, too_many_points (over 500),
+            out_of_range, self_intersecting, too_small (under 400 m²) or too_large (over 500 km across), or holes; on
+            depot_id, geofence_limit (50 active).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_DUPLICATE (the depot has an active fence of that name), CONFLICT_IDEMPOTENCY_KEY_REUSED or CONFLICT_IDEMPOTENCY_IN_PROGRESS.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /geofences/{geofence_id}:
+    parameters:
+      - { name: geofence_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Geofences]
+      operationId: getGeofence
+      summary: A geofence (FMS-90)
+      description: Needs tracking:read, in the caller's depot scope; outside it, or an id that is not a UUID, is a 404. The ETag is the version.
+      responses:
+        '200':
+          description: The geofence.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Geofence' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Geofences]
+      operationId: updateGeofence
+      summary: Change a geofence (FMS-90)
+      description: >
+        Needs geofence:write (admin). The fields to change, at least one; If-Match refuses a stale write. Changing
+        its outline, kind, applies or depot closes its open flags (end_reason geofence_changed) and vehicles are
+        judged afresh from their next crossing. A removed fence cannot be changed. Audited; GeofenceChanged.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GeofencePatch' } } }
+      responses:
+        '200':
+          description: Changed.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Geofence' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (as on POST, or an empty body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match), CONFLICT_INVALID_STATE_TRANSITION (a removed fence) or CONFLICT_DUPLICATE (the name).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Geofences]
+      operationId: deleteGeofence
+      summary: Remove a geofence (FMS-90)
+      description: Soft; needs geofence:write (admin). Its open flags close (end_reason geofence_removed). Removing a removed fence changes nothing. Audited.
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /geofences/{geofence_id}/reactivate:
+    parameters:
+      - { name: geofence_id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Geofences]
+      operationId: reactivateGeofence
+      summary: Restore a removed geofence (FMS-90)
+      description: Needs geofence:write (admin). Back in force, judged from each vehicle's next crossing. An active fence is returned as it is. Audited.
+      responses:
+        '200':
+          description: Restored.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Geofence' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (geofence_limit on depot_id, 50 active).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_DUPLICATE (another active fence of the depot now has its name).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /vehicles/{vehicle_id}/tracking:
     get:
@@ -3335,7 +3509,7 @@ paths:
     get:
       tags: [Settings]
       operationId: getRuleThresholds
-      summary: The speeding and idling thresholds (FMS-46, FMS-80)
+      summary: The speeding, idling and route deviation thresholds (FMS-46, FMS-80, FMS-90)
       description: The fleet's, and each depot's that replace them for its vehicles. Any signed-in user.
       responses:
         '200':
@@ -3354,8 +3528,8 @@ paths:
     put:
       tags: [Settings]
       operationId: setFleetRuleThresholds
-      summary: Set the fleet's speeding and idling thresholds (FMS-80)
-      description: All four values; audited; the rules use them within a minute. Needs settings:write (admin).
+      summary: Set the fleet's speeding, idling and route deviation thresholds (FMS-80, FMS-90)
+      description: The four speeding and idling values, and route deviation's if they change; audited; the rules use them within a minute. Needs settings:write (admin).
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/RuleThresholds' } } }
@@ -3382,7 +3556,7 @@ paths:
     put:
       tags: [Settings]
       operationId: setDepotRuleThresholds
-      summary: Set a depot's own speeding and idling thresholds (FMS-80)
+      summary: Set a depot's own speeding, idling and route deviation thresholds (FMS-80, FMS-90)
       description: Creates or replaces the depot's row, which replaces the fleet's for its vehicles; audited. Needs settings:write (admin).
       requestBody:
         required: true
@@ -6457,7 +6631,9 @@ components:
         updated_at: { type: [string, 'null'], format: date-time }
     RuleThresholds:
       type: object
-      description: The telemetry rules' thresholds (FMS-46).
+      description: >
+        The telemetry rules' thresholds (FMS-46, FMS-90). In a PUT the four of FMS-46 are required; route deviation's
+        are optional, and one left out keeps the row's value (or the starting one).
       additionalProperties: false
       required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes]
       properties:
@@ -6465,15 +6641,90 @@ components:
         speeding_pings: { type: integer, minimum: 1, maximum: 20, description: Consecutive pings over the limit that raise a speeding flag. }
         clear_pings: { type: integer, minimum: 1, maximum: 20, description: Consecutive pings at or under the limit that resolve it. }
         idle_minutes: { type: integer, minimum: 1, maximum: 120, description: Minutes at 0 km/h, engine not reported off, that raise an idling flag. }
+        route_deviation_m: { type: integer, minimum: 100, maximum: 5000, default: 500, description: Further than this from the trip's road is off route. }
+        route_deviation_pings: { type: integer, minimum: 1, maximum: 20, default: 3, description: Consecutive pings off route that raise a route deviation flag; clear_pings back on it resolve it. }
     RuleThresholdRow:
-      allOf:
-        - { $ref: '#/components/schemas/RuleThresholds' }
-        - type: object
-          required: [updated_by, updated_by_name, updated_at]
+      type: object
+      description: A row of thresholds as stored, the fleet's or a depot's (a depot's adds depot_id in the list), with who changed it last.
+      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, updated_by, updated_by_name, updated_at]
+      properties:
+        speed_limit_kmh: { type: integer, minimum: 20, maximum: 200 }
+        speeding_pings: { type: integer, minimum: 1, maximum: 20 }
+        clear_pings: { type: integer, minimum: 1, maximum: 20 }
+        idle_minutes: { type: integer, minimum: 1, maximum: 120 }
+        route_deviation_m: { type: integer, minimum: 100, maximum: 5000 }
+        route_deviation_pings: { type: integer, minimum: 1, maximum: 20 }
+        updated_by: { type: [string, 'null'], format: uuid }
+        updated_by_name: { type: [string, 'null'] }
+        updated_at: { type: [string, 'null'], format: date-time }
+    GeofencePolygon:
+      type: object
+      description: GeoJSON Polygon of one ring (no holes), [longitude, latitude] pairs, open or closed; 3 to 500 corners.
+      additionalProperties: false
+      required: [type, coordinates]
+      properties:
+        type: { type: string, const: Polygon }
+        coordinates:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: array
+            minItems: 3
+            maxItems: 501
+            items:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items: { type: number }
+    GeofenceInput:
+      type: object
+      additionalProperties: false
+      required: [depot_id, name, kind, polygon]
+      properties:
+        depot_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 120, description: Unique per depot among active fences, ignoring case. }
+        description: { type: [string, 'null'], maxLength: 500 }
+        kind: { type: string, enum: [keep_in, keep_out], description: 'keep_in: its vehicles must stay inside. keep_out: they must not enter.' }
+        applies: { type: string, enum: [always, off_trip], default: always, description: 'off_trip: only while the vehicle is on no trip.' }
+        polygon: { $ref: '#/components/schemas/GeofencePolygon' }
+    GeofencePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        depot_id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 500 }
+        kind: { type: string, enum: [keep_in, keep_out] }
+        applies: { type: string, enum: [always, off_trip] }
+        polygon: { $ref: '#/components/schemas/GeofencePolygon' }
+    Geofence:
+      type: object
+      description: A depot's geofence (FMS-90, docs/geofences.md).
+      additionalProperties: false
+      required: [geofence_id, depot_id, name, description, kind, applies, polygon, area_m2, is_active, version, created_at, updated_at, updated_by, updated_by_name]
+      properties:
+        geofence_id: { type: string, format: uuid }
+        depot_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        kind: { type: string, enum: [keep_in, keep_out] }
+        applies: { type: string, enum: [always, off_trip] }
+        polygon:
+          type: object
+          description: The ring as stored, closed.
+          required: [type, coordinates]
           properties:
-            updated_by: { type: [string, 'null'], format: uuid }
-            updated_by_name: { type: [string, 'null'] }
-            updated_at: { type: [string, 'null'], format: date-time }
+            type: { type: string, const: Polygon }
+            coordinates: { type: array, items: { type: array, items: { type: array, items: { type: number } } } }
+        area_m2: { type: integer, minimum: 1 }
+        is_active: { type: boolean, description: False once removed. }
+        version: { type: integer, minimum: 0, description: Also the ETag. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, 'null'], format: uuid }
+        updated_by_name: { type: [string, 'null'] }
     RuleThresholdList:
       type: object
       required: [fleet, depots]
@@ -7574,13 +7825,20 @@ components:
 
     TelemetryFlag:
       type: object
-      description: A speeding or idling flag of the telemetry rules (FMS-46).
-      required: [flag_id, vehicle_id, trip_id, flag_type, severity, status, observed_at, resolved_at, details]
+      description: A flag of the telemetry rules (FMS-46) or of the geofence and route deviation rules (FMS-90).
+      required: [flag_id, vehicle_id, trip_id, flag_type, geofence, severity, status, observed_at, resolved_at, details]
       properties:
         flag_id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
         trip_id: { type: [string, 'null'], format: uuid, description: The trip the pings were stored with. }
         flag_type: { type: string, enum: [speeding, idling, fuel_variance, route_deviation, geofence_violation, harsh_braking, other] }
+        geofence:
+          type: [object, 'null']
+          description: The fence a geofence_violation is about; null for other flags.
+          required: [geofence_id, name]
+          properties:
+            geofence_id: { type: string, format: uuid }
+            name: { type: string }
         severity: { type: string, enum: [low, medium, high, critical] }
         status: { type: string, enum: [open, reviewed, dismissed, resolved], description: The review status; the rules never change it. }
         observed_at: { type: string, format: date-time, description: When the condition began. }
@@ -7588,9 +7846,11 @@ components:
         details:
           type: object
           description: >
-            speed_limit_kmh, speed_kmh and consecutive_pings (speeding) or idle_minutes (idling); lat, lng and
-            flagged_at (the ping that crossed the threshold). On closing: end_reason (cleared, moving, engine_off,
-            signal_lost), duration_seconds and, for speeding, max_speed_kmh.
+            speed_limit_kmh, speed_kmh and consecutive_pings (speeding) or idle_minutes (idling); kind and
+            geofence_name (geofence_violation); distance_m, route_deviation_m and consecutive_pings (route_deviation);
+            lat, lng and flagged_at (the ping that crossed the threshold). On closing: end_reason (cleared, moving,
+            engine_off, signal_lost; trip_started, trip_ended, geofence_changed, geofence_removed), duration_seconds
+            and, for speeding, max_speed_kmh, for route deviation max_distance_m.
           additionalProperties: true
 
     RoadLine:

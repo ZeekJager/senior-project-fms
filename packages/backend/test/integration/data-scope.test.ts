@@ -101,7 +101,7 @@ async function markers(depotId: string | null, ids: Ids, extra: { driverRows?: b
   return found;
 }
 
-/** What the small seed leaves out of a depot: its own spare part, a prediction, an alert, an incident, a notification, a service program. */
+/** What the small seed leaves out of a depot: its own spare part, a prediction, an alert, an incident, a notification, a service program, a geofence. */
 async function fillGaps(depotId: string, ids: Ids): Promise<void> {
   const none = async (sql: string, params: unknown[]) => (await pool.query(`SELECT 1 FROM ${sql} LIMIT 1`, params)).rowCount === 0;
   const [vehicle, user] = [ids.vehicles[0], ids.users[0]];
@@ -136,6 +136,13 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
   }
   if (await none('maintenance.service_programs WHERE depot_id = $1', [depotId])) {
     await pool.query("INSERT INTO maintenance.service_programs (depot_id, name, interval_km, lead_km) VALUES ($1, 'Depot B service', 10000, 1000)", [depotId]);
+  }
+  if (await none('tracking.geofences WHERE depot_id = $1', [depotId])) {
+    await pool.query(
+      `INSERT INTO tracking.geofences (depot_id, name, kind, polygon, min_lat, max_lat, min_lng, max_lng, area_m2)
+       VALUES ($1, 'Depot B yard', 'keep_in', '{"type":"Polygon","coordinates":[[[38.76,9.01],[38.762,9.01],[38.762,9.012],[38.76,9.01]]]}', 9.01, 9.012, 38.76, 38.762, 24000)`,
+      [depotId],
+    );
   }
   // A downtime period (FMS-131) on the vehicle the samples name: the first by id.
   if (await none('fleet.downtime_periods WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.vehicles])) {
@@ -173,6 +180,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     periodId: await one('SELECT public_id::text AS id FROM fleet.downtime_periods WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x) ORDER BY id', [ids.vehicles]),
     notificationId: await one('SELECT public_id::text AS id FROM alert.notifications WHERE recipient_user_id = ANY($1::bigint[]) ORDER BY id', [ids.users]),
     programId: await one('SELECT public_id::text AS id FROM maintenance.service_programs WHERE depot_id = $1 ORDER BY id', [depotId]),
+    geofenceId: await one('SELECT public_id::text AS id FROM tracking.geofences WHERE depot_id = $1 ORDER BY id', [depotId]),
   };
 }
 

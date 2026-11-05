@@ -29,4 +29,6 @@ export const handlers: RequestHandler[] = [
   ),
   // Settings (FMS-80): health badges read the alert line from them. The defaults, never changed.
   http.get('/api/v1/settings', () => HttpResponse.json({ data: DEFAULT_SETTINGS, meta: { request_id: 'r-0' } })),
+  // Geofences (FMS-90): the live map draws them under the vehicles. None by default.
+  http.get('/api/v1/geofences', () => HttpResponse.json({ data: [], meta: { request_id: 'r-0' } })),
 ]

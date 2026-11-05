@@ -1,0 +1,1 @@
+export { GeofencesPage } from './GeofencesPage'

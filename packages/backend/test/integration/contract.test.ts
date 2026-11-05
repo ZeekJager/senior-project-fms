@@ -405,6 +405,40 @@ describe('the Sprint 3 operations (FMS-119)', () => {
   });
 });
 
+describe('geofences and route deviation (FMS-90)', () => {
+  test('geofences: draw, list, read, change, remove, restore; a crossing outline and a stale version are the spec’s; thresholds and flags with the new fields', async () => {
+    const depot = await createDepot();
+    const { cookie } = await signIn(['admin']);
+    const api = as(cookie);
+    const polygon = { type: 'Polygon', coordinates: [[[38.7603, 9.0098], [38.7623, 9.0098], [38.7623, 9.0118], [38.7603, 9.0118]]] };
+
+    const created = await api.post('/geofences', { depot_id: depot.public_id, name: 'Contract yard', kind: 'keep_in', applies: 'off_trip', polygon });
+    expect(created.status).toBe(201);
+    expectContract(created, 'post', '/geofences');
+    const id = created.body.data.geofence_id;
+    expectContract(await api.get(`/geofences?depot_id=${depot.public_id}`), 'get', '/geofences');
+    expectContract(await api.get(`/geofences/${id}`), 'get', '/geofences/{geofence_id}');
+    expectContract(await api.patch(`/geofences/${id}`, { name: 'Contract night yard', description: 'Parked after 18:00' }), 'patch', '/geofences/{geofence_id}');
+    const stale = await request(app).patch(`/api/v1/geofences/${id}`).set('Cookie', cookie).set('If-Match', '"0"').send({ name: 'Late' });
+    expect(stale.status).toBe(409);
+    expectContract(stale, 'patch', '/geofences/{geofence_id}');
+    const crossing = await api.post('/geofences', { depot_id: depot.public_id, name: 'Bow', kind: 'keep_out', polygon: { type: 'Polygon', coordinates: [[[38.76, 9.01], [38.77, 9.02], [38.77, 9.01], [38.76, 9.02]]] } });
+    expect(crossing.status).toBe(400);
+    expectContract(crossing, 'post', '/geofences');
+    const removed = await api.delete(`/geofences/${id}`);
+    expect(removed.status).toBe(204);
+    expectContract(removed, 'delete', '/geofences/{geofence_id}');
+    expectContract(await api.post(`/geofences/${id}/reactivate`), 'post', '/geofences/{geofence_id}/reactivate');
+
+    const thresholds = await api.put(`/settings/telemetry-rules/depots/${depot.public_id}`, { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 800 });
+    expect(thresholds.status).toBe(200);
+    expectContract(thresholds, 'put', '/settings/telemetry-rules/depots/{depot_id}');
+    expectContract(await api.get('/settings/telemetry-rules'), 'get', '/settings/telemetry-rules');
+    const vehicle = await createVehicle({ depot });
+    expectContract(await api.get(`/vehicles/${vehicle.public_id}/telemetry-flags`), 'get', '/vehicles/{vehicle_id}/telemetry-flags');
+  });
+});
+
 describe('the contract check itself', () => {
   test('it names a body that does not match, a status the spec does not list, and an operation it does not have', () => {
     const wrong = responseProblems('/auth/me', 'get', 200, { data: { user: { id: 'not-a-uuid' } }, meta: { request_id: 'x' } });

@@ -151,5 +151,8 @@ export { tripBoard, type TripBoard } from './infrastructure/command-center.queri
 /** For the telemetry rules (FMS-46): a flag's trip, by the internal id its pings carry, with its driver. */
 export { tripPartiesByIds, type TripParties } from './infrastructure/trip-activity.queries';
 
+/** For the geofence and route deviation rules (FMS-90): the road each trip follows, by the internal id its pings carry. */
+export { tripRoadsByIds, type TripRoad } from './infrastructure/trip-activity.queries';
+
 /** For the nightly scoring (FMS-55): completed trips' kilometres and driving time over a window, and kilometres since a time. */
 export { completedDistanceAfter, completedTripMetres, completedTripUsage, type TripUsage } from './infrastructure/trip-usage.queries';

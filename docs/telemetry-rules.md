@@ -27,6 +27,7 @@ Code: `integration/domain/telemetry-rules.ts` (the rules, pure), `integration/ap
 | `speeding_pings` | 3 | 1-20 |
 | `clear_pings` | 3 | 1-20 |
 | `idle_minutes` | 5 | 1-120 |
+| `route_deviation_m`, `route_deviation_pings` | 500, 3 | 100-5000, 1-20: route deviation's, FMS-90 ([geofences.md](geofences.md)) |
 
 A depot's row replaces the whole fleet row for its vehicles. An administrator changes them on the Settings screen (S-27) or with `PUT /settings/telemetry-rules/fleet` and `/depots/{depot_id}` (FMS-80, [settings.md](settings.md)), audited. Each instance re-reads thresholds at most every 30 seconds per depot (`THRESHOLDS_TTL_MS`), and the instance that saved a change at once, so a change takes effect within a minute. By SQL, as the admin role, a change is not audited and waits for the cache:
 
@@ -95,5 +96,5 @@ Speeding flags appear after the third ping (30 s), idling ones after 5 minutes. 
 ## Not done here
 
 - A screen or API to change thresholds (SQL for now, above).
-- Harsh braking, geofences and route deviation: other flag types of the same table, for later cards.
+- Harsh braking: another flag type of the same table, for a later card. Geofences and route deviation are FMS-90 ([geofences.md](geofences.md)): their own consumer and counters, the same table, events and thresholds row.
 - Reviewing a flag (`status`): the compliance workflow.

@@ -65,6 +65,8 @@ It is cached in Redis for 5 seconds (`LIVE_MAP_CACHE_TTL_SECONDS`): one snapshot
 - When a position names a vehicle the page does not have, or a different trip. Throttled to once every 5 seconds.
 - A snapshot older than a position the socket already brought keeps that position.
 
+**Geofences** (FMS-90, [geofences.md](geofences.md)): the depot's fences are drawn under the markers, a yard as an outline and a no-go zone dashed and shaded, with their names on hover (`GET /geofences`, cached a minute). A vehicle with an open geofence or route deviation flag says so in its popup: *Geofence: broken since 14:05*, *Off route: since 14:05*.
+
 **Speeding and idling flags** come from the telemetry rules (FMS-46, [telemetry-rules.md](telemetry-rules.md)), which open and close `tracking.telemetry_flags`. A flag opening or closing drops the cached snapshot and reaches the page as `vehicle.flag.changed`, which re-reads it: the legend and the marker change within a second or two of the ping that decided it.
 
 ## Budgets

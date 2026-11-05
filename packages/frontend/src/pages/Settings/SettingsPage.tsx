@@ -8,7 +8,7 @@ import { ApiError } from '@/lib/api/errors'
 import { formatDateTime } from '@/pages/VehicleHistory/format'
 import { DepotThresholdsDrawer } from './DepotThresholdsDrawer'
 import { ThresholdFields, sameThresholds, toValues, validateThresholds, type ThresholdErrors, type ThresholdValues } from './ThresholdFields'
-import { parseWhole, useRuleThresholds, useSaveSettings, useSaveThresholds, type Thresholds, type ThresholdsRow } from './api'
+import { DEFAULT_THRESHOLDS, parseWhole, useRuleThresholds, useSaveSettings, useSaveThresholds, type Thresholds, type ThresholdsRow } from './api'
 
 const SETTING_COPY: Record<SettingKey, { label: string; unit: string; hint: (s: Setting) => string }> = {
   fuel_variance_threshold_pct: {
@@ -87,7 +87,7 @@ function FormError({ message }: { message: string | null }) {
 
 const serverMessage = (err: unknown) => (err instanceof ApiError ? `Not saved: ${err.message}` : 'Could not reach the server. Check your connection and try again.')
 
-/** Speeding and idling (FMS-46): the fleet's thresholds, and depots that have their own. */
+/** Speeding and idling (FMS-46) and route deviation (FMS-90): the fleet's thresholds, and depots that have their own. */
 function DrivingRules() {
   const rules = useRuleThresholds()
   const depots = useDepots()
@@ -127,11 +127,11 @@ function DrivingRules() {
 
   const drawerStart: Thresholds = useMemo(() => {
     const row = drawer?.depotId ? own.find((o) => o.depot_id === drawer.depotId) : undefined
-    return row ?? fleet ?? { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5 }
+    return row ?? fleet ?? DEFAULT_THRESHOLDS
   }, [drawer, own, fleet])
 
   return (
-    <SettingsCard id="driving-rules" icon={<Gauge />} title="Driving rules" description="Speeding and idling flags from each vehicle's GPS pings. A depot can have its own.">
+    <SettingsCard id="driving-rules" icon={<Gauge />} title="Driving rules" description="Speeding, idling and off-route flags from each vehicle's GPS pings. A depot can have its own.">
       {rules.isError ? (
         <ErrorState error={rules.error} onRetry={() => void rules.refetch()} />
       ) : !values || !fleet ? (
@@ -199,7 +199,8 @@ function DepotRow({ name, row, onEdit }: { name: string; row: ThresholdsRow; onE
         <p className="truncate text-sm font-medium text-ink">{name}</p>
         <p className="text-xs text-ink-subtle">
           <span className="tabular">{row.speed_limit_kmh} km/h</span> after <span className="tabular">{row.speeding_pings}</span>, cleared after{' '}
-          <span className="tabular">{row.clear_pings}</span> · idling after <span className="tabular">{row.idle_minutes} min</span>
+          <span className="tabular">{row.clear_pings}</span> · idling after <span className="tabular">{row.idle_minutes} min</span> · off route beyond{' '}
+          <span className="tabular">{row.route_deviation_m.toLocaleString('en-US')} m</span> for <span className="tabular">{row.route_deviation_pings}</span>
         </p>
       </div>
       <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit} aria-label={`Edit ${name}'s thresholds`}>

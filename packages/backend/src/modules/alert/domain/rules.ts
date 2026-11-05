@@ -70,6 +70,8 @@ const FILL_UP_TITLES: Record<string, string> = {
 };
 const HOUR = 60;
 const DAY = 24 * HOUR;
+/** Flag types alerted from events of their own (FMS-90), not from TelemetryFlagRaised. */
+const LOCATION_FLAG_TYPES = ['geofence_violation', 'route_deviation'];
 
 const km = (n: number) => `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })} km`;
 const addisDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Addis_Ababa' });
@@ -247,9 +249,11 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
   },
 
   // The telemetry rules (FMS-46): `flag_id`, `vehicle_id`, `driver_id`, `trip_id`, `depot_id`, `flag_type`, `severity`, `observed_at`.
+  // A geofence or route deviation flag (FMS-90) is alerted from its own event below, with the fence or the distance.
   TelemetryFlagRaised: {
-    type: (p) => (str(p, 'flag_type') === 'geofence_violation' ? 'geofence_violation' : 'unsafe_driving'),
+    type: () => 'unsafe_driving',
     module: 'integration',
+    when: (p) => !LOCATION_FLAG_TYPES.includes(str(p, 'flag_type') ?? ''),
     facts: (p) => ({
       severity: severityOr(p, 'severity', str(p, 'flag_type') === 'speeding' ? 'high' : 'medium'),
       vehicleId: str(p, 'vehicle_id'),
@@ -262,6 +266,54 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     windowMinutes: 30,
     title: (p, n) => `${capitalize(humanize(str(p, 'flag_type') ?? 'unsafe driving'))}: ${vehicleName(n)}`,
     message: (p, n) => `${vehicleName(n)} was flagged for ${humanize(str(p, 'flag_type') ?? 'unsafe driving')}. Contact the driver.`,
+    audience: ['dispatcher', 'depot_admin'],
+  },
+
+  // Geofences (FMS-90): a vehicle left a keep-in fence or entered a keep-out one. `flag_id`, `vehicle_id`, `driver_id`, `trip_id`,
+  // `depot_id`, `geofence_id`, `geofence_name`, `kind`, `observed_at`, `lat`, `lng`. Each fence is its own source.
+  GeofenceViolated: {
+    type: () => 'geofence_violation',
+    module: 'integration',
+    facts: (p) => ({
+      severity: 'high',
+      vehicleId: str(p, 'vehicle_id'),
+      driverId: str(p, 'driver_id'),
+      tripId: str(p, 'trip_id'),
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'flag_id') ? { type: 'telemetry_flag', id: str(p, 'flag_id')! } : null,
+      dedupKey: `geofence:${str(p, 'vehicle_id')}:${str(p, 'geofence_id') ?? 'unknown'}`,
+    }),
+    windowMinutes: 30,
+    title: (p, n) => `${str(p, 'kind') === 'keep_out' ? 'Entered' : 'Left'} ${str(p, 'geofence_name') ?? 'a geofence'}: ${vehicleName(n)}`,
+    message: (p, n) =>
+      str(p, 'kind') === 'keep_out'
+        ? `${vehicleName(n)} entered ${str(p, 'geofence_name') ?? 'a no-go zone'}, a zone it must keep out of. Contact the driver.`
+        : `${vehicleName(n)} left ${str(p, 'geofence_name') ?? 'its geofence'}, an area it must stay inside. Check it is authorised to.`,
+    audience: ['dispatcher', 'depot_admin'],
+  },
+
+  // Route deviation (FMS-90): a vehicle on a trip was off its route's road for the consecutive pings the threshold asks.
+  // `flag_id`, `vehicle_id`, `driver_id`, `trip_id`, `depot_id`, `route_id`, `distance_m`, `route_deviation_m`, `consecutive_pings`.
+  RouteDeviationDetected: {
+    type: () => 'route_deviation',
+    module: 'integration',
+    facts: (p) => ({
+      severity: 'medium',
+      vehicleId: str(p, 'vehicle_id'),
+      driverId: str(p, 'driver_id'),
+      tripId: str(p, 'trip_id'),
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'flag_id') ? { type: 'telemetry_flag', id: str(p, 'flag_id')! } : null,
+      dedupKey: `route_deviation:${str(p, 'vehicle_id')}:${str(p, 'trip_id') ?? 'none'}`,
+    }),
+    windowMinutes: 60,
+    title: (_p, n) => `Off route: ${vehicleName(n)}`,
+    message: (p, n) => {
+      const metres = num(p, 'distance_m');
+      const pings = num(p, 'consecutive_pings');
+      const how = metres !== null ? `${metres.toLocaleString('en-US')} m from its route` : 'off its route';
+      return `${vehicleName(n)} was ${how}${pings !== null ? ` for ${pings} pings in a row` : ''}. Contact the driver.`;
+    },
     audience: ['dispatcher', 'depot_admin'],
   },
 

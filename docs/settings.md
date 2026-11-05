@@ -24,7 +24,7 @@ For `settings:write`, a new permission held by admin only. Reading the values ne
 
 ### Driving rules: `tracking.rule_thresholds`
 
-The speeding and idling thresholds ([telemetry-rules.md](telemetry-rules.md)) kept their table: one fleet row and one per depot that differs.
+The speeding and idling thresholds ([telemetry-rules.md](telemetry-rules.md)) and, since FMS-90, route deviation's ([geofences.md](geofences.md): *Off route beyond* metres, *Off route after* pings) kept their table: one fleet row and one per depot that differs.
 
 | Field | Default | Range |
 |---|---|---|
@@ -34,7 +34,7 @@ The speeding and idling thresholds ([telemetry-rules.md](telemetry-rules.md)) ke
 | `idle_minutes` | 5 | 1-120 |
 
 - `GET /settings/telemetry-rules`: `{ fleet, depots[] }`, each with the four values and who changed them last, and when.
-- `PUT /settings/telemetry-rules/fleet` and `PUT /settings/telemetry-rules/depots/{depot_id}`: all four values; a depot's row is created or replaced. Saving the same values writes nothing.
+- `PUT /settings/telemetry-rules/fleet` and `PUT /settings/telemetry-rules/depots/{depot_id}`: all four speeding and idling values, and route deviation's two if they change (one left out keeps the row's); a depot's row is created or replaced. Saving the same values writes nothing.
 - `DELETE /settings/telemetry-rules/depots/{depot_id}`: the depot follows the fleet's again (`404` if it had none of its own). The table has no `is_active`, so the row is deleted; the audit row keeps its values.
 
 ### Alerts and anomalies: `settings.settings`

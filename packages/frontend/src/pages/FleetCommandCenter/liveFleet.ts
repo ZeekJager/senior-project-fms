@@ -77,6 +77,9 @@ export function applyPositions(fleet: Fleet, updates: readonly LocationUpdate[])
 
 export const isSpeeding = (v: VehicleLocation) => v.flags.some((f) => f.flag_type === 'speeding')
 
+/** "14:05", in Addis Ababa. */
+const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Addis_Ababa' })
+
 /** "Bole - Adama", or the trip's own origin and destination when it has no route. */
 export function routeLabel(trip: LiveTrip | null): string | null {
   if (!trip) return null
@@ -93,6 +96,11 @@ export function toMapVehicle(v: VehicleLocation): FleetMapVehicle | null {
     details.push({ label: 'Driver', value: v.trip.driver?.full_name ?? 'Not assigned' })
     const route = routeLabel(v.trip)
     if (route) details.push({ label: 'Route', value: route })
+  }
+  // Geofences and route deviation (FMS-90): said in the popup; the alert says which fence.
+  for (const f of v.flags) {
+    if (f.flag_type === 'route_deviation') details.push({ label: 'Off route', value: `Since ${clock(f.observed_at)}` })
+    if (f.flag_type === 'geofence_violation') details.push({ label: 'Geofence', value: `Broken since ${clock(f.observed_at)}` })
   }
   return {
     vehicleId: v.vehicle_id,
