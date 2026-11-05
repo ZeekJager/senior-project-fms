@@ -1,6 +1,7 @@
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
+import { config } from './config';
 import { pool, reads } from './db';
 import { auditLogMiddleware } from './middleware/auditLog';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -12,6 +13,7 @@ import { integrationGateway, keepsRawBody } from './modules/integration';
 import { assertEveryRouteDeclaresPolicy } from './shared/authz/route-policy';
 import { cache } from './shared/cache';
 import { outboxHealth } from './shared/events/outbox-health';
+import { apiDocs, apiDocsEnabledFor } from './shared/http/api-docs';
 import { healthRouter, type HealthMetrics, type OptionalDependency, type ReadinessCheck } from './shared/http/health';
 import type { AppModule } from './shared/module';
 
@@ -24,6 +26,8 @@ export interface AppOptions {
   metrics?: Record<string, HealthMetrics>;
   /** The modules to mount. Defaults to every module; tests pass their own routes. */
   modules?: AppModule[];
+  /** Serve the API documentation page at /api-docs (FMS-65). Defaults to on, except in production. */
+  apiDocs?: boolean;
 }
 
 /** Composition root: shared middleware first, then each module's routes. */
@@ -61,6 +65,11 @@ export function createApp(options: AppOptions = {}): Express {
       options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }), integrations: integrationGateway.metrics, replica: () => reads.metrics() },
     ),
   );
+
+  if (options.apiDocs ?? apiDocsEnabledFor(config.nodeEnv)) {
+    const docs = apiDocs();
+    if (docs) app.use('/api-docs', docs);
+  }
 
   for (const mod of options.modules ?? defaultModules) {
     if (mod.router) app.use('/api/v1', mod.router);
