@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, HeartPulse, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Radar, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -12,6 +12,7 @@ import { MaintenancePage } from '@/pages/Maintenance'
 import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
+import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
 import { GeofencesPage } from '@/pages/Geofences'
@@ -150,6 +151,14 @@ export const portals: Portal[] = [
         element: <ReportsPage />,
         permission: 'analytics:read',
         nav: { label: 'Reports', icon: FileChartColumn },
+      },
+      {
+        // S-33 (FMS-142): availability, downtime by reason, MTBF and MTTR, with the repairs behind them. analytics:read
+        // and maintenance:read: admin, fleet manager, compliance officer, fleet owner; in the user's depot scope.
+        path: '/availability',
+        element: <FleetAvailabilityPage />,
+        permission: { all: ['analytics:read', 'maintenance:read'] },
+        nav: { label: 'Availability', icon: Gauge },
       },
     ],
   },

@@ -269,6 +269,35 @@ export class MaintenanceRepository extends Repository {
     return { records: records.rows, failures: failures.rows };
   }
 
+  /** What the repairs and failures behind downtime periods were, by public id (FMS-142): the problem in words. */
+  async downtimeProblems(
+    db: Queryable,
+    recordIds: readonly string[],
+    failureIds: readonly string[],
+  ): Promise<{
+    records: { id: string; type: string; status: string; description: string | null }[];
+    failures: { id: string; component: string; mode: string; detectedBy: string; occurredAt: Date }[];
+  }> {
+    const records = recordIds.length
+      ? await db.query<{ id: string; type: string; status: string; description: string | null }>(
+          `SELECT public_id::text AS id, maintenance_type::text AS type, status::text AS status, description
+             FROM maintenance.maintenance_records
+            WHERE public_id = ANY($1::uuid[])`,
+          [recordIds],
+        )
+      : { rows: [] };
+    const failures = failureIds.length
+      ? await db.query<{ id: string; component: string; mode: string; detectedBy: string; occurredAt: Date }>(
+          `SELECT public_id::text AS id, component::text AS component, failure_mode::text AS mode,
+                  detected_by::text AS "detectedBy", occurred_at AS "occurredAt"
+             FROM maintenance.failure_events
+            WHERE public_id = ANY($1::uuid[])`,
+          [failureIds],
+        )
+      : { rows: [] };
+    return { records: records.rows, failures: failures.rows };
+  }
+
   /** Completed repairs with an odometer, completed at or after `since` (null: all): meter readings (FMS-126). */
   async completedOdometers(db: Queryable, since: Date | null): Promise<{ vehicleId: string; ref: string; odometerKm: number; at: Date }[]> {
     const res = await db.query<{ vehicleId: string; ref: string; odometerKm: number; at: Date }>(

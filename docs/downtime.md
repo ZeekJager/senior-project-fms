@@ -6,7 +6,7 @@ Card: FMS-131 (SE-175). Code:
 - `packages/backend/src/modules/analytics/`: `domain/downtime.ts` and `AnalyticsService.downtime`;
 - the repairs and failures behind it in the maintenance module: `MaintenanceRepository.downtimeSources`, exported as `maintenanceRefs.downtimeSources`.
 
-Migration 050. The screen that shows it is FMS-142 (SE-186).
+Migration 050. The screen that shows it is S-33 Fleet availability (FMS-142, SE-186, [availability.md](availability.md)), which also added a month window and the problem behind each period to `GET /vehicles/{vehicle_id}/downtime`.
 
 Fleet managers are measured on availability. Before this card the system knew a vehicle's status now and its status history, but not how long it had been out of service in a month, or why. `fleet.downtime_periods` keeps each stretch a vehicle was down, with its reason, and `GET /analytics/downtime` turns them into availability, MTBF and MTTR per vehicle, depot and fleet.
 
@@ -77,7 +77,7 @@ The answer is computed live from `analytics.downtime_facts` and `analytics.vehic
 
 ## Reading a vehicle's periods
 
-`GET /vehicles/{vehicle_id}/downtime` (`vehicle:read`, depot scope, `404` outside it): every period, newest first, paged, with its length in minutes (to now while it lasts), reason, whether it is unplanned, the derived reason, the staff reason's note and author, what opened it, and its work order and failure.
+`GET /vehicles/{vehicle_id}/downtime` (`vehicle:read`, depot scope, `404` outside it): every period, newest first, paged, with its length in minutes (to now while it lasts), reason, whether it is unplanned, the derived reason, the staff reason's note and author, what opened it, and its work order and failure: their ids, and with `maintenance:read` what they were (FMS-142). `from` and `to` keep the periods overlapping a window.
 
 ## Not covered
 

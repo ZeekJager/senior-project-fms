@@ -41,7 +41,7 @@ import { DepotService } from './application/depot.service';
 import { DispatchService } from './application/dispatch.service';
 import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
-import { DowntimeService, type DowntimeSourceLookup } from './application/downtime.service';
+import { DowntimeService, type DowntimeProblemLookup, type DowntimeSourceLookup } from './application/downtime.service';
 import { DriverService } from './application/driver.service';
 import { DvirService } from './application/dvir.service';
 import { ExpiryService } from './application/expiry.service';
@@ -84,6 +84,8 @@ type MaintenanceLookup = {
   serviceDueSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceDueSummary>>;
   /** The repairs and failures behind each vehicle's downtime (FMS-131). */
   downtimeSources: DowntimeSourceLookup;
+  /** What they were, for the availability screen (FMS-142). */
+  downtimeProblems: DowntimeProblemLookup;
 };
 let maintenanceLookup: MaintenanceLookup | null = null;
 
@@ -147,6 +149,7 @@ const downtimeService = new DowntimeService({
   vehicles: vehicleRepository,
   users: userDirectory,
   sources: () => maintenanceLookup?.downtimeSources ?? null,
+  problems: () => maintenanceLookup?.downtimeProblems ?? null,
 });
 for (const type of [VEHICLE_EVENTS.statusChanged, 'FailureRecorded', 'MaintenanceRecordOpened', 'MaintenanceRecordUpdated', 'MaintenanceRecordCompleted']) {
   eventBus.project(type, 'fleet.downtime', async (event, tx) => {
