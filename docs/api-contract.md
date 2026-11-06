@@ -1010,6 +1010,10 @@ Analytics and reporting reads go to the PostgreSQL read replica (FMS-94, [read-r
 | `POST /webhooks/ev/{provider}` | Receive charging event | Provider signature/secret | 202 Accepted |
 | `GET /integrations/providers` | Provider status | `integration:read` | `Provider[]` |
 | `POST /integrations/providers/{id}/sync` | Trigger provider sync | `integration:execute` | 202 + `SyncLog` |
+| `GET /integrations/devices` | The device registry (FMS-138): `?provider_id=`, `?status=active\|removed\|all` | `integration:read`; the vehicles' depot scope | `GpsDevice[]`, `meta.total` |
+| `GET /integrations/devices/unknown` | Device ids a provider sent that are linked to no vehicle | `integration:read` | `UnknownGpsDevice[]` |
+| `POST /integrations/devices` | Link a provider's device to a vehicle | `integration:execute`; `Idempotency-Key` | 201 + `GpsDevice` |
+| `DELETE /integrations/devices/{id}` | Unlink a device (kept as `removed`) | `integration:execute` | 204 |
 
 Webhook handlers verify signatures, validate schema and version, create a correlation id, normalize provider payloads, and persist/enqueue work. They return quickly so provider retries do not create duplicate business work. Idempotency is required for retried external events.
 
@@ -1034,7 +1038,10 @@ How it works and how to add a provider: [docs/integrations.md](integrations.md).
   - `status` (`operational`, `degraded`, `down` while the circuit is open, `unknown`, `inactive`);
   - `capabilities` (`sync`, `webhooks`, `health_check`), `webhook_secret_configured`;
   - `last_success_at`, `last_failure_at`, `last_error`, `last_sync`;
-  - `circuit` (this API instance's breaker: `state`, `opened_at`, `retry_at`, the 60 s window's counts, `latency_mean_ms`; null until the instance has called it);
+  - `last_delivery_at`, when its last webhook delivery was stored (FMS-138);
+  - `today` (FMS-138, since midnight in Addis Ababa): `deliveries` and `deliveries_rejected` (a bad signature, a replay, an unreadable body), `positions_accepted` and `positions_rejected` (an unlinked device, too old, in the future, imprecise);
+  - `devices` (FMS-138): a telematics provider's `linked` (active) devices and `unknown` device ids; null for other types;
+  - `circuit` (this API instance's breaker: `state`, `opened_at`, `retry_at`, the 60 s window's counts, `latency_mean_ms`; null until the instance has called it, so always null for a provider that only sends webhooks);
   - `health`.
 
   `configuration` and secrets are never returned.
@@ -1055,6 +1062,29 @@ Retries are de-duplicated on these keys, with `INSERT ... ON CONFLICT DO NOTHING
 | Telemetry | `(vehicle_id, recorded_at)` on `tracking.gps_pings` |
 | Fuel card | `(provider_id, external_transaction_id)` on `integration.fuel_card_transactions` |
 | EV charging | `external_session_id` on `ev.charging_sessions` |
+
+### 15.3 Device registry (FMS-138)
+
+Which tracker reports for which vehicle: [docs/telematics.md](telematics.md).
+
+- **`GpsDevice`:**
+  - `id`, `device_identifier`, `device_model`;
+  - `provider` (`id`, `code`, `name`; null for a device with its own token) and `credential` (`provider` or `token`);
+  - `vehicle` (`id`, `registration_number`), `status` (`active`, `inactive`, `faulty`, `removed`);
+  - `installed_at`, `removed_at`, `last_seen_at`;
+  - `last_error`: `{ reason, at }`, why its last refused position was refused (`too_old`, `future_timestamp`, `low_accuracy`, `vehicle_retired`), or null.
+
+  Never a token or its hash. Listed active first, then by last seen, for the vehicles in the caller's depot scope.
+- **Link.** `POST /integrations/devices` with `{ provider_id, device_identifier, vehicle_id, device_model?, replace? }`.
+  - The identifier is the provider's own (an IMEI, a serial): 1 to 255 printable characters, no spaces. Identifiers are unique across the fleet.
+  - The same device again moves it, from another vehicle or back from `removed`, keeping its id.
+  - Refusals:
+    - `400 VALIDATION_FAILED`: `provider_id` `references_missing_record` or `not_telematics`; `vehicle_id` `references_missing_record` (none in scope) or `vehicle_retired`.
+    - `409 CONFLICT_DUPLICATE`: `device_identifier` `already_exists`, another provider's device or a token device; `vehicle_id` `vehicle_has_device`, the vehicle's active device as `record_id`. `replace: true` takes that device out of service instead.
+
+  Audited, with the user.
+- **Unlink.** `DELETE /integrations/devices/{id}`: `204`. The device is kept as `removed` with its pings; its positions are refused from then on, and a token device's token stops working. Again is `204` and changes nothing; outside the caller's scope, `404`. Audited.
+- **`UnknownGpsDevice`** (`GET /integrations/devices/unknown`): `provider`, `device_identifier`, `first_seen_at`, `last_seen_at`, `positions` refused. Only from signed deliveries; newest first, 200 at most; 1,000 kept per provider. Linking one removes it.
 
 ## 16. Resource Schemas
 

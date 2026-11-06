@@ -133,6 +133,8 @@ services:
       INTEGRATION_SMTP_EMAIL_API_KEY: "${INTEGRATION_SMTP_EMAIL_API_KEY:-}"
       INTEGRATION_SMS_GATEWAY_API_KEY: "${INTEGRATION_SMS_GATEWAY_API_KEY:-}"
       INTEGRATION_WEB_PUSH_API_KEY: "${INTEGRATION_WEB_PUSH_API_KEY:-}"
+      # The GPS simulator's telematics provider (FMS-138, docs/telematics.md); empty, its webhooks answer 404.
+      INTEGRATION_FMS_SIMULATOR_WEBHOOK_SECRET: "${INTEGRATION_FMS_SIMULATOR_WEBHOOK_SECRET:-}"
     healthcheck:
       # 200 when the API can reach PostgreSQL (GET /health/ready); a Redis
       # outage shows as "degraded" but keeps it healthy.

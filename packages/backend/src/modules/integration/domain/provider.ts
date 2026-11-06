@@ -36,6 +36,16 @@ export interface ProviderView {
   /** The message of the last failure (a status, a timeout), never the provider's response. */
   last_error: string | null;
   last_sync: SyncLogView | null;
+  /** When its last webhook delivery was stored (FMS-138). */
+  last_delivery_at: Date | null;
+  /**
+   * Its webhook traffic since midnight in Addis Ababa (FMS-138): deliveries stored and refused (a bad signature,
+   * a replay, a body it cannot read) and the positions in them stored and refused (an unlinked device, too old).
+   */
+  today: { deliveries: number; deliveries_rejected: number; positions_accepted: number; positions_rejected: number };
+  /** A telematics provider's active devices and the unlinked device ids it has sent; null for other types. */
+  devices: { linked: number; unknown: number } | null;
+  /** Null while this instance has not called the provider: a provider that only sends webhooks is never called. */
   circuit: CircuitView | null;
   /** The result of `?check=true`, or of the last check on this instance. */
   health: { checked_at: Date; healthy: boolean; error: string | null } | null;

@@ -74,8 +74,10 @@ export class IntegrationService {
     const providers = await repo.listProviders(repo.pool());
     if (check) await Promise.all(providers.filter((p) => p.isActive).map((p) => this.checkHealth(p, correlationId)));
     const outcomes = await repo.outcomes(repo.pool(), providers.map((p) => p.id));
+    const traffic = await repo.traffic(repo.pool(), providers.map((p) => p.id), new Date(this.now()));
     return providers.map((p) => {
       const o = outcomes.get(p.id)!;
+      const t = traffic.get(p.id)!;
       const adapter = registry.adapterFor(p);
       const circuit = registry.circuitOf(p);
       const health = registry.healthOf(p);
@@ -92,6 +94,9 @@ export class IntegrationService {
         last_failure_at: o.lastFailureAt,
         last_error: o.lastError,
         last_sync: o.lastSync ? syncLogView(o.lastSync, p.publicId) : null,
+        last_delivery_at: t.lastDeliveryAt,
+        today: t.today,
+        devices: p.providerType === 'telematics' ? { linked: t.devicesLinked, unknown: t.unknownDevices } : null,
         circuit,
         health,
       };
@@ -167,6 +172,10 @@ export class IntegrationService {
     });
     if (!signature.ok) {
       log.warn({ provider: provider.code, event: 'integration.webhook_rejected', reason: signature.reason }, 'Webhook rejected');
+      // Counted, never stored: a wrong secret is the commonest onboarding fault, and a counter cannot be filled up.
+      await repo.addCounts(repo.pool(), provider.id, new Date(this.now()), { deliveries_rejected: 1 }).catch((err: unknown) => {
+        log.error({ err, provider: provider.code, event: 'integration.count_failed' }, 'Could not count a refused webhook');
+      });
       throw signature.reason === 'stale_timestamp' ? webhookStale() : webhookSignatureInvalid(signature.reason);
     }
 
@@ -177,9 +186,10 @@ export class IntegrationService {
     } catch (err) {
       if (!(err instanceof WebhookPayloadError)) throw err;
       // Signed, so it is the provider's: worth a failed row on its status, unlike a forged delivery.
-      await repo.inTransaction((client) =>
-        repo.insertSyncLog(ctx, inboundLog(provider, delivery, 'failed', null, err.message, { trigger: 'webhook' }), client),
-      );
+      await repo.inTransaction(async (client) => {
+        await repo.insertSyncLog(ctx, inboundLog(provider, delivery, 'failed', null, err.message, { trigger: 'webhook' }), client);
+        await repo.addCounts(client, provider.id, new Date(this.now()), { deliveries_rejected: 1 });
+      });
       throw new AppError(400, 'VALIDATION_FAILED', 'The webhook body is not one this provider sends.', [{ field: err.field, reason: err.reason }]);
     }
 
@@ -196,6 +206,7 @@ export class IntegrationService {
         };
         const row = await repo.insertSyncLog(ctx, inboundLog(provider, delivery, 'succeeded', normalized.eventId, null, metadata), client);
         const stored = await repo.findSyncLog(client, row.id as string);
+        await repo.addCounts(client, provider.id, new Date(this.now()), { deliveries: 1 });
         await this.deps.events.publish(client, [
           createEvent(
             INTEGRATION_EVENTS.webhookReceived,

@@ -75,22 +75,27 @@ A telematics provider without an adapter of its own posts the **FMS telematics f
 
 The gateway stores the delivery and answers 202 (integrations.md). The consumer `integration.telematics-pings` then ingests its positions for that provider's devices, at least once; the pings' unique key makes a redelivery a no-op. A provider with its own format gets its own adapter, registered by code, which turns its format into this one.
 
+The provider's devices are linked to vehicles in the device registry (FMS-138, S-34 Telematics, [telematics.md](telematics.md)). A position from a device linked to no vehicle is refused (`unknown_device`), counted on the provider's status and listed for linking; a refused position from a linked device is that device's last error.
+
 ## The simulator
 
 ```bash
 npm run simulate:gps                                                  # 200 vehicles, every 10 s, for 60 s
 npm run simulate:gps -- --vehicles 50 --interval 5 --duration 0       # until Ctrl+C
 npm run simulate:gps -- --speeding 0.2 --idling 0.1 --api http://localhost:3000/api/v1
+npm run simulate:gps -- --provider geotab-et                          # as another telematics provider, with its secret
+npm run simulate:gps -- --via device                                  # each vehicle's own token, POST /tracking/gps-pings
 ```
 
-- **Setup:** it takes the first N active vehicles from the API's database (`make seed SIZE=budget` has 200). Each gets a simulated device (`sim-<vehicle id>`) and a fresh token.
+- **How it reports (FMS-138):** by default as the telematics provider `fms-simulator`: signed webhooks to `/webhooks/telematics/fms-simulator`, the positions due posted together once a second, the path a real provider uses ([telematics.md](telematics.md)). It needs `INTEGRATION_FMS_SIMULATOR_WEBHOOK_SECRET` (`make env` generates it) and switches the provider on. `--via device` posts each vehicle's position itself, with its token, as below.
+- **Setup:** it takes the first N active vehicles from the API's database (`make seed SIZE=budget` has 200). Each gets a simulated device: `sim-<provider>-<vehicle id>` linked to it in the device registry, or with `--via device` `sim-<vehicle id>` and a fresh token.
 - **Movement:** each vehicle drives back and forth along a route of its depot (origin, stops, destination; `scripts/simulator/motion.ts`), or a 1 km loop around its depot when the depot has none.
 - **Scenarios:** `--speeding` vehicles drive at 95-115 km/h (the speeding rule, FMS-46), `--idling` ones stand still at 0 km/h with the engine on, and the rest drive at 25-70 km/h.
-- **Timing:** each vehicle posts its own position once per interval, spread over the interval like real devices.
+- **Timing:** each vehicle reports once per interval, spread over the interval like real devices.
 - **Report:** latency every interval. At the end: totals, p50, p95 and max latency, and how many vehicles' current location moved. It exits 1 if a request failed or a vehicle did not move.
 - **Never production:** it replaces devices installed in the vehicles, so it refuses `NODE_ENV=production`.
 
-**Measured (SE-132):** 200 vehicles every 10 s for 60 s against one local API instance (PostgreSQL and Redis on the same machine).
+**Measured (SE-132, `--via device`):** 200 vehicles every 10 s for 60 s against one local API instance (PostgreSQL and Redis on the same machine).
 - 1,200 pings at 20 per second, all accepted;
 - latency p50 6 ms, p95 9 ms, max 120 ms;
 - the current location moved for 200 of 200 vehicles;

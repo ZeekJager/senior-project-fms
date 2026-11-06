@@ -179,6 +179,8 @@ export class IngestionService {
     const vehicles = new Map<string, IngestVehicle>();
     // Each vehicle's newest odometer from its own device or telematics provider (phones and users are not meters).
     const odometers = new Map<string, { km: number; at: Date; deviceRef: string | null }>();
+    // Why each device's last refused ping was refused (FMS-138), for the device registry.
+    const deviceErrors = new Map<string, PingRejection>();
     pings.forEach((ping, index) => {
       const placed = placements[index];
       if ('reason' in placed) {
@@ -189,6 +191,7 @@ export class IngestionService {
       const reason = placed.vehicle.isActive ? pingProblem(ping, now) : 'vehicle_retired';
       if (reason) {
         rejected.push({ index, reason });
+        if (placed.deviceId) deviceErrors.set(placed.deviceId, reason);
         return;
       }
       vehicles.set(placed.vehicle.id, placed.vehicle);
@@ -232,6 +235,7 @@ export class IngestionService {
 
     const deviceIds = [...new Set(rows.flatMap((r) => (r.deviceId ? [r.deviceId] : [])))];
     await this.deps.devices.touch(client, deviceIds, new Date(now));
+    await this.deps.devices.recordErrors(client, deviceErrors, new Date(now));
 
     const result: IngestResult = { accepted: inserted.length, duplicates: rows.length - inserted.length, rejected };
     await recordAuditEntry(client, {

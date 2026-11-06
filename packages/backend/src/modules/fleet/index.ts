@@ -413,6 +413,9 @@ export const trackingRefs = {
     byPublicIds: (db: Queryable, publicIds: readonly string[], scope: Scope) => vehicleRepository.trackingRefs(db, { publicIds }, scope),
     byIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.trackingRefs(db, { ids }, { kind: 'all' }),
     liveMap: (db: Queryable, scope: Scope, depotId: string | null) => vehicleRepository.liveMap(db, scope, depotId),
+    /** For the device registry (FMS-138): a scope's vehicles, and plates for its responses. */
+    idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
+    refsByIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.refsByIds(db, ids),
   },
   drivers: {
     idOfUser: tripRefs.drivers.idOfUser,

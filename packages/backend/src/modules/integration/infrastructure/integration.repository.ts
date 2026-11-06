@@ -61,6 +61,24 @@ export interface ProviderOutcomes {
   lastSync: SyncLogRow | null;
 }
 
+/** A provider's webhook traffic of one day (FMS-138): deliveries stored and refused, positions stored and refused. */
+export interface WebhookCounts {
+  deliveries: number;
+  deliveries_rejected: number;
+  positions_accepted: number;
+  positions_rejected: number;
+}
+
+export interface ProviderTraffic {
+  today: WebhookCounts;
+  lastDeliveryAt: Date | null;
+  devicesLinked: number;
+  unknownDevices: number;
+}
+
+/** The fleet's day for the daily counts. */
+const ZONE = `'Africa/Addis_Ababa'`;
+
 const PROVIDER_SQL = `
   SELECT p.id, p.public_id AS "publicId", p.code, p.name, p.provider_type AS "providerType", p.base_url AS "baseUrl",
          p.is_active AS "isActive", p.configuration
@@ -134,6 +152,66 @@ export class IntegrationRepository extends Repository {
     for (const r of successes.rows) result.get(r.providerId)!.lastSuccessAt = r.at;
     for (const r of failures.rows) Object.assign(result.get(r.providerId)!, { lastFailureAt: r.at, lastError: r.error });
     for (const r of syncs.rows) result.get(r.providerId as string)!.lastSync = r;
+    return result;
+  }
+
+  /**
+   * Adds to the provider's counts for the Addis Ababa day of `at` (FMS-138). Counters, not audited: they
+   * summarise traffic whose stored rows have their own audit entries.
+   */
+  async addCounts(db: Queryable, providerId: string, at: Date, delta: Partial<WebhookCounts>): Promise<void> {
+    await db.query(
+      `INSERT INTO integration.webhook_daily_counts AS c (provider_id, day, deliveries, deliveries_rejected, positions_accepted, positions_rejected)
+       VALUES ($1, ($2::timestamptz AT TIME ZONE ${ZONE})::date, $3, $4, $5, $6)
+       ON CONFLICT (provider_id, day) DO UPDATE
+          SET deliveries = c.deliveries + EXCLUDED.deliveries,
+              deliveries_rejected = c.deliveries_rejected + EXCLUDED.deliveries_rejected,
+              positions_accepted = c.positions_accepted + EXCLUDED.positions_accepted,
+              positions_rejected = c.positions_rejected + EXCLUDED.positions_rejected,
+              updated_at = CURRENT_TIMESTAMP`,
+      [providerId, at, delta.deliveries ?? 0, delta.deliveries_rejected ?? 0, delta.positions_accepted ?? 0, delta.positions_rejected ?? 0],
+    );
+  }
+
+  /**
+   * For the status panel (FMS-138), per provider: today's counts (the Addis Ababa day of `at`), when its last
+   * delivery was stored, and its active devices and unknown device ids.
+   */
+  async traffic(db: Queryable, providerIds: readonly string[], at: Date): Promise<Map<string, ProviderTraffic>> {
+    const result = new Map<string, ProviderTraffic>(
+      providerIds.map((id) => [
+        id,
+        { today: { deliveries: 0, deliveries_rejected: 0, positions_accepted: 0, positions_rejected: 0 }, lastDeliveryAt: null, devicesLinked: 0, unknownDevices: 0 },
+      ]),
+    );
+    if (providerIds.length === 0) return result;
+    const counts = await db.query<WebhookCounts & { providerId: string }>(
+      `SELECT provider_id AS "providerId", deliveries, deliveries_rejected, positions_accepted, positions_rejected
+         FROM integration.webhook_daily_counts
+        WHERE provider_id = ANY($1::bigint[]) AND day = ($2::timestamptz AT TIME ZONE ${ZONE})::date`,
+      [providerIds, at],
+    );
+    const deliveries = await db.query<{ providerId: string; at: Date }>(
+      `SELECT provider_id AS "providerId", max(started_at) AS at
+         FROM integration.sync_logs
+        WHERE provider_id = ANY($1::bigint[]) AND direction = 'inbound' AND status = 'succeeded'
+        GROUP BY provider_id`,
+      [providerIds],
+    );
+    const devices = await db.query<{ providerId: string; n: number }>(
+      `SELECT provider_id AS "providerId", count(*)::int AS n FROM integration.gps_devices
+        WHERE provider_id = ANY($1::bigint[]) AND status = 'active' GROUP BY provider_id`,
+      [providerIds],
+    );
+    const unknown = await db.query<{ providerId: string; n: number }>(
+      `SELECT provider_id AS "providerId", count(*)::int AS n FROM integration.unknown_devices
+        WHERE provider_id = ANY($1::bigint[]) GROUP BY provider_id`,
+      [providerIds],
+    );
+    for (const { providerId, ...today } of counts.rows) result.get(providerId)!.today = today;
+    for (const r of deliveries.rows) result.get(r.providerId)!.lastDeliveryAt = r.at;
+    for (const r of devices.rows) result.get(r.providerId)!.devicesLinked = r.n;
+    for (const r of unknown.rows) result.get(r.providerId)!.unknownDevices = r.n;
     return result;
   }
 
