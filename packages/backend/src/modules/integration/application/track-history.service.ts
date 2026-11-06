@@ -1,8 +1,9 @@
 import { depotScope, type Scope } from '../../../shared/authz/scope';
-import { notFound, validationFailed } from '../../../shared/errors/app-error';
+import { notFound } from '../../../shared/errors/app-error';
+import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
-import { encodeTrackCursor, type TrackPointView, type TrackQuery } from '../domain/track-history';
+import { encodeTrackCursor, trackWindow, type TrackPointView, type TrackQuery } from '../domain/track-history';
 import type { TrackingRepository } from '../infrastructure/tracking.repository';
 
 /** What the history needs from fleet and trip (connected in integration/index.ts). */
@@ -15,24 +16,35 @@ export interface TrackHistoryServiceDeps {
   db: Queryable;
   tracking: TrackingRepository;
   refs: TrackHistoryRefs;
+  now?: () => number;
 }
 
 /**
  * A vehicle's GPS history (FMS-136, api-contract §11): where it was, oldest first, a page at a time. Behavioural
- * data (§24.3): tracking:read only, in the caller's depot scope; another depot's vehicle is not found.
+ * data (§24.3): tracking:read only, in the caller's depot scope; another depot's vehicle is not found. At most 30 days
+ * per request, and every read audited (FMS-95).
  */
 export class TrackHistoryService {
   constructor(private readonly deps: TrackHistoryServiceDeps) {}
 
-  async forVehicle(user: RequestUser, vehiclePublicId: string, query: TrackQuery): Promise<{ points: TrackPointView[]; nextCursor: string | null }> {
+  async forVehicle(user: RequestUser, vehiclePublicId: string, query: TrackQuery, correlationId: string): Promise<{ points: TrackPointView[]; nextCursor: string | null }> {
     const { db, tracking, refs } = this.deps;
-    if (query.from && query.to && query.from >= query.to) throw validationFailed([{ field: 'to', reason: 'before_from' }], '`to` must be after `from`.');
+    const window = trackWindow(query.from, query.to, new Date((this.deps.now ?? Date.now)()));
     const [vehicle] = await refs.vehicles.byPublicIds(db, [vehiclePublicId], depotScope(user));
     if (!vehicle) throw notFound('Vehicle not found.');
 
     // One more than the page: whether another page follows.
-    const rows = await tracking.history(db, vehicle.id, { ...query, limit: query.limit + 1 });
+    const rows = await tracking.history(db, vehicle.id, { ...query, ...window, limit: query.limit + 1 });
     const page = rows.slice(0, query.limit);
+    // Who looked where a vehicle (and so its driver) was, and when (FMS-95, §24.3): one entry per page read.
+    await recordAuditEntry(db, {
+      action: 'tracking.history_read',
+      userId: user.id,
+      entityType: 'fleet.vehicles',
+      entityId: vehicle.id,
+      correlationId,
+      details: { vehicle_id: vehicle.publicId, from: window.from.toISOString(), to: window.to.toISOString(), points: page.length, continued: query.cursor !== null },
+    });
     const trips = await refs.trips.partiesByIds(db, [...new Set(page.flatMap((r) => (r.tripId ? [r.tripId] : [])))]);
     const last = page.at(-1);
     return {

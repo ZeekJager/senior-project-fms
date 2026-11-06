@@ -23,8 +23,13 @@ import {
   decodeCursor,
   encodeCursor,
   invalidDateRange,
+  LIVE_POSITION_STALE_MS,
+  stopNotFound,
   tripClosed,
   tripNotFound,
+  tripNotUnderWay,
+  type TripLiveState,
+  type TripStopView,
   tripRouteNotFound,
   tripRouteRetired,
   type TripStatus,
@@ -32,7 +37,7 @@ import {
   type TripView,
 } from '../domain/trip';
 import type { RequestUser } from '../../../types/express';
-import type { TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
+import type { StopRow, TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
 import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
 import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleRequired, type CommandStatus } from '../domain/lifecycle';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
@@ -52,6 +57,17 @@ import {
   tooManyShifted,
   type Slot,
 } from '../domain/schedule';
+
+/** A vehicle's newest position as GET /trips/{id}/live shows it (FMS-95), from tracking.vehicle_current_location. */
+export interface LivePosition {
+  lat: number;
+  lng: number;
+  speedKmh: number;
+  heading: number | null;
+  recordedAt: Date;
+}
+
+export type PositionLookup = (db: Queryable, vehicleId: string) => Promise<LivePosition | null>;
 
 /** A trip nobody planned (FMS-139): where it goes, saved as a one-off route of the depot. */
 export interface AdhocRoute {
@@ -114,8 +130,28 @@ export interface TripAssignment {
 export interface TripServiceDeps {
   trips: Pick<
     TripRepository,
-    'inTransaction' | 'history' | 'findVisible' | 'findById' | 'stops' | 'etas' | 'routePlan' | 'routeId' | 'insert' | 'update' | 'insertStop' | 'overlapping' | 'underWay' | 'clashing'
+    | 'inTransaction'
+    | 'history'
+    | 'findVisible'
+    | 'findById'
+    | 'stops'
+    | 'etas'
+    | 'routePlan'
+    | 'routeId'
+    | 'insert'
+    | 'update'
+    | 'insertStop'
+    | 'overlapping'
+    | 'underWay'
+    | 'clashing'
+    | 'lockStop'
+    | 'completeStop'
   >;
+  /**
+   * The vehicles' newest positions (internal vehicle ids), for GET /trips/{id}/live (FMS-95): the integration module's,
+   * connected by src/modules/index.ts (it imports trip). Null when not connected: the live state has no position.
+   */
+  positions?: () => PositionLookup | null;
   /** One-off routes for unplanned trips (FMS-139). */
   routes: Pick<RouteRepository, 'insert'>;
   /** The fleet and maintenance modules' lookups, connected by src/modules/index.ts. */
@@ -545,6 +581,90 @@ export class TripService {
   }
 
   /**
+   * POST /trips/{id}/stops/{stop_id}/complete (FMS-95): the work at a stop is done. trip:execute: the trip's driver
+   * (their own trips; anyone else's is 404) or dispatch in the trip's depot. Only while the trip is under way (409
+   * trip_not_under_way); stops may be completed in any order. The stop is completed now, by the caller, and reached
+   * now unless GPS already had it there, so the next estimate (FMS-86) routes past it. Audited; TripStopCompleted,
+   * which the console receives as `trip.updated`. A stop already completed is returned as it is (`changed` false).
+   */
+  async completeStop(caller: Caller, tripId: string, stopId: string, notes?: string): Promise<{ stop: TripStopView; changed: boolean }> {
+    const { trips } = this.deps;
+    return trips.inTransaction(async (client) => {
+      const row = await trips.findVisible(client, tripId, await this.visibility(client, caller), true);
+      if (!row) throw tripNotFound();
+      const stop = await trips.lockStop(client, row.id, stopId);
+      if (!stop) throw stopNotFound();
+      if (stop.status === 'completed') return { stop: stopView(stop, false), changed: false };
+      if (row.status !== 'en_route') throw tripNotUnderWay(row.status);
+
+      const at = this.now();
+      await trips.completeStop(mutationContext(caller), stop, at, notes, client);
+      const done = (await trips.stops(client, [row.id])).find((s) => s.id === stop.id)!;
+      const [view] = await this.views(client, [row]);
+      await this.deps.events.publish(client, [
+        tripEvent(caller, TRIP_EVENTS.stopCompleted, {
+          trip_id: view.id,
+          stop_id: done.id,
+          sequence_number: done.sequenceNumber,
+          name: done.name,
+          depot_id: view.depot_id,
+          driver_id: view.driver_id,
+          vehicle_id: view.vehicle_id,
+          completed_at: at.toISOString(),
+          // Whether GPS had the vehicle there first (FMS-86), or the completion is its only arrival.
+          reached_by_gps: stop.actualArrival !== null,
+        }),
+      ]);
+      return { stop: stopView(done, false), changed: true };
+    });
+  }
+
+  /**
+   * GET /trips/{id}/live (FMS-95): where a trip stands now, for whoever may read it (trip:read; a driver their own).
+   * While under way: the vehicle's newest position (stale after 2 minutes), the next stop not yet reached with its
+   * estimate, how many stops are reached and completed, and the trip's estimate (FMS-86). Otherwise the same without
+   * a position.
+   */
+  async live(caller: Caller, tripId: string): Promise<TripLiveState> {
+    const { trips } = this.deps;
+    return trips.inTransaction(async (client) => {
+      const row = await trips.findVisible(client, tripId, await this.visibility(client, caller));
+      if (!row) throw tripNotFound();
+      const [view] = await this.views(client, [row]);
+      const now = this.now();
+      const lookup = row.status === 'en_route' && row.vehicleId ? (this.deps.positions?.() ?? null) : null;
+      const position = lookup ? await lookup(client, row.vehicleId!) : null;
+      const next = view.stops.find((s) => s.status === 'planned');
+      return {
+        trip_id: view.id,
+        status: view.status,
+        vehicle_id: view.vehicle_id,
+        driver_id: view.driver_id,
+        position: position
+          ? {
+              lat: position.lat,
+              lng: position.lng,
+              speed_kmh: position.speedKmh,
+              heading: position.heading,
+              recorded_at: position.recordedAt,
+              stale: now.getTime() - position.recordedAt.getTime() > LIVE_POSITION_STALE_MS,
+            }
+          : null,
+        next_stop: next ? { stop_id: next.id, sequence_number: next.sequence_number, name: next.name, eta: next.eta } : null,
+        stops: {
+          total: view.stops.length,
+          reached: view.stops.filter((s) => s.actual_arrival !== null).length,
+          completed: view.stops.filter((s) => s.status === 'completed').length,
+        },
+        eta: view.eta,
+        actual_start: view.actual_start,
+        scheduled_end: view.scheduled_end,
+        as_of: now,
+      };
+    });
+  }
+
+  /**
    * POST /trips/{id}/status: the explicit form of the same moves.
    * `en_route` is start and `completed` is end. `scheduled` (from a draft
    * with both times) and `cancelled` are dispatch decisions: trip:write.
@@ -689,17 +809,7 @@ export class TripService {
       actual_start: r.actualStart,
       actual_end: r.actualEnd,
       actual_distance_km: r.actualDistanceKm,
-      stops: own.map((s) => ({
-        id: s.id,
-        sequence_number: s.sequenceNumber,
-        name: s.name,
-        latitude: s.latitude,
-        longitude: s.longitude,
-        status: s.status,
-        planned_arrival: s.plannedArrival,
-        actual_arrival: s.actualArrival,
-        eta: eta ? s.eta : null,
-      })),
+      stops: own.map((s) => stopView(s, !!eta)),
       eta: eta
         ? {
             arrival_at: eta.arrivalAt,
@@ -726,6 +836,22 @@ function lifecyclePayload(view: TripView): Record<string, unknown> {
 
 function tripEvent(caller: Caller, type: string, payload: { trip_id: string } & Record<string, unknown>): DomainEvent {
   return createEvent(type, payload, { actor: caller.user.publicId, correlationId: caller.correlationId }, { aggregate: aggregateKey('trip', payload.trip_id) });
+}
+
+/** A stop as the API returns it; its estimate only while the trip has one (under way). */
+function stopView(s: StopRow, withEta: boolean): TripStopView {
+  return {
+    id: s.id,
+    sequence_number: s.sequenceNumber,
+    name: s.name,
+    latitude: s.latitude,
+    longitude: s.longitude,
+    status: s.status,
+    planned_arrival: s.plannedArrival,
+    actual_arrival: s.actualArrival,
+    eta: withEta ? s.eta : null,
+    completed_at: s.completedAt,
+  };
 }
 
 function mutationContext(caller: Caller): MutationContext {

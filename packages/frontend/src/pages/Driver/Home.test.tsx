@@ -144,6 +144,43 @@ describe('Driver Home (S-11)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('You cannot drive this trip: your licence has expired. Call dispatch.')
   })
 
+  it('under way, the stops are listed in order with the next marked; Done marks one finished (FMS-95)', async () => {
+    const state = { underWay: [trip({ status: 'en_route', actual_start: '2026-11-02T05:34:00Z' })], assigned: [] as DriverTrip[] }
+    serveDay(state)
+    const posted: string[] = []
+    server.use(
+      http.post(`/api/v1/trips/${trip().id}/stops/:stopId/complete`, ({ params, request }) => {
+        posted.push(`${String(params.stopId)} ${request.headers.get('Idempotency-Key') ? 'keyed' : 'unkeyed'}`)
+        const done = { id: 's1', sequence_number: 1, name: 'Dukem', status: 'completed' as const, actual_arrival: '2026-11-02T06:10:00Z', completed_at: '2026-11-02T06:10:00Z' }
+        state.underWay = [trip({ status: 'en_route', actual_start: '2026-11-02T05:34:00Z', stops: [done, { id: 's2', sequence_number: 2, name: 'Bishoftu', status: 'planned' }] })]
+        return HttpResponse.json({ data: done, meta: { request_id: 'r', changed: true } })
+      }),
+    )
+    await openHome()
+    const stops = within(await card()).getByRole('region', { name: 'Stops' })
+    const items = within(stops).getAllByRole('listitem')
+    expect(items.map((li) => within(li).getByText(/^(Dukem|Bishoftu)$/).textContent)).toEqual(['Dukem', 'Bishoftu'])
+    expect(items[0]).toHaveAttribute('aria-current', 'step')
+    expect(within(stops).getByText('0 of 2 done')).toBeInTheDocument()
+
+    await userEvent.setup().click(within(stops).getByRole('button', { name: 'Mark Dukem done' }))
+    // Addis Ababa time, UTC+3.
+    expect(await within(stops).findByText('Done at 09:10')).toBeInTheDocument()
+    expect(within(stops).getByText('1 of 2 done')).toBeInTheDocument()
+    expect(within(stops).queryByRole('button', { name: 'Mark Dukem done' })).not.toBeInTheDocument()
+    expect(within(stops).getAllByRole('listitem')[1]).toHaveAttribute('aria-current', 'step')
+    expect(posted).toEqual(['s1 keyed'])
+  })
+
+  it('a stop the server refuses says why', async () => {
+    serveDay({ underWay: [trip({ status: 'en_route', actual_start: '2026-11-02T05:34:00Z' })], assigned: [] })
+    server.use(http.post(`/api/v1/trips/${trip().id}/stops/:stopId/complete`, () => errorEnvelope(409, 'CONFLICT_INVALID_STATE_TRANSITION')))
+    await openHome()
+    const stops = within(await card()).getByRole('region', { name: 'Stops' })
+    await userEvent.setup().click(within(stops).getByRole('button', { name: 'Mark Bishoftu done' }))
+    expect(await within(stops).findByRole('alert')).toHaveTextContent('This trip is no longer under way.')
+  })
+
   it('no trip today: says so, without showing anything else', async () => {
     serveDay({ underWay: [], assigned: [] })
     await openHome()

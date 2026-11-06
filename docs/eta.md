@@ -15,6 +15,7 @@ Card FMS-86 (SE-130), architecture §9.2. Dispatchers see when each trip under w
 1. **Stops reached.** The vehicle is within **150 m** of a stop ahead, so that stop is marked `arrived`, with `actual_arrival` set to the position's time.
    - **Stops ahead.** Only the stops after the last one reached count. A stop passed without coming near it is behind the vehicle once a later stop is reached, and is never routed back to.
    - **No coordinates.** A stop without coordinates gets no time and is not routed to.
+   - **Marked done.** A stop the driver marked done (FMS-95, [trip-stops.md](trip-stops.md)) has an `actual_arrival`, so it counts as reached, and GPS never marks it again.
 2. **The road ahead.** One request to the engine, from the position through the stops ahead to the route's destination. It uses OSRM's `route` service without the line: the legs only, never cached.
 3. **Times.** Each stop ahead gets the position's time plus the driving time of the legs before it (`trip_stops.eta`). The trip gets its arrival at the destination, and the distance and time left (`trip.trip_etas`).
    - **At the destination.** Within 150 m of the destination: arrived at the position's time, with nothing left.

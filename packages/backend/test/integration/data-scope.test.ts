@@ -144,6 +144,13 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
       [depotId],
     );
   }
+  // A stop (FMS-95) on the trip the samples name: the first by id.
+  if (await none('trip.trip_stops WHERE trip_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.trips])) {
+    await pool.query(
+      "INSERT INTO trip.trip_stops (trip_id, sequence_number, name) VALUES ((SELECT MIN(x) FROM unnest($1::bigint[]) x), 1, 'Depot B stop')",
+      [ids.trips],
+    );
+  }
   // A downtime period (FMS-131) on the vehicle the samples name: the first by id.
   if (await none('fleet.downtime_periods WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.vehicles])) {
     await pool.query(
@@ -168,6 +175,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     userId: await one('SELECT public_id::text AS id FROM auth.users WHERE id = ANY($1::bigint[]) ORDER BY id', [ids.users]),
     routeId: await one('SELECT public_id::text AS id FROM trip.routes WHERE id = ANY($1::bigint[]) ORDER BY id', [ids.routes]),
     tripId: await one('SELECT public_id::text AS id FROM trip.trips WHERE id = ANY($1::bigint[]) ORDER BY id', [ids.trips]),
+    stopId: await one('SELECT public_id::text AS id FROM trip.trip_stops WHERE trip_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x) ORDER BY id', [ids.trips]),
     attendanceId: await one('SELECT public_id::text AS id FROM fleet.driver_attendance WHERE driver_id = ANY($1::bigint[]) ORDER BY id', [ids.drivers]),
     documentId: await one("SELECT public_id::text AS id FROM document.documents WHERE owner_type = 'vehicle' AND owner_id = ANY($1::bigint[]) ORDER BY id", [ids.vehicles]),
     fuelLogId: await byVehicle('fuel.fuel_logs'),

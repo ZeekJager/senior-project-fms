@@ -263,6 +263,8 @@ export const ignitionTime = {
 /** For the fuel anomaly rules (FMS-82): where a vehicle (internal id) was around a time, from its stored pings. */
 export const trackingLookups = {
   positionNear: (db: Queryable, vehicleId: string, at: Date, windowMs: number) => tracking.nearest(db, vehicleId, at, windowMs),
+  /** For a trip's live state (FMS-95, trip): a vehicle's newest position. */
+  currentPosition: (db: Queryable, vehicleId: string) => tracking.currentPosition(db, vehicleId),
 };
 
 export const gpsDevices = {

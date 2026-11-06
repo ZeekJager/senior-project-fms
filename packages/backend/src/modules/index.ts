@@ -2,14 +2,14 @@ import { config } from '../config';
 import type { AppModule } from '../shared/module';
 import { authModule, provideDepotDirectory } from './auth';
 import { depotDirectory, fleetModule, provideMaintenanceLookup, provideMeterSources, tripRefs } from './fleet';
-import { provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, ROUTING_TIMEOUT_MS, tripModule } from './trip';
+import { provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripPositions, ROUTING_TIMEOUT_MS, tripModule } from './trip';
 import { fuelMeterReadings, fuelModule } from './fuel';
 import { maintenanceModule, maintenanceRefs } from './maintenance';
 import { alertModule } from './alert';
 import { analyticsModule } from './analytics';
 import { commandCenterModule } from './command-center';
 import { evModule } from './ev';
-import { ignitionTime, integrationGateway, integrationModule } from './integration';
+import { ignitionTime, integrationGateway, integrationModule, trackingLookups } from './integration';
 import { auditModule } from './audit';
 import { settingsModule } from './settings';
 import { backupModule } from './backup';
@@ -23,6 +23,8 @@ provideDepotDirectory(depotDirectory);
 provideFleetRefs(tripRefs);
 provideMaintenanceLookup(maintenanceRefs);
 provideMaintenanceRefs(maintenanceRefs);
+// A trip's live state (FMS-95) shows its vehicle's newest position, which the integration module keeps (it imports trip).
+provideTripPositions(trackingLookups.currentPosition);
 // Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
 provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
 // Road routing (FMS-84): OSRM through the integration gateway (timeouts, a retry, its circuit breaker).

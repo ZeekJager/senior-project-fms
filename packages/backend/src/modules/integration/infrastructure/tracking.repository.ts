@@ -257,4 +257,14 @@ export class TrackingRepository {
     );
     return new Map(res.rows.map(({ vehicleId, ...rest }) => [vehicleId, rest]));
   }
+
+  /** A vehicle's newest position (internal id), for a trip's live state (FMS-95). */
+  async currentPosition(db: Queryable, vehicleId: string): Promise<{ lat: number; lng: number; speedKmh: number; heading: number | null; recordedAt: Date } | null> {
+    const res = await db.query<{ lat: number; lng: number; speedKmh: number; heading: number | null; recordedAt: Date }>(
+      `SELECT latitude::float8 AS lat, longitude::float8 AS lng, speed_kmh AS "speedKmh", heading_degrees::float8 AS heading, recorded_at AS "recordedAt"
+         FROM tracking.vehicle_current_location WHERE vehicle_id = $1`,
+      [vehicleId],
+    );
+    return res.rows[0] ?? null;
+  }
 }

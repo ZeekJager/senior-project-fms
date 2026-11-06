@@ -15,6 +15,8 @@ export interface TripStopView {
   actual_arrival: Date | null;
   /** Expected arrival from the vehicle's latest position (FMS-86); null once reached, without coordinates, or not under way. */
   eta: Date | null;
+  /** When it was marked done (FMS-95), by the driver or dispatch; reaching it by GPS makes it `arrived` only. */
+  completed_at: Date | null;
 }
 
 /** A trip under way's latest arrival estimate (FMS-86, docs/eta.md): from its newest position, at most every 30 s. */
@@ -99,7 +101,37 @@ export const TRIP_EVENTS = {
   started: 'TripStarted',
   /** The driver ended the trip (FMS-32). */
   completed: 'TripCompleted',
+  /** A stop of a trip under way was marked done (FMS-95); the console reads it as `trip.updated`. */
+  stopCompleted: 'TripStopCompleted',
 } as const;
+
+export const stopNotFound = () => new AppError(404, 'NOT_FOUND', 'Stop not found.');
+
+/** Stops are completed while the trip is under way: not before it starts, nor after it ends. */
+export const tripNotUnderWay = (status: TripStatus) =>
+  new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', `Stops are completed during the trip; this one is ${status.replace('_', ' ')}.`, [
+    { field: 'status', reason: 'trip_not_under_way' },
+  ]);
+
+/** A position older than this is shown as stale on the live state (as the live map greys a vehicle, FMS-45). */
+export const LIVE_POSITION_STALE_MS = 2 * 60_000;
+
+/** GET /trips/{id}/live (FMS-95, api-contract §7.2): where a trip stands now. */
+export interface TripLiveState {
+  trip_id: string;
+  status: TripStatus;
+  vehicle_id: string | null;
+  driver_id: string | null;
+  /** The vehicle's newest position while the trip is under way; null otherwise or before its first. */
+  position: { lat: number; lng: number; speed_kmh: number; heading: number | null; recorded_at: Date; stale: boolean } | null;
+  /** The first stop not yet reached, completed or skipped, in order, with its estimate. */
+  next_stop: { stop_id: string; sequence_number: number; name: string; eta: Date | null } | null;
+  stops: { total: number; reached: number; completed: number };
+  eta: TripEta | null;
+  actual_start: Date | null;
+  scheduled_end: Date | null;
+  as_of: Date;
+}
 
 /** States a trip can be assigned (or re-assigned) in. A draft needs its times first. */
 export const ASSIGNABLE_STATUSES: readonly TripStatus[] = ['scheduled', 'assigned'];

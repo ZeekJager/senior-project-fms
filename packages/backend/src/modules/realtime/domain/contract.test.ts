@@ -201,7 +201,7 @@ describe('event mapping (api-contract §11.2)', () => {
       driverIds: ['d2', 'd1'],
       payload: { trip_id: 't1', status: 'assigned', depot_id: DEPOT_A, driver_id: 'd2', version: 4, change: 'TripAssigned' },
     });
-    for (const type of ['TripCreated', 'TripUpdated', 'TripCancelled', 'TripStarted', 'TripCompleted']) {
+    for (const type of ['TripCreated', 'TripUpdated', 'TripCancelled', 'TripStarted', 'TripCompleted', 'TripStopCompleted']) {
       expect((await deliveriesFor(envelope(type, { trip_id: 't1' }), lookups))[0].event).toBe('trip.updated');
     }
     // A trip that no longer exists: nothing to say.

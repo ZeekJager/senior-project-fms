@@ -32,7 +32,8 @@ async function track(vehicle: Row, start: Date, count: number, trip: Row | null 
   return times;
 }
 
-const START = new Date('2026-10-20T06:00:00Z');
+// Within the default window (the last 30 days, FMS-95), on the minute.
+const START = new Date(Math.floor((Date.now() - 24 * 60 * MIN) / MIN) * MIN);
 
 describe('GET /vehicles/{vehicle_id}/tracking', () => {
   test('the points oldest first, with the trip named, a page at a time to the last', async () => {
