@@ -135,7 +135,7 @@ export function trackingRouter(service: IngestionService, liveMap: LiveMapServic
       const vehicleId = z.uuid().safeParse(req.params.vehicleId);
       if (!vehicleId.success) throw notFound('Vehicle not found.');
       const query = parseInput(trackQuery, req.query);
-      const { points, nextCursor } = await history.forVehicle(req.user!, vehicleId.data, query);
+      const { points, nextCursor } = await history.forVehicle(req.user!, vehicleId.data, query, req.correlationId);
       res.json({ data: points, meta: { page_size: query.limit, next_cursor: nextCursor, request_id: req.correlationId } });
     }),
   );

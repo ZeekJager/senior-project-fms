@@ -48,7 +48,7 @@ const SAMPLES: Record<string, (w: World) => Record<string, unknown>> = {
   NotificationUnreadChanged: (w) => ({ user_id: w.user, unread_count: 3, reason: 'created' }),
   IncidentReported: (w) => ({ incident_id: crypto.randomUUID(), depot_id: w.depot, reported_by_driver_id: w.driver, vehicle_id: w.vehicle, severity: 'medium' }),
   IncidentUpdated: (w) => ({ incident_id: crypto.randomUUID(), depot_id: w.depot, reported_by_driver_id: w.driver, vehicle_id: w.vehicle, status: 'investigating' }),
-  ...Object.fromEntries(['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted'].map((t) => [t, (w: World) => ({ trip_id: w.trip, driver_id: w.driver })])),
+  ...Object.fromEntries(['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted', 'TripStopCompleted'].map((t) => [t, (w: World) => ({ trip_id: w.trip, driver_id: w.driver })])),
   // A new arrival estimate (FMS-86): the trip update again, carrying its eta.
   TripEtaUpdated: (w) => ({ trip_id: w.trip, arrival_at: new Date().toISOString(), stops: [] }),
 };

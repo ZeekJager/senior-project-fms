@@ -102,7 +102,11 @@ npm run simulate:gps -- --via device                                  # each veh
 - all 1,200 `VehicleLocationUpdated` events dispatched and published to Redis, with an outbox lag of 0 afterwards;
 - a signed-in socket received `vehicle.location.updated` for every simulated vehicle.
 
+## Reading it back
+
+- **Now.** The live map reads the current positions ([live-map.md](live-map.md)), and so does a trip's live state (`GET /trips/{id}/live`).
+- **History.** `GET /vehicles/{id}/tracking` (FMS-136, api-contract §11.1) gives the stored pings oldest first, at most 30 days per request, and audits every page (FMS-95, [trip-stops.md](trip-stops.md)).
+
 ## Not yet
 
-- **History:** `GET /vehicles/{id}/tracking` (api-contract §11.1) is not built yet. The current positions are read by the live map ([live-map.md](live-map.md)).
 - **Old pings:** `tracking.gps_pings` keeps its default partition; monthly partitions and a retention job come with the data volume.

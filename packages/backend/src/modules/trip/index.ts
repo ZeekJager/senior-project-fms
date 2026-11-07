@@ -11,7 +11,7 @@ import { cache } from '../../shared/cache';
 import { logger } from '../../shared/logging/logger';
 import { EtaService } from './application/eta.service';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
-import { TripService } from './application/trip.service';
+import { TripService, type PositionLookup } from './application/trip.service';
 import { LOCATION_UPDATED } from './domain/eta';
 import { OsrmRoadPlanner, type RoadPlanner, type RoutingGatewayClient } from './infrastructure/osrm.planner';
 import { RouteRepository } from './infrastructure/route.repository';
@@ -44,6 +44,16 @@ export function provideRoutingClient(client: ((correlationId: string) => Routing
   roadPlanner = client ? new OsrmRoadPlanner(client, cache) : null;
 }
 
+let positionLookup: PositionLookup | null = null;
+
+/**
+ * Connects the vehicles' newest positions for GET /trips/{id}/live (FMS-95): the integration module's, which imports
+ * trip. Called once by src/modules/index.ts.
+ */
+export function provideTripPositions(lookup: PositionLookup | null): void {
+  positionLookup = lookup;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -70,6 +80,7 @@ const tripService = new TripService({
   maintenance,
   events: eventBus,
   overrunGraceMinutes: config.trips.overrunGraceMinutes,
+  positions: () => positionLookup,
 });
 
 // Live arrival times (FMS-86, docs/eta.md): each announced position of a trip under way, at most every 30 seconds

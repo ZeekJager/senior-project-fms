@@ -475,8 +475,8 @@ Route rules (FMS-83):
 | `POST /trips/{trip_id}/start` | Start trip | `trip:execute` | Valid state transition -> `Trip`; `If-Match`, `Idempotency-Key`; `meta.warnings` |
 | `POST /trips/{trip_id}/end` | End trip | `trip:execute` | Valid state transition -> `Trip`; `If-Match`, `Idempotency-Key` |
 | `POST /trips/{trip_id}/status` | Explicit status transition | `trip:execute` | `{status}`; `scheduled/assigned/en_route/completed/cancelled`; `If-Match`, `Idempotency-Key` |
-| `POST /trips/{trip_id}/stops/{stop_id}/complete` | Complete trip stop | `trip:execute` | Stop completion -> `TripStop` |
-| `GET /trips/{trip_id}/live` | Live trip state | `trip:read` | `TripLiveState` |
+| `POST /trips/{trip_id}/stops/{stop_id}/complete` | Mark a stop done (FMS-95) | `trip:execute` | `{notes?}` -> `TripStop`, `meta.changed`; `Idempotency-Key`; trip under way only |
+| `GET /trips/{trip_id}/live` | Live trip state (FMS-95) | `trip:read` | `TripLiveState` |
 
 Trip assignment preserves the earlier business rules: a driver cannot be assigned to overlapping trips; a vehicle cannot be assigned to overlapping trips; and a vehicle with an active maintenance/operational flag cannot be assigned when the domain rule forbids it. Typical conflicts are `409 CONFLICT_DRIVER_OVERLAP`, `409 CONFLICT_VEHICLE_OVERLAP` and `409 CONFLICT_VEHICLE_FLAGGED`.
 
@@ -486,7 +486,7 @@ Trip rules (FMS-30):
 
 - **Who:** `trip:read`: every staff role except the finance clerk and technician, and drivers. Staff see the trips of their depots (a trip's depot is its route's depot); a driver sees **only the trips they drive**: other trips are `404`, and filtering by another driver returns an empty list, not `403`. `trip:write` (create, reschedule, cancel): admin, fleet manager, dispatcher.
 - **Create:** `route_id` (an active route in your depots: unknown or elsewhere is `400 references_missing_record`, retired is `400 route_retired`), or instead a one-off `route` (below), `scheduled_start` and `scheduled_end` (ISO 8601 with an offset). Both `route_id` and `route`, or neither, is `400` (`reason: route_id_or_route`). Without `scheduled_end` the trip ends the route's `estimated_duration_seconds` after its start; a route without one needs the end (`400`, `scheduled_end` `required`). An end at or before the start is `400 VALIDATION_INVALID_DATE_RANGE`. The trip starts `scheduled`, with no driver or vehicle (assigned later, FMS-31), and copies the route's plan: `origin`, `destination`, `planned_distance_km`, `planned_duration_seconds` and its stops (as `stops[]`, `status: planned`). A later edit of the route never changes the trip. `Idempotency-Key` is accepted (§19).
-- **`Trip`:** `id`, `route_id`, `route_name`, `depot_id`, `vehicle_id`, `driver_id`, `status`, `origin`, `destination`, `planned_distance_km`, `planned_duration_seconds`, `scheduled_start`, `scheduled_end`, `actual_start`, `actual_end`, `actual_distance_km`, `stops[]` (`id`, `sequence_number`, `name`, `latitude`, `longitude`, `status`, `planned_arrival`, `actual_arrival`), `version` (ETag; `If-Match` on `PATCH`), `created_at`, `updated_at`.
+- **`Trip`:** `id`, `route_id`, `route_name`, `depot_id`, `vehicle_id`, `driver_id`, `status`, `origin`, `destination`, `planned_distance_km`, `planned_duration_seconds`, `scheduled_start`, `scheduled_end`, `actual_start`, `actual_end`, `actual_distance_km`, `stops[]` (`TripStop`: `id`, `sequence_number`, `name`, `latitude`, `longitude`, `status`, `planned_arrival`, `actual_arrival`, `eta`, `completed_at`), `version` (ETag; `If-Match` on `PATCH`), `created_at`, `updated_at`.
 - **Update:** `PATCH` takes `scheduled_start`, `scheduled_end`, `status: "cancelled"`, `reason` (1-500) and `shift_following` (boolean); driver, vehicle and route are not writable (re-plan by cancelling and creating). An open trip (`draft`, `scheduled`, `assigned`) changes; a trip under way (`en_route`) can move its end only (FMS-139, below). A draft that gets both times becomes `scheduled`. The overlap rules above still hold when an assigned or en-route trip is rescheduled. The response's `meta.shifted` lists the trips moved later to make room (`[{ trip_id, scheduled_start, scheduled_end }]`, empty when none).
 - **Cancel:** `PATCH {"status": "cancelled"}` keeps the row with status `cancelled`; it stays in the history. A trip under way (`en_route`) is ended, not cancelled, and a completed or cancelled trip never changes: both `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: trip_en_route`, `trip_completed`, `trip_cancelled`).
 - **History:** `GET /trips` filters by `status` (one or several, comma-separated), `driver_id`, `vehicle_id`, `route_id`, `depot_id`, and `from`/`to` on the trip's start (`scheduled_start`, or `created_at` for an unscheduled draft). `from`/`to` take an instant or a date; a date is that Addis Ababa day, and a date `to` covers the whole day. `to` at or before `from` is `400 VALIDATION_INVALID_DATE_RANGE`. Filters combine (AND); one naming something unknown matches nothing. Newest first (`sort_order=asc` for earliest first) with **keyset paging**: `page_size` 1-100 (default 50), `meta.next_cursor` for the next page or `null` on the last; trips written while paging never shift a page. A cursor the API did not issue is `400 invalid_cursor`.
@@ -532,6 +532,18 @@ Trip lifecycle (FMS-32):
   - **When.** The estimate is worked out from the vehicle's newest position and the road ahead, at most every 30 seconds of position time per trip, and published as `TripEtaUpdated`.
   - **Otherwise.** A trip that is not under way has `eta: null`.
 - **Events:** `TripStarted` (`trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`), `TripCompleted` (the same, with `actual_end` and `duration_seconds`), `TripCancelled` (as for `PATCH`), and `TripUpdated` (`changed_fields: ["status"]`) when a draft is scheduled. Fleet's availability and the cached vehicle follow them.
+
+Stops and live state (FMS-95, [trip-stops.md](trip-stops.md)):
+
+- **Stop status:** `planned`; `arrived` when GPS saw the vehicle within 150 m (FMS-86); `completed` when marked done; `skipped`.
+- **Mark a stop done:** `POST /trips/{trip_id}/stops/{stop_id}/complete`, `trip:execute`; a driver only on their own trips, staff in their depots (others, and an id that is not a UUID, are `404`). Only while the trip is `en_route`: otherwise `409 CONFLICT_INVALID_STATE_TRANSITION` (`reason: trip_not_under_way`). The body is empty or `{ "notes" }` (1-500). The stop becomes `completed` with `completed_at` now and who did it. If GPS had not seen the vehicle there, `actual_arrival` is now as well, so the estimate counts the stop passed. A stop already completed is `200` with `meta.changed: false` and nothing written. Audited; `Idempotency-Key` accepted.
+- **Event:** `TripStopCompleted` (`trip_id`, `stop_id`, `sequence_number`, `name`, `depot_id`, `driver_id`, `vehicle_id`, `completed_at`, `reached_by_gps`). It reaches the console as `trip.updated` (§11.2), and the screens showing the trip re-read it.
+- **`TripLiveState`** (`GET /trips/{trip_id}/live`, `trip:read`, the same scope as `GET /trips/{trip_id}`):
+  - `trip_id`, `status`, `vehicle_id`, `driver_id`, `actual_start`, `scheduled_end`, `as_of`;
+  - `position`: `{lat, lng, speed_kmh, heading, recorded_at, stale}`, the vehicle's newest position while the trip is under way (`stale` after 2 minutes without one), else `null`;
+  - `next_stop`: `{stop_id, sequence_number, name, eta}`, the first stop still `planned`, or `null`;
+  - `stops`: `{total, reached, completed}`, where reached means it has an `actual_arrival`;
+  - `eta`: the trip's estimate (FMS-86), or `null`.
 
 ### 7.3 Trip creation example
 
@@ -824,7 +836,7 @@ Service program rules ([service-programs.md](service-programs.md)):
 |---|---|---|---|
 | `GET /tracking/vehicles/current` | Current fleet locations (the live map, FMS-45) | `tracking:read` | `depot_id?` -> `VehicleLocation[]`; cached 5 s |
 | `POST /tracking/gps-pings` | Telemetry ingestion | Device token, `tracking:ingest`, or `trip:execute` (a driver's phone) | `{pings: GPSPoint[]}` (1-500) -> `202 {accepted, duplicates, rejected[]}`; high-volume endpoint |
-| `GET /vehicles/{vehicle_id}/tracking` | Historical GPS (FMS-136) | `tracking:read` | `from`, `to` (both included), `limit` (1-1000, default 500), `cursor` -> `TrackPoint[]` oldest first, `meta.next_cursor` for the next page or `null`; depot scope, another depot's vehicle is `404` |
+| `GET /vehicles/{vehicle_id}/tracking` | Historical GPS (FMS-136) | `tracking:read` | `from`, `to` (both included; at most 30 days, FMS-95), `limit` (1-1000, default 500), `cursor` -> `TrackPoint[]` oldest first, `meta.next_cursor` for the next page or `null`; depot scope, another depot's vehicle is `404`; every page audited |
 | `GET /vehicles/{vehicle_id}/telemetry-flags` | Telemetry warnings (FMS-46, FMS-90) | `tracking:read` | `flag_type,from,to,ongoing,limit` -> `TelemetryFlag[]`, newest first |
 | `GET /geofences` | A depot's geofences (FMS-90) | `tracking:read` | `depot_id?`, `status` (`active` default, `inactive`, `all`) -> `Geofence[]`, by depot then name; depot scope |
 | `GET /geofences/{geofence_id}` | One geofence | `tracking:read` | -> `Geofence`, ETag; depot scope, else `404` |
@@ -842,6 +854,12 @@ Service program rules ([service-programs.md](service-programs.md)):
   - `trip`: `{trip_id, route_name, origin, destination, started_at, scheduled_end, driver: {driver_id, full_name}}` for the trip under way, or `null`;
   - `flags`: open, unresolved telemetry flags, the newest of each type: `{flag_type, severity, observed_at}`.
 - **Freshness.** Cached in Redis for 5 s, one snapshot per depot shown (`integration:live-map:<depot public id>`, or `all`), shared by everyone who sees it. Trip and vehicle events drop it after commit. Positions move on through `vehicle.location.updated` meanwhile.
+
+**GPS history (FMS-136, FMS-95).** `GET /vehicles/{vehicle_id}/tracking` covers at most 30 days per request:
+
+- **Defaults.** Without `to` it ends now, or 30 days after `from` when that is earlier. Without `from` it starts 30 days before its end.
+- **Refusals.** A longer range is `400 VALIDATION_INVALID_DATE_RANGE` (`reason: range_too_long`), and so is `to` at or before `from` (`reason: before_from`). Ask for the rest in another request.
+- **Audit.** Where a vehicle was is behavioural data (§24.3), so every page read is audited: `tracking.history_read` on the vehicle, with `from`, `to`, the number of points and whether it continued a cursor.
 
 **GPS ingestion (FMS-88).** How it works, the webhook format and the simulator: [docs/gps-ingestion.md](gps-ingestion.md).
 

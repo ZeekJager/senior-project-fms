@@ -36,3 +36,16 @@
 .trip-map-key--planned {
   border-top: 2px dashed rgb(var(--c-ink-subtle));
 }
+
+/* The replay (FMS-95): the road still ahead faint, the vehicle a filled dot ringed in the surface colour. */
+.trip-map .trip-map-track--ahead {
+  stroke-opacity: 0.25;
+}
+.trip-map .trip-map-replay {
+  stroke: rgb(var(--c-surface));
+  fill: rgb(var(--c-brand));
+  fill-opacity: 1;
+}
+.trip-map-scrubber {
+  accent-color: rgb(var(--c-brand));
+}

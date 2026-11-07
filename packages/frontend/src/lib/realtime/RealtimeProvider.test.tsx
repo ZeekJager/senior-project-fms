@@ -69,6 +69,10 @@ describe('RealtimeProvider (FMS-43)', () => {
     fake.serverEvent('trip.updated', { trip_id: 't1', status: 'en_route', change: 'TripEtaUpdated', eta: null })
     expect(invalidate).not.toHaveBeenCalled()
     expect(seen).toHaveLength(2)
+    // A stop marked done (FMS-95) is news: the console's trip and the dispatch board re-read it.
+    fake.serverEvent('trip.updated', { trip_id: 't1', status: 'en_route', change: 'TripStopCompleted' })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['trips'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dispatch'] })
   })
 
   it('signed out: no socket at all', async () => {

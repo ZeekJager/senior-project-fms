@@ -8,7 +8,7 @@ import { usePhoneGps } from '@/features/phoneGps/PhoneGps'
 import { ApiError } from '@/lib/api/errors'
 import { useConnectivity } from '@/pwa/useConnectivity'
 import { clockTime } from '@/pages/Attendance/api'
-import { useMyAttendance, useTodayTrips, useTripCommand, useTripVehicle, type DriverTrip, type TripWarning } from './api'
+import { useCompleteStop, useMyAttendance, useTodayTrips, useTripCommand, useTripVehicle, type DriverTrip, type TripWarning } from './api'
 import { readPostTrip, writePostTrip, type PostTrip } from './checklist'
 import { Note, Panel } from './parts'
 
@@ -230,7 +230,9 @@ function TripCard({ trip, children }: { trip: DriverTrip; children: ReactNode })
           </span>
         </div>
 
-        {trip.stops.length > 0 && (
+        {trip.stops.length > 0 && underWay && <StopList trip={trip} />}
+
+        {trip.stops.length > 0 && !underWay && (
           <details className="group rounded-control border border-line">
             <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-4 py-3 text-base font-medium text-ink">
               {trip.stops.length} stop{trip.stops.length === 1 ? '' : 's'} on the way
@@ -253,6 +255,96 @@ function TripCard({ trip, children }: { trip: DriverTrip; children: ReactNode })
         <div className="space-y-3">{children}</div>
       </div>
     </article>
+  )
+}
+
+const STOP_REFUSALS: Record<string, string> = {
+  CONFLICT_INVALID_STATE_TRANSITION: 'This trip is no longer under way. Your day has been refreshed.',
+  RESOURCE_NOT_FOUND: 'Dispatch changed this trip. Your day has been refreshed.',
+}
+
+/**
+ * The stops of the trip under way (FMS-95), in order: done (with the time), reached (GPS saw the vehicle there) or
+ * still ahead, the next one marked. Done marks a stop finished; dispatch sees it on the console at once.
+ */
+function StopList({ trip }: { trip: DriverTrip }) {
+  const { api } = useAuth()
+  const online = useConnectivity(api)
+  const complete = useCompleteStop()
+  const stops = [...trip.stops].sort((a, b) => a.sequence_number - b.sequence_number)
+  const left = stops.filter((s) => s.status !== 'completed' && s.status !== 'skipped')
+  const next = left[0]?.id
+  const pending = complete.isPending ? complete.variables.stop.id : null
+  const failed = complete.error
+
+  return (
+    <section aria-labelledby="stops-heading" className="rounded-control border border-line">
+      <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
+        <h3 id="stops-heading" className="text-base font-semibold text-ink">
+          Stops
+        </h3>
+        <span className="text-sm tabular-nums text-ink-muted">
+          {stops.length - left.length} of {stops.length} done
+        </span>
+      </div>
+      <ol className="divide-y divide-line">
+        {stops.map((s) => {
+          const done = s.status === 'completed'
+          const isNext = s.id === next
+          return (
+            <li key={s.id} aria-current={isNext ? 'step' : undefined} className={cn('flex min-h-16 items-center gap-3 px-4 py-3', isNext && 'bg-brand-soft/60')}>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums',
+                  done ? 'bg-success-solid text-white' : isNext ? 'bg-brand text-white' : 'bg-surface-sunken text-ink-muted',
+                )}
+              >
+                {done ? <CheckCircle2 className="h-5 w-5" /> : s.sequence_number}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn('block break-words text-base font-medium', done ? 'text-ink-muted' : 'text-ink')}>{s.name}</span>
+                <span className="block text-sm text-ink-muted">
+                  {done
+                    ? `Done at ${time(s.completed_at ?? s.actual_arrival ?? null)}`
+                    : s.status === 'skipped'
+                      ? 'Skipped'
+                      : s.status === 'arrived'
+                        ? `You reached it at ${time(s.actual_arrival ?? null)}`
+                        : isNext
+                          ? 'Next stop'
+                          : 'Ahead'}
+                </span>
+              </span>
+              {!done && s.status !== 'skipped' && (
+                <button
+                  type="button"
+                  onClick={() => complete.mutate({ trip, stop: s })}
+                  disabled={!online || complete.isPending}
+                  aria-busy={pending === s.id}
+                  aria-label={`Mark ${s.name} done`}
+                  className={cn(
+                    'focus-ring h-12 shrink-0 rounded-2xl px-5 text-base font-semibold transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60',
+                    isNext ? 'bg-brand text-white shadow-soft hover:bg-brand-strong' : 'border border-line-strong bg-surface text-ink hover:bg-surface-muted',
+                  )}
+                >
+                  {pending === s.id ? 'Saving…' : 'Done'}
+                </button>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+      <div role="alert" className="empty:hidden">
+        {failed != null && (
+          <div className="border-t border-line px-4 py-3">
+            <Note tone="danger" icon={<AlertCircle />}>
+              {failed instanceof ApiError ? (STOP_REFUSALS[failed.code] ?? `The stop could not be marked done (${failed.code}).`) : 'No connection. Try again when you have signal.'}
+            </Note>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
 

@@ -182,6 +182,7 @@ function TripPanel({ vehicle, trip, driver, onClose }: { vehicle: Vehicle; trip:
                 planned={{ origin: toLatLng(route.data?.origin ?? null), destination: toLatLng(route.data?.destination ?? null) }}
                 road={roadPoints(road.data)}
                 track={(track.data ?? []).map((p): LatLng => [p.lat, p.lng])}
+                times={(track.data ?? []).map((p) => p.recorded_at)}
                 className="h-80"
               />
               <p className="text-xs text-ink-subtle">

@@ -8,7 +8,7 @@ import { authorize } from '../../auth';
 import type { Caller } from '../application/route.service';
 import type { TripService } from '../application/trip.service';
 import { COMMAND_STATUSES } from '../domain/lifecycle';
-import { TRIP_STATUSES, tripNotFound } from '../domain/trip';
+import { TRIP_STATUSES, stopNotFound, tripNotFound } from '../domain/trip';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_PAGE_SIZE = 100;
@@ -118,6 +118,9 @@ const historyQuery = z
   })
   .transform(({ from, to, ...rest }) => ({ ...rest, from: from ? bound(from, false) : undefined, to: to ? bound(to, true) : undefined }));
 
+/** POST /trips/{id}/stops/{stop_id}/complete: optionally, what happened there (a note for dispatch). */
+const completeStopBody = z.strictObject({ notes: z.string().trim().min(1).max(500).optional() });
+
 function caller(req: Request): Caller {
   return { user: req.user!, correlationId: req.correlationId };
 }
@@ -171,6 +174,29 @@ export function tripRouter(service: TripService): Router {
     asyncHandler(async (req, res) => {
       const trip = await service.get(caller(req), tripId(req));
       res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // FMS-95: where the trip stands now, in one read: position, next stop, counts and estimate.
+  router.get(
+    '/trips/:tripId/live',
+    authorize('trip:read'),
+    asyncHandler(async (req, res) => {
+      res.json({ data: await service.live(caller(req), tripId(req)), meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // FMS-95: the work at a stop is done. A retry, or completing it twice, returns the stop as it is.
+  router.post(
+    '/trips/:tripId/stops/:stopId/complete',
+    authorize('trip:execute'),
+    idempotent(),
+    asyncHandler(async (req, res) => {
+      const id = tripId(req);
+      if (!UUID.test(req.params.stopId)) throw stopNotFound();
+      const { notes } = parseInput(completeStopBody, req.body ?? {});
+      const { stop, changed } = await service.completeStop(caller(req), id, req.params.stopId, notes);
+      res.json({ data: stop, meta: { request_id: req.correlationId, changed } });
     }),
   );
 

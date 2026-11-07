@@ -16,8 +16,18 @@ export interface DriverTrip {
   scheduled_end: string | null
   actual_start: string | null
   planned_distance_km: number | null
-  stops: { id: string; sequence_number: number; name: string; status: string }[]
+  stops: DriverStop[]
   version: number
+}
+
+/** A stop on the way: reached when GPS saw the vehicle there (FMS-86), completed when the driver marked it done (FMS-95). */
+export interface DriverStop {
+  id: string
+  sequence_number: number
+  name: string
+  status: 'planned' | 'arrived' | 'completed' | 'skipped'
+  actual_arrival?: string | null
+  completed_at?: string | null
 }
 
 export type TripWarning =
@@ -120,6 +130,24 @@ export function useTripCommand(command: 'start' | 'end') {
       // An ended trip leaves the list at once, so the phone stops reporting its position now, not at the refetch (FMS-57).
       if (command === 'end') queryClient.setQueriesData<DriverTrip[]>({ queryKey: ['driver', 'today'] }, (trips) => trips?.filter((t) => t.id !== trip.id))
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['driver', 'today'] }),
+  })
+}
+
+/**
+ * POST /trips/{id}/stops/{stop_id}/complete (FMS-95): the driver marks a stop done. The trip on screen shows it at
+ * once; a retry replays rather than repeats, and a stop already done answers as it is.
+ */
+export function useCompleteStop() {
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ trip, stop }: { trip: DriverTrip; stop: DriverStop }) =>
+      api.request<DriverStop>(`/trips/${trip.id}/stops/${stop.id}/complete`, { method: 'POST', json: {}, idempotencyKey: true }),
+    onSuccess: (done, { trip }) =>
+      queryClient.setQueriesData<DriverTrip[]>({ queryKey: ['driver', 'today'] }, (trips) =>
+        trips?.map((t) => (t.id === trip.id ? { ...t, stops: t.stops.map((s) => (s.id === done.id ? { ...s, ...done } : s)) } : t)),
+      ),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['driver', 'today'] }),
   })
 }

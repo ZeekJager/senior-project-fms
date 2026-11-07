@@ -52,6 +52,8 @@ export interface StopRow {
   actualArrival: Date | null;
   /** Expected arrival from the vehicle's latest position (FMS-86); null once reached or before an estimate. */
   eta: Date | null;
+  /** When it was marked done (FMS-95). */
+  completedAt: Date | null;
 }
 
 /** A trip's latest estimate (FMS-86), keyed by internal trip id. */
@@ -211,11 +213,38 @@ export class TripRepository extends Repository {
     const res = await db.query<StopRow>(
       `SELECT s.public_id AS id, s.trip_id AS "tripId", s.sequence_number AS "sequenceNumber", s.name,
               s.latitude::float8 AS latitude, s.longitude::float8 AS longitude, s.status,
-              s.planned_arrival AS "plannedArrival", s.actual_arrival AS "actualArrival", s.eta
+              s.planned_arrival AS "plannedArrival", s.actual_arrival AS "actualArrival", s.eta, s.completed_at AS "completedAt"
          FROM trip.trip_stops s WHERE s.trip_id = ANY($1::bigint[]) ORDER BY s.trip_id, s.sequence_number`,
       [tripIds],
     );
     return res.rows;
+  }
+
+  /** A stop of a trip (internal trip id) by its public id, row-locked; with its internal id for the write. */
+  async lockStop(client: PoolClient, tripId: string, stopPublicId: string): Promise<(StopRow & { internalId: string }) | null> {
+    const res = await client.query<StopRow & { internalId: string }>(
+      `SELECT s.id AS "internalId", s.public_id AS id, s.trip_id AS "tripId", s.sequence_number AS "sequenceNumber", s.name,
+              s.latitude::float8 AS latitude, s.longitude::float8 AS longitude, s.status,
+              s.planned_arrival AS "plannedArrival", s.actual_arrival AS "actualArrival", s.eta, s.completed_at AS "completedAt"
+         FROM trip.trip_stops s WHERE s.trip_id = $1 AND s.public_id = $2::uuid FOR UPDATE`,
+      [tripId, stopPublicId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  /**
+   * Marks a stop done (FMS-95): completed now, by the user; reached now unless GPS already had it, so the estimate
+   * (FMS-86) treats it as behind the vehicle. Audited.
+   */
+  completeStop(ctx: MutationContext, stop: { internalId: string; actualArrival: Date | null }, at: Date, notes: string | undefined, client: PoolClient): Promise<Row> {
+    return this.mutate(
+      ctx,
+      'trip.trip_stops',
+      'UPDATE',
+      stop.internalId,
+      { status: 'completed', completed_at: at, completed_by: ctx.userId, actual_arrival: stop.actualArrival ?? at, eta: null, ...(notes !== undefined ? { notes } : {}) },
+      client,
+    );
   }
 
   /** The latest estimate of these trips (internal ids), for those that have one. */

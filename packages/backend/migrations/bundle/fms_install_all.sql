@@ -3355,3 +3355,16 @@ CREATE TABLE IF NOT EXISTS integration.unknown_devices (
 INSERT INTO integration.external_providers (code, name, provider_type, is_active, configuration)
 VALUES ('fms-simulator', 'FMS GPS simulator', 'telematics', FALSE, '{}'::JSONB)
 ON CONFLICT (code) DO NOTHING;
+-- ===== 062_trip_stop_completion.sql =====
+ALTER TABLE trip.trip_stops ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE trip.trip_stops ADD COLUMN IF NOT EXISTS completed_by BIGINT
+    REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Stops marked completed before this column existed get their arrival (or last change) as the time.
+UPDATE trip.trip_stops SET completed_at = coalesce(actual_arrival, updated_at)
+ WHERE status = 'completed' AND completed_at IS NULL;
+
+DO $$ BEGIN
+    ALTER TABLE trip.trip_stops
+        ADD CONSTRAINT chk_trip_stop_completed CHECK (status <> 'completed' OR completed_at IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

@@ -627,6 +627,86 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TripMoveRefused' }
 
+  /trips/{trip_id}/live:
+    get:
+      tags: [Trips]
+      operationId: getTripLive
+      summary: Where a trip stands now (FMS-95)
+      description: >
+        Needs trip:read; a driver only their own trips, staff in their depot scope (another's trip, or an id that is
+        not a UUID, is a 404). While the trip is under way: the vehicle's newest position (stale after 2 minutes
+        without one), the next stop not yet reached with its estimate, how many stops are reached and completed, and
+        the trip's arrival estimate (FMS-86). For a trip not under way the position is null. docs/trip-stops.md.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: The trip's live state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/TripLiveState' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trips/{trip_id}/stops/{stop_id}/complete:
+    post:
+      tags: [Trips]
+      operationId: completeTripStop
+      summary: Mark a stop done (FMS-95)
+      description: >
+        The driver (or dispatch) marks a stop of a trip under way done: status completed, completed_at now and who,
+        actual_arrival now if GPS had not seen the vehicle there (so the estimate counts it passed), and the note if
+        given. Needs trip:execute; a driver only on their own trips. A stop already completed is 200 with
+        meta.changed false and nothing written. Audited; publishes TripStopCompleted, which the console receives as
+        trip.updated. docs/trip-stops.md.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - name: stop_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                notes: { type: string, minLength: 1, maxLength: 500, description: What happened at the stop, for dispatch. }
+      responses:
+        '200':
+          description: The stop as it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/TripStop' }
+                  meta:
+                    type: object
+                    required: [request_id, changed]
+                    properties:
+                      request_id: { type: string }
+                      changed: { type: boolean, description: False when the stop was already completed. }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (reason trip_not_under_way) when the trip is not en_route.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
   /trips/{trip_id}/status:
     post:
       tags: [Trips]
@@ -1670,16 +1750,17 @@ paths:
         The vehicle's stored positions, oldest first, a page at a time: the vehicle page draws a trip's track from
         the points between its actual start and end. Behavioural data: needs tracking:read (never drivers), in the
         caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404. Each point names its trip,
-        not the driver.
+        not the driver. One request covers at most 30 days (FMS-95): without `to` it ends now (or 30 days after
+        `from`), without `from` it starts 30 days before its end. Every read is audited (tracking.history_read).
       parameters:
         - $ref: '#/components/parameters/VehicleId'
         - name: from
           in: query
-          description: recorded_at at or after this instant.
+          description: recorded_at at or after this instant; default 30 days before `to`.
           schema: { type: string, format: date-time }
         - name: to
           in: query
-          description: recorded_at at or before this instant.
+          description: recorded_at at or before this instant; default now, or 30 days after `from` when that is earlier.
           schema: { type: string, format: date-time }
         - name: limit
           in: query
@@ -1708,7 +1789,10 @@ paths:
                       next_cursor: { type: [string, 'null'], description: The next page's cursor; null on the last page. }
                       request_id: { type: string }
         '400':
-          description: VALIDATION_FAILED (a time without offset, limit out of range, to before from, a cursor the API did not issue, or an unknown query parameter).
+          description: >
+            VALIDATION_FAILED (a time without offset, limit out of range, a cursor the API did not issue, or an unknown
+            query parameter); VALIDATION_INVALID_DATE_RANGE (`to` not after `from`, reason before_from; more than 30
+            days, reason range_too_long).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -7581,27 +7665,7 @@ components:
         actual_distance_km: { type: [number, 'null'] }
         stops:
           type: array
-          items:
-            type: object
-            required: [id, sequence_number, name, status]
-            properties:
-              id: { type: string, format: uuid }
-              sequence_number: { type: integer }
-              name: { type: string }
-              latitude: { type: [number, 'null'] }
-              longitude: { type: [number, 'null'] }
-              status: { type: string, enum: [planned, arrived, completed, skipped] }
-              planned_arrival: { type: [string, 'null'], format: date-time }
-              actual_arrival:
-                type: [string, 'null']
-                format: date-time
-                description: When the vehicle came within 150 m of the stop while the trip was under way (FMS-86).
-              eta:
-                type: [string, 'null']
-                format: date-time
-                description: >
-                  Expected arrival from the vehicle's latest position (FMS-86); null once reached, for a stop
-                  without coordinates or behind the vehicle, or when the trip is not under way.
+          items: { $ref: '#/components/schemas/TripStop' }
         eta:
           description: The latest arrival estimate while the trip is under way (FMS-86); null otherwise or before the first.
           oneOf:
@@ -7610,6 +7674,82 @@ components:
         version: { type: integer }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    TripStop:
+      type: object
+      required: [id, sequence_number, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        sequence_number: { type: integer }
+        name: { type: string }
+        latitude: { type: [number, 'null'] }
+        longitude: { type: [number, 'null'] }
+        status:
+          type: string
+          enum: [planned, arrived, completed, skipped]
+          description: arrived when GPS saw the vehicle there (FMS-86); completed when marked done (FMS-95).
+        planned_arrival: { type: [string, 'null'], format: date-time }
+        actual_arrival:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            When the vehicle came within 150 m of the stop while the trip was under way (FMS-86), or, if GPS never
+            saw it there, when the stop was marked done (FMS-95).
+        eta:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            Expected arrival from the vehicle's latest position (FMS-86); null once reached, for a stop
+            without coordinates or behind the vehicle, or when the trip is not under way.
+        completed_at: { type: [string, 'null'], format: date-time, description: When the stop was marked done (FMS-95). }
+
+    TripLiveState:
+      type: object
+      description: Where a trip stands now (FMS-95). docs/trip-stops.md.
+      required: [trip_id, status, vehicle_id, driver_id, position, next_stop, stops, eta, actual_start, scheduled_end, as_of]
+      properties:
+        trip_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/TripStatus' }
+        vehicle_id: { type: [string, 'null'], format: uuid }
+        driver_id: { type: [string, 'null'], format: uuid }
+        position:
+          description: The vehicle's newest position while the trip is under way; null otherwise or before the first.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [lat, lng, speed_kmh, heading, recorded_at, stale]
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+                speed_kmh: { type: [number, 'null'] }
+                heading: { type: [number, 'null'] }
+                recorded_at: { type: string, format: date-time }
+                stale: { type: boolean, description: No position for more than 2 minutes. }
+        next_stop:
+          description: The first stop not yet reached or done; null when none is left.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [stop_id, sequence_number, name, eta]
+              properties:
+                stop_id: { type: string, format: uuid }
+                sequence_number: { type: integer }
+                name: { type: string }
+                eta: { type: [string, 'null'], format: date-time }
+        stops:
+          type: object
+          required: [total, reached, completed]
+          properties:
+            total: { type: integer }
+            reached: { type: integer, description: Stops with an actual arrival (seen by GPS or marked done). }
+            completed: { type: integer }
+        eta:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/TripEta'
+        actual_start: { type: [string, 'null'], format: date-time }
+        scheduled_end: { type: [string, 'null'], format: date-time }
+        as_of: { type: string, format: date-time }
 
     TripEta:
       type: object
