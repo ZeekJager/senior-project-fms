@@ -1,0 +1,24 @@
+# The production images (FMS-105) build from the repository root. Keep the context small and
+# keep secrets, local state and dev output out of every layer.
+.git
+.github
+.husky
+.claude
+**/node_modules
+**/dist
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+packages/backend/storage
+packages/backend/test
+packages/frontend/.impeccable
+packages/ai-service/data
+packages/ai-service/models
+packages/ai-service/tests
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+docs
+*.md
