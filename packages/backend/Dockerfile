@@ -34,7 +34,7 @@ RUN npm ci --workspace fms-backend --omit=dev --ignore-scripts && npm cache clea
 # 3. What runs.
 FROM ${NODE_IMAGE} AS runtime
 # pg_dump and pg_restore for database backups (FMS-144): the server's major version, 16.
-RUN apk add --no-cache postgresql16-client
+RUN apk add --no-cache postgresql16-client && apk upgrade --no-cache
 ENV NODE_ENV=production PORT=3000 STORAGE_LOCAL_DIR=/app/packages/backend/storage
 WORKDIR /app/packages/backend
 COPY --from=prod-deps /app/node_modules /app/node_modules

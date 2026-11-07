@@ -6,7 +6,7 @@
 # API_UPSTREAM, so the image holds no address of the API and is the same in every environment.
 
 ARG NODE_IMAGE=node:22-alpine
-ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.28-alpine
+ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30-alpine
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
@@ -25,6 +25,11 @@ ARG VITE_GPS_MAX_ACCURACY_M
 RUN cd packages/frontend && npx tsc -b && npx vite build
 
 FROM ${NGINX_IMAGE} AS runtime
+# The base image is rebuilt rarely: take the operating system's security fixes published since (OpenSSL, nginx, ...),
+# which the image scan in CI otherwise fails on. Back to the unprivileged user afterwards.
+USER root
+RUN apk upgrade --no-cache
+USER nginx
 # nginx renders templates/*.template into conf.d at start, filling ${API_UPSTREAM}.
 COPY docker/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY docker/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
