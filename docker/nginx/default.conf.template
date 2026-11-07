@@ -1,0 +1,62 @@
+# The web app's nginx (FMS-105). Rendered at start; ${API_UPSTREAM} is the API's address.
+# The image's entrypoint substitutes only variables set in the environment, so nginx's own
+# $variables below are left alone.
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ""      close;
+}
+
+server {
+  listen 8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+  server_tokens off;
+
+  include /etc/nginx/snippets/security-headers.conf;
+
+  gzip on;
+  gzip_types text/css application/javascript application/json image/svg+xml;
+
+  location = /healthz {
+    access_log off;
+    include /etc/nginx/snippets/security-headers.conf;
+    default_type text/plain;
+    return 200 "ok\n";
+  }
+
+  # Socket.IO (FMS-43) needs the upgrade headers; the rest of /api is plain HTTP. The browser's Host
+  # is kept, so the API sees a same-origin request.
+  location /api/ {
+    proxy_pass ${API_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 75s;
+    client_max_body_size 12m;
+  }
+
+  # Hashed build files never change: cache them for good. index.html and the service worker must be
+  # fetched afresh, or a release would not reach a phone that has the old one.
+  location /assets/ {
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    include /etc/nginx/snippets/security-headers.conf;
+    try_files $uri =404;
+  }
+  location ~ ^/(index\.html|sw\.js|manifest\.webmanifest)$ {
+    add_header Cache-Control "no-cache";
+    include /etc/nginx/snippets/security-headers.conf;
+    try_files $uri =404;
+  }
+
+  # A route of the single-page app.
+  location / {
+    add_header Cache-Control "no-cache";
+    include /etc/nginx/snippets/security-headers.conf;
+    try_files $uri $uri/ /index.html;
+  }
+}
