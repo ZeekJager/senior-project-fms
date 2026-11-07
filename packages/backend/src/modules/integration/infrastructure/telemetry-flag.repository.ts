@@ -52,6 +52,15 @@ const FLAG_COLUMNS = `f.id, f.public_id AS "publicId", f.vehicle_id AS "vehicleI
  * (TelemetryFlagRaised, TelemetryFlagResolved) record each one.
  */
 export class TelemetryFlagRepository {
+  /** Deletes up to `limit` flags observed before `cutoff`, oldest first (FMS-104 retention); returns how many went. */
+  async purgeBefore(db: Queryable, cutoff: Date, limit: number): Promise<number> {
+    const res = await db.query(
+      `DELETE FROM tracking.telemetry_flags WHERE id IN (SELECT id FROM tracking.telemetry_flags WHERE observed_at < $1 ORDER BY observed_at, id LIMIT $2)`,
+      [cutoff, limit],
+    );
+    return res.rowCount ?? 0;
+  }
+
   /** The depot's thresholds, else the fleet's (depot_id NULL), else the starting values. */
   async thresholds(db: Queryable, depotId: string | null): Promise<RuleThresholds> {
     const res = await db.query<RuleThresholds>(

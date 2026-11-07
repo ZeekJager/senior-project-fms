@@ -232,6 +232,19 @@ export class TrackingRepository {
   }
 
   /**
+   * Deletes up to `limit` pings recorded before `cutoff`, oldest first (FMS-104 retention); returns how many went.
+   * A bounded batch, so one run never holds a long lock on the table.
+   */
+  async purgePingsBefore(db: Queryable, cutoff: Date, limit: number): Promise<number> {
+    const res = await db.query(
+      `DELETE FROM tracking.gps_pings
+        WHERE (recorded_at, id) IN (SELECT recorded_at, id FROM tracking.gps_pings WHERE recorded_at < $1 ORDER BY recorded_at, id LIMIT $2)`,
+      [cutoff, limit],
+    );
+    return res.rowCount ?? 0;
+  }
+
+  /**
    * The vehicle's stored ping nearest `at` in time, within `windowMs` either side of it, or null (FMS-82: where the
    * vehicle was when a fill-up was logged). History pings of a trip that has ended count: it is where it was then.
    */
