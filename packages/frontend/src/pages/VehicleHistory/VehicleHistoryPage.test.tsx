@@ -107,7 +107,7 @@ const brakeWarranty = {
   claims: { claimable: 1, submitted: 0, approved: 0, rejected: 0, recovered_cents: 0 }, version: 2, created_at: '2025-11-28T09:00:00Z', updated_at: '2025-11-28T09:00:00Z',
 }
 
-const claimable = { warranty_id: 'w-1', provider: 'Moenco', component: 'brakes', status: 'claimable', amount_cents: null, reference: null, km_checked: true, updated_at: null, updated_by: null }
+const claimable = { warranty_id: 'w-1', provider: 'Moenco', component: 'brakes', status: 'claimable', amount_cents: null, reference: null, ends_km: null, km_checked: true, updated_at: null, updated_by: null }
 
 /** The vehicle and every section's list; records each tracking query, and what the warranty screens send. */
 function serveVehicle() {
@@ -339,6 +339,58 @@ describe('Vehicle history (S-22)', () => {
     )
     expect(await within(drawer).findByText('Claim approved')).toBeInTheDocument()
     expect(drawer).toHaveTextContent('Recovered ETB 3,800.00')
+  })
+
+  it('a repair with no odometer under a warranty with a km limit is submitted with the reading (FMS-133)', async () => {
+    serveVehicle()
+    const unchecked = { ...claimable, ends_km: 100_000, km_checked: false }
+    const sent: unknown[] = []
+    server.use(
+      http.get('/api/v1/maintenance', () =>
+        page([record('r-2', '2026-10-12T08:00:00Z', { maintenance_type: 'corrective', description: 'Replaced the front brake pads', odometer_km: null, warranty_claim: unchecked })]),
+      ),
+      http.patch('/api/v1/maintenance-records/r-2/warranty-claim', async ({ request }) => {
+        const body = (await request.json()) as { odometer_km?: number }
+        sent.push(body)
+        if ((body.odometer_km ?? 0) > 100_000) {
+          return HttpResponse.json(
+            { error: { code: 'CONFLICT_INVALID_STATE_TRANSITION', message: 'Past the limit.', details: [{ field: 'odometer_km', reason: 'over_km_limit', allowed_transitions: [] }] } },
+            { status: 409 },
+          )
+        }
+        return envelope({ ...unchecked, status: 'submitted', km_checked: true, updated_at: '2026-11-08T09:00:00Z', updated_by: 'u-1' })
+      }),
+    )
+    const user = userEvent.setup()
+    signedInAs(technician)
+    renderApp(`/vehicles/${VEHICLE_ID}`)
+
+    const table = await screen.findByRole('table', { name: /Repair history of AA 3-20001/ })
+    const row = (await within(table).findByText('Replaced the front brake pads')).closest('tr')!
+    expect(row).toHaveTextContent('Under warranty: odometer needed')
+    await user.click(row)
+    const drawer = await screen.findByRole('dialog', { name: /AA 3-20001/ })
+    expect(drawer).toHaveTextContent('It ends at 100,000 km and this repair has no odometer reading: the distance is not checked yet.')
+
+    // Not sent without the reading.
+    await user.click(within(drawer).getByRole('button', { name: 'Submit claim' }))
+    expect(within(drawer).getByText('Enter the odometer at the repair: the provider pays only within the limit.')).toBeInTheDocument()
+    expect(sent).toEqual([])
+
+    // Past the limit: the server keeps the reading and says there is nothing to claim.
+    await user.type(within(drawer).getByLabelText(/Odometer at the repair/), '104000')
+    await user.click(within(drawer).getByRole('button', { name: 'Submit claim' }))
+    expect(await within(drawer).findByText("At 104,000 km the repair is past the warranty's 100,000 km limit: there is nothing to claim.")).toBeInTheDocument()
+
+    const odometer = within(drawer).getByLabelText(/Odometer at the repair/)
+    await user.clear(odometer)
+    await user.type(odometer, '95,000')
+    await user.click(within(drawer).getByRole('button', { name: 'Submit claim' }))
+    expect(await within(drawer).findByText('Claim submitted')).toBeInTheDocument()
+    expect(sent).toEqual([
+      { status: 'submitted', reference: null, odometer_km: 104_000 },
+      { status: 'submitted', reference: null, odometer_km: 95_000 },
+    ])
   })
 
   it('a reader sees the warranty and recalls without the buttons that change them', async () => {

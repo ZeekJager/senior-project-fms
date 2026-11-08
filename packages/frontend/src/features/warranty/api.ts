@@ -40,7 +40,9 @@ export interface WarrantyClaim {
   status: ClaimStatus
   amount_cents: number | null
   reference: string | null
-  /** False: the warranty ends at an odometer reading and the repair has none, so the distance was not checked. */
+  /** The warranty's end odometer; null: it ends by date only. */
+  ends_km: number | null
+  /** False: the warranty ends at an odometer reading and the repair has none: submitting the claim needs `odometer_km`. */
   km_checked: boolean
   updated_at: string | null
   updated_by: string | null
@@ -203,7 +205,7 @@ export function useUpdateClaim() {
   const { api } = useAuth()
   const invalidate = useInvalidate()
   return useMutation({
-    mutationFn: ({ recordId, ...body }: { recordId: string; status: Exclude<ClaimStatus, 'claimable'>; amount_cents?: number; reference?: string | null }) =>
+    mutationFn: ({ recordId, ...body }: { recordId: string; status: Exclude<ClaimStatus, 'claimable'>; amount_cents?: number; reference?: string | null; odometer_km?: number }) =>
       api.request<WarrantyClaim>(`/maintenance-records/${recordId}/warranty-claim`, { method: 'PATCH', json: body }),
     onSuccess: invalidate,
   })

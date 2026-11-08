@@ -77,6 +77,10 @@ export interface LockedClaim {
   vehicleId: string;
   warrantyId: string | null;
   claimStatus: ClaimStatus | null;
+  /** The repair's odometer; null: not entered. */
+  odometerKm: number | null;
+  /** Its warranty's end odometer; null: none, or no warranty. */
+  endsKm: number | null;
 }
 
 /** A maintenance.recalls row (internal ids). */
@@ -289,10 +293,18 @@ export class WarrantyRepository extends Repository {
     return this.mutate(ctx, 'maintenance.maintenance_records', 'UPDATE', recordId, { ...data }, client);
   }
 
+  /** The odometer a repair was missing, given with its warranty claim (audited as a change to the record). */
+  setRepairOdometer(ctx: MutationContext, client: PoolClient, recordId: string, odometerKm: number): Promise<Row> {
+    return this.mutate(ctx, 'maintenance.maintenance_records', 'UPDATE', recordId, { odometer_km: odometerKm }, client);
+  }
+
   async lockClaim(client: PoolClient, recordPublicId: string): Promise<LockedClaim | null> {
     const res = await client.query<LockedClaim>(
-      `SELECT id, vehicle_id AS "vehicleId", warranty_id AS "warrantyId", claim_status AS "claimStatus"
-         FROM maintenance.maintenance_records WHERE public_id = $1 FOR UPDATE`,
+      `SELECT r.id, r.vehicle_id AS "vehicleId", r.warranty_id AS "warrantyId", r.claim_status AS "claimStatus",
+              r.odometer_km::float8 AS "odometerKm", w.ends_km::float8 AS "endsKm"
+         FROM maintenance.maintenance_records r
+         LEFT JOIN maintenance.warranties w ON w.id = r.warranty_id
+        WHERE r.public_id = $1 FOR UPDATE OF r`,
       [recordPublicId],
     );
     return res.rows[0] ?? null;

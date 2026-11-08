@@ -52,7 +52,11 @@ export function RepairsSection({ vehicle }: { vehicle: Vehicle }) {
           {r.warranty_claim && (
             <span className="mt-1 inline-block">
               <Badge tone={CLAIM_TONES[r.warranty_claim.status]} icon={<ShieldCheck />}>
-                {r.warranty_claim.status === 'claimable' ? 'Under warranty: claimable' : CLAIM_LABELS[r.warranty_claim.status]}
+                {r.warranty_claim.status !== 'claimable'
+                  ? CLAIM_LABELS[r.warranty_claim.status]
+                  : r.warranty_claim.km_checked
+                    ? 'Under warranty: claimable'
+                    : 'Under warranty: odometer needed'}
               </Badge>
             </span>
           )}

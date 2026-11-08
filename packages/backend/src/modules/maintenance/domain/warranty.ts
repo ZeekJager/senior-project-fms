@@ -152,7 +152,9 @@ export interface WarrantyClaimView {
   /** Recovered, in cents (ETB): on an approved claim. */
   amount_cents: number | null;
   reference: string | null;
-  /** False: the warranty has an end odometer and the repair none, so the distance was not checked. */
+  /** The warranty's end odometer; null: it ends by date only. */
+  ends_km: number | null;
+  /** False: the warranty has an end odometer and the repair none, so the distance is not checked yet; submitting the claim needs the reading. */
   km_checked: boolean;
   updated_at: Date | null;
   updated_by: string | null;
@@ -242,6 +244,22 @@ export const claimAmountRequired = () =>
 
 export const claimAmountNotApproved = () =>
   new AppError(400, 'VALIDATION_FAILED', 'Only an approved claim has an amount recovered.', [{ field: 'amount_cents', reason: 'only_when_approved' }]);
+
+export const claimOdometerRequired = (endsKm: number) =>
+  new AppError(
+    400,
+    'VALIDATION_FAILED',
+    `The warranty ends at ${endsKm.toLocaleString('en-US')} km and this repair has no odometer reading: give the odometer at the repair to submit the claim.`,
+    [{ field: 'odometer_km', reason: 'odometer_required' }],
+  );
+
+export const claimOdometerRecorded = () =>
+  new AppError(400, 'VALIDATION_FAILED', 'The repair already has its odometer reading.', [{ field: 'odometer_km', reason: 'odometer_recorded' }]);
+
+export const claimOverKmLimit = () =>
+  new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', "At that odometer reading the repair is past the warranty's limit: there is nothing to claim.", [
+    { field: 'odometer_km', reason: 'over_km_limit', allowed_transitions: [] },
+  ]);
 
 export const recallCompletedFinal = () =>
   new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', 'The recall work on this vehicle is completed and can no longer change.', [

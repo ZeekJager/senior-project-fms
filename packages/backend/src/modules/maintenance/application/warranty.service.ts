@@ -18,6 +18,9 @@ import {
   coveringWarranty,
   daysFrom,
   notClaimable,
+  claimOdometerRecorded,
+  claimOdometerRequired,
+  claimOverKmLimit,
   operatingDay,
   recallCodeTaken,
   recallCompletedFinal,
@@ -103,6 +106,8 @@ export interface ClaimInput {
   status: Exclude<ClaimStatus, 'claimable'>;
   amount_cents?: number | null;
   reference?: string | null;
+  /** The odometer at the repair, when it has none and its warranty ends at a reading: recorded on the repair first. */
+  odometer_km?: number;
 }
 
 export interface RecallInput {
@@ -284,6 +289,7 @@ export class WarrantyService {
           status: r.status,
           amount_cents: r.amountCents,
           reference: r.reference,
+          ends_km: r.endsKm,
           km_checked: r.endsKm === null || r.odometerKm !== null,
           updated_at: r.updatedAt,
           updated_by: r.updatedBy ? (userIds.get(r.updatedBy) ?? null) : null,
@@ -298,11 +304,32 @@ export class WarrantyService {
    */
   async updateClaim(caller: Caller, recordPublicId: string, input: ClaimInput): Promise<WarrantyClaimView> {
     const { repo, vehicles } = this.deps;
-    return repo.inTransaction(async (client) => {
+    const lock = async (client: PoolClient) => {
       const row = await repo.lockClaim(client, recordPublicId);
       if (!row || !(await vehicles.findInScope(client, { id: row.vehicleId }, depotScope(caller.user)))) throw maintenanceNotFound();
-      if (!row.warrantyId || !row.claimStatus) throw notClaimable();
+      return row;
+    };
+    // The reading the repair was missing is recorded, and the repair judged again, on its own transaction: it is
+    // kept even when it shows the repair past the warranty's limit, so the repair stops showing as claimable.
+    if (input.odometer_km !== undefined) {
+      const odometerKm = input.odometer_km;
+      await repo.inTransaction(async (client) => {
+        const row = await lock(client);
+        if (!row.warrantyId || !row.claimStatus) throw notClaimable();
+        if (row.odometerKm !== null) throw claimOdometerRecorded();
+        await repo.setRepairOdometer(ctxOf(caller), client, row.id, odometerKm);
+        await this.refreshClaims(client, ctxOf(caller), row.vehicleId, [row.id]);
+      });
+    }
+    return repo.inTransaction(async (client) => {
+      const row = await lock(client);
+      if (!row.warrantyId || !row.claimStatus) throw input.odometer_km !== undefined ? claimOverKmLimit() : notClaimable();
       if (!CLAIM_TRANSITIONS[row.claimStatus].includes(input.status)) throw claimTransitionNotAllowed(row.claimStatus);
+      // A claim goes to the provider only once the distance is known to be within the warranty's limit.
+      if (input.status === 'submitted' && row.endsKm !== null) {
+        if (row.odometerKm === null) throw claimOdometerRequired(row.endsKm);
+        if (row.odometerKm > row.endsKm) throw claimOverKmLimit();
+      }
       if (input.status === 'approved' && (input.amount_cents === undefined || input.amount_cents === null)) throw claimAmountRequired();
       if (input.status !== 'approved' && input.amount_cents !== undefined && input.amount_cents !== null) throw claimAmountNotApproved();
       await repo.setClaim(ctxOf(caller), client, row.id, {

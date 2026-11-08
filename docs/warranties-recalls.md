@@ -71,7 +71,7 @@ It comes from a `provider`, with optional `coverage` and `terms` text.
 - **Something failed.** The repair has at least one failure (FMS-125). A service with no failure has nothing to claim.
 - **Active warranty.** The warranty is not void.
 - **In time.** Its work day falls within cover. The work day is when the work was completed; if it has not been, when it started; if not, when it was entered.
-- **In distance.** Its odometer is at or under `ends_km`. A repair entered without an odometer cannot be checked against `ends_km`, so it is treated as within it. The claim then says `km_checked: false`.
+- **In distance.** Its odometer is at or under `ends_km`. A repair entered without an odometer cannot be checked against `ends_km` yet: it is claimable, with `km_checked: false`, but the claim cannot be submitted until the distance is known (below).
 - **Right part.** The warranty is on the whole vehicle, or on a component that failed.
 
 **Two warranties covering it.** The repair is claimed under one only:
@@ -168,9 +168,15 @@ The `warranty-expiry-check` job (07:00, fleet module) uses the expiry rules of F
   - *Void* asks first.
 - **Header badge:** an open recall shows as a badge in the header, which opens the section.
 
+**The distance before submitting.** A provider pays only within the warranty's limit, so a claim under a warranty with `ends_km` is submitted only once the repair has an odometer reading:
+
+- **No reading:** submitting without one is `400`, `odometer_required`. Submitting with `odometer_km` records the reading on the repair first (audited as an `UPDATE` of `maintenance.maintenance_records`, even on a completed repair, since only a missing reading is filled in) and judges the repair again.
+- **Past the limit:** the reading is kept, the repair is no longer claimable under that warranty (another that covers it takes it, if any), and the answer is `409`, `over_km_limit`.
+- **Already has a reading:** `odometer_km` is `400`, `odometer_recorded`: a recorded reading is changed on the repair itself, while it is open.
+
 **Repairs:** a repair a warranty covers shows *Under warranty: claimable*, or where its claim is. Its record shows the warranty. With `maintenance:write`, the record moves the claim on, on the vehicle page as on the workshop page:
 
-- *Submit claim*, with the provider's reference;
+- *Submit claim*, with the provider's reference; a repair with no odometer under a warranty with a limit says the distance is not checked yet, and asks for the odometer at the repair first;
 - *Approved*, with the amount recovered;
 - *Rejected*.
 

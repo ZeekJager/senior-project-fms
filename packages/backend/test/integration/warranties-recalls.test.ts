@@ -300,6 +300,44 @@ describe('claimable repairs', () => {
     expect(completedEarlier.body.data.warranty_claim).toMatchObject({ warranty_id: w.id, status: 'claimable' });
   });
 
+  test('a repair with no odometer is submitted only with the reading; one past the limit is kept and stops being claimable', async () => {
+    const depot = await createDepot();
+    const tech = await signIn(['technician'], depot);
+    const truck = await createVehicle({ depot, odometer_km: 120_000 });
+    const w = await warranty(tech, { vehicle_id: truck.public_id, component: 'engine', provider: 'Engines Ltd', starts_on: addisDate(-200), ends_on: addisDate(200), ends_km: 100_000 });
+    const spec = '/maintenance-records/{record_id}/warranty-claim';
+    const claim = (r: { id: string }, body: object) => call('patch', spec, `/maintenance-records/${r.id}/warranty-claim`, tech, body);
+
+    const within = await repair(tech, truck, ['engine'], { odometerKm: null });
+    expect(within.warranty_claim).toMatchObject({ warranty_id: w.id, status: 'claimable', ends_km: 100_000, km_checked: false });
+    // Not sent while the distance is unknown.
+    const blocked = await claim(within, { status: 'submitted', reference: 'ENG-1' });
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.error.details[0]).toMatchObject({ field: 'odometer_km', reason: 'odometer_required' });
+    expect((await recordOf(tech, within.id)).warranty_claim).toMatchObject({ status: 'claimable' });
+    // With the reading: recorded on the completed repair, then sent.
+    const sent = await claim(within, { status: 'submitted', reference: 'ENG-1', odometer_km: 95_000.5 });
+    expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+    expect(sent.body.data).toMatchObject({ status: 'submitted', reference: 'ENG-1', km_checked: true });
+    expect(await recordOf(tech, within.id)).toMatchObject({ status: 'completed', odometer_km: 95_000.5 });
+    const audited = await pool.query(
+      "SELECT count(*)::int AS n FROM audit.audit_logs WHERE entity_type = 'maintenance.maintenance_records' AND entity_id = (SELECT id FROM maintenance.maintenance_records WHERE public_id = $1) AND new_values ? 'odometer_km'",
+      [within.id],
+    );
+    expect(audited.rows[0].n).toBeGreaterThanOrEqual(1);
+    // A reading is given only once.
+    const again = await claim(within, { status: 'approved', amount_cents: 1000, odometer_km: 96_000 });
+    expect(again.status).toBe(400);
+    expect(again.body.error.details[0].reason).toBe('odometer_recorded');
+
+    // Past the limit: the reading stays, the repair is no longer claimable, and the claim is not sent.
+    const past = await repair(tech, truck, ['engine'], { odometerKm: null });
+    const refused = await claim(past, { status: 'submitted', odometer_km: 104_000 });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.details[0]).toMatchObject({ field: 'odometer_km', reason: 'over_km_limit' });
+    expect(await recordOf(tech, past.id)).toMatchObject({ odometer_km: 104_000, warranty_claim: null });
+  });
+
   test('a claim goes submitted, then approved with the amount or rejected; voiding the warranty clears only unsent ones', async () => {
     const depot = await createDepot();
     const tech = await signIn(['technician'], depot);

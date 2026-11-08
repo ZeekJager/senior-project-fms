@@ -9527,7 +9527,7 @@ components:
       description: >
         The warranty claim on a repair (FMS-133): a repair that found a failure a warranty of its vehicle covered
         on its work day (completed, else started, else entered) and within its end odometer.
-      required: [warranty_id, provider, component, status, amount_cents, reference, km_checked, updated_at, updated_by]
+      required: [warranty_id, provider, component, status, amount_cents, reference, ends_km, km_checked, updated_at, updated_by]
       properties:
         warranty_id: { type: string, format: uuid }
         provider: { type: string }
@@ -9535,7 +9535,12 @@ components:
         status: { type: string, enum: [claimable, submitted, approved, rejected] }
         amount_cents: { type: [integer, 'null'], description: Recovered, in whole cents (ETB); on an approved claim. }
         reference: { type: [string, 'null'], description: "The provider's claim reference." }
-        km_checked: { type: boolean, description: 'False: the warranty has an end odometer and the repair none, so the distance was not checked.' }
+        ends_km: { type: [number, 'null'], description: "The warranty's end odometer; null: it ends by date only." }
+        km_checked:
+          type: boolean
+          description: >
+            False: the warranty has an end odometer and the repair none, so the distance is not checked yet.
+            Submitting the claim then needs `odometer_km`.
         updated_at: { type: [string, 'null'], format: date-time, description: When the claim last moved; null while only claimable. }
         updated_by: { type: [string, 'null'], format: uuid }
 
@@ -9547,6 +9552,14 @@ components:
         status: { type: string, enum: [submitted, approved, rejected] }
         amount_cents: { type: [integer, 'null'], minimum: 0, description: 'Required with approved; only then.' }
         reference: { type: [string, 'null'], maxLength: 100 }
+        odometer_km:
+          type: number
+          minimum: 0
+          description: >
+            The odometer at the repair, for one that has none whose warranty ends at a reading (`km_checked: false`).
+            Recorded on the repair (audited) and the repair judged again, before the claim moves; kept even when it
+            puts the repair past the limit (then `409`, `over_km_limit`). On a repair with a reading: `400`,
+            `odometer_recorded`.
 
     Recall:
       type: object

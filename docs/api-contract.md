@@ -867,6 +867,10 @@ Warranty and recall rules ([warranties-recalls.md](warranties-recalls.md)):
 - **Claim steps:** `claimable` -> `submitted` -> `approved` (`amount_cents` required) or `rejected` -> `submitted`. Errors:
   - any other step: `409 CONFLICT_INVALID_STATE_TRANSITION` with `allowed_transitions`;
   - no claim on the repair: `409`, `not_claimable`.
+- **The distance before submitting:** a claim under a warranty with `ends_km` is submitted only once the repair has an odometer reading (`km_checked: true`).
+  - **No reading:** `submitted` without `odometer_km` is `400`, `odometer_required`. With it, the reading is recorded on the repair (audited) and the repair judged again first; the reading is kept either way.
+  - **Past the limit:** `409`, `over_km_limit`, and the repair is no longer claimable (or is claimable under another warranty that covers it).
+  - **Already has a reading:** `odometer_km` is `400`, `odometer_recorded`.
 - **`RecallCreate`:** `campaign_code` (1-50, unique ignoring case: `409 CONFLICT_DUPLICATE`), `make`, `model`, `year_from`, `year_to` (not before `year_from`: `400 VALIDATION_INVALID_DATE_RANGE`), `description`, `remedy`, `issued_on`.
 - **Matching:** every vehicle in service of the make and model (ignoring case) with a model year in the range is listed as open.
   - **No model year:** a vehicle without one is not matched.

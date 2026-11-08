@@ -52,6 +52,13 @@ const claimBody = z.strictObject({
   status: z.enum(['submitted', 'approved', 'rejected']),
   amount_cents: cents.nullable().optional(),
   reference: optionalText(100),
+  // The odometer at the repair, for one that has none, whose warranty ends at a reading (one decimal at most).
+  odometer_km: z
+    .number()
+    .min(0)
+    .max(10_000_000)
+    .refine((n) => /^\d+(\.\d)?$/.test(String(n)), { message: 'At most one decimal.', params: { reason: 'too_many_decimals' } })
+    .optional(),
 });
 
 const year = z.number().int().min(1900).max(2100);
