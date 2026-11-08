@@ -88,6 +88,10 @@ When the linter stops you:
 
 Code used by several modules lives in `src/shared/` (errors, HTTP helpers, repository base class, transactions, logging). Shared code never imports from a module.
 
+### Personal data
+
+Licence numbers (`fleet.drivers.license_number`, `emergency_phone`) and phone numbers (`auth.users.phone`) are **encrypted at rest** (FMS-104, migration 063, [docs/driver-data-protection.md](docs/driver-data-protection.md)): triggers encrypt on write, so the write paths are unchanged, but **a query that returns or filters on one of these columns must wrap it in `privacy.decrypt_text(column)`**. Selecting the raw column returns `enc:v1:...` ciphertext. A new column of this kind gets the same trigger and a decrypting read. Never log or audit a decrypted value; the audit trail holds the ciphertext. The key (`DATA_ENCRYPTION_KEY`) is given to every connection by `src/shared/infrastructure/data-key.ts`; a script or test that opens its own connection must do the same.
+
 ### Schema ownership
 
 One PostgreSQL schema per module. Tables are created only by that module's migrations. The full table-by-table list, with the developer track that owns each schema, is CFG-5 in Jira (SE-107); this table is the same ownership in short.
@@ -97,6 +101,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `auth` | auth | users, roles, permissions, role_permissions, user_roles, refresh_sessions |
 | `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017), meter_readings (odometer and engine-hour history, migration 038) |
 | `trip` | trip | routes, trips, trip_stops |
+| `privacy` | privacy | functions only (`encrypt_text`, `decrypt_text`, `blind_index`; FMS-104, migration 063); no tables |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
 | `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions (scored nightly, FMS-55), inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039) |
 | `alert` | alert | alerts, alert_acknowledgements, incident_reports, notifications |

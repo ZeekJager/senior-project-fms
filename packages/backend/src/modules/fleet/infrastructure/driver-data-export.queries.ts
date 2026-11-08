@@ -18,8 +18,8 @@ const iso = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-
  */
 export async function driverDataExport(db: Queryable, userId: string): Promise<DriverDataExport | null> {
   const found = await db.query<Record<string, unknown> & { internal_id: string }>(
-    `SELECT d.id AS internal_id, d.public_id AS id, d.license_number, d.license_expiry::text AS license_expiry, d.license_categories,
-            d.hire_date::text AS hire_date, d.emergency_phone, d.is_active, ${iso('d.created_at')} AS created_at
+    `SELECT d.id AS internal_id, d.public_id AS id, privacy.decrypt_text(d.license_number) AS license_number, d.license_expiry::text AS license_expiry, d.license_categories,
+            d.hire_date::text AS hire_date, privacy.decrypt_text(d.emergency_phone) AS emergency_phone, d.is_active, ${iso('d.created_at')} AS created_at
        FROM fleet.drivers d WHERE d.user_id = $1`,
     [userId],
   );

@@ -3368,3 +3368,123 @@ DO $$ BEGIN
     ALTER TABLE trip.trip_stops
         ADD CONSTRAINT chk_trip_stop_completed CHECK (status <> 'completed' OR completed_at IS NOT NULL);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- ===== 063_encrypt_personal_data.sql =====
+-- Needs the key when rows exist: SET fms.data_key = '<DATA_ENCRYPTION_KEY>'; first (docs/driver-data-protection.md).
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE SCHEMA IF NOT EXISTS privacy;
+
+-- The key of this session, or an error. Never returns a short key: a mistyped
+-- one would encrypt data nobody can read back.
+CREATE OR REPLACE FUNCTION privacy.data_key()
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    k TEXT := current_setting('fms.data_key', TRUE);
+BEGIN
+    IF k IS NULL OR length(k) < 32 THEN
+        RAISE EXCEPTION 'fms.data_key is not set on this connection (DATA_ENCRYPTION_KEY): personal data can be neither read nor written'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN k;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION privacy.encrypt_text(plain TEXT)
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+    SELECT CASE
+        WHEN plain IS NULL THEN NULL
+        WHEN plain LIKE 'enc:v1:%' THEN plain
+        ELSE 'enc:v1:' || replace(encode(pgp_sym_encrypt(plain, privacy.data_key(), 'cipher-algo=aes256, compress-algo=0'), 'base64'), E'\n', '')
+    END
+$$;
+
+CREATE OR REPLACE FUNCTION privacy.decrypt_text(stored TEXT)
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+    SELECT CASE
+        WHEN stored IS NULL THEN NULL
+        WHEN stored LIKE 'enc:v1:%' THEN pgp_sym_decrypt(decode(substr(stored, 8), 'base64'), privacy.data_key())
+        ELSE stored
+    END
+$$;
+
+-- HMAC-SHA256 of the plain value under the key (with a purpose suffix, so the
+-- index is not the cipher's key): equal values give equal indexes.
+CREATE OR REPLACE FUNCTION privacy.blind_index(plain TEXT)
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+    SELECT CASE WHEN plain IS NULL THEN NULL ELSE encode(hmac(plain, privacy.data_key() || ':blind-index', 'sha256'), 'hex') END
+$$;
+
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        GRANT USAGE ON SCHEMA privacy TO fms_app;
+        GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA privacy TO fms_app;
+    END IF;
+END $$;
+
+-- Room for ciphertext, and the licence number's blind index.
+ALTER TABLE fleet.drivers ALTER COLUMN license_number TYPE TEXT;
+ALTER TABLE fleet.drivers ALTER COLUMN emergency_phone TYPE TEXT;
+ALTER TABLE fleet.drivers ADD COLUMN IF NOT EXISTS license_number_idx VARCHAR(64);
+ALTER TABLE auth.users ALTER COLUMN phone TYPE TEXT;
+
+CREATE OR REPLACE FUNCTION fleet.encrypt_driver_personal_data()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.license_number IS NOT NULL THEN
+        IF NEW.license_number NOT LIKE 'enc:v1:%' THEN
+            NEW.license_number_idx := privacy.blind_index(NEW.license_number);
+            NEW.license_number := privacy.encrypt_text(NEW.license_number);
+        ELSIF NEW.license_number_idx IS NULL THEN
+            NEW.license_number_idx := privacy.blind_index(privacy.decrypt_text(NEW.license_number));
+        END IF;
+    END IF;
+    NEW.emergency_phone := privacy.encrypt_text(NEW.emergency_phone);
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION auth.encrypt_user_personal_data()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.phone := privacy.encrypt_text(NEW.phone);
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_drivers_encrypt_personal_data ON fleet.drivers;
+CREATE TRIGGER trg_drivers_encrypt_personal_data
+    BEFORE INSERT OR UPDATE OF license_number, emergency_phone ON fleet.drivers
+    FOR EACH ROW EXECUTE FUNCTION fleet.encrypt_driver_personal_data();
+
+DROP TRIGGER IF EXISTS trg_users_encrypt_personal_data ON auth.users;
+CREATE TRIGGER trg_users_encrypt_personal_data
+    BEFORE INSERT OR UPDATE OF phone ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION auth.encrypt_user_personal_data();
+
+-- Encrypt what is there: setting a column to itself fires the trigger.
+UPDATE fleet.drivers SET license_number = license_number WHERE license_number NOT LIKE 'enc:v1:%' OR license_number_idx IS NULL;
+UPDATE fleet.drivers SET emergency_phone = emergency_phone WHERE emergency_phone IS NOT NULL AND emergency_phone NOT LIKE 'enc:v1:%';
+UPDATE auth.users SET phone = phone WHERE phone IS NOT NULL AND phone NOT LIKE 'enc:v1:%';
+
+-- Unique on the blind index instead of on the (random) ciphertext.
+ALTER TABLE fleet.drivers DROP CONSTRAINT IF EXISTS drivers_license_number_key;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_drivers_license_number_idx ON fleet.drivers(license_number_idx);

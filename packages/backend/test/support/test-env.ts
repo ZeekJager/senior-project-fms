@@ -51,6 +51,7 @@ export function applyTestEnv(): void {
   setDefault('DB_USER', 'fms_app');
   setDefault('DB_PASSWORD', process.env.DB_APP_PASSWORD ?? dotEnv.DB_APP_PASSWORD);
   setDefault('JWT_SECRET', dotEnv.JWT_SECRET);
+  setDefault('DATA_ENCRYPTION_KEY', dotEnv.DATA_ENCRYPTION_KEY);
   // Redis (FMS-72) only when REDIS_HOST is given (CI sets it; the dev stack's
   // Redis is not published to the host). Test keys live under their own prefix,
   // and each test file under its own below it: the files share one Redis, and a
