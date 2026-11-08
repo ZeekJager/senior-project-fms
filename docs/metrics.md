@@ -13,7 +13,7 @@ an administrator to read in the app; these are for the operators' monitoring sta
 | Service | Address | Config |
 |---|---|---|
 | API | `http://<host>:9464/metrics` | `METRICS_PORT` (default 9464, `0` turns it off), `METRICS_HOST` (default `127.0.0.1`), `METRICS_TOKEN` |
-| AI service | `http://ai-service:5000/metrics` | the same bearer token as its other endpoints (`ML_SERVICE_TOKEN`) |
+| AI service | `http://ai-service:5000/metrics` | `ML_SERVICE_TOKEN`, sent as `X-Internal-Token` like its other endpoints, or as `Authorization: Bearer <token>` (what a scrape config sends) |
 
 **Not exposed publicly.** The API serves `/metrics` from a second, tiny HTTP server (`src/shared/metrics/metrics-server.ts`) that has no
 other route, so nothing added to the public API can be reached through it, and `/metrics` on the public port is a 404. It listens on the
@@ -51,6 +51,20 @@ histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_
 Per route and status class, or for one route: add `status_class` to the `by`, or filter `route="/api/v1/trips/:tripId"`. The CFG-3
 budgets are the thresholds to alert on. An alert on the event outbox: `outbox_oldest_pending_seconds > 60` (what `/health/ready`
 calls `degraded`) or `outbox_dead_lettered_events > 0`.
+
+## What the AI service exports
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `http_request_duration_seconds{method,route,status_class}` | histogram | Every request, by route template (`/internal/ml/predict-maintenance/batch`); strangers are one `unmatched` series; `/health` and `/metrics` are left out. Same 13 buckets as the API's |
+| `ml_prediction_duration_seconds` | histogram | Time to score one request's vehicles |
+| `ml_predicted_vehicles_total` | counter | Vehicles scored |
+| `ml_model_info{version}` | gauge | `1` for the model being served |
+| `ml_model_load_seconds` | gauge | How long the model took to load |
+
+The production image runs two workers. Each would count only what it served, and a scrape reaches a different worker each time, so
+the workers write their metrics to files in `PROMETHEUS_MULTIPROC_DIR` (`/tmp/prometheus`, emptied when the container starts) and a
+scrape adds them up. Process metrics (CPU, memory) are not exported for that reason; scrape the container's own.
 
 ## Readiness
 
