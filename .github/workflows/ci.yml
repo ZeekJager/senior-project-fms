@@ -259,6 +259,44 @@ jobs:
         if: always()
         run: docker compose down -v --remove-orphans
 
+  # FMS-105 (docs/production-images.md): the three production images are built (tagged by commit),
+  # scanned, and run. Separate from docker-stack, which builds the development images.
+  images:
+    name: production-images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TRIVY_VERSION: "0.76.2"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build images, tagged by commit
+        run: |
+          set -euo pipefail
+          docker build -f packages/backend/Dockerfile -t "fms-backend:${GITHUB_SHA}" .
+          docker build -f packages/frontend/Dockerfile -t "fms-frontend:${GITHUB_SHA}" .
+          docker build -t "fms-ai-service:${GITHUB_SHA}" packages/ai-service
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          file="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$file" "$base/$file"
+          curl -sSfL -o "$RUNNER_TEMP/trivy-checksums.txt" "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $file\$" trivy-checksums.txt | sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" trivy
+      # The card's bar: no critical finding that has a fix. HIGH ones are listed, not failed on.
+      - name: Scan images
+        run: |
+          set -euo pipefail
+          for image in fms-backend fms-frontend fms-ai-service; do
+            echo "::group::$image"
+            "$RUNNER_TEMP/trivy" image --quiet --severity HIGH,CRITICAL --ignore-unfixed "${image}:${GITHUB_SHA}" || true
+            "$RUNNER_TEMP/trivy" image --quiet --severity CRITICAL --ignore-unfixed --exit-code 1 "${image}:${GITHUB_SHA}"
+            echo "::endgroup::"
+          done
+      - name: Smoke run
+        run: sh scripts/ci/smoke-images.sh "fms-backend:${GITHUB_SHA}" "fms-frontend:${GITHUB_SHA}" "fms-ai-service:${GITHUB_SHA}"
+
   secrets:
     name: secrets-scan
     runs-on: ubuntu-24.04
