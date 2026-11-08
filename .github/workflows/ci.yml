@@ -252,12 +252,16 @@ jobs:
       # readiness reports it degraded (still 200: reads use the primary).
       - name: Read replica follows the primary
         run: sh scripts/ci/check-replica.sh
-      # FMS-75: the database collects query statistics (preloaded by the Compose command, created by migration 064)
-      # and the API's metrics port answers inside its container.
+      # FMS-75: the database preloads pg_stat_statements (the Compose command) and collects with it, and the API's metrics port
+      # answers inside its container. This job applies no migrations, so the extension (migration 064) is created here.
       - name: Query statistics and metrics are on
         run: |
           set -euo pipefail
-          docker compose exec -T postgres psql -U fms_admin -d fms_db -Atc "select count(*) > 0 from pg_stat_statements" | grep -qx t
+          psql_admin() { docker compose exec -T postgres psql -U fms_admin -d fms_db -Atc "$1"; }
+          psql_admin "show shared_preload_libraries" | grep -q pg_stat_statements
+          psql_admin "create extension if not exists pg_stat_statements" >/dev/null
+          psql_admin "select 1" >/dev/null
+          psql_admin "select count(*) > 0 from pg_stat_statements" | grep -qx t
           docker compose exec -T backend wget -qO- http://127.0.0.1:9464/metrics | grep -q '^# TYPE http_request_duration_seconds histogram'
       - name: Container logs on failure
         if: failure()
