@@ -13,6 +13,8 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `VehicleFaultDetected` (DVIR, FMS-36) | `vehicle_fault` | `severity` if given, else high | vehicle | the vehicle (60 min) | technician, depot admin |
 | `DocumentExpiring` (FMS-26) | `document_expiring` | red: high, amber: medium | the vehicle or driver owning it | the document and expiry date (31 days) | depot admin |
 | `LicenceExpiring` (FMS-26) | `licence_expiring` | red: high, amber: medium | driver (`depot_id`) | the driver and expiry date (31 days) | depot admin |
+| `WarrantyExpiring` (FMS-133, [warranties-recalls.md](warranties-recalls.md)) | `warranty_expiring` | red: high, amber: medium | vehicle | the warranty and end date (31 days) | technician, depot admin |
+| `VehicleRecallOpened` (FMS-133): a manufacturer's recall now applies to the vehicle | `vehicle_recall` | high | vehicle | the vehicle and recall (31 days) | technician, depot admin |
 | `FuelAnomalyDetected` (the monthly reconciliation, FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md); per fill-up, FMS-82) | `fuel_anomaly` | `severity`, else high | vehicle | vehicle and anomaly type (24 h) | depot admin, fleet manager |
 | `TelemetryFlagRaised` (FMS-46, docs/telemetry-rules.md): speeding and idling only | `unsafe_driving` | `severity`: high for speeding, medium for idling | vehicle, or `depot_id` | vehicle and flag type (30 min) | dispatcher, depot admin |
 | `GeofenceViolated` (FMS-90, [geofences.md](geofences.md)): left a yard, entered a no-go zone | `geofence_violation` | high | vehicle, or `depot_id` | vehicle and fence (30 min) | dispatcher, depot admin |

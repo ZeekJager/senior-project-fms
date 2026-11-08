@@ -1,4 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { WarrantyClaim } from '@/features/warranty/api'
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
 import type { Vehicle } from '@/pages/Vehicles/types'
@@ -47,6 +48,8 @@ export interface MaintenanceRecord {
   completed_by: string | null
   /** The preventive service program this work carries out (FMS-129). */
   service_program: { id: string; name: string } | null
+  /** The warranty claim (FMS-133): null when no warranty covered it. */
+  warranty_claim: WarrantyClaim | null
   parts: PartLine[]
   /** What failed (FMS-125), oldest first. */
   failures: FailureEvent[]

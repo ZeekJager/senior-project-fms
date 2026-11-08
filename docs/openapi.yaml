@@ -3209,6 +3209,416 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /warranties:
+    get:
+      tags: [Maintenance]
+      operationId: listWarranties
+      summary: Vehicles' warranties (FMS-133)
+      description: >
+        The warranties of the caller's vehicles: live ones first, then by end date, the soonest first. Voided
+        ones only with include_void=true. Needs maintenance:read (docs/warranties-recalls.md).
+      parameters:
+        - { name: vehicle_id, in: query, description: "One vehicle's; another depot's vehicle gives an empty page.", schema: { type: string, format: uuid } }
+        - { name: include_void, in: query, schema: { type: string, enum: ['true', 'false'], default: 'false' } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of warranties.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Warranty' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Maintenance]
+      operationId: createWarranty
+      summary: Record a vehicle's warranty (FMS-133)
+      description: >
+        On the whole vehicle (component null or left out) or one component of the failure catalogue, from a
+        start date to an end date, an end odometer or both, whichever comes first. The vehicle's repairs whose
+        claim is not yet sent are judged against it at once, on the same transaction. Needs maintenance:write,
+        the vehicle in the caller's depots. Audited.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WarrantyCreate' } } }
+      responses:
+        '201':
+          description: The warranty.
+          headers:
+            ETag: { schema: { type: string } }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Warranty' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: >
+            VALIDATION_FAILED (end_required: neither ends_on nor ends_km; references_missing_record: a vehicle
+            outside the caller's depots), or VALIDATION_INVALID_DATE_RANGE (before_starts_on).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /warranties/{warranty_id}:
+    get:
+      tags: [Maintenance]
+      operationId: getWarranty
+      summary: A warranty (FMS-133)
+      description: Needs maintenance:read. Another depot's vehicle's warranty is a 404.
+      parameters:
+        - $ref: '#/components/parameters/WarrantyId'
+      responses:
+        '200':
+          description: The warranty.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Warranty' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Maintenance]
+      operationId: updateWarranty
+      summary: Change or void a warranty (FMS-133)
+      description: >
+        The fields sent; is_active false voids it (entered by mistake, or cancelled). The vehicle's repairs
+        whose claim is not yet sent are judged again; a submitted, approved or rejected claim is left as it is.
+        Needs maintenance:write. If-Match optional. Audited.
+      parameters:
+        - $ref: '#/components/parameters/WarrantyId'
+        - { name: If-Match, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WarrantyUpdate' } } }
+      responses:
+        '200':
+          description: The warranty.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Warranty' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: As on create; empty_update.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/warranty-claim:
+    patch:
+      tags: [Maintenance]
+      operationId: updateWarrantyClaim
+      summary: Move a repair's warranty claim (FMS-133)
+      description: >
+        claimable to submitted; submitted to approved (amount_cents, the amount recovered, required) or
+        rejected; rejected to submitted again. Approved is final. Needs maintenance:write. Audited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WarrantyClaimUpdate' } } }
+      responses:
+        '200':
+          description: The claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/WarrantyClaim' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: 'VALIDATION_FAILED: amount_cents required with approved, only_when_approved otherwise.'
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (not_claimable, or invalid_transition with allowed_transitions).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance/{record_id}/warranty-claim:
+    patch:
+      tags: [Maintenance]
+      operationId: updateWarrantyClaimAlias
+      summary: Move a repair's warranty claim (FMS-133; the /maintenance alias)
+      description: The same as PATCH /maintenance-records/{record_id}/warranty-claim.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WarrantyClaimUpdate' } } }
+      responses:
+        '200':
+          description: The claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/WarrantyClaim' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: As on /maintenance-records.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: As on /maintenance-records.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /recalls:
+    get:
+      tags: [Maintenance]
+      operationId: listRecalls
+      summary: Manufacturer recalls (FMS-133)
+      description: Newest first. Each counts the caller's vehicles under it by status. Needs maintenance:read.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of recalls.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Recall' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Maintenance]
+      operationId: createRecall
+      summary: Issue a manufacturer recall (FMS-133)
+      description: >
+        A campaign for a make, model and model years (both ends included). Every vehicle in service of that make
+        and model (ignoring case) with a model year in the range is listed as open, on the same transaction; a
+        vehicle without a model year is not. Publishes RecallIssued and a VehicleRecallOpened per vehicle (an
+        alert for its depot). Needs maintenance:write and a caller who sees every depot (403
+        fleet_wide_not_allowed). Audited.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RecallCreate' } } }
+      responses:
+        '201':
+          description: The recall.
+          headers:
+            ETag: { schema: { type: string } }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Recall' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED, or VALIDATION_INVALID_DATE_RANGE (before_year_from).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (a recall with that campaign code, ignoring case).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /recalls/{recall_id}:
+    get:
+      tags: [Maintenance]
+      operationId: getRecall
+      summary: A manufacturer recall (FMS-133)
+      description: Needs maintenance:read. Its counts are of the caller's vehicles.
+      parameters:
+        - $ref: '#/components/parameters/RecallId'
+      responses:
+        '200':
+          description: The recall.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Recall' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Maintenance]
+      operationId: updateRecall
+      summary: Change a manufacturer recall (FMS-133)
+      description: >
+        The fields sent. A change of make, model or years lists the vehicles it now applies to (VehicleRecallOpened
+        each) and drops those it no longer does that are still open with no work order. Needs maintenance:write
+        and a caller who sees every depot. If-Match optional. Audited.
+      parameters:
+        - $ref: '#/components/parameters/RecallId'
+        - { name: If-Match, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RecallUpdate' } } }
+      responses:
+        '200':
+          description: The recall.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Recall' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: As on create; empty_update.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_DUPLICATE (the campaign code), or CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /recalls/{recall_id}/vehicles:
+    get:
+      tags: [Maintenance]
+      operationId: listRecallVehicles
+      summary: The vehicles under a recall (FMS-133)
+      description: Those in the caller's depots, open first, then scheduled, then completed. Needs maintenance:read.
+      parameters:
+        - $ref: '#/components/parameters/RecallId'
+        - { name: status, in: query, description: 'Comma-separated: open, scheduled, completed. Default all.', schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of the recall's vehicles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/RecallVehicle' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown status).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /recalls/{recall_id}/vehicles/{vehicle_id}:
+    patch:
+      tags: [Maintenance]
+      operationId: updateRecallVehicle
+      summary: Schedule or complete a vehicle's recall work (FMS-133)
+      description: >
+        maintenance_record_id links the work order that carries out the remedy (the vehicle's own, not
+        cancelled): the work is scheduled, or completed at once when that work order is. Completing the work
+        order completes it; cancelling it puts it back to open. status completed with no work order completes it
+        by hand (completed_at, default now); open unlinks the work order. Completed is final (409). Publishes
+        VehicleRecallCompleted on completion. Needs maintenance:write, the vehicle in the caller's depots. Audited.
+      parameters:
+        - $ref: '#/components/parameters/RecallId'
+        - $ref: '#/components/parameters/VehicleId'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RecallVehicleUpdate' } } }
+      responses:
+        '200':
+          description: The vehicle's recall work.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/RecallVehicle' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: 'VALIDATION_FAILED: maintenance_record_id required to schedule, or not the vehicle''s; completed_at in_future; empty_update.'
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (recall_completed).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /vehicles/{vehicle_id}/recalls:
+    get:
+      tags: [Maintenance]
+      operationId: listVehicleRecalls
+      summary: One vehicle's recalls (FMS-133)
+      description: Every recall the vehicle is under, open first. Needs maintenance:read, the vehicle in the caller's depots.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+      responses:
+        '200':
+          description: The vehicle's recalls.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/RecallVehicle' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /maintenance-predictions/{prediction_id}/feedback:
     post:
       tags: [Maintenance]
@@ -6552,6 +6962,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    WarrantyId:
+      name: warranty_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RecallId:
+      name: recall_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     MaintenanceRecordId:
       name: record_id
       in: path
@@ -7480,7 +7900,7 @@ components:
     MaintenanceRecord:
       type: object
       description: One piece of repair or service work on a vehicle (FMS-22, api-contract §10.1).
-      required: [id, vehicle_id, registration_number, maintenance_type, description, status, priority, scheduled_at, started_at, completed_at, odometer_km, labour_hours, total_cost_cents, parts_cost_cents, workshop, notes, completed_by, service_program, parts, failures, version, created_at, updated_at]
+      required: [id, vehicle_id, registration_number, maintenance_type, description, status, priority, scheduled_at, started_at, completed_at, odometer_km, labour_hours, total_cost_cents, parts_cost_cents, workshop, notes, completed_by, service_program, warranty_claim, parts, failures, version, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -7508,6 +7928,11 @@ components:
               properties:
                 id: { type: string, format: uuid }
                 name: { type: string }
+        warranty_claim:
+          description: 'The warranty claim (FMS-133); null: no warranty covered it.'
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/WarrantyClaim'
         parts: { type: array, items: { $ref: '#/components/schemas/MaintenancePartLine' } }
         failures: { type: array, items: { $ref: '#/components/schemas/FailureEvent' }, description: What failed (FMS-125), oldest first. }
         version: { type: integer, description: Bumped on every change; also the ETag. }
@@ -9025,6 +9450,186 @@ components:
         version: { type: integer }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    WarrantyComponent:
+      type: [string, 'null']
+      description: 'A component of the failure catalogue (FMS-125); null: the whole vehicle.'
+      enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null]
+
+    Warranty:
+      type: object
+      description: A vehicle's warranty (FMS-133, docs/warranties-recalls.md).
+      required: [id, vehicle_id, registration_number, component, provider, coverage, starts_on, ends_on, ends_km, terms, is_active, status,
+                 days_left, km_left, claims, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        component: { $ref: '#/components/schemas/WarrantyComponent' }
+        provider: { type: string }
+        coverage: { type: [string, 'null'], description: What it covers, as the provider words it. }
+        starts_on: { type: string, format: date }
+        ends_on: { type: [string, 'null'], format: date, description: 'The last day of cover (Addis Ababa).' }
+        ends_km: { type: [number, 'null'], description: The odometer reading at which cover ends. }
+        terms: { type: [string, 'null'] }
+        is_active: { type: boolean, description: 'False: voided.' }
+        status:
+          type: string
+          enum: [active, expiring, expired, not_started, void]
+          description: Today. expiring is within the expiry_warning_days setting (30) of ends_on; expired is past ends_on, or the odometer past ends_km.
+        days_left: { type: [integer, 'null'], description: 'Days to ends_on (negative once past); null without one.' }
+        km_left: { type: [number, 'null'], description: "Kilometres to ends_km from the vehicle's odometer now; null without one." }
+        claims:
+          type: object
+          description: The repairs claimed under it, by claim status, and what approved claims recovered (cents, ETB).
+          required: [claimable, submitted, approved, rejected, recovered_cents]
+          properties:
+            claimable: { type: integer }
+            submitted: { type: integer }
+            approved: { type: integer }
+            rejected: { type: integer }
+            recovered_cents: { type: integer }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WarrantyCreate:
+      type: object
+      additionalProperties: false
+      required: [vehicle_id, provider, starts_on]
+      description: An end date, an end odometer, or both.
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        component: { $ref: '#/components/schemas/WarrantyComponent' }
+        provider: { type: string, minLength: 1, maxLength: 255 }
+        coverage: { type: [string, 'null'], maxLength: 2000 }
+        starts_on: { type: string, format: date }
+        ends_on: { type: [string, 'null'], format: date }
+        ends_km: { type: [number, 'null'], exclusiveMinimum: 0 }
+        terms: { type: [string, 'null'], maxLength: 5000 }
+
+    WarrantyUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        component: { $ref: '#/components/schemas/WarrantyComponent' }
+        provider: { type: string, minLength: 1, maxLength: 255 }
+        coverage: { type: [string, 'null'], maxLength: 2000 }
+        starts_on: { type: string, format: date }
+        ends_on: { type: [string, 'null'], format: date }
+        ends_km: { type: [number, 'null'], exclusiveMinimum: 0 }
+        terms: { type: [string, 'null'], maxLength: 5000 }
+        is_active: { type: boolean }
+
+    WarrantyClaim:
+      type: object
+      description: >
+        The warranty claim on a repair (FMS-133): a repair that found a failure a warranty of its vehicle covered
+        on its work day (completed, else started, else entered) and within its end odometer.
+      required: [warranty_id, provider, component, status, amount_cents, reference, km_checked, updated_at, updated_by]
+      properties:
+        warranty_id: { type: string, format: uuid }
+        provider: { type: string }
+        component: { $ref: '#/components/schemas/WarrantyComponent' }
+        status: { type: string, enum: [claimable, submitted, approved, rejected] }
+        amount_cents: { type: [integer, 'null'], description: Recovered, in whole cents (ETB); on an approved claim. }
+        reference: { type: [string, 'null'], description: "The provider's claim reference." }
+        km_checked: { type: boolean, description: 'False: the warranty has an end odometer and the repair none, so the distance was not checked.' }
+        updated_at: { type: [string, 'null'], format: date-time, description: When the claim last moved; null while only claimable. }
+        updated_by: { type: [string, 'null'], format: uuid }
+
+    WarrantyClaimUpdate:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [submitted, approved, rejected] }
+        amount_cents: { type: [integer, 'null'], minimum: 0, description: 'Required with approved; only then.' }
+        reference: { type: [string, 'null'], maxLength: 100 }
+
+    Recall:
+      type: object
+      description: A manufacturer's recall campaign (FMS-133).
+      required: [id, campaign_code, make, model, year_from, year_to, description, remedy, issued_on, vehicles, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        campaign_code: { type: string }
+        make: { type: string }
+        model: { type: string }
+        year_from: { type: integer }
+        year_to: { type: integer }
+        description: { type: string }
+        remedy: { type: [string, 'null'] }
+        issued_on: { type: [string, 'null'], format: date }
+        vehicles:
+          type: object
+          description: "The caller's vehicles under it, by status."
+          required: [total, open, scheduled, completed]
+          properties:
+            total: { type: integer }
+            open: { type: integer }
+            scheduled: { type: integer }
+            completed: { type: integer }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RecallCreate:
+      type: object
+      additionalProperties: false
+      required: [campaign_code, make, model, year_from, year_to, description]
+      properties:
+        campaign_code: { type: string, minLength: 1, maxLength: 50 }
+        make: { type: string, minLength: 1, maxLength: 100 }
+        model: { type: string, minLength: 1, maxLength: 100 }
+        year_from: { type: integer, minimum: 1900, maximum: 2100 }
+        year_to: { type: integer, minimum: 1900, maximum: 2100, description: Not before year_from. }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        remedy: { type: [string, 'null'], maxLength: 5000 }
+        issued_on: { type: [string, 'null'], format: date }
+
+    RecallUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        campaign_code: { type: string, minLength: 1, maxLength: 50 }
+        make: { type: string, minLength: 1, maxLength: 100 }
+        model: { type: string, minLength: 1, maxLength: 100 }
+        year_from: { type: integer, minimum: 1900, maximum: 2100 }
+        year_to: { type: integer, minimum: 1900, maximum: 2100 }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        remedy: { type: [string, 'null'], maxLength: 5000 }
+        issued_on: { type: [string, 'null'], format: date }
+
+    RecallVehicle:
+      type: object
+      description: One vehicle a recall applies to, and its recall work.
+      required: [recall_id, campaign_code, description, remedy, vehicle_id, registration_number, status, maintenance_record_id, completed_at, notes, matched_at, updated_at]
+      properties:
+        recall_id: { type: string, format: uuid }
+        campaign_code: { type: string }
+        description: { type: string }
+        remedy: { type: [string, 'null'] }
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        status: { type: string, enum: [open, scheduled, completed] }
+        maintenance_record_id: { type: [string, 'null'], format: uuid, description: The work order that carries out the remedy. }
+        completed_at: { type: [string, 'null'], format: date-time }
+        notes: { type: [string, 'null'] }
+        matched_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RecallVehicleUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: { type: string, enum: [open, scheduled, completed] }
+        maintenance_record_id: { type: [string, 'null'], format: uuid }
+        completed_at: { type: string, format: date-time, description: 'With completed; default the work order''s completion, else now.' }
+        notes: { type: [string, 'null'], maxLength: 2000 }
 
     ServiceDue:
       type: object

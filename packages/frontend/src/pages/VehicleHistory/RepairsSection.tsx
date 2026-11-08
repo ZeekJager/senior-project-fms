@@ -1,9 +1,10 @@
-import { Eye, Plus, Wrench } from 'lucide-react'
+import { Eye, Plus, ShieldCheck, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { DataTable, EmptyState, MoneyDisplay, StatusBadge, type Column } from '@/components/shared'
-import { Button } from '@/components/ui'
+import { Badge, Button } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { formatDate } from '@/features/documents/expiry'
+import { CLAIM_LABELS, CLAIM_TONES } from '@/features/warranty'
 import { LogRepairDrawer } from '@/pages/Maintenance'
 import { TYPE_LABELS, useRecords, type MaintenanceRecord } from '@/pages/Maintenance/api'
 import { RecordDrawer } from '@/pages/Maintenance/RecordDrawer'
@@ -46,6 +47,14 @@ export function RepairsSection({ vehicle }: { vehicle: Vehicle }) {
             <p className="mt-1 truncate text-xs text-ink-subtle" title={r.parts.map((p) => `${p.name} × ${p.quantity}`).join(', ')}>
               {r.parts.map((p) => `${p.name} × ${p.quantity}`).join(', ')}
             </p>
+          )}
+          {/* A repair a warranty covered (FMS-133): where its claim is. */}
+          {r.warranty_claim && (
+            <span className="mt-1 inline-block">
+              <Badge tone={CLAIM_TONES[r.warranty_claim.status]} icon={<ShieldCheck />}>
+                {r.warranty_claim.status === 'claimable' ? 'Under warranty: claimable' : CLAIM_LABELS[r.warranty_claim.status]}
+              </Badge>
+            </span>
           )}
           {/* No Status column on a phone: an unfinished record says so here. */}
           {r.status !== 'completed' && (
@@ -134,7 +143,7 @@ export function RepairsSection({ vehicle }: { vehicle: Vehicle }) {
         emptyState={<EmptyState icon={<Wrench />} heading="No repairs yet" description="Repairs, services and inspections of this vehicle appear here once they are logged." />}
       />
 
-      <RecordDrawer record={viewing} onClose={() => setViewing(null)} canWrite={false} onCorrect={() => {}} />
+      <RecordDrawer record={viewing} onClose={() => setViewing(null)} canWrite={false} canClaim={canWrite} onCorrect={() => {}} />
       {/* Mounted only while open: the job card loads the flagged vehicles and parts as it opens. */}
       {logging && (
         <LogRepairDrawer

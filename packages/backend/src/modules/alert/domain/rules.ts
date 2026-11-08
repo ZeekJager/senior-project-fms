@@ -188,6 +188,48 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     audience: ['depot_admin'],
   },
 
+  // FMS-133: a vehicle's warranty ending within 30 days (amber), 7 (red), raised by the expiry job (FMS-26).
+  WarrantyExpiring: {
+    type: () => 'warranty_expiring',
+    module: 'fleet',
+    facts: (p) => ({
+      severity: str(p, 'level') === 'red' ? 'high' : 'medium',
+      vehicleId: str(p, 'vehicle_id'),
+      driverId: null,
+      tripId: null,
+      depotId: null,
+      entity: str(p, 'warranty_id') ? { type: 'warranty', id: str(p, 'warranty_id')! } : null,
+      dedupKey: `warranty_expiring:${str(p, 'warranty_id')}:${str(p, 'ends_on')}`,
+    }),
+    windowMinutes: 31 * DAY,
+    title: (p, n) => `Warranty ends ${daysLabel(num(p, 'days_left'))}: ${vehicleName(n)}`,
+    message: (p, n) => {
+      const component = str(p, 'component');
+      const what = component ? `${humanize(component)} warranty` : 'warranty';
+      return `The ${what} of ${vehicleName(n)} from ${str(p, 'provider') ?? 'its provider'} ends on ${str(p, 'ends_on') ?? 'its end date'}. Have anything it covers inspected and claimed before then.`;
+    },
+    audience: ['technician', 'depot_admin'],
+  },
+
+  // FMS-133: a manufacturer's recall now applies to a vehicle. `recall_id`, `campaign_code`, `vehicle_id`, `description`.
+  VehicleRecallOpened: {
+    type: () => 'vehicle_recall',
+    module: 'maintenance',
+    facts: (p) => ({
+      severity: 'high',
+      vehicleId: str(p, 'vehicle_id'),
+      driverId: null,
+      tripId: null,
+      depotId: null,
+      entity: str(p, 'vehicle_id') ? { type: 'vehicle', id: str(p, 'vehicle_id')! } : null,
+      dedupKey: `vehicle_recall:${str(p, 'vehicle_id')}:${str(p, 'recall_id')}`,
+    }),
+    windowMinutes: 31 * DAY,
+    title: (p, n) => `Recall ${str(p, 'campaign_code') ?? ''}: ${vehicleName(n)}`.replace('Recall :', 'Recall:'),
+    message: (p, n) => `${vehicleName(n)} is under a manufacturer's recall: ${str(p, 'description') ?? 'see the recall'}. Book the remedy into the workshop.`,
+    audience: ['technician', 'depot_admin'],
+  },
+
   // Fuel reconciliation (FMS-82): `anomaly_id`, `vehicle_id`, `driver_id`, `fuel_log_id`, `anomaly_type`, `severity`.
   FuelAnomalyDetected: {
     type: () => 'fuel_anomaly',

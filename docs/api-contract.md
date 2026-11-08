@@ -829,6 +829,57 @@ Service program rules ([service-programs.md](service-programs.md)):
 - **Computed** by the `service-due` job (01:30), when a program is created or changed (its vehicles), and when a preventive repair for a program is completed (that vehicle: the count starts again from the repair). All on the writer's transaction.
 - **Events:** `ServiceDue` and `ServiceOverdue`, published once per move into that status. Each becomes a `service_due` alert about the vehicle: medium when due, high when overdue, one alert per vehicle and program.
 
+### 10.5 Warranties, warranty claims and recalls (FMS-133)
+
+| Method + path | Purpose | Auth / permission | Request / response |
+|---|---|---|---|
+| `GET /warranties` | Vehicles' warranties | `maintenance:read` | `vehicle_id`, `include_void` (`false` default) -> Paged `Warranty[]`, live first, then by end date |
+| `POST /warranties` | Record a warranty | `maintenance:write` | `WarrantyCreate` -> `201 Warranty` |
+| `GET /warranties/{warranty_id}` | Warranty detail | `maintenance:read` | `Warranty` |
+| `PATCH /warranties/{warranty_id}` | Change or void a warranty | `maintenance:write` | Fields sent, `is_active` -> `Warranty`; `If-Match` |
+| `PATCH /maintenance-records/{record_id}/warranty-claim` | Move a repair's claim (also under `/maintenance`) | `maintenance:write` | `status` (`submitted`, `approved`, `rejected`), `amount_cents` (with `approved` only), `reference` -> `WarrantyClaim` |
+| `GET /recalls` | Manufacturer recalls | `maintenance:read` | Paged `Recall[]`, newest first |
+| `POST /recalls` | Issue a recall | `maintenance:write`, every depot | `RecallCreate` -> `201 Recall` |
+| `GET /recalls/{recall_id}` | Recall detail | `maintenance:read` | `Recall` |
+| `PATCH /recalls/{recall_id}` | Change a recall | `maintenance:write`, every depot | Fields sent -> `Recall`; `If-Match` |
+| `GET /recalls/{recall_id}/vehicles` | The vehicles under it | `maintenance:read` | `status` (comma-separated) -> Paged `RecallVehicle[]`, open first |
+| `PATCH /recalls/{recall_id}/vehicles/{vehicle_id}` | Schedule or complete a vehicle's recall work | `maintenance:write` | `status`, `maintenance_record_id`, `completed_at`, `notes` -> `RecallVehicle` |
+| `GET /vehicles/{vehicle_id}/recalls` | One vehicle's recalls | `maintenance:read` | `RecallVehicle[]`, open first |
+
+Warranty and recall rules ([warranties-recalls.md](warranties-recalls.md)):
+
+- **Scope:** warranties and recall vehicles are limited to the caller's depots; another depot's warranty or vehicle is `404`. A recall applies to the whole fleet: issuing or changing one needs a user who sees every depot (`403`, `reason: fleet_wide_not_allowed`); its `vehicles` counts are of the caller's vehicles.
+- **`WarrantyCreate`:**
+  - **Required:** `vehicle_id`, `provider` (1-255) and `starts_on`.
+  - **Optional:** `component` (the failure catalogue; `null` or left out: the whole vehicle), `coverage`, `terms`.
+  - **The end:** `ends_on` and/or `ends_km` (the odometer reading at which cover ends), whichever comes first. Neither: `400`, `end_required`. `ends_on` before `starts_on`: `400 VALIDATION_INVALID_DATE_RANGE`.
+- **`Warranty`:** the fields above, plus:
+  - `id`, `registration_number`, `is_active`;
+  - `status` (`active`, `expiring` within 30 days of `ends_on`, `expired`, `not_started`, `void`);
+  - `days_left`, `km_left`;
+  - `claims` (`claimable`, `submitted`, `approved`, `rejected`, `recovered_cents`);
+  - `version`, `created_at`, `updated_at`.
+- **Claimable:** a repair with a failure that a live warranty of its vehicle covered is claimable.
+  - **Covered means:** the whole vehicle or the failed component; on its work day (completed, else started, else entered); at or under `ends_km`. A repair without an odometer is not checked against `ends_km`: `km_checked: false`.
+  - **Two cover it:** a component warranty comes before a whole-vehicle one, then the one that ends last.
+  - **Judged:** on every change to the repair, its failures or the vehicle's warranties, until the claim is submitted.
+  - **Shown:** as `warranty_claim` on `MaintenanceRecord` (`null`: none).
+- **Claim steps:** `claimable` -> `submitted` -> `approved` (`amount_cents` required) or `rejected` -> `submitted`. Errors:
+  - any other step: `409 CONFLICT_INVALID_STATE_TRANSITION` with `allowed_transitions`;
+  - no claim on the repair: `409`, `not_claimable`.
+- **`RecallCreate`:** `campaign_code` (1-50, unique ignoring case: `409 CONFLICT_DUPLICATE`), `make`, `model`, `year_from`, `year_to` (not before `year_from`: `400 VALIDATION_INVALID_DATE_RANGE`), `description`, `remedy`, `issued_on`.
+- **Matching:** every vehicle in service of the make and model (ignoring case) with a model year in the range is listed as open.
+  - **No model year:** a vehicle without one is not matched.
+  - **When:** on issue, on an edit, and when a vehicle is registered or its make, model or year changes.
+  - **An edit that narrows it:** drops the open matches with no work order.
+- **Recall work:** `maintenance_record_id` (the vehicle's own, not cancelled) schedules it. Completing that work order completes the recall work; cancelling it reopens it. `status: completed` without one is done by hand. Completed is final: `409`.
+- **Expiry:** the `warranty-expiry-check` job (07:00) raises `WarrantyExpiring` for an `ends_on` within 30 days: amber, or red within 7, once per level.
+- **Events:**
+  - `WarrantyExpiring` becomes a `warranty_expiring` alert;
+  - `VehicleRecallOpened` (one per matched vehicle) becomes a high `vehicle_recall` alert, both for the vehicle's depot;
+  - `RecallIssued` and `VehicleRecallCompleted` raise no alert.
+- **Audit:** every write is audited.
+
 ## 11. Tracking and Command Center API
 
 ### 11.1 Tracking

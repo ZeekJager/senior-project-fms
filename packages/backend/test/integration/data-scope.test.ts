@@ -22,9 +22,11 @@ const DEPOT_ROLES: RoleName[] = ['dispatcher', 'technician', 'depot_admin', 'fin
 
 /**
  * Path parameters naming a record no depot owns: the same for every caller, by design. Depots are a directory: every
- * signed-in user may read any depot's name and address (api-contract §6.1); `in_scope=true` narrows the list.
+ * signed-in user may read any depot's name and address (api-contract §6.1); `in_scope=true` narrows the list. A recall
+ * (FMS-133) is a manufacturer's campaign for the whole fleet; the vehicles it lists are scoped (and named by no
+ * public id of their own), and a vehicle's recalls are swept under its vehicleId.
  */
-const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId']);
+const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId']);
 
 /**
  * Path parameters naming a kind of answer, not a record: each value is swept as a list route of its own, with `query`.
@@ -101,7 +103,7 @@ async function markers(depotId: string | null, ids: Ids, extra: { driverRows?: b
   return found;
 }
 
-/** What the small seed leaves out of a depot: its own spare part, a prediction, an alert, an incident, a notification, a service program, a geofence. */
+/** What the small seed leaves out of a depot: its own spare part, a prediction, an alert, an incident, a notification, a service program, a geofence, a warranty. */
 async function fillGaps(depotId: string, ids: Ids): Promise<void> {
   const none = async (sql: string, params: unknown[]) => (await pool.query(`SELECT 1 FROM ${sql} LIMIT 1`, params)).rowCount === 0;
   const [vehicle, user] = [ids.vehicles[0], ids.users[0]];
@@ -159,6 +161,13 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
       [ids.vehicles],
     );
   }
+  // A warranty (FMS-133) on the vehicle the samples name.
+  if (await none('maintenance.warranties WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.vehicles])) {
+    await pool.query(
+      "INSERT INTO maintenance.warranties (vehicle_id, provider, starts_on, ends_on) VALUES ((SELECT MIN(x) FROM unnest($1::bigint[]) x), 'Depot B dealer', '2026-01-01', '2028-01-01')",
+      [ids.vehicles],
+    );
+  }
   if (await none('alert.notifications WHERE recipient_user_id = ANY($1::bigint[])', [ids.users])) {
     await pool.query("INSERT INTO alert.notifications (recipient_user_id, notification_type, title, message, channel, status) VALUES ($1, 'alert', 'Depot B', 'For depot B', 'in_app', 'delivered')", [user]);
   }
@@ -189,6 +198,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     notificationId: await one('SELECT public_id::text AS id FROM alert.notifications WHERE recipient_user_id = ANY($1::bigint[]) ORDER BY id', [ids.users]),
     programId: await one('SELECT public_id::text AS id FROM maintenance.service_programs WHERE depot_id = $1 ORDER BY id', [depotId]),
     geofenceId: await one('SELECT public_id::text AS id FROM tracking.geofences WHERE depot_id = $1 ORDER BY id', [depotId]),
+    warrantyId: await byVehicle('maintenance.warranties'),
   };
 }
 

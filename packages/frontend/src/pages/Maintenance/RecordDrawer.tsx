@@ -7,6 +7,7 @@ import { ApiError } from '@/lib/api/errors'
 import { TYPE_LABELS, useCompleteRecord, useOpenWorkFor, useRecordFailures, type MaintenanceRecord } from './api'
 import { FailureFields } from './FailureFields'
 import { COMPONENT_LABELS, DETECTION_LABELS, MODE_LABELS, checkFailures, emptyFailure, type FailureDraft, type FailureInput } from './failures'
+import { WarrantyClaimBlock } from './WarrantyClaimBlock'
 
 const OPEN = ['scheduled', 'open', 'in_progress']
 
@@ -26,11 +27,14 @@ export function RecordDrawer({
   record,
   onClose,
   canWrite,
+  canClaim = canWrite,
   onCorrect,
 }: {
   record: MaintenanceRecord | null
   onClose: () => void
   canWrite: boolean
+  /** Whether its warranty claim may move on (FMS-133): maintenance:write, also where the record is read-only otherwise. */
+  canClaim?: boolean
   onCorrect: (record: MaintenanceRecord) => void
 }) {
   const complete = useCompleteRecord()
@@ -159,6 +163,12 @@ export function RecordDrawer({
                   <FailureFields drafts={drafts} onChange={setDrafts} errors={failureErrors} />
                 </Block>
               )
+            )}
+
+            {record.warranty_claim && (
+              <Block title="Warranty">
+                <WarrantyClaimBlock recordId={record.id} claim={record.warranty_claim} canWrite={canClaim} />
+              </Block>
             )}
 
             <dl className="grid grid-cols-2 gap-3">
