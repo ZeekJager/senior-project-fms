@@ -78,8 +78,33 @@ sending traffic to the instance.
 
 ## Web vitals
 
-The web app reports Core Web Vitals (LCP, INP, CLS, FCP, TTFB) of real users' sessions to `POST /telemetry/web-vitals`, which records
-them as `web_vitals_*` histograms by metric name and rating. See below.
+The web app reports the Core Web Vitals of real sessions: LCP, INP, CLS, FCP and TTFB (`web-vitals` library, `src/lib/webVitals.ts`).
+They are queued as the browser settles them and sent when the page is hidden or closed (that is when LCP, INP and CLS are final) with
+`navigator.sendBeacon`, or a `keepalive` fetch where that is missing, in requests of at most 10 reports. Only while someone is signed
+in (the endpoint is `authenticated()`, any signed-in user) and only in production builds.
+
+`POST /telemetry/web-vitals` (204, no body) records each report as a histogram:
+
+| Metric | Unit | Buckets around Google's good / poor |
+|---|---|---|
+| `web_vitals_lcp_seconds{page}` | s | 2.5 s / 4 s |
+| `web_vitals_inp_seconds{page}` | s | 200 ms / 500 ms |
+| `web_vitals_cls{page}` | score | 0.1 / 0.25 |
+| `web_vitals_fcp_seconds{page}` | s | 1.8 s / 3 s |
+| `web_vitals_ttfb_seconds{page}` | s | 0.8 s / 1.8 s |
+| `web_vitals_ratings_total{metric,rating}` | count | the browser's own verdict: `good`, `needs-improvement`, `poor` |
+
+`page` is the **route template** of the screen the metric was reported on (`/vehicles/:vehicleId/history`), found by matching the URL
+against the route table; a path no route has sends no page and is filed under `other`. The API accepts only a template (`/`,
+letters, digits, `:`, `_`, `-`, at most 80 characters) and keeps at most 100 distinct pages: later ones count under `other`, so a
+client cannot make a series per URL. The values are checked (a time up to 10 minutes, a layout shift up to 20, at most 10 reports a
+request). Nothing about the user is recorded: no id, no URL, no query string, no user agent.
+
+```promql
+histogram_quantile(0.75, sum by (le, page) (rate(web_vitals_lcp_seconds_bucket[1d])))
+```
+
+The 75th percentile is the one Google's thresholds are defined on.
 
 ## pg_stat_statements
 

@@ -2,6 +2,8 @@ import request from 'supertest';
 import { afterAll, describe, expect, test } from 'vitest';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
+import { createUser } from '../support/factories';
+import { forgetWebVitalPages, MAX_WEB_VITAL_PAGES } from '../../src/shared/metrics/web-vitals-metrics';
 import { PostgresJobLock } from '../../src/shared/jobs/job-lock';
 import { runJob } from '../../src/shared/jobs/scheduler';
 import { setMetricReaders } from '../../src/shared/metrics/domain-metrics';
@@ -223,5 +225,79 @@ describe('/health/ready and the AI service', () => {
     } finally {
       await counted.close();
     }
+  });
+});
+
+describe('POST /telemetry/web-vitals', () => {
+  const PASSWORD = 'Vitals-Test-1';
+  async function cookie(): Promise<string> {
+    const user = await createUser({ roles: ['driver'], password: PASSWORD });
+    const res = await request(app).post('/api/v1/auth/login').send({ email: user.email, password: PASSWORD });
+    return (res.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
+  }
+  const send = (session: string, metrics: unknown[]) => request(app).post('/api/v1/telemetry/web-vitals').set('Cookie', session).send({ metrics });
+
+  test('records each report as a histogram by page template, in seconds, and counts its rating', async () => {
+    forgetWebVitalPages();
+    const session = await cookie();
+    const res = await send(session, [
+      { name: 'LCP', value: 2300, rating: 'good', page: '/vehicles/:vehicleId' },
+      { name: 'INP', value: 350, rating: 'needs-improvement', page: '/vehicles/:vehicleId' },
+      { name: 'CLS', value: 0.07, rating: 'good', page: '/vehicles/:vehicleId' },
+      { name: 'TTFB', value: 900, rating: 'needs-improvement' },
+    ]);
+    expect(res.status).toBe(204);
+    expect(res.text).toBe('');
+    const text = await scrape();
+    const page = { page: '/vehicles/:vehicleId' };
+    expect(series(text, 'web_vitals_lcp_seconds_count', page)).toBeGreaterThanOrEqual(1);
+    expect(series(text, 'web_vitals_lcp_seconds_sum', page)).toBeCloseTo(2.3, 5);
+    expect(series(text, 'web_vitals_inp_seconds_sum', page)).toBeCloseTo(0.35, 5);
+    expect(series(text, 'web_vitals_cls_sum', page)).toBeCloseTo(0.07, 5);
+    expect(series(text, 'web_vitals_ttfb_seconds_count', { page: 'other' })).toBeGreaterThanOrEqual(1);
+    expect(series(text, 'web_vitals_ratings_total', { metric: 'LCP', rating: 'good' })).toBeGreaterThanOrEqual(1);
+    expect(series(text, 'web_vitals_ratings_total', { metric: 'INP', rating: 'needs-improvement' })).toBeGreaterThanOrEqual(1);
+  });
+
+  test('needs a signed-in user', async () => {
+    expect((await request(app).post('/api/v1/telemetry/web-vitals').send({ metrics: [{ name: 'LCP', value: 1, rating: 'good' }] })).status).toBe(401);
+  });
+
+  test('refuses what is not a measurement: unknown metrics, absurd values, ids in the page, extra fields, too many', async () => {
+    const session = await cookie();
+    const good = { name: 'LCP', value: 1000, rating: 'good', page: '/trips' };
+    for (const bad of [
+      { ...good, name: 'FID' },
+      { ...good, value: -1 },
+      { ...good, value: 600_001 },
+      { ...good, value: Number.NaN },
+      { ...good, name: 'CLS', value: 21 },
+      { ...good, rating: 'fine' },
+      { ...good, page: '/vehicles/3f2b8c1e?token=abc' },
+      { ...good, page: 'https://evil.example/x' },
+      { ...good, page: `/${'a'.repeat(80)}` },
+      { ...good, user: 'someone' },
+    ]) {
+      const res = await send(session, [bad]);
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect((await send(session, [])).status).toBe(400);
+    expect((await send(session, Array.from({ length: 11 }, () => good))).status).toBe(400);
+    expect((await request(app).post('/api/v1/telemetry/web-vitals').set('Cookie', session).send({})).status).toBe(400);
+    expect((await send(session, [good])).status).toBe(204);
+  });
+
+  test('a client cannot make a series per page: past the cap, pages count as other', async () => {
+    forgetWebVitalPages();
+    const session = await cookie();
+    for (let i = 0; i < MAX_WEB_VITAL_PAGES + 5; i += 10) {
+      const batch = Array.from({ length: 10 }, (_, j) => ({ name: 'FCP', value: 1000, rating: 'good', page: `/cap-${i + j}` }));
+      expect((await send(session, batch)).status).toBe(204);
+    }
+    const text = await scrape();
+    const pages = new Set([...text.matchAll(/^web_vitals_fcp_seconds_count\{[^}]*page="([^"]+)"/gm)].map((m) => m[1]));
+    expect(pages.size).toBeLessThanOrEqual(MAX_WEB_VITAL_PAGES + 1);
+    expect(pages.has('other')).toBe(true);
+    forgetWebVitalPages();
   });
 });

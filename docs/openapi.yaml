@@ -6412,6 +6412,45 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /telemetry/web-vitals:
+    post:
+      tags: [System]
+      operationId: reportWebVitals
+      summary: How fast a page was for a real session (FMS-75)
+      description: >
+        Any signed-in user. The web app reports Core Web Vitals (LCP, INP, CLS, FCP, TTFB: the times in milliseconds, CLS a
+        score) with the rating the browser gave and the route template of the page (`/vehicles/:id`, never a URL). They are
+        recorded as Prometheus histograms by metric and page (docs/metrics.md); nothing about the user is kept. At most 10 a
+        request; a page beyond the first 100 distinct ones counts as `other`. Answers 204 with no body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [metrics]
+              properties:
+                metrics:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [name, value, rating]
+                    properties:
+                      name: { type: string, enum: [LCP, INP, CLS, FCP, TTFB] }
+                      value: { type: number, minimum: 0, maximum: 600000, description: 'Milliseconds; for CLS a score of at most 20.' }
+                      rating: { type: string, enum: [good, needs-improvement, poor] }
+                      page: { type: string, maxLength: 80, pattern: '^/[A-Za-z0-9/:_-]*$', description: 'The page route template, such as /vehicles/:id.' }
+      responses:
+        '204': { description: Recorded. }
+        '400':
+          description: VALIDATION_FAILED (an unknown metric, a negative or absurd value, a page that is not a route template, more than 10).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
   /system/health/history:
     get:
       tags: [System]

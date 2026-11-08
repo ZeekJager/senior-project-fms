@@ -49,6 +49,8 @@ const REVIEWED_AUTHENTICATED = [
   'GET /api/v1/drivers/me',
   'GET /api/v1/settings/telemetry-rules',
   'GET /api/v1/settings',
+  // The web app reports how fast a page was (FMS-75): histograms by metric and page template, nothing about the user.
+  'POST /api/v1/telemetry/web-vitals',
 ];
 
 interface Endpoint {
