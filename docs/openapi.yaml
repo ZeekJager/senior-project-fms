@@ -4815,9 +4815,9 @@ paths:
         - { name: documents, in: query, schema: { type: string, enum: [expired, expiring, due] } }
         - { name: health, in: query, schema: { type: string, enum: [at_risk, watch, healthy, stale, unscored] } }
         - { name: search, in: query, description: 'Registration number, make, model or VIN.', schema: { type: string, maxLength: 100 } }
-        - { name: sort_by, in: query, description: 'A sortable column of the list; default registration_number.', schema: { type: string, default: registration_number } }
+        - { name: sort_by, in: query, description: 'A sortable column of the list; anything else is a 400 (FMS-103).', schema: { type: string, enum: [registration_number, make, model, year, odometer_km, health_score, created_at, updated_at, status, vehicle_type, depot], default: registration_number } }
         - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
-        - { name: then_by, in: query, description: The tie-breaking column., schema: { type: string } }
+        - { name: then_by, in: query, description: 'The tie-breaking column: one of the sort_by columns.', schema: { type: string, enum: [registration_number, make, model, year, odometer_km, health_score, created_at, updated_at, status, vehicle_type, depot] } }
         - { name: then_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -4981,7 +4981,7 @@ paths:
         - { name: license_expiring_before, in: query, schema: { type: string, format: date } }
         - { name: status, in: query, schema: { type: string, enum: [active, retired] } }
         - { name: search, in: query, schema: { type: string, maxLength: 100 } }
-        - { name: sort_by, in: query, description: 'A sortable column of the list; default license_number.', schema: { type: string, default: license_number } }
+        - { name: sort_by, in: query, description: 'A sortable column of the list; anything else is a 400 (FMS-103).', schema: { type: string, enum: [full_name, license_number, license_expiry, hire_date, created_at], default: license_number } }
         - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'

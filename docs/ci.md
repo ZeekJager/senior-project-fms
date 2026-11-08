@@ -10,6 +10,7 @@ Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`,
 | `migrations-ci` | Applies every migration Up twice, every Down in reverse, Up again; then runs `npm run migrate` on a fresh database twice | A migration is not idempotent or not reversible, Down leaves a schema behind, the runner fails or re-applies a file |
 | `docker-stack` | Creates a `.env` with generated secrets, builds the Compose images, starts the stack, waits for `GET /health/ready`, then `scripts/ci/check-replica.sh` (FMS-94): the replica streams, a write on the primary reaches it, it refuses writes, readiness reports it `ok`, and `degraded` while it is stopped; then (FMS-75) the database is collecting `pg_stat_statements` and the API's metrics port answers in its container. | An image does not build, the backend does not start, or the replica does not follow the primary or is not fallen back from |
 | `production-images` | Builds the three production images tagged by commit (FMS-105, [production-images.md](production-images.md)), scans them with Trivy (fails on a critical finding that has a fix), then `scripts/ci/smoke-images.sh`: migrates with the backend image, starts the three images with `NODE_ENV=production`, checks health, that none runs as root, that the web app serves the SPA and reaches the API through nginx | An image does not build, a critical vulnerability with a fix, an image runs as root or fails its health check |
+| `dependency-audit` | `npm audit` over the lockfile (fails on a **critical** advisory; high and moderate are listed) and `pip-audit` over the AI service's pins (fails on any known vulnerability: it does not grade). No install, so it is quick (FMS-103, [security.md](security.md)) | A critical vulnerability in an npm dependency, or any in a Python pin; fix by updating it, or `npm audit fix` |
 | `secrets-scan` | gitleaks over the checked-out files, with the default rules plus `.gitleaks.toml` (weak hardcoded passwords, literal fallbacks in code, SQL role passwords) | Any secret is committed |
 
 CI needs no repository secrets. Its databases are throwaway PostgreSQL containers on the runner (`scripts/ci/start-postgres.sh`); every password and the JWT secret are generated per run and masked in logs.
@@ -30,7 +31,7 @@ npm test
 A repository admin sets this once in **Settings → Branches → Add branch protection rule** (or **Rules → Rulesets**) for `master`:
 
 - **Require a pull request before merging**, with **1 approval**, and **dismiss stale approvals when new commits are pushed**.
-- **Require status checks to pass**, with **require branches to be up to date**, and select: `backend-ci`, `frontend-ci`, `ai-service-ci`, `migrations-ci`, `docker-stack`, `production-images`, `secrets-scan`. A check only appears in the list after it has run once on a PR.
+- **Require status checks to pass**, with **require branches to be up to date**, and select: `backend-ci`, `frontend-ci`, `ai-service-ci`, `migrations-ci`, `docker-stack`, `production-images`, `dependency-audit`, `secrets-scan`. A check only appears in the list after it has run once on a PR.
 - **Do not allow bypassing the above settings** (applies the rules to admins too, so nobody can push to `master` directly).
 - **Block force pushes** and **block deletions**.
 
