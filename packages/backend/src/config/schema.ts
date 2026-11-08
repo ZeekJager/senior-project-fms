@@ -33,6 +33,10 @@ const appSchema = z
     // Further behind than this, the replica is not read: the primary is.
     READ_REPLICA_MAX_LAG_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
     JWT_SECRET: z.string({ error: 'is required' }).min(32, 'must be at least 32 characters'),
+    // Encrypts personal data at rest in PostgreSQL (FMS-104, docs/driver-data-protection.md): licence numbers and phone
+    // numbers. Every database connection of the app is given it; the database never stores it, so a copy of the database
+    // or of a backup cannot be read without it. At least 32 characters.
+    DATA_ENCRYPTION_KEY: z.string({ error: 'is required' }).min(32, 'must be at least 32 characters'),
     // Document files (FMS-17): local disk in development, S3-compatible elsewhere.
     STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
     STORAGE_LOCAL_DIR: z.string().trim().min(1).default('storage'),
@@ -61,6 +65,11 @@ const appSchema = z
     REALTIME_LEGACY_LOCATION: z.enum(['true', 'false']).default('false'),
     // GPS ingestion (FMS-88): VehicleLocationUpdated at most once per vehicle per this many seconds of its pings.
     TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
+    // Driver data protection (FMS-104, docs/driver-data-protection.md): how long where a vehicle was (and so its driver)
+    // is kept. A nightly job deletes older GPS pings and telemetry flags. Never below 30 days: the history screen
+    // reads up to 30 days back.
+    GPS_PING_RETENTION_DAYS: z.coerce.number().int().min(30).max(3650).default(180),
+    TELEMETRY_FLAG_RETENTION_DAYS: z.coerce.number().int().min(30).max(3650).default(365),
     // Alert engine (FMS-92): a critical alert unacknowledged this many minutes escalates to the next tier, and again after as many more.
     ALERT_ESCALATION_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     // Fuel reconciliation (FMS-41): a month's fuel more than this many percent above or below what its trips needed is an anomaly.
@@ -114,7 +123,7 @@ const appSchema = z
     if (env.NODE_ENV !== 'production') return;
     if (env.BACKUP_PG_CONTAINER) ctx.addIssue({ code: 'custom', path: ['BACKUP_PG_CONTAINER'], message: 'is for development only' });
     if (!env.REDIS_HOST) ctx.addIssue({ code: 'custom', path: ['REDIS_HOST'], message: 'is required in production' });
-    for (const key of ['DB_PASSWORD', 'JWT_SECRET'] as const) {
+    for (const key of ['DB_PASSWORD', 'JWT_SECRET', 'DATA_ENCRYPTION_KEY'] as const) {
       if (env[key].includes(PLACEHOLDER)) {
         ctx.addIssue({ code: 'custom', path: [key], message: `still contains the '${PLACEHOLDER}' placeholder` });
       }
@@ -143,13 +152,15 @@ export interface AppConfig {
   /** The read replica (FMS-94): null when DB_READ_HOST is not set, and reporting reads use the primary. */
   readReplica: { db: DbConfig; maxLagSeconds: number } | null;
   jwtSecret: string;
+  /** The key personal data is encrypted with in PostgreSQL (FMS-104): set on every connection, never stored. */
+  dataEncryptionKey: string;
   storage: StorageConfig;
   /** Null when REDIS_HOST is not set (development and tests may run without Redis). */
   redis: RedisConfig | null;
   trips: { overrunGraceMinutes: number };
   realtime: RealtimeConfig;
   integrations: IntegrationsConfig;
-  tracking: { eventIntervalSeconds: number };
+  tracking: { eventIntervalSeconds: number; retention: { pingDays: number; flagDays: number } };
   alerts: { escalationMinutes: number };
   /**
    * Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly.
@@ -288,6 +299,7 @@ export function loadAppConfig(env: Env): AppConfig {
         }
       : null,
     jwtSecret: e.JWT_SECRET,
+    dataEncryptionKey: e.DATA_ENCRYPTION_KEY,
     redis: e.REDIS_HOST ? { host: e.REDIS_HOST, port: e.REDIS_PORT, password: e.REDIS_PASSWORD!, keyPrefix: e.REDIS_KEY_PREFIX } : null,
     storage:
       e.STORAGE_DRIVER === 's3'
@@ -303,7 +315,10 @@ export function loadAppConfig(env: Env): AppConfig {
     trips: { overrunGraceMinutes: e.TRIP_OVERRUN_GRACE_MINUTES },
     realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
     integrations: { secrets: integrations.secrets },
-    tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
+    tracking: {
+      eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS,
+      retention: { pingDays: e.GPS_PING_RETENTION_DAYS, flagDays: e.TELEMETRY_FLAG_RETENTION_DAYS },
+    },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
     fuel: {
       varianceThresholdPct: e.FUEL_VARIANCE_THRESHOLD_PCT,

@@ -8,6 +8,7 @@ const validEnv = {
   DB_USER: 'fms_app',
   DB_PASSWORD: 'app-secret',
   JWT_SECRET: 'x'.repeat(32),
+  DATA_ENCRYPTION_KEY: 'k'.repeat(32),
 };
 
 function problems(fn: () => unknown): string[] {
@@ -45,10 +46,19 @@ test('blank values count as missing', () => {
 });
 
 test('production refuses the .env.example placeholder', () => {
-  const env = { ...validEnv, NODE_ENV: 'production', DB_PASSWORD: PLACEHOLDER, JWT_SECRET: `${PLACEHOLDER}-${'x'.repeat(32)}` };
+  const env = { ...validEnv, NODE_ENV: 'production', DB_PASSWORD: PLACEHOLDER, JWT_SECRET: `${PLACEHOLDER}-${'x'.repeat(32)}`, DATA_ENCRYPTION_KEY: `${PLACEHOLDER}-${'k'.repeat(32)}` };
   const found = problems(() => loadAppConfig(env));
   assert.ok(found.some((p) => p.startsWith('DB_PASSWORD')));
   assert.ok(found.some((p) => p.startsWith('JWT_SECRET')));
+  assert.ok(found.some((p) => p.startsWith('DATA_ENCRYPTION_KEY')));
+});
+
+test('the data encryption key (FMS-104) is required and at least 32 characters', () => {
+  const missing = { ...validEnv } as Record<string, string | undefined>;
+  delete missing.DATA_ENCRYPTION_KEY;
+  assert.deepEqual(problems(() => loadAppConfig(missing)).map((p) => p.split(':')[0]), ['DATA_ENCRYPTION_KEY']);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, DATA_ENCRYPTION_KEY: 'short' })).map((p) => p.split(':')[0]), ['DATA_ENCRYPTION_KEY']);
+  assert.equal(loadAppConfig(validEnv).dataEncryptionKey, 'k'.repeat(32));
 });
 
 test('development tolerates the placeholder password', () => {
@@ -90,7 +100,7 @@ test('integration secrets are read by provider code from INTEGRATION_<CODE>_* (F
 });
 
 test('GPS events: at most one per vehicle per 5 s by default (FMS-88)', () => {
-  assert.deepEqual(loadAppConfig(validEnv).tracking, { eventIntervalSeconds: 5 });
+  assert.deepEqual(loadAppConfig(validEnv).tracking, { eventIntervalSeconds: 5, retention: { pingDays: 180, flagDays: 365 } });
   assert.equal(loadAppConfig({ ...validEnv, TRACKING_EVENT_INTERVAL_SECONDS: '0' }).tracking.eventIntervalSeconds, 0);
   assert.ok(problems(() => loadAppConfig({ ...validEnv, TRACKING_EVENT_INTERVAL_SECONDS: '-1' })).some((p) => p.startsWith('TRACKING_EVENT_INTERVAL_SECONDS')));
 });

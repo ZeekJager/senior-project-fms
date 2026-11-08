@@ -68,6 +68,7 @@ import { MeterRepository } from './infrastructure/meter.repository';
 import { engineHoursOver, faultyDvirCounts, setHealthScore, vehiclesToScore } from './infrastructure/scoring.queries';
 import { metersAt, serviceVehicles } from './infrastructure/service-due.queries';
 import { VehicleRepository } from './infrastructure/vehicle.repository';
+import { driverDataExport } from './infrastructure/driver-data-export.queries';
 
 const vehicleRepository = new VehicleRepository(pool, activeTripsForVehicles, vehicleOnActiveTripSql);
 
@@ -408,6 +409,9 @@ export const fuelRefs = {
  * filter checked against the scope. For the telemetry rules (FMS-46): a vehicle's depot (internal id) and
  * drivers' public ids.
  */
+/** For a driver's data export (FMS-104): the driver behind an account, with their fleet records; null for a user who is not a driver. */
+export const driverData = { forUser: (db: Queryable, userId: string) => driverDataExport(db, userId) };
+
 export const trackingRefs = {
   vehicles: {
     byPublicIds: (db: Queryable, publicIds: readonly string[], scope: Scope) => vehicleRepository.trackingRefs(db, { publicIds }, scope),

@@ -49,6 +49,8 @@ const REVIEWED_AUTHENTICATED = [
   'GET /api/v1/drivers/me',
   'GET /api/v1/settings/telemetry-rules',
   'GET /api/v1/settings',
+  // The caller's own data as a download (FMS-104): no id to give, so nobody else's.
+  'GET /api/v1/auth/me/data-export',
 ];
 
 interface Endpoint {

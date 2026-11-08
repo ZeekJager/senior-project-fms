@@ -86,7 +86,16 @@ describe('GET /vehicles/{vehicle_id}/tracking', () => {
 
     expect((await get(`/vehicles/${String(theirs.public_id)}/tracking`, dispatcher)).status).toBe(404);
     expect((await get('/vehicles/not-a-uuid/tracking', dispatcher)).status).toBe(404);
-    expect((await get(`/vehicles/${String(mine.public_id)}/tracking`, await signIn(['technician'], depot))).status).toBe(403);
+    // Without tracking:read it is refused (FMS-104), and the refusal is on the trail: who tried, which route, what it needed.
+    const refused = await get(`/vehicles/${String(mine.public_id)}/tracking`, await signIn(['technician'], depot));
+    expect(refused.status).toBe(403);
+    const denied = await pool.query<{ details: Record<string, unknown>; actor_id: string | null }>(
+      "SELECT details, user_id AS actor_id FROM audit.audit_logs WHERE action = 'access.denied' AND correlation_id = $1",
+      [refused.headers['x-request-id']],
+    );
+    expect(denied.rows.map((r) => r.details)).toEqual([expect.objectContaining({ method: 'GET', route: '/api/v1/vehicles/:vehicleId/tracking', required: ['tracking:read'] })]);
+    // Nothing of the vehicle's history was read, so no read is recorded for it.
+    expect((await pool.query("SELECT 1 FROM audit.audit_logs WHERE action = 'tracking.history_read' AND entity_id = $1", [mine.id])).rowCount).toBe(0);
 
     const badCursor = await get(`/vehicles/${String(mine.public_id)}/tracking?cursor=bm9wZQ`, dispatcher);
     expect(badCursor.status).toBe(400);

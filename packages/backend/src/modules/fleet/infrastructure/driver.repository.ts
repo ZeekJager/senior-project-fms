@@ -24,7 +24,8 @@ export interface DriverRow {
 
 export const DRIVER_SORT_COLUMNS = {
   full_name: 'a.full_name',
-  license_number: 'd.license_number',
+  // Encrypted at rest (FMS-104): sorted by the decrypted value.
+  license_number: 'privacy.decrypt_text(d.license_number)',
   license_expiry: 'd.license_expiry',
   hire_date: 'd.hire_date',
   created_at: 'd.created_at',
@@ -69,10 +70,10 @@ const LICENSE_STATUS_SQL = `CASE WHEN d.license_expiry < ${TODAY} THEN 'expired'
               ELSE 'valid' END`;
 
 const ROW_COLUMNS = `
-         d.id, d.public_id AS "publicId", d.user_id AS "userId", d.license_number AS "licenseNumber",
+         d.id, d.public_id AS "publicId", d.user_id AS "userId", privacy.decrypt_text(d.license_number) AS "licenseNumber",
          d.license_categories AS "licenseCategories", d.license_expiry::text AS "licenseExpiry",
          ${LICENSE_STATUS_SQL} AS "licenseStatus",
-         d.hire_date::text AS "hireDate", d.emergency_phone AS "emergencyPhone", d.is_active AS "isActive", d.version,
+         d.hire_date::text AS "hireDate", privacy.decrypt_text(d.emergency_phone) AS "emergencyPhone", d.is_active AS "isActive", d.version,
          d.created_at AS "createdAt", d.updated_at AS "updatedAt"`;
 
 const ROW_SQL = `SELECT ${ROW_COLUMNS} FROM fleet.drivers d`;
@@ -191,7 +192,7 @@ export class DriverRepository extends Repository {
     if (filter.depotId) where.push(`a.depot_id = ${add(filter.depotId)}`);
     if (filter.search) {
       const p = add(containsPattern(filter.search));
-      where.push(`(a.full_name ILIKE ${p} OR a.email ILIKE ${p} OR d.license_number ILIKE ${p})`);
+      where.push(`(a.full_name ILIKE ${p} OR a.email ILIKE ${p} OR privacy.decrypt_text(d.license_number) ILIKE ${p})`);
     }
     if (filter.licenseExpiringBefore) where.push(`d.license_expiry < ${add(filter.licenseExpiringBefore)}::date`);
     if (filter.licenseStatus) where.push(`${LICENSE_STATUS_SQL} = ${add(filter.licenseStatus)}`);

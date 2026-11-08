@@ -4301,6 +4301,34 @@ paths:
                   meta: { $ref: '#/components/schemas/Meta' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
 
+  /auth/me/data-export:
+    get:
+      tags: [Auth]
+      operationId: exportMyData
+      summary: The caller's own data, as a JSON download (FMS-104)
+      description: >
+        Any signed-in user, and only their own: there is no id to give. The account (never the password hash or
+        sessions); for a driver also the licence and phone, vehicle assignments, attendance, inspections, trips, fuel
+        logs, incident reports and the GPS points recorded on their trips (the newest 50,000; `truncated` says if there
+        were more), which reach back as far as the retention period (`retention_days`). Vehicles and trips appear by
+        public id, the vehicle also by plate. Never cached. Every export is audited (`privacy.data_exported`, with
+        counts only).
+      responses:
+        '200':
+          description: The data, as an attachment.
+          headers:
+            Content-Disposition: { schema: { type: string }, description: 'attachment; filename="fms-my-data-YYYY-MM-DD.json".' }
+            Cache-Control: { schema: { type: string }, description: no-store. }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/DataExport' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
   /auth/password:
     post:
       tags: [Auth]
@@ -8589,6 +8617,59 @@ components:
         status: { type: string, enum: [above, below, within, not_judged] }
         reason: { type: [string, 'null'], enum: [electric, no_efficiency, too_little_distance, null], description: Why not judged. }
         anomaly_id: { type: [string, 'null'], format: uuid, description: The anomaly the monthly job raised for exactly this period. }
+
+    DataExport:
+      type: object
+      description: A person's own data (FMS-104). Ids are public; nothing internal or secret.
+      required: [generated_at, account, driver, trips, fuel_logs, incident_reports, location_history]
+      properties:
+        generated_at: { type: string, format: date-time }
+        account:
+          type: object
+          required: [id, email, full_name, phone, status, roles, last_login_at, created_at]
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string }
+            full_name: { type: string }
+            phone: { type: [string, 'null'] }
+            status: { type: string }
+            roles: { type: array, items: { type: string } }
+            last_login_at: { type: [string, 'null'], format: date-time }
+            created_at: { type: string, format: date-time }
+        driver:
+          type: [object, 'null']
+          description: The driver record with `vehicle_assignments`, `attendance` and `inspections`; null for someone who is not a driver.
+          additionalProperties: true
+          properties:
+            id: { type: string, format: uuid }
+            license_number: { type: string }
+            license_expiry: { type: string }
+            license_categories: { type: array, items: { type: string } }
+            hire_date: { type: [string, 'null'] }
+            emergency_phone: { type: [string, 'null'] }
+            vehicle_assignments: { type: array, items: { type: object, additionalProperties: true } }
+            attendance: { type: array, items: { type: object, additionalProperties: true } }
+            inspections: { type: array, items: { type: object, additionalProperties: true } }
+        trips: { type: array, items: { type: object, additionalProperties: true } }
+        fuel_logs: { type: array, items: { type: object, additionalProperties: true } }
+        incident_reports: { type: array, items: { type: object, additionalProperties: true } }
+        location_history:
+          type: object
+          required: [retention_days, truncated, points]
+          properties:
+            retention_days: { type: integer, description: How far back GPS history is kept. }
+            truncated: { type: boolean, description: True when there were more than 50,000 points and the oldest were left out. }
+            points:
+              type: array
+              items:
+                type: object
+                required: [trip_id, recorded_at, lat, lng, speed_kmh]
+                properties:
+                  trip_id: { type: [string, 'null'], format: uuid }
+                  recorded_at: { type: string, format: date-time }
+                  lat: { type: number }
+                  lng: { type: number }
+                  speed_kmh: { type: integer }
 
     FuelAnomaly:
       type: object

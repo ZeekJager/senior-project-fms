@@ -232,6 +232,36 @@ export class TrackingRepository {
   }
 
   /**
+   * The newest `limit` pings recorded on these trips (internal ids), oldest first, for a driver's data export (FMS-104).
+   * One more than `limit` is read, so the caller knows whether the list was cut.
+   */
+  async forTrips(db: Queryable, tripIds: readonly string[], limit: number): Promise<{ tripId: string; recordedAt: string; latitude: number; longitude: number; speedKmh: number }[]> {
+    if (tripIds.length === 0) return [];
+    const res = await db.query<{ tripId: string; recordedAt: string; latitude: number; longitude: number; speedKmh: number }>(
+      `SELECT * FROM (
+         SELECT trip_id AS "tripId", to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "recordedAt",
+                latitude::float8 AS latitude, longitude::float8 AS longitude, speed_kmh AS "speedKmh", recorded_at AS at, id
+           FROM tracking.gps_pings WHERE trip_id = ANY($1::bigint[]) ORDER BY recorded_at DESC, id DESC LIMIT $2
+       ) newest ORDER BY at, id`,
+      [tripIds, limit + 1],
+    );
+    return res.rows.map(({ tripId, recordedAt, latitude, longitude, speedKmh }) => ({ tripId, recordedAt, latitude, longitude, speedKmh }));
+  }
+
+  /**
+   * Deletes up to `limit` pings recorded before `cutoff`, oldest first (FMS-104 retention); returns how many went.
+   * A bounded batch, so one run never holds a long lock on the table.
+   */
+  async purgePingsBefore(db: Queryable, cutoff: Date, limit: number): Promise<number> {
+    const res = await db.query(
+      `DELETE FROM tracking.gps_pings
+        WHERE (recorded_at, id) IN (SELECT recorded_at, id FROM tracking.gps_pings WHERE recorded_at < $1 ORDER BY recorded_at, id LIMIT $2)`,
+      [cutoff, limit],
+    );
+    return res.rowCount ?? 0;
+  }
+
+  /**
    * The vehicle's stored ping nearest `at` in time, within `windowMs` either side of it, or null (FMS-82: where the
    * vehicle was when a fill-up was logged). History pings of a trip that has ended count: it is where it was then.
    */

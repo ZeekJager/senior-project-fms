@@ -125,7 +125,7 @@ export class AttendanceRepository extends Repository {
     else if (f.status) where.push(`t.status = ${add(f.status)}`);
     if (f.search) {
       const p = add(containsPattern(f.search));
-      where.push(`(a.full_name ILIKE ${p} OR a.email ILIKE ${p} OR d.license_number ILIKE ${p})`);
+      where.push(`(a.full_name ILIKE ${p} OR a.email ILIKE ${p} OR privacy.decrypt_text(d.license_number) ILIKE ${p})`);
     }
     const from = `fleet.drivers d
       JOIN fleet.driver_accounts a ON a.user_id = d.user_id

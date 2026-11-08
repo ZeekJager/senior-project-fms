@@ -21,6 +21,7 @@ import { AlertRepository } from './infrastructure/alert.repository';
 import { DeliveryRepository } from './infrastructure/delivery.repository';
 import { IncidentRepository } from './infrastructure/incident.repository';
 import { NotificationRepository } from './infrastructure/notification.repository';
+import { driverIncidentsExport } from './infrastructure/driver-incidents-export.queries';
 
 // The alert engine (FMS-92, architecture §9.4 and §34): events become alerts by rule, de-duplicated per
 // source, notified in-app, acknowledged and resolved through the API, and escalated when a critical
@@ -152,3 +153,7 @@ export const incidentLookup = {
 export { ALERT_EVENTS, SEVERITIES as ALERT_SEVERITIES, type AlertView } from './domain/alert';
 export { INCIDENT_EVENTS, INCIDENT_TYPES, type IncidentView } from './domain/incident';
 export { ALERT_RULES, ESCALATION_TIERS } from './domain/rules';
+
+/** For a driver's data export (FMS-104): incident reports about them or filed by their account. */
+export const driverIncidentData = { forPerson: (db: Queryable, driverId: string | null, userId: string) => driverIncidentsExport(db, driverId, userId) };
+export type { DriverIncidentExport } from './infrastructure/driver-incidents-export.queries';

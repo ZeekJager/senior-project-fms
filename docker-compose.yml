@@ -116,6 +116,8 @@ services:
       DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       JWT_SECRET: "${JWT_SECRET:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      # Encrypts licence and phone numbers in the database (FMS-104).
+      DATA_ENCRYPTION_KEY: "${DATA_ENCRYPTION_KEY:?is not set - run node scripts/init-env.mjs to add it to .env}"
       STORAGE_DRIVER: local
       STORAGE_LOCAL_DIR: /app/storage
       REDIS_HOST: redis
