@@ -309,6 +309,37 @@ jobs:
       - name: Smoke run
         run: sh scripts/ci/smoke-images.sh "fms-backend:${GITHUB_SHA}" "fms-frontend:${GITHUB_SHA}" "fms-ai-service:${GITHUB_SHA}"
 
+  # FMS-103 (docs/security.md): a known critical vulnerability in a dependency fails the build. The lockfile and the pins are
+  # audited as they are, with no install. npm grades its advisories, so the bar is critical, and high ones are listed; pip-audit does
+  # not grade, so any known vulnerability in the (few) Python pins fails it. Secret scanning is the secrets-scan job.
+  dependency-audit:
+    name: dependency-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: npm audit (fails on critical)
+        run: |
+          set -euo pipefail
+          # npm exits 1 both for a finding and for a registry that answered 5xx, so a failure is tried three times: a finding
+          # fails all three, a hiccup does not.
+          audit() { for attempt in 1 2 3; do npm audit "$@" && return 0; sleep 10; done; return 1; }
+          echo "::group::High and moderate findings (listed, not failed on)"
+          npm audit --audit-level=none || true
+          echo "::endgroup::"
+          audit --audit-level=critical
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: pip-audit (fails on any known vulnerability)
+        run: |
+          set -euo pipefail
+          pip install pip-audit
+          pip-audit -r packages/ai-service/requirements.txt --progress-spinner off
+
   secrets:
     name: secrets-scan
     runs-on: ubuntu-24.04

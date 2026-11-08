@@ -3,6 +3,17 @@ import { ApiError, toApiError } from './errors'
 /** Where the API answers; a download link (FMS-91) points here too. */
 export const API_BASE = '/api/v1'
 
+/** The CSRF token the server set at sign-in (FMS-103): a cookie the page may read, echoed in a header on every write. */
+export const CSRF_COOKIE = 'fms_csrf'
+export const CSRF_HEADER = 'X-CSRF-Token'
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/** The token in `cookie` (document.cookie by default), or undefined when there is none, as before the first sign-in after a release. */
+export function csrfToken(cookie: string = typeof document === 'undefined' ? '' : document.cookie): string | undefined {
+  const entry = cookie.split('; ').find((part) => part.startsWith(`${CSRF_COOKIE}=`))
+  return entry ? decodeURIComponent(entry.slice(CSRF_COOKIE.length + 1)) : undefined
+}
+
 /** Auth endpoints answer 401 for their own reasons; they never trigger a refresh-and-retry. */
 const AUTH_PATHS = ['/auth/login', '/auth/refresh', '/auth/logout']
 
@@ -90,12 +101,15 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
 
   async function send<T>(path: string, options: RequestOptions): Promise<Envelope<T>> {
     const { json, formData, idempotencyKey, headers, ...init } = options
+    // A write sends the token the sign-in set, read now: a refresh replaces it, so the retry after one sends the new one.
+    const token = SAFE_METHODS.has((init.method ?? 'GET').toUpperCase()) ? undefined : csrfToken()
     const res = await fetchImpl(`${API_BASE}${path}`, {
       credentials: 'same-origin',
       ...init,
       headers: {
         Accept: 'application/json',
         'X-Client-Channel': clientChannel(),
+        ...(token ? { [CSRF_HEADER]: token } : {}),
         ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(typeof idempotencyKey === 'string' ? { 'Idempotency-Key': idempotencyKey } : {}),
         ...headers,
@@ -128,6 +142,12 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     try {
       return await send<T>(path, options)
     } catch (err) {
+      // No token, or a stale one: a session that began before the token existed (a release), or a cookie the browser dropped. The
+      // refresh sets a new one with the session; the write is tried once more. A refusal for its origin is final.
+      if (err instanceof ApiError && err.status === 403 && err.code === 'FORBIDDEN_CSRF' && err.details.every((d) => d.field !== 'origin') && !AUTH_PATHS.includes(path)) {
+        await refresh()
+        return await send<T>(path, options)
+      }
       if (!(err instanceof ApiError) || err.status !== 401 || AUTH_PATHS.includes(path)) throw err
 
       // An access token that lapsed is recoverable with the refresh cookie.

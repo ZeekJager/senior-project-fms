@@ -1,5 +1,5 @@
 import type { Queryable } from '../../shared/infrastructure/queryable';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
 import { redis, redisKey } from '../../shared/cache';
@@ -94,7 +94,19 @@ export const authenticated = authenticatedWith(authenticate);
  * session not revoked). Throws the same 401/403 AppErrors.
  */
 export const authenticateAccessToken = (accessToken: string | undefined) => authService.authenticate(accessToken);
-export { ACCESS_COOKIE } from './api/session-cookies';
+export { ACCESS_COOKIE, REFRESH_COOKIE } from './api/session-cookies';
+
+/** A request refused by the CSRF check (FMS-103), on the audit trail beside the other denied accesses: no cookies, no token, just the route and why. */
+export const auditCsrfDenied = (req: Request, reason: string): Promise<void> =>
+  writeAuthAudit(pool, {
+    action: 'access.denied',
+    actorId: null,
+    subjectId: null,
+    correlationId: req.correlationId,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+    details: { method: req.method, route: req.path, reason: `csrf_${reason}` },
+  });
 
 export { publicRoute } from '../../shared/authz/route-policy';
 export { depotScope, ownDriverScope, scopeClause, type Scope } from '../../shared/authz/scope';

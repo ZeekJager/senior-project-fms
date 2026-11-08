@@ -54,6 +54,9 @@ const INIT = `window.ui = SwaggerUIBundle({
   tagsSorter: 'alpha',
   requestInterceptor: function (request) {
     request.credentials = 'include';
+    // Writes with the session cookie must send the CSRF token the sign-in set (FMS-103).
+    var token = document.cookie.split('; ').filter(function (c) { return c.indexOf('fms_csrf=') === 0; })[0];
+    if (token) request.headers['X-CSRF-Token'] = decodeURIComponent(token.slice('fms_csrf='.length));
     return request;
   },
 });

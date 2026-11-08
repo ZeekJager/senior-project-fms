@@ -11,6 +11,11 @@ info:
     To try it from /api-docs (served outside production): call POST /auth/login first. The session is an HttpOnly
     cookie the browser keeps and sends with the calls that follow; there is no token to paste.
 
+    Writes made with the session cookie must come from this site and send the CSRF token the sign-in set, as an
+    X-CSRF-Token header equal to the fms_csrf cookie; otherwise 403 FORBIDDEN_CSRF (api-contract §21, docs/security.md).
+    Every call is rate limited by kind of client; over a limit it is 429 RATE_LIMITED with Retry-After (api-contract §20).
+    The "Try it out" button on /api-docs sends the token for you.
+
     The ML service's internal endpoints belong to that service and are not part of this API.
 servers:
   - url: /api/v1
@@ -4815,9 +4820,9 @@ paths:
         - { name: documents, in: query, schema: { type: string, enum: [expired, expiring, due] } }
         - { name: health, in: query, schema: { type: string, enum: [at_risk, watch, healthy, stale, unscored] } }
         - { name: search, in: query, description: 'Registration number, make, model or VIN.', schema: { type: string, maxLength: 100 } }
-        - { name: sort_by, in: query, description: 'A sortable column of the list; default registration_number.', schema: { type: string, default: registration_number } }
+        - { name: sort_by, in: query, description: 'A sortable column of the list; anything else is a 400 (FMS-103).', schema: { type: string, enum: [registration_number, make, model, year, odometer_km, health_score, created_at, updated_at, status, vehicle_type, depot], default: registration_number } }
         - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
-        - { name: then_by, in: query, description: The tie-breaking column., schema: { type: string } }
+        - { name: then_by, in: query, description: 'The tie-breaking column: one of the sort_by columns.', schema: { type: string, enum: [registration_number, make, model, year, odometer_km, health_score, created_at, updated_at, status, vehicle_type, depot] } }
         - { name: then_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -4981,7 +4986,7 @@ paths:
         - { name: license_expiring_before, in: query, schema: { type: string, format: date } }
         - { name: status, in: query, schema: { type: string, enum: [active, retired] } }
         - { name: search, in: query, schema: { type: string, maxLength: 100 } }
-        - { name: sort_by, in: query, description: 'A sortable column of the list; default license_number.', schema: { type: string, default: license_number } }
+        - { name: sort_by, in: query, description: 'A sortable column of the list; anything else is a 400 (FMS-103).', schema: { type: string, enum: [full_name, license_number, license_expiry, hire_date, created_at], default: license_number } }
         - { name: sort_order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -6729,7 +6734,7 @@ components:
       description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Forbidden:
-      description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission).
+      description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission), or on a write made with the session cookie, FORBIDDEN_CSRF (not from this site, or no valid X-CSRF-Token).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     NotFound:
       description: NOT_FOUND (missing, or outside the caller's depots).

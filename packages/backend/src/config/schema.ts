@@ -1,3 +1,4 @@
+import type { RateLimits } from '../shared/http/rate-limit';
 import { z } from 'zod';
 
 /** Placeholder used in `.env.example`; never valid outside development. */
@@ -61,6 +62,27 @@ const appSchema = z
       .default('')
       .transform((v) => v.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean))
       .pipe(z.array(z.url({ protocol: /^https?$/, error: 'must be http(s) origins, comma-separated' }))),
+    // Browser origins, other than the API's own, that may call it with the session cookie (FMS-103, docs/security.md): CORS answers
+    // them, and the CSRF check accepts them. Comma-separated, like REALTIME_ALLOWED_ORIGINS. Empty: only the app's own origin, which is
+    // right when the web app and the API share a host (the Compose stack and the production images do).
+    CORS_ALLOWED_ORIGINS: z
+      .string()
+      .default('')
+      .transform((v) => v.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean))
+      .pipe(z.array(z.url({ protocol: /^https?$/, error: 'must be http(s) origins, comma-separated' }))),
+    // Rate limits (FMS-103, docs/security.md): requests a minute by kind of client. Redis counts them across instances, memory when it is
+    // down. The defaults suit a depot's staff and a fleet of devices; raise one for a bigger fleet, they cannot be switched off.
+    RATE_LIMIT_SESSION_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(600),
+    RATE_LIMIT_UPLOAD_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(30),
+    RATE_LIMIT_DEVICE_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(120),
+    RATE_LIMIT_WEBHOOK_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(600),
+    RATE_LIMIT_ANONYMOUS_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(120),
+    RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(30),
+    RATE_LIMIT_IP_CEILING_PER_MINUTE: z.coerce.number().int().min(1).max(1_000_000).default(3000),
+    // How many proxies sit in front of the API (nginx, a load balancer): the client address is read that many hops back in
+    // X-Forwarded-For. 0 trusts no header. Without it the address of every request is the proxy's, so audit entries name the proxy and
+    // per-address limits (sign-in, rate limits) count everyone as one. Never more than the real number: a client could then choose its own.
+    TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
     // The legacy client->server `location_update` socket event (api-contract §11.2). Off unless a legacy client needs it.
     REALTIME_LEGACY_LOCATION: z.enum(['true', 'false']).default('false'),
     // Metrics (FMS-75, docs/metrics.md): GET /metrics in Prometheus' format, on its own port and never on the public one. 0 turns
@@ -171,6 +193,12 @@ export interface AppConfig {
   redis: RedisConfig | null;
   trips: { overrunGraceMinutes: number };
   realtime: RealtimeConfig;
+  /** Cross-origin callers of the API (FMS-103). */
+  cors: { allowedOrigins: string[] };
+  /** Proxies in front of the API: how many hops of X-Forwarded-For to believe (FMS-103). */
+  trustProxy: number;
+  /** Requests a minute by kind of client (FMS-103, shared/http/rate-limit.ts). */
+  rateLimits: RateLimits;
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number; retention: { pingDays: number; flagDays: number } };
   /** Metrics (FMS-75): where GET /metrics is served (port 0: nowhere), and the bearer token it needs, if any. */
@@ -333,6 +361,17 @@ export function loadAppConfig(env: Env): AppConfig {
         : { driver: 'local', localDir: e.STORAGE_LOCAL_DIR },
     trips: { overrunGraceMinutes: e.TRIP_OVERRUN_GRACE_MINUTES },
     realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
+    cors: { allowedOrigins: e.CORS_ALLOWED_ORIGINS },
+    trustProxy: e.TRUST_PROXY,
+    rateLimits: {
+      session: e.RATE_LIMIT_SESSION_PER_MINUTE,
+      upload: e.RATE_LIMIT_UPLOAD_PER_MINUTE,
+      device: e.RATE_LIMIT_DEVICE_PER_MINUTE,
+      webhook: e.RATE_LIMIT_WEBHOOK_PER_MINUTE,
+      anonymous: e.RATE_LIMIT_ANONYMOUS_PER_MINUTE,
+      auth: e.RATE_LIMIT_AUTH_PER_MINUTE,
+      ipCeiling: e.RATE_LIMIT_IP_CEILING_PER_MINUTE,
+    },
     integrations: { secrets: integrations.secrets },
     tracking: {
       eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS,
