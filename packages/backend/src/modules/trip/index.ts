@@ -16,6 +16,7 @@ import { LOCATION_UPDATED } from './domain/eta';
 import { OsrmRoadPlanner, type RoadPlanner, type RoutingGatewayClient } from './infrastructure/osrm.planner';
 import { RouteRepository } from './infrastructure/route.repository';
 import { TripRepository } from './infrastructure/trip.repository';
+import { driverTripsExport } from './infrastructure/driver-trips-export.queries';
 
 let fleetRefs: FleetRefs | null = null;
 
@@ -167,3 +168,7 @@ export { tripRoadsByIds, type TripRoad } from './infrastructure/trip-activity.qu
 
 /** For the nightly scoring (FMS-55): completed trips' kilometres and driving time over a window, and kilometres since a time. */
 export { completedDistanceAfter, completedTripMetres, completedTripUsage, type TripUsage } from './infrastructure/trip-usage.queries';
+
+/** For a driver's data export (FMS-104): their trips, by the driver's internal id. */
+export const driverTripData = { forDriver: (db: Queryable, driverId: string) => driverTripsExport(db, driverId) };
+export type { DriverTripExport } from './infrastructure/driver-trips-export.queries';

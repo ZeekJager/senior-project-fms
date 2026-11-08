@@ -20,6 +20,7 @@ DB_ADMIN_PASSWORD="$(secret 24)"
 DB_APP_PASSWORD="$(secret 24)"
 REDIS_PASSWORD="$(secret 24)"
 JWT_SECRET="$(secret 48)"
+DATA_ENCRYPTION_KEY="$(secret 48)"
 ML_SERVICE_TOKEN="$(secret 48)"
 
 cleanup() {
@@ -77,14 +78,14 @@ docker run -d --name "$PREFIX-redis" --network "$NET" --network-alias redis \
 echo "== Migrations, run by the backend image"
 docker run --rm --network "$NET" \
   -e DB_HOST=postgres -e DB_NAME=fms_db -e DB_USER=fms_app -e DB_PASSWORD="$DB_APP_PASSWORD" \
-  -e DB_ADMIN_USER=fms_admin -e DB_ADMIN_PASSWORD="$DB_ADMIN_PASSWORD" \
+  -e DB_ADMIN_USER=fms_admin -e DB_ADMIN_PASSWORD="$DB_ADMIN_PASSWORD" -e DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" \
   "$BACKEND_IMAGE" node dist/scripts/migrate.js | tail -3
 
 echo "== Backend"
 docker run -d --name "$PREFIX-backend" --network "$NET" --network-alias backend \
   -e NODE_ENV=production \
   -e DB_HOST=postgres -e DB_NAME=fms_db -e DB_USER=fms_app -e DB_PASSWORD="$DB_APP_PASSWORD" \
-  -e JWT_SECRET="$JWT_SECRET" \
+  -e JWT_SECRET="$JWT_SECRET" -e DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" \
   -e REDIS_HOST=redis -e REDIS_PASSWORD="$REDIS_PASSWORD" \
   -e ML_SERVICE_URL=http://ai-service:5000 -e ML_SERVICE_TOKEN="$ML_SERVICE_TOKEN" \
   "$BACKEND_IMAGE" >/dev/null

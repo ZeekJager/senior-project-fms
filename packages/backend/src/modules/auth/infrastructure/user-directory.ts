@@ -21,7 +21,7 @@ export interface UserAccount {
 }
 
 const ACCOUNT_SQL = `
-  SELECT u.id, u.public_id AS "publicId", u.full_name AS "fullName", u.email, u.phone, u.status,
+  SELECT u.id, u.public_id AS "publicId", u.full_name AS "fullName", u.email, privacy.decrypt_text(u.phone) AS phone, u.status,
          u.depot_id AS "depotId", u.photo_updated_at AS "photoUpdatedAt",
          COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
     FROM auth.users u

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Client } from 'pg';
+import { setDataKey } from '../../src/shared/infrastructure/data-key';
 
 const UP_MARKER = /\r?\n-- \+migrate Up\r?\n/;
 const DOWN_MARKER = /\r?\n-- \+migrate Down\r?\n/;
@@ -15,6 +16,16 @@ export function findMigrationsDir(from: string = __dirname): string {
     dir = path.dirname(dir);
   }
   throw new Error(`migrations/ folder not found above ${from}`);
+}
+
+/**
+ * Migration 063 encrypts personal data in place and its Down decrypts it, so a session that runs migrations over rows
+ * needs the key (FMS-104). It comes from DATA_ENCRYPTION_KEY when that is set; without it the migrations that need no
+ * key still run, and one that does fails with the database's own message.
+ */
+async function giveDataKey(client: Client): Promise<void> {
+  const key = process.env.DATA_ENCRYPTION_KEY;
+  if (key) await setDataKey(client, key);
 }
 
 export interface MigrationResult {
@@ -32,6 +43,7 @@ export async function applyMigrations(
   log: (line: string) => void = () => {},
   migrationsDir: string = findMigrationsDir(),
 ): Promise<MigrationResult> {
+  await giveDataKey(client);
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id SERIAL PRIMARY KEY,
@@ -85,6 +97,7 @@ export async function revertMigrations(
   log: (line: string) => void = () => {},
   migrationsDir: string = findMigrationsDir(),
 ): Promise<string[]> {
+  await giveDataKey(client);
   const exists = await client.query("SELECT to_regclass('schema_migrations') IS NOT NULL AS present");
   if (!exists.rows[0].present) return [];
   const applied = new Set((await client.query<{ filename: string }>('SELECT filename FROM schema_migrations')).rows.map((r) => r.filename));

@@ -20,6 +20,7 @@ import { ReconciliationService } from './application/reconciliation.service';
 import { FuelAnomalyRepository } from './infrastructure/fuel-anomaly.repository';
 import { FUEL_EVENTS } from './domain/fuel-log';
 import { FuelLogRepository } from './infrastructure/fuel-log.repository';
+import { driverFuelLogsExport } from './infrastructure/driver-fuel-export.queries';
 
 const fuelLogs = new FuelLogRepository(pool);
 
@@ -88,3 +89,7 @@ export const fuelUsage = {
 export const fuelReconciliation = { run: (context: JobContext) => reconciliationService.runMonthly(context) };
 
 export { FUEL_EVENTS } from './domain/fuel-log';
+
+/** For a driver's data export (FMS-104): their fuel logs, by the driver's internal id. */
+export const driverFuelData = { forDriver: (db: Queryable, driverId: string) => driverFuelLogsExport(db, driverId) };
+export type { DriverFuelLogExport } from './infrastructure/driver-fuel-export.queries';

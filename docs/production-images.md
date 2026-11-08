@@ -46,12 +46,13 @@ environment at run time.
 ## Running them
 
 Required environment for the backend in production: `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`,
+`DATA_ENCRYPTION_KEY` (encrypts licence and phone numbers; losing it loses them, see [driver-data-protection.md](driver-data-protection.md)),
 `REDIS_HOST`, `REDIS_PASSWORD` (and the rest of `.env.example` as the deployment needs). Migrations run from the same
 image, as the schema owner, before the new version starts:
 
 ```sh
 docker run --rm -e DB_HOST=... -e DB_NAME=... -e DB_USER=fms_app -e DB_PASSWORD=... \
-  -e DB_ADMIN_USER=... -e DB_ADMIN_PASSWORD=... fms-backend:$tag node dist/scripts/migrate.js
+  -e DB_ADMIN_USER=... -e DB_ADMIN_PASSWORD=... -e DATA_ENCRYPTION_KEY=... fms-backend:$tag node dist/scripts/migrate.js
 ```
 
 Uploaded documents: use S3 (`STORAGE_DRIVER=s3`), or mount a volume at `/app/packages/backend/storage` for local

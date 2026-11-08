@@ -64,7 +64,7 @@ jobs:
       # the admin password under its own variable name, so it gets two names.
       - name: Generate per-run secrets
         run: |
-          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET REDIS_PASSWORD; do
+          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET DATA_ENCRYPTION_KEY REDIS_PASSWORD; do
             value=$(openssl rand -hex 32)
             echo "::add-mask::$value"
             for name in $names; do echo "$name=$value" >> "$GITHUB_ENV"; done
@@ -165,7 +165,7 @@ jobs:
       # the admin password under its own variable name, so it gets two names.
       - name: Generate per-run secrets
         run: |
-          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET; do
+          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET DATA_ENCRYPTION_KEY; do
             value=$(openssl rand -hex 32)
             echo "::add-mask::$value"
             for name in $names; do echo "$name=$value" >> "$GITHUB_ENV"; done

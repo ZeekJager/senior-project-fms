@@ -25,12 +25,17 @@ const MODULE_SCHEMAS = {
   // System health (FMS-143): per-minute samples of each component and request rollups.
   system: ['system'],
   'command-center': [],
+  // A person's own data export (FMS-104): reads the modules that hold the records through their index.ts, owns no schema.
+  privacy: [],
   // The Socket.IO gateway (FMS-43): forwards domain events, stores nothing.
   realtime: [],
 };
 
-/** Usable from any module: enum types and trigger functions only, no tables. */
-const PLATFORM_SCHEMAS = ['shared'];
+/**
+ * Usable from any module: enum types and trigger functions only, no tables. `privacy` (FMS-104, migration 063) holds the
+ * functions that encrypt and decrypt personal data, which every module that returns a licence or phone number calls.
+ */
+const PLATFORM_SCHEMAS = ['shared', 'privacy'];
 
 /**
  * Owned by platform code in src/shared, not by a module: `api` holds the

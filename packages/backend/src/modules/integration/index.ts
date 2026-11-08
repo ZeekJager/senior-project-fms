@@ -25,6 +25,7 @@ import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
 import { LocationRulesService } from './application/location-rules.service';
+import { trackingRetentionJob } from './application/tracking-retention.job';
 import { RuleThresholdService } from './application/rule-threshold.service';
 import { NotificationGateway } from './application/notification-gateway';
 import { TelemetryRulesService } from './application/telemetry-rules.service';
@@ -196,7 +197,14 @@ router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
 router.use(ruleThresholdRouter(ruleThresholds));
 router.use(geofenceRouter(geofences));
 
-export const integrationModule: AppModule = { name: 'integration', router };
+export const integrationModule: AppModule = {
+  name: 'integration',
+  router,
+  jobs: [
+    // FMS-104: pings and flags older than the retention period are deleted (docs/driver-data-protection.md).
+    trackingRetentionJob({ db: pool, tracking, flags: flagRepository, retention: config.tracking.retention }),
+  ],
+};
 
 /** What other modules (and the composition root) use of the gateway. */
 export const integrationGateway = {
@@ -261,6 +269,11 @@ export const ignitionTime = {
 };
 
 /** For the fuel anomaly rules (FMS-82): where a vehicle (internal id) was around a time, from its stored pings. */
+/** For a driver's data export (FMS-104): the pings recorded on their trips. */
+export const driverLocationData = {
+  forTrips: (db: Queryable, tripIds: readonly string[], limit: number) => tracking.forTrips(db, tripIds, limit),
+};
+
 export const trackingLookups = {
   positionNear: (db: Queryable, vehicleId: string, at: Date, windowMs: number) => tracking.nearest(db, vehicleId, at, windowMs),
   /** For a trip's live state (FMS-95, trip): a vehicle's newest position. */

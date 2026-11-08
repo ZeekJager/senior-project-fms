@@ -1,3 +1,4 @@
+import type { Queryable } from '../../shared/infrastructure/queryable';
 import { Router } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
@@ -22,6 +23,7 @@ import { RedisLoginThrottle } from './infrastructure/redis-login-throttle';
 import { SessionRepository } from './infrastructure/session.repository';
 import { UserAdminRepository } from './infrastructure/user-admin.repository';
 import { writeAuthAudit } from './infrastructure/auth-audit';
+import { accountExport } from './infrastructure/account-export';
 
 let depotDirectory: DepotDirectory | null = null;
 
@@ -135,3 +137,7 @@ router.use(userAdminRouter(userAdminService, authorize));
 router.use(userPhotoRouter(userPhotoService, authorize, authenticated));
 
 export const authModule: AppModule = { name: 'auth', router };
+
+/** For a user's own data export (FMS-104): their account, without the password hash or sessions. */
+export const accountData = { forUser: (db: Queryable, userId: string) => accountExport(db, userId) };
+export type { AccountExport } from './infrastructure/account-export';

@@ -20,7 +20,8 @@ test('known unique constraints map to their contract codes, without leaking valu
   assert.equal(err.code, 'CONFLICT_DUPLICATE_PLATE');
   assert.deepEqual(err.details, [{ field: 'registration_number', reason: 'already_exists' }]);
   assert.ok(!JSON.stringify(err).includes('AA-12345'));
-  assert.equal(toAppError(pgError('23505', { constraint: 'drivers_license_number_key' })).code, 'CONFLICT_DUPLICATE_LICENSE');
+  // Licence numbers are encrypted at rest (FMS-104): a duplicate is caught by the unique index on their blind index.
+  assert.equal(toAppError(pgError('23505', { constraint: 'ux_drivers_license_number_idx' })).code, 'CONFLICT_DUPLICATE_LICENSE');
   assert.equal(toAppError(pgError('23505', { constraint: 'driver_attendance_driver_id_attendance_date_key' })).code, 'CONFLICT_ATTENDANCE_DUPLICATE');
 });
 

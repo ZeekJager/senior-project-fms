@@ -92,13 +92,15 @@ describe('database and unexpected errors', () => {
   test('every constraint the error mapper names exists in the migrated schema', async () => {
     const names = [
       'uq_fleet_vehicle_registration',
-      'drivers_license_number_key',
       'driver_attendance_driver_id_attendance_date_key',
       'ex_trip_driver_overlap',
       'ex_trip_vehicle_overlap',
     ];
     const res = await pool.query<{ conname: string }>('SELECT conname FROM pg_constraint WHERE conname = ANY($1)', [names]);
     expect(res.rows.map((r) => r.conname).sort()).toEqual([...names].sort());
+    // A duplicate licence number violates a unique index, not a constraint (FMS-104: the blind index of the encrypted number).
+    const index = await pool.query("SELECT 1 FROM pg_indexes WHERE schemaname = 'fleet' AND indexname = 'ux_drivers_license_number_idx'");
+    expect(index.rowCount).toBe(1);
   });
 });
 

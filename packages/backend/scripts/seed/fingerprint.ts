@@ -6,16 +6,18 @@ import type { Queryable } from '../../src/shared/infrastructure/queryable';
 // vehicle's created_at, its registration date, is the seed's and is kept),
 // password hashes (salted) and audit correlation ids. Two runs with the same
 // seed and anchor must give the same hash.
+// Licence and phone numbers are encrypted at rest (FMS-104): the fingerprint is of the decrypted values, as the random
+// ciphertext differs on every run.
 const QUERIES: Record<string, string> = {
   depots: 'SELECT code, name, city, latitude, longitude, capacity FROM fleet.depots ORDER BY code',
-  users: `SELECT u.email, u.full_name, u.phone, u.status, d.code AS depot, u.password_hash LIKE '$argon2%' AS can_sign_in,
+  users: `SELECT u.email, u.full_name, privacy.decrypt_text(u.phone), u.status, d.code AS depot, u.password_hash LIKE '$argon2%' AS can_sign_in,
                  array(SELECT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id WHERE ur.user_id = u.id ORDER BY r.name) AS roles
             FROM auth.users u LEFT JOIN fleet.depots d ON d.id = u.depot_id ORDER BY u.email`,
   vehicles: `SELECT v.registration_number, v.vin, v.make, v.model, v.model_year, v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km,
                     v.odometer_km, v.status, v.maintenance_flag, v.created_at, d.code AS depot
                FROM fleet.vehicles v JOIN fleet.depots d ON d.id = v.depot_id ORDER BY v.registration_number`,
-  drivers: `SELECT dr.license_number, dr.license_categories, dr.license_expiry::text, dr.hire_date::text, dr.emergency_phone, u.email
-              FROM fleet.drivers dr JOIN auth.users u ON u.id = dr.user_id ORDER BY dr.license_number`,
+  drivers: `SELECT privacy.decrypt_text(dr.license_number), dr.license_categories, dr.license_expiry::text, dr.hire_date::text, privacy.decrypt_text(dr.emergency_phone), u.email
+              FROM fleet.drivers dr JOIN auth.users u ON u.id = dr.user_id ORDER BY privacy.decrypt_text(dr.license_number)`,
   parts: 'SELECT part_number, name, unit_cost_cents, stock_quantity, reorder_threshold, service_item FROM maintenance.inventory_parts ORDER BY part_number',
   movements: `SELECT p.part_number, m.movement_type, m.quantity_delta FROM maintenance.inventory_movements m
                 JOIN maintenance.inventory_parts p ON p.id = m.inventory_part_id ORDER BY p.part_number, m.movement_type, m.quantity_delta`,
@@ -30,25 +32,25 @@ const QUERIES: Record<string, string> = {
                FROM maintenance.failure_events f JOIN fleet.vehicles v ON v.id = f.vehicle_id
                JOIN maintenance.maintenance_records r ON r.id = f.maintenance_record_id
               ORDER BY f.occurred_at, v.registration_number, f.component`,
-  attendance: `SELECT dr.license_number, a.attendance_date::text, a.status, a.check_in_at, a.check_in_method, a.check_out_at, a.check_out_method
+  attendance: `SELECT privacy.decrypt_text(dr.license_number), a.attendance_date::text, a.status, a.check_in_at, a.check_in_method, a.check_out_at, a.check_out_method
                  FROM fleet.driver_attendance a
-                 JOIN fleet.drivers dr ON dr.id = a.driver_id ORDER BY dr.license_number, a.attendance_date`,
+                 JOIN fleet.drivers dr ON dr.id = a.driver_id ORDER BY privacy.decrypt_text(dr.license_number), a.attendance_date`,
   documents: `SELECT v.registration_number, doc.document_type, doc.original_filename, doc.content_type, doc.size_bytes, doc.sha256, doc.expires_on::text
                 FROM document.documents doc JOIN fleet.vehicles v ON doc.owner_type = 'vehicle' AND v.id = doc.owner_id
                ORDER BY v.registration_number, doc.document_type`,
   // The road (FMS-84) by its hash: the line itself is kilobytes per route.
   routes: `SELECT r.name, d.code AS depot, r.distance_km, r.estimated_duration_seconds, r.distance_source, r.measured_at, md5(r.geometry::text) AS road FROM trip.routes r
              JOIN fleet.depots d ON d.id = r.depot_id ORDER BY d.code, r.name`,
-  trips: `SELECT r.name AS route, v.registration_number, dr.license_number, t.status, t.scheduled_start, t.scheduled_end,
+  trips: `SELECT r.name AS route, v.registration_number, privacy.decrypt_text(dr.license_number), t.status, t.scheduled_start, t.scheduled_end,
                  t.actual_start, t.actual_end, t.planned_distance_km, t.actual_distance_km, t.actual_duration_seconds
             FROM trip.trips t JOIN trip.routes r ON r.id = t.route_id
             LEFT JOIN fleet.vehicles v ON v.id = t.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = t.driver_id
-           ORDER BY t.scheduled_start NULLS LAST, r.name, t.status, v.registration_number NULLS LAST, dr.license_number NULLS LAST`,
+           ORDER BY t.scheduled_start NULLS LAST, r.name, t.status, v.registration_number NULLS LAST, privacy.decrypt_text(dr.license_number) NULLS LAST`,
   // Meter readings (FMS-126): a manual one is recorded when the seed registers the vehicle, so its time is left out.
   meters: `SELECT v.registration_number, m.meter, m.value, m.source, m.suspect, CASE WHEN m.source = 'manual' THEN NULL ELSE m.recorded_at END AS recorded_at
              FROM fleet.meter_readings m JOIN fleet.vehicles v ON v.id = m.vehicle_id
             ORDER BY v.registration_number, m.meter, m.source, m.value, 6 NULLS FIRST`,
-  fuel: `SELECT v.registration_number, dr.license_number, f.fuel_type, f.quantity_ml, f.unit_price_cents, f.total_cost_cents,
+  fuel: `SELECT v.registration_number, privacy.decrypt_text(dr.license_number), f.fuel_type, f.quantity_ml, f.unit_price_cents, f.total_cost_cents,
                 f.odometer_km, f.station_name, f.source, f.recorded_at
            FROM fuel.fuel_logs f JOIN fleet.vehicles v ON v.id = f.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = f.driver_id
           ORDER BY f.recorded_at, v.registration_number`,

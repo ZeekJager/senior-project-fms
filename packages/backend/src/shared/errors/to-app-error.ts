@@ -5,7 +5,8 @@ import { AppError, type ErrorCode, type ErrorDetail } from './app-error';
 // back to CONFLICT_DUPLICATE.
 const UNIQUE_CONSTRAINTS: Record<string, ErrorCode> = {
   uq_fleet_vehicle_registration: 'CONFLICT_DUPLICATE_PLATE',
-  drivers_license_number_key: 'CONFLICT_DUPLICATE_LICENSE',
+  // Licence numbers are encrypted at rest; their uniqueness is on the blind index (migration 063, FMS-104).
+  ux_drivers_license_number_idx: 'CONFLICT_DUPLICATE_LICENSE',
   driver_attendance_driver_id_attendance_date_key: 'CONFLICT_ATTENDANCE_DUPLICATE',
 };
 

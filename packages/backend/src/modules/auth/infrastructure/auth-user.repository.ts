@@ -67,7 +67,7 @@ export class AuthUserRepository {
 
   async findProfile(db: Queryable, id: string): Promise<UserProfileRow | null> {
     const res = await db.query<UserProfileRow>(
-      `SELECT u.public_id AS id, u.email, u.full_name, u.phone, u.status,
+      `SELECT u.public_id AS id, u.email, u.full_name, privacy.decrypt_text(u.phone) AS phone, u.status,
               u.depot_id AS "depotId", u.last_login_at, u.photo_updated_at AS "photoUpdatedAt"
          FROM auth.users u
         WHERE u.id = $1`,

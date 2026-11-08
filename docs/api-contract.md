@@ -860,6 +860,7 @@ Service program rules ([service-programs.md](service-programs.md)):
 
 - **Defaults.** Without `to` it ends now, or 30 days after `from` when that is earlier. Without `from` it starts 30 days before its end.
 - **Refusals.** A longer range is `400 VALIDATION_INVALID_DATE_RANGE` (`reason: range_too_long`), and so is `to` at or before `from` (`reason: before_from`). Ask for the rest in another request.
+- **Retention (FMS-104).** GPS pings are kept `GPS_PING_RETENTION_DAYS` (180) and telemetry flags `TELEMETRY_FLAG_RETENTION_DAYS` (365); the nightly `tracking-retention` job deletes older ones, so a history request reaches back no further ([driver-data-protection.md](driver-data-protection.md)).
 - **Audit.** Where a vehicle was is behavioural data (§24.3), so every page read is audited: `tracking.history_read` on the vehicle, with `from`, `to`, the number of points and whether it continued a cursor.
 
 **GPS ingestion (FMS-88).** How it works, the webhook format and the simulator: [docs/gps-ingestion.md](gps-ingestion.md).
