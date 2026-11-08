@@ -139,7 +139,7 @@ Unversioned and unauthenticated, for load balancers and container orchestration:
 | Endpoint | Returns |
 |---|---|
 | `GET /health/live` | `200` while the process is running; checks no dependencies |
-| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`) |
+| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`). The AI service (FMS-75) is `checks.ml`: `ok`, `degraded` (down; `200`) or `disabled`; with `READINESS_ML_CRITICAL=true` a down one is `failed` and the answer `503` ([metrics.md](metrics.md)) |
 
 ### 3.8 System health (FMS-143)
 

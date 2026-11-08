@@ -59,6 +59,15 @@ const appSchema = z
       .pipe(z.array(z.url({ protocol: /^https?$/, error: 'must be http(s) origins, comma-separated' }))),
     // The legacy client->server `location_update` socket event (api-contract §11.2). Off unless a legacy client needs it.
     REALTIME_LEGACY_LOCATION: z.enum(['true', 'false']).default('false'),
+    // Metrics (FMS-75, docs/metrics.md): GET /metrics in Prometheus' format, on its own port and never on the public one. 0 turns
+    // it off. Bound to the loopback by default; a deployment that lets Prometheus scrape over the network sets the host and a
+    // token (required in production for any host that is not the loopback).
+    METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9464),
+    METRICS_HOST: z.string().trim().min(1).default('127.0.0.1'),
+    METRICS_TOKEN: z.string().min(16, 'must be at least 16 characters').optional(),
+    // Readiness (FMS-75): the ML service is reported in /health/ready either way. `true` makes it a reason for 503, for a
+    // deployment that cannot run without predictions; otherwise it is degraded and the API keeps serving.
+    READINESS_ML_CRITICAL: z.enum(['true', 'false']).default('false'),
     // GPS ingestion (FMS-88): VehicleLocationUpdated at most once per vehicle per this many seconds of its pings.
     TRACKING_EVENT_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(3600).default(5),
     // Alert engine (FMS-92): a critical alert unacknowledged this many minutes escalates to the next tier, and again after as many more.
@@ -101,6 +110,9 @@ const appSchema = z
     }
     if (env.FUEL_PRICE_MIN_CENTS_PER_LITRE >= env.FUEL_PRICE_MAX_CENTS_PER_LITRE) {
       ctx.addIssue({ code: 'custom', path: ['FUEL_PRICE_MIN_CENTS_PER_LITRE'], message: 'must be below FUEL_PRICE_MAX_CENTS_PER_LITRE' });
+    }
+    if (env.NODE_ENV === 'production' && env.METRICS_PORT > 0 && !LOOPBACK_HOSTS.has(env.METRICS_HOST) && !env.METRICS_TOKEN) {
+      ctx.addIssue({ code: 'custom', path: ['METRICS_TOKEN'], message: 'is required in production when METRICS_HOST is not the loopback: the metrics port would be open to the network' });
     }
     if (env.REDIS_HOST && !env.REDIS_PASSWORD) {
       ctx.addIssue({ code: 'custom', path: ['REDIS_PASSWORD'], message: 'is required when REDIS_HOST is set' });
@@ -150,6 +162,10 @@ export interface AppConfig {
   realtime: RealtimeConfig;
   integrations: IntegrationsConfig;
   tracking: { eventIntervalSeconds: number };
+  /** Metrics (FMS-75): where GET /metrics is served (port 0: nowhere), and the bearer token it needs, if any. */
+  metrics: { port: number; host: string; token: string | null };
+  /** Readiness (FMS-75): whether the ML service being down makes /health/ready answer 503. */
+  readiness: { mlCritical: boolean };
   alerts: { escalationMinutes: number };
   /**
    * Fuel reconciliation (FMS-41): the variance, in whole percent either way, beyond which a vehicle's month is an anomaly.
@@ -166,6 +182,9 @@ export interface AppConfig {
 }
 
 /** The predictive maintenance service (FMS-54) and the feature spec the core implements (FMS-127). */
+/** Hosts that only this machine can reach (FMS-75: no token needed to scrape the metrics port bound to one). */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
 /** The per-fill-up fuel anomaly rules' thresholds (FMS-82, docs/fuel-anomaly-rules.md). */
 export interface FuelRulesConfig {
   /** A fill-up this many percent above what the distance since the last one could have used is a refuel that came too soon. */
@@ -304,6 +323,8 @@ export function loadAppConfig(env: Env): AppConfig {
     realtime: { allowedOrigins: e.REALTIME_ALLOWED_ORIGINS, legacyLocation: e.REALTIME_LEGACY_LOCATION === 'true' },
     integrations: { secrets: integrations.secrets },
     tracking: { eventIntervalSeconds: e.TRACKING_EVENT_INTERVAL_SECONDS },
+    metrics: { port: e.METRICS_PORT, host: e.METRICS_HOST, token: e.METRICS_TOKEN ?? null },
+    readiness: { mlCritical: e.READINESS_ML_CRITICAL === 'true' },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
     fuel: {
       varianceThresholdPct: e.FUEL_VARIANCE_THRESHOLD_PCT,

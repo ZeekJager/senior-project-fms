@@ -108,7 +108,7 @@ describe('health', () => {
     expect(res.status).toBe(200);
     // Redis is optional (FMS-72): ok when configured (CI), disabled when not.
     // So is the read replica (FMS-94): tests run without one, so reporting reads use the primary.
-    expect(res.body.checks).toEqual({ database: 'ok', redis: process.env.REDIS_HOST ? 'ok' : 'disabled', outbox: 'ok', replica: 'disabled' });
+    expect(res.body.checks).toEqual({ database: 'ok', redis: process.env.REDIS_HOST ? 'ok' : 'disabled', outbox: 'ok', replica: 'disabled', ml: 'disabled' });
     // The event outbox's lag (FMS-73), this instance's provider circuits (FMS-85) and the replica's lag (FMS-94).
     expect(res.body.metrics).toEqual({
       outbox: { undispatched: 0, unpublished: 0, oldest_pending_seconds: 0, dead_lettered: 0 },

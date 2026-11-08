@@ -5,6 +5,9 @@ import { config } from './config';
 import { pool } from './db';
 import { modules } from './modules';
 import { attachRealtime } from './modules/realtime';
+import { setMetricReaders } from './shared/metrics/domain-metrics';
+import { startMetricsServer } from './shared/metrics/metrics-server';
+import { metricsRegistry } from './shared/metrics/registry';
 import { systemHealth } from './modules/system';
 import { redis, redisKey } from './shared/cache';
 import { createOutboxRelay } from './shared/events/event-bus';
@@ -22,9 +25,12 @@ const JOBS_TIME_ZONE = 'Africa/Addis_Ababa';
 const server = createServer(createApp());
 // Socket.IO on the same server and port, at /api/v1/socket.io (FMS-43).
 const realtime = attachRealtime(server);
+setMetricReaders({ sockets: () => realtime.io.engine.clientsCount });
 server.listen(config.port, () => {
   logger.info({ port: config.port, nodeEnv: config.nodeEnv }, 'fms-backend listening');
 });
+// GET /metrics (FMS-75, docs/metrics.md) on its own port, never the public one.
+startMetricsServer(metricsRegistry, config.metrics, (port) => logger.info({ port, host: config.metrics.host, token: config.metrics.token !== null }, 'fms-backend metrics listening'));
 
 // Every instance schedules every job; a Redis lease picks one (FMS-72) and
 // the jobs.job_runs row guarantees it runs once a day (FMS-26).

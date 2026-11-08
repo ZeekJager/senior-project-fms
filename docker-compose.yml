@@ -115,6 +115,8 @@ services:
       DB_ADMIN_USER: fms_admin
       DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # GET /metrics (FMS-75, docs/metrics.md) on port 9464 for a Prometheus on this network. Not published to the host.
+      METRICS_HOST: 0.0.0.0
       JWT_SECRET: "${JWT_SECRET:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       STORAGE_DRIVER: local
       STORAGE_LOCAL_DIR: /app/storage
