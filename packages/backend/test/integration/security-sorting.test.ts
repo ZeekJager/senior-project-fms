@@ -11,7 +11,7 @@ import { operations, spec } from '../support/openapi';
 // list is covered the day it is documented.
 
 const app = createApp();
-const PASSWORD = 'Sorting-Test-1';
+const PASSWORD = 'Sort-Test-1';
 
 interface Param {
   name?: string;

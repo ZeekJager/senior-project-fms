@@ -49,12 +49,13 @@ export interface AppOptions {
   /**
    * Rate limits (FMS-103). On, with the configured limits and Redis (memory when it is down), except under NODE_ENV=test, where the
    * whole suite is one address making thousands of requests: the rate limit tests turn it on with their own store and limits.
+   * `false` leaves it off: for the in-process seed script, which is the only caller of its own app on a private loopback port.
    */
-  rateLimit?: { store?: RateStore; limits?: RateLimits };
+  rateLimit?: { store?: RateStore; limits?: RateLimits } | false;
 }
 
 /** Routes whose callers cannot send the CSRF header (shared/http/csrf.ts): the session is being made or ended, or it is a beacon. */
-const CSRF_TOKEN_EXEMPT = new Set(['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/password', '/api/v1/telemetry/web-vitals']);
+const CSRF_NO_HEADER_PATHS = new Set(['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/password', '/api/v1/telemetry/web-vitals']);
 
 /** Composition root: shared middleware first, then each module's routes. */
 export function createApp(options: AppOptions = {}): Express {
@@ -84,7 +85,7 @@ export function createApp(options: AppOptions = {}): Express {
   // A request that announces more than any upload can be is refused before it is read (FMS-103).
   app.use(maxRequestBytes());
   // Rate limits by kind of client (FMS-103, shared/http/rate-limit.ts), before the body is parsed or anything is looked up.
-  if (options.rateLimit || config.nodeEnv !== 'test') {
+  if (options.rateLimit !== false && (options.rateLimit || config.nodeEnv !== 'test')) {
     let warned = false;
     const store =
       options.rateLimit?.store ??
@@ -115,7 +116,7 @@ export function createApp(options: AppOptions = {}): Express {
       accessCookie: ACCESS_COOKIE,
       refreshCookie: REFRESH_COOKIE,
       requireToken: options.csrfToken ?? config.nodeEnv !== 'test',
-      exemptFromToken: (req) => CSRF_TOKEN_EXEMPT.has(req.path),
+      exemptFromToken: (req) => CSRF_NO_HEADER_PATHS.has(req.path),
       onDenied: (req, reason) => {
         logger.warn({ method: req.method, path: req.path, reason, origin: req.get('origin') ?? null }, 'a cookie-authenticated write was refused as cross-site');
         return auditCsrfDenied(req, reason);

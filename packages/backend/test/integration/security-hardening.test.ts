@@ -12,7 +12,7 @@ import { createUser } from '../support/factories';
 
 // FMS-103 (docs/security.md): response headers, CORS, CSRF and request size.
 
-const PASSWORD = 'Hardening-Test-1';
+const PASSWORD = 'Harden-Test-1';
 const HOST = 'fms.test';
 const SELF = `https://${HOST}`;
 const EVIL = 'https://evil.example';

@@ -21,6 +21,7 @@ export class SeedApiError extends Error {
  */
 export class SeedApi {
   private cookie = '';
+  private csrf = '';
   private credentials: { email: string; password: string } | null = null;
 
   private constructor(
@@ -29,7 +30,8 @@ export class SeedApi {
   ) {}
 
   static async start(): Promise<SeedApi> {
-    const app = createApp();
+    // The seed is the only caller of its own app, on a loopback port picked for it, and uploads hundreds of documents: no rate limits.
+    const app = createApp({ rateLimit: false });
     const server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });
@@ -44,10 +46,11 @@ export class SeedApi {
       body: JSON.stringify({ email, password }),
     });
     if (!res.ok) throw new SeedApiError(res.status, await res.json().catch(() => null), 'POST /auth/login');
-    this.cookie = res.headers
-      .getSetCookie()
-      .map((c) => c.split(';')[0])
-      .join('; ');
+    const set = res.headers.getSetCookie();
+    this.cookie = set.map((c) => c.split(';')[0]).join('; ');
+    // A write with the session cookie must send the CSRF token the sign-in set (FMS-103), as the web app does.
+    const csrf = set.find((c) => c.startsWith('fms_csrf='));
+    this.csrf = csrf ? decodeURIComponent(csrf.split(';')[0].slice('fms_csrf='.length)) : '';
     this.credentials = { email, password };
   }
 
@@ -55,7 +58,7 @@ export class SeedApi {
   async call<T = Record<string, unknown>>(method: string, path: string, body?: unknown, retried = false): Promise<{ data: T; meta: Record<string, unknown> }> {
     const res = await fetch(this.base + path, {
       method,
-      headers: { 'content-type': 'application/json', cookie: this.cookie },
+      headers: { 'content-type': 'application/json', cookie: this.cookie, 'x-csrf-token': this.csrf },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 401 && !retried && this.credentials) {
@@ -72,7 +75,7 @@ export class SeedApi {
     const form = new FormData();
     for (const [name, value] of Object.entries(fields)) form.append(name, value);
     form.append('file', new Blob([new Uint8Array(file.bytes)]), file.filename);
-    const res = await fetch(this.base + path, { method: 'POST', headers: { cookie: this.cookie }, body: form });
+    const res = await fetch(this.base + path, { method: 'POST', headers: { cookie: this.cookie, 'x-csrf-token': this.csrf }, body: form });
     if (res.status === 401 && !retried && this.credentials) {
       await this.signIn(this.credentials.email, this.credentials.password);
       return this.upload<T>(path, fields, file, true);
