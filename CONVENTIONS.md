@@ -101,7 +101,7 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `auth` | auth | users, roles, permissions, role_permissions, user_roles, refresh_sessions |
 | `fleet` | fleet | depots, vehicles, drivers, driver_vehicle_assignments, driver_attendance, dvir_reports, driver_accounts (read model of drivers' account fields, migration 017), meter_readings (odometer and engine-hour history, migration 038) |
 | `trip` | trip | routes, trips, trip_stops |
-| `privacy` | privacy | functions only (`encrypt_text`, `decrypt_text`, `blind_index`; FMS-104, migration 063); no tables |
+| `privacy` | platform (any module may call it) | functions only (`encrypt_text`, `decrypt_text`, `blind_index`; FMS-104, migration 063); no tables. The `privacy` module (a person's data export) owns no schema |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
 | `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions (scored nightly, FMS-55), inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039) |
 | `alert` | alert | alerts, alert_acknowledgements, incident_reports, notifications |

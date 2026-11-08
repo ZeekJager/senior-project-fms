@@ -91,7 +91,11 @@ DO $$ BEGIN
     END IF;
 END $$;
 
--- Room for ciphertext, and the licence number's blind index.
+-- Room for ciphertext, and the licence number's blind index. A column named in a trigger's UPDATE OF list cannot change type
+-- while the trigger exists (this migration runs twice in CI), so the triggers are dropped here and created below.
+DROP TRIGGER IF EXISTS trg_drivers_encrypt_personal_data ON fleet.drivers;
+DROP TRIGGER IF EXISTS trg_users_encrypt_personal_data ON auth.users;
+
 ALTER TABLE fleet.drivers ALTER COLUMN license_number TYPE TEXT;
 ALTER TABLE fleet.drivers ALTER COLUMN emergency_phone TYPE TEXT;
 ALTER TABLE fleet.drivers ADD COLUMN IF NOT EXISTS license_number_idx VARCHAR(64);
