@@ -4,6 +4,7 @@ import { recordAuditEntry, type AuditResult } from '../infrastructure/audit-log'
 import type { Queryable } from '../infrastructure/queryable';
 import { jobSource, withRequestSource } from '../infrastructure/request-source';
 import type { JobLock } from './job-lock';
+import { jobDuration } from '../metrics/registry';
 import { scheduleOf, type ScheduledJob } from './job';
 
 export interface SchedulerDeps {
@@ -103,11 +104,13 @@ async function runInContext(job: ScheduledJob, deps: SchedulerDeps): Promise<Job
   if (!interval) await audit('job.started', {});
   try {
     const result = (await job.run({ now, correlationId, runKey })) ?? {};
+    jobDuration.observe({ job: job.name, status: 'succeeded' }, (Date.now() - started) / 1000);
     await deps.lock.succeed(claim, result);
     if (!interval || didSomething(result)) await audit('job.succeeded', { result, duration_ms: Date.now() - started });
     return { status: 'succeeded', correlationId, result };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    jobDuration.observe({ job: job.name, status: 'failed' }, (Date.now() - started) / 1000);
     await deps.lock.fail(claim, error).catch(() => {});
     await audit('job.failed', { error, duration_ms: Date.now() - started }, 'failed').catch(() => {});
     return { status: 'failed', correlationId, error };

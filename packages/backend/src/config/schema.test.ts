@@ -122,3 +122,26 @@ test('Road routing: off unless ROUTING_URL is set, an empty value included (FMS-
   assert.deepEqual(loadAppConfig({ ...validEnv, ROUTING_URL: 'http://osrm:5000/' }).routing, { url: 'http://osrm:5000' });
   assert.ok(problems(() => loadAppConfig({ ...validEnv, ROUTING_URL: 'ftp://osrm' })).some((p) => p.startsWith('ROUTING_URL')));
 });
+
+test('metrics (FMS-75): on port 9464 and the loopback, no token, unless set; port 0 turns them off', () => {
+  assert.deepEqual(loadAppConfig(validEnv).metrics, { port: 9464, host: '127.0.0.1', token: null });
+  assert.deepEqual(loadAppConfig({ ...validEnv, METRICS_PORT: '0', METRICS_HOST: '0.0.0.0', METRICS_TOKEN: 'a-scrape-token-16+' }).metrics, { port: 0, host: '0.0.0.0', token: 'a-scrape-token-16+' });
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, METRICS_PORT: '70000' })).map((p) => p.split(':')[0]), ['METRICS_PORT']);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, METRICS_TOKEN: 'short' })).map((p) => p.split(':')[0]), ['METRICS_TOKEN']);
+});
+
+test('metrics: in production a host other than the loopback needs a token; the loopback, or port 0, does not', () => {
+  const production = { ...validEnv, NODE_ENV: 'production', DB_PASSWORD: 'a-real-password', JWT_SECRET: 'j'.repeat(32), REDIS_HOST: 'redis', REDIS_PASSWORD: 'r' };
+  assert.deepEqual(problems(() => loadAppConfig({ ...production, METRICS_HOST: '0.0.0.0' })).map((p) => p.split(':')[0]), ['METRICS_TOKEN']);
+  assert.equal(loadAppConfig({ ...production, METRICS_HOST: '0.0.0.0', METRICS_TOKEN: 'a-scrape-token-16+' }).metrics.token, 'a-scrape-token-16+');
+  assert.equal(loadAppConfig({ ...production, METRICS_HOST: '127.0.0.1' }).metrics.port, 9464);
+  assert.equal(loadAppConfig({ ...production, METRICS_HOST: '0.0.0.0', METRICS_PORT: '0' }).metrics.port, 0);
+  // Development does not insist.
+  assert.equal(loadAppConfig({ ...validEnv, METRICS_HOST: '0.0.0.0' }).metrics.host, '0.0.0.0');
+});
+
+test('readiness (FMS-75): a down ML service is only degraded unless READINESS_ML_CRITICAL=true', () => {
+  assert.equal(loadAppConfig(validEnv).readiness.mlCritical, false);
+  assert.equal(loadAppConfig({ ...validEnv, READINESS_ML_CRITICAL: 'true' }).readiness.mlCritical, true);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, READINESS_ML_CRITICAL: 'yes' })).map((p) => p.split(':')[0]), ['READINESS_ML_CRITICAL']);
+});

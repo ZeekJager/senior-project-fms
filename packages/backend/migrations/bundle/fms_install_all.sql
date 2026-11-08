@@ -3488,3 +3488,10 @@ UPDATE auth.users SET phone = phone WHERE phone IS NOT NULL AND phone NOT LIKE '
 -- Unique on the blind index instead of on the (random) ciphertext.
 ALTER TABLE fleet.drivers DROP CONSTRAINT IF EXISTS drivers_license_number_key;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_drivers_license_number_idx ON fleet.drivers(license_number_idx);
+-- ===== 064_pg_stat_statements.sql =====
+DO $$ BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+EXCEPTION
+    WHEN undefined_file OR feature_not_supported OR insufficient_privilege THEN
+        RAISE NOTICE 'pg_stat_statements is not available here (%): query statistics are off', SQLERRM;
+END $$;

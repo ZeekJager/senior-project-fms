@@ -6,3 +6,4 @@ scikit-learn==1.7.2
 joblib==1.6.0
 pandas==2.3.3
 numpy==2.3.4
+prometheus-client==0.26.0

@@ -1,3 +1,4 @@
+import { Router } from 'express';
 import { config } from '../../config';
 import { pool, reads } from '../../db';
 import { cache } from '../../shared/cache';
@@ -5,6 +6,7 @@ import { logger } from '../../shared/logging/logger';
 import type { AppModule } from '../../shared/module';
 import { integrationGateway } from '../integration';
 import { requestRollup as rollupMiddleware, systemHealthRouter } from './api/system-health.routes';
+import { webVitalsRouter } from './api/web-vitals.routes';
 import { HealthSampler, RequestRecorder, type Probe } from './application/health-sampler';
 import { SystemHealthService } from './application/system-health.service';
 import { HealthRepository } from './infrastructure/health.repository';
@@ -35,9 +37,14 @@ const sampler = new HealthSampler({
   log: logger,
 });
 
+// Web vitals reported by the web app (FMS-75, docs/metrics.md) sit beside the health screen's routes.
+const router = Router();
+router.use(systemHealthRouter(service));
+router.use(webVitalsRouter());
+
 export const systemModule: AppModule = {
   name: 'system',
-  router: systemHealthRouter(service),
+  router,
   jobs: [
     {
       // Samples and request counts past 30 days.

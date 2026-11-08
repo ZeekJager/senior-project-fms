@@ -242,6 +242,10 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 - A new or changed endpoint also goes in `docs/openapi.yaml` (OpenAPI 3.1; FMS-119, FMS-65). It is the contract, and CI holds it to the code both ways (`test/integration/openapi.test.ts`): **mounting a route without describing it fails**, so does describing one that is not mounted, and so do a missing summary, tag, 401 or path parameter, a schema that is not valid JSON Schema, and an error code not in `ERROR_CODES`. That a response is what the spec says is checked in `test/integration/contract.test.ts`: call your operation there (or in your own test with `expectContract`, `test/support/openapi.ts`), its status and body are validated against the schema. Describe a legacy mount of an operation as `deprecated: true` with its own operation id. `/api-docs` (Swagger UI on the same file) is served outside production.
 
+## Metrics
+
+The API and the AI service export Prometheus metrics on an internal port ([docs/metrics.md](docs/metrics.md), FMS-75). A new metric goes in `src/shared/metrics` (a gauge read at the scrape, through `setMetricReaders`, or a histogram observed where it happens). **A label is a small, fixed set**: a route template, a status class, a provider code, a job name. Never an id, a URL, a query string, a user or anything a client chooses without a cap: each distinct value is a series in the scraper for ever. `/metrics` is never on the public port, and a metric holds no personal data.
+
 ## Read replica
 
 - **Reporting reads go to the replica** (FMS-94, `docs/read-replica.md`): analytics, reconciliation, history and audit searches that scan many rows. A service takes `reads` (`src/db.ts`, `{ session(): Promise<ReadSession> }`) in its deps, opens one session per request (`await reads.session()`) and runs that request's queries on it. The response puts `session.freshness()` in `meta.data_freshness`.

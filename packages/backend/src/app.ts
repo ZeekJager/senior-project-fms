@@ -16,6 +16,9 @@ import { cache } from './shared/cache';
 import { outboxHealth } from './shared/events/outbox-health';
 import { apiDocs, apiDocsEnabledFor } from './shared/http/api-docs';
 import { healthRouter, type HealthMetrics, type OptionalDependency, type ReadinessCheck } from './shared/http/health';
+import { mlReadiness } from './shared/http/ml-readiness';
+import { setMetricReaders } from './shared/metrics/domain-metrics';
+import { httpMetrics } from './shared/metrics/http-metrics';
 import type { AppModule } from './shared/module';
 
 export interface AppOptions {
@@ -29,11 +32,19 @@ export interface AppOptions {
   modules?: AppModule[];
   /** Serve the API documentation page at /api-docs (FMS-65). Defaults to on, except in production. */
   apiDocs?: boolean;
+  /** The AI service in /health/ready (FMS-75). Defaults to ML_SERVICE_URL and READINESS_ML_CRITICAL. */
+  ml?: { url: string | null; critical: boolean };
 }
 
 /** Composition root: shared middleware first, then each module's routes. */
 export function createApp(options: AppOptions = {}): Express {
-  const readinessChecks = options.readinessChecks ?? { database: () => pool.query('SELECT 1') };
+  // The AI service (FMS-75): a reason for 503 only when the deployment says it cannot run without it; degraded otherwise.
+  const ml = options.ml ?? { url: config.ml.service?.url ?? null, critical: config.readiness.mlCritical };
+  const mlProbe = mlReadiness({ url: ml.url });
+  const readinessChecks = {
+    ...(options.readinessChecks ?? { database: () => pool.query('SELECT 1') }),
+    ...(ml.url && ml.critical ? { ml: () => mlProbe.ping() } : {}),
+  };
 
   const app = express();
   // Request id first, so every later log line and error carries it.
@@ -41,6 +52,8 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(requestLogger);
   // Per-minute request and 5xx counts and latencies for the system health screen (FMS-143): counts only.
   app.use(requestRollup);
+  // Per-route latency histograms for /metrics (FMS-75): the route template, never the URL.
+  app.use(httpMetrics);
   app.use(cors({ exposedHeaders: ['X-Request-Id'] }));
   app.use(
     express.json({
@@ -59,12 +72,14 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(auditLogMiddleware);
 
   const outbox = outboxHealth(pool);
+  // What /metrics reads at a scrape (FMS-75): the same signals as /health/ready, as numbers.
+  setMetricReaders({ outbox: () => outbox.metrics(), replica: () => reads.metrics(), circuits: () => integrationGateway.circuits() });
   app.use(
     healthRouter(
       readinessChecks,
       undefined,
       // The read replica (FMS-94): degraded when reporting reads fall back to the primary.
-      options.optionalDependencies ?? { redis: cache, outbox, replica: reads },
+      options.optionalDependencies ?? { redis: cache, outbox, replica: reads, ...(ml.url && ml.critical ? {} : { ml: mlProbe }) },
       options.metrics ?? { outbox: async () => ({ ...(await outbox.metrics()) }), integrations: integrationGateway.metrics, replica: () => reads.metrics() },
     ),
   );

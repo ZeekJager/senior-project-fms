@@ -21,7 +21,8 @@ from typing import Any, Mapping
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest, multiprocess
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, create_model
 
 from ml import artefact
@@ -34,6 +35,10 @@ REQUEST_ID_HEADER = "X-Request-Id"
 MIN_TOKEN_LENGTH = 32
 # One nightly scoring call scores this many vehicles at most (FMS-55 sends batches).
 MAX_BATCH = 500
+# Seconds, the same buckets as the API's http_request_duration_seconds (FMS-75, docs/metrics.md).
+LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 2, 5, 10)
+# Probes and the scrape itself say nothing about the service's users.
+NOT_MEASURED = ("/health", "/metrics")
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,48 @@ def _field(loc: tuple) -> str:
     return ".".join(str(part) for part in loc if part != "body")
 
 
+class ServiceMetrics:
+    """The service's metrics (FMS-75), in Prometheus' format.
+
+    With several uvicorn workers (the production image runs two) each worker would count only the requests it served, and a scrape
+    would reach a different one each time. When PROMETHEUS_MULTIPROC_DIR is set, the workers write to files in it and a scrape adds
+    them up; the folder is emptied when the service starts (the image's command). Without it, one registry of this app.
+    """
+
+    def __init__(self, model_version: str, load_seconds: float) -> None:
+        self.multiprocess = bool(os.environ.get("PROMETHEUS_MULTIPROC_DIR"))
+        # In multiprocess mode the metrics live in files, not in a registry.
+        self.registry = None if self.multiprocess else CollectorRegistry()
+        self.requests = Histogram(
+            "http_request_duration_seconds",
+            "Request duration by method, route template and status class",
+            ["method", "route", "status_class"],
+            buckets=LATENCY_BUCKETS,
+            registry=self.registry,
+        )
+        self.prediction = Histogram(
+            "ml_prediction_duration_seconds", "Time to score one request's vehicles", buckets=LATENCY_BUCKETS, registry=self.registry
+        )
+        self.vehicles = Counter("ml_predicted_vehicles_total", "Vehicles scored", registry=self.registry)
+        self.model = Gauge("ml_model_info", "1 for the model being served", ["version"], registry=self.registry, multiprocess_mode="max")
+        self.model.labels(version=model_version).set(1)
+        self.load = Gauge("ml_model_load_seconds", "Seconds the model took to load", registry=self.registry, multiprocess_mode="max")
+        self.load.set(load_seconds)
+
+    def render(self) -> bytes:
+        if self.multiprocess:
+            registry = CollectorRegistry()
+            multiprocess.MultiProcessCollector(registry)
+            return generate_latest(registry)
+        return generate_latest(self.registry)
+
+
+def route_template(request: Request) -> str:
+    """The route a request matched, as its template (`/internal/ml/predict-maintenance/batch`), never its URL; strangers are one `unmatched` series."""
+    path = getattr(request.scope.get("route"), "path", None)
+    return path if isinstance(path, str) else "unmatched"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Loads the model once, then serves it. Refuses to start without a usable token or model."""
     settings = settings or Settings.from_env()
@@ -114,6 +161,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # No interactive docs: the API is internal, and documented in docs/api-contract.md §10.3.
     app = FastAPI(title="FMS predictive maintenance", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.predictor = predictor
+    service_metrics = ServiceMetrics(predictor.version, load_seconds)
+    app.state.metrics = service_metrics
 
     @app.middleware("http")
     async def request_id(request: Request, call_next):
@@ -121,6 +170,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request.state.request_id = rid
         response = await call_next(request)
         response.headers[REQUEST_ID_HEADER] = rid
+        return response
+
+    @app.middleware("http")
+    async def measure(request: Request, call_next):
+        started = time.perf_counter()
+        response = await call_next(request)
+        if request.url.path not in NOT_MEASURED:
+            service_metrics.requests.labels(
+                method=request.method, route=route_template(request), status_class=f"{response.status_code // 100}xx"
+            ).observe(time.perf_counter() - started)
         return response
 
     def error(request: Request, status: int, code: str, message: str, details: list[dict[str, str]]) -> JSONResponse:
@@ -141,17 +200,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not hmac.compare_digest(sent.encode(), settings.token.encode()):
             raise ServiceError(401, "AUTH_TOKEN_INVALID", f"A valid {AUTH_HEADER} is required.")
 
+    def scrape_authorized(request: Request) -> None:
+        """/metrics takes the internal token as the other endpoints do, or as a bearer token (what a Prometheus scrape sends)."""
+        bearer = request.headers.get("Authorization", "")
+        sent = request.headers.get(AUTH_HEADER) or (bearer[7:] if bearer.startswith("Bearer ") else "")
+        if not hmac.compare_digest(sent.encode(), settings.token.encode()):
+            raise ServiceError(401, "AUTH_TOKEN_INVALID", f"A valid {AUTH_HEADER} or bearer token is required.")
+
     def meta(request: Request) -> dict[str, Any]:
         return {"request_id": request.state.request_id, "model_version": predictor.version}
 
     def predictions(items: list[PredictRequest]) -> list[dict[str, Any]]:
-        out = predictor.predict([item.features.model_dump() for item in items])
+        with service_metrics.prediction.time():
+            out = predictor.predict([item.features.model_dump() for item in items])
+        service_metrics.vehicles.inc(len(items))
         return [{"vehicle_id": str(item.vehicle_id), "as_of": item.as_of.isoformat(), **p} for item, p in zip(items, out)]
 
     @app.get("/health")
     def health() -> dict[str, Any]:
         """Liveness, without a token: the model is loaded (the service does not start without one)."""
         return {"status": "ok", "model_version": predictor.version, "load_seconds": load_seconds}
+
+    @app.get("/metrics", dependencies=[Depends(scrape_authorized)])
+    def scrape() -> Response:
+        """Prometheus' text format (FMS-75, docs/metrics.md): internal, with the service's token."""
+        return Response(service_metrics.render(), media_type=CONTENT_TYPE_LATEST, headers={"Cache-Control": "no-store"})
 
     @app.get("/model", dependencies=[Depends(authorized)])
     def model_info(request: Request) -> dict[str, Any]:

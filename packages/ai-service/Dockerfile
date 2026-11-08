@@ -22,6 +22,9 @@ RUN python scripts/generate_training_data.py --out /tmp/training_data.csv \
 FROM ${PYTHON_IMAGE} AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 ML_MODELS_DIR=/opt/models
 RUN useradd --system --uid 10001 --no-create-home ml
+# The two workers write their metrics here and a scrape adds them up (FMS-75, docs/metrics.md); emptied each time the service starts.
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+RUN mkdir -p /tmp/prometheus && chown ml /tmp/prometheus
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/models /opt/models
@@ -31,4 +34,4 @@ USER ml
 EXPOSE 5000
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
-CMD ["uvicorn", "app:create_app", "--factory", "--host", "0.0.0.0", "--port", "5000", "--workers", "2"]
+CMD ["sh", "-c", "rm -rf /tmp/prometheus/* && exec uvicorn app:create_app --factory --host 0.0.0.0 --port 5000 --workers 2"]

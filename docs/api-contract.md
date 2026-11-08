@@ -139,7 +139,7 @@ Unversioned and unauthenticated, for load balancers and container orchestration:
 | Endpoint | Returns |
 |---|---|
 | `GET /health/live` | `200` while the process is running; checks no dependencies |
-| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`) |
+| `GET /health/ready` | `200` when every required check passes, otherwise `503` with `{status: "unavailable", checks: {database: "failed", ...}}`. Redis is optional (FMS-72): `checks.redis` is `ok`, `degraded` (down: the API serves from PostgreSQL, `status: "degraded"`, still `200`) or `disabled` (not configured). The read replica (FMS-94) is reported the same way as `checks.replica`: `degraded` when it is down or more than `READ_REPLICA_MAX_LAG_SECONDS` behind and reporting reads use the primary; its lag is `metrics.replica` (`lag_seconds`, `in_use`, `max_lag_seconds`, `fallbacks`). The AI service (FMS-75) is `checks.ml`: `ok`, `degraded` (down; `200`) or `disabled`; with `READINESS_ML_CRITICAL=true` a down one is `failed` and the answer `503` ([metrics.md](metrics.md)) |
 
 ### 3.8 System health (FMS-143)
 
@@ -147,6 +147,7 @@ The health of the FMS over time, for the admin's screen (S-31, [system-health.md
 
 | Method + path | Purpose | Request / response |
 |---|---|---|
+| `POST /telemetry/web-vitals` | The web app reports how fast a page was (FMS-75) | any signed-in user | `{metrics: [{name: LCP\|INP\|CLS\|FCP\|TTFB, value, rating, page?}]}` (1-10; times in ms, `page` a route template) -> `204`, no body. Recorded as Prometheus histograms by metric and page ([metrics.md](metrics.md)) |
 | `GET /system/health` | Each component now and its uptime; outages; failed jobs | -> `SystemHealth`: `generated_at`, `window_end` (the start of the current minute), `sampled_from` (the first sample of the last 30 days, null with none), `components[]`, `outages[]` (the last 30 days, newest first, at most 100) and `outages_total`, `failed_jobs[]` (the last 30 days, at most 50) and `failed_jobs_total` |
 | `GET /system/health/history` | The period over time | `window` (`24h` default, `7d`, `30d`; else `400`) -> `window`, `from`, `to`, `bucket_minutes` (15, 120, 480), `requests` (`requests`, `errors_5xx`, `error_rate_pct`, `p95_ms`, and the same per cell in `cells[]` with its `start`) and `components[]` (`component`, `label`, `cells[]` of `start`, `ok_minutes`, `down_minutes`, `disabled_minutes`, `no_data_minutes`) |
 
