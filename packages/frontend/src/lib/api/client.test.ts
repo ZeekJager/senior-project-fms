@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { server } from '@/test/msw/server'
 import { envelope, errorEnvelope, testApi } from '@/test/auth'
 import { ApiError } from './errors'
+import { CSRF_COOKIE, csrfToken } from './client'
 
 const ok = () => envelope({ ok: true })
 
@@ -302,5 +303,111 @@ describe('api client', () => {
 
     expect(localStorage.length).toBe(0)
     expect(sessionStorage.length).toBe(0)
+  })
+})
+
+describe('CSRF token (FMS-103)', () => {
+  const setToken = (value: string) => {
+    document.cookie = `${CSRF_COOKIE}=${encodeURIComponent(value)}; path=/`
+  }
+  const clearToken = () => {
+    document.cookie = `${CSRF_COOKIE}=; path=/; max-age=0`
+  }
+  const refusal = (reason: string, field = 'x-csrf-token') => errorEnvelope(403, 'FORBIDDEN_CSRF', 'The request was refused.', [{ field, reason }])
+
+  it('reads the token from the cookie, decoded', () => {
+    expect(csrfToken('a=1; fms_csrf=abc.d%2Fe-f; b=2')).toBe('abc.d/e-f')
+    expect(csrfToken('a=1; b=2')).toBeUndefined()
+    expect(csrfToken('')).toBeUndefined()
+    // Not a cookie that merely ends the same way.
+    expect(csrfToken('not_fms_csrf=x')).toBeUndefined()
+  })
+
+  it('sends it on every write, and not on a read', async () => {
+    setToken('t1.sig1')
+    const seen: Record<string, string | null> = {}
+    server.use(
+      http.get('/api/v1/thing', ({ request }) => (seen.GET = request.headers.get('X-CSRF-Token'), ok())),
+      http.post('/api/v1/thing', ({ request }) => (seen.POST = request.headers.get('X-CSRF-Token'), ok())),
+      http.patch('/api/v1/thing', ({ request }) => (seen.PATCH = request.headers.get('X-CSRF-Token'), ok())),
+      http.put('/api/v1/thing', ({ request }) => (seen.PUT = request.headers.get('X-CSRF-Token'), ok())),
+      http.delete('/api/v1/thing', ({ request }) => (seen.DELETE = request.headers.get('X-CSRF-Token'), ok())),
+    )
+    const api = testApi()
+    await api.request('/thing')
+    for (const method of ['POST', 'PATCH', 'PUT', 'DELETE']) await api.request('/thing', { method, json: {} })
+    clearToken()
+    expect(seen).toEqual({ GET: null, POST: 't1.sig1', PATCH: 't1.sig1', PUT: 't1.sig1', DELETE: 't1.sig1' })
+  })
+
+  it('reads the cookie at each request, so a refreshed token is the one sent', async () => {
+    setToken('old.sig')
+    const seen: (string | null)[] = []
+    server.use(http.post('/api/v1/thing', ({ request }) => (seen.push(request.headers.get('X-CSRF-Token')), ok())))
+    const api = testApi()
+    await api.request('/thing', { method: 'POST', json: {} })
+    setToken('new.sig')
+    await api.request('/thing', { method: 'POST', json: {} })
+    clearToken()
+    expect(seen).toEqual(['old.sig', 'new.sig'])
+  })
+
+  it('sends no header when there is no token', async () => {
+    clearToken()
+    let header: string | null = 'unset'
+    server.use(http.post('/api/v1/thing', ({ request }) => ((header = request.headers.get('X-CSRF-Token')), ok())))
+    await testApi().request('/thing', { method: 'POST', json: {} })
+    expect(header).toBeNull()
+  })
+
+  it('recovers a session that began before the token existed: refreshes (which sets it) and sends the write again, once', async () => {
+    clearToken()
+    const seen: (string | null)[] = []
+    let refreshes = 0
+    server.use(
+      http.post('/api/v1/thing', ({ request }) => {
+        seen.push(request.headers.get('X-CSRF-Token'))
+        return request.headers.get('X-CSRF-Token') ? envelope({ done: true }) : refusal('required')
+      }),
+      http.post('/api/v1/auth/refresh', () => {
+        refreshes += 1
+        setToken('fresh.sig')
+        return envelope({ roles: [] })
+      }),
+    )
+    await expect(testApi().request('/thing', { method: 'POST', json: {} })).resolves.toEqual({ done: true })
+    clearToken()
+    expect(seen).toEqual([null, 'fresh.sig'])
+    expect(refreshes).toBe(1)
+  })
+
+  it('does not loop: a second refusal after the refresh is the error', async () => {
+    clearToken()
+    let writes = 0
+    let refreshes = 0
+    server.use(
+      http.post('/api/v1/thing', () => (writes++, refusal('invalid'))),
+      http.post('/api/v1/auth/refresh', () => (refreshes++, envelope({ roles: [] }))),
+    )
+    await expect(testApi().request('/thing', { method: 'POST', json: {} })).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN_CSRF' })
+    expect([writes, refreshes]).toEqual([2, 1])
+  })
+
+  it('does not retry a refusal for the origin: that is not a stale token', async () => {
+    let writes = 0
+    let refreshes = 0
+    server.use(
+      http.post('/api/v1/thing', () => (writes++, refusal('cross_origin', 'origin'))),
+      http.post('/api/v1/auth/refresh', () => (refreshes++, envelope({ roles: [] }))),
+    )
+    await expect(testApi().request('/thing', { method: 'POST', json: {} })).rejects.toBeInstanceOf(ApiError)
+    expect([writes, refreshes]).toEqual([1, 0])
+  })
+
+  it('does not retry the sign-in calls themselves', async () => {
+    let attempts = 0
+    server.use(http.post('/api/v1/auth/login', () => (attempts++, refusal('invalid'))))
+    await expect(testApi().request('/auth/login', { method: 'POST', json: {} })).rejects.toMatchObject({ code: 'FORBIDDEN_CSRF' })
+    expect(attempts).toBe(1)
   })
 })

@@ -107,6 +107,7 @@ A detail may carry `record_id`: the public id of the record the problem is about
 | `AUTH_TOKEN_REVOKED` | 401 | Refresh session revoked or reused | `auth.refresh_sessions` |
 | `AUTH_ACCOUNT_DISABLED` | 403 | User status is not `active` | `auth.users.status` |
 | `FORBIDDEN_INSUFFICIENT_ROLE` | 403 | Caller lacks the required permission | RBAC |
+| `FORBIDDEN_CSRF` | 403 | A write with the session cookies that did not come from this site (`details[0].field` `origin`, `reason` `cross_origin`), or sent no valid `X-CSRF-Token` (`field` `x-csrf-token`, `reason` `required` or `invalid`) | CSRF (§21) |
 | `NOT_FOUND` | 404 | Resource does not exist or is not visible to the caller | API |
 | `PAYLOAD_TOO_LARGE` | 413 | Request body over the size limit (JSON: 1 MB; uploads: §8) | API |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | An upload whose content is not an accepted type (§8: JPEG, PNG, PDF, judged by the file's bytes, not its name or declared type) | API |
@@ -1241,6 +1242,8 @@ Retry-prone create and command endpoints support `Idempotency-Key`. The server s
 | ML service | Service quota + timeout | Protect inference capacity |
 
 - Bound request body sizes and use timeouts for external calls.
+- **Limits in force (FMS-103, [security.md](security.md)).** Requests a minute, fixed one-minute windows, counted in Redis (memory when it is down): a signed-in session 600 (`session`), uploads 30 more (`upload`), a GPS device's token 120 (`device`), a provider's webhooks 600 (`webhook`), anyone not signed in 120 per address (`anonymous`), the sign-in, refresh and password calls 30 per address (`auth`), and 3,000 per address for everything (`ip_ceiling`). Over a limit: `429 RATE_LIMITED`, `details: [{reason: <policy>}]`, `Retry-After` in seconds. Every answer carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` for the tightest limit. Health probes are not counted. The configuration is `RATE_LIMIT_*_PER_MINUTE`.
+- **Body sizes.** JSON 1 MB, an upload 10 MB (§8), and a request that is not an upload and announces more than 12 MB is refused before it is read: all `413 PAYLOAD_TOO_LARGE`.
 - Retry only safe operations automatically; use exponential backoff and jitter.
 - Use circuit breaking for unstable external dependencies.
 - Propagate request/correlation ids across API, ML and integrations.
@@ -1250,6 +1253,10 @@ Retry-prone create and command endpoints support `Idempotency-Key`. The server s
 - All production API traffic uses HTTPS/TLS; Socket.IO uses WSS.
 - Authorization is enforced at API/service boundaries, not only in React.
 - Browser access tokens are stored in Secure, HttpOnly cookies and protected with an appropriate SameSite policy; CSRF defenses are required for cookie-authenticated state-changing requests.
+- **CSRF (FMS-103).** The session cookies are `SameSite=Strict`. In addition, a `POST`, `PUT`, `PATCH` or `DELETE` that carries them must (1) come from this site: its `Origin` is this host or one in `CORS_ALLOWED_ORIGINS`, or, with no `Origin`, `Sec-Fetch-Site` is not `cross-site`/`same-site`; and (2) send `X-CSRF-Token` equal to the `fms_csrf` cookie, which sign-in and refresh set (readable by the page, `Secure`, `SameSite=Strict`) and which is signed for that session's access token. Otherwise `403 FORBIDDEN_CSRF`, and the attempt is on the audit trail as a denied access. Not CSRF targets, because they carry no session cookie: devices (bearer token), webhooks (signature), sign-in. Exempt from the token only, still checked for origin: `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/password` and `/telemetry/web-vitals` (a beacon sets no headers), and the offline queue's replay (`X-Client-Channel: pwa` with an `Idempotency-Key`, from this very host), which the service worker sends and cannot read the cookie for.
+- **CORS (FMS-103).** Only the origins in `CORS_ALLOWED_ORIGINS` (none by default: the web app and the API share a host) are answered, by name and with credentials, never `*`. Any other origin gets no CORS headers.
+- **Response headers (FMS-103).** `Content-Security-Policy: default-src 'none'`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-site`, `Cross-Origin-Opener-Policy: same-origin`, a restrictive `Permissions-Policy`, and in production `Strict-Transport-Security`. No `X-Powered-By`.
+- **Sorting and filters (FMS-103).** `sort_by`, `then_by` and `sort_order` accept the values the operation lists and nothing else (`400`); a query parameter an operation does not declare is ignored, never put in SQL.
 - Webhook signatures and service-to-service credentials are validated before processing.
 - Passwords, access tokens, provider secrets and API keys are never logged.
 - Sensitive actions generate audit events.

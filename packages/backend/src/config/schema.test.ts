@@ -145,3 +145,28 @@ test('readiness (FMS-75): a down ML service is only degraded unless READINESS_ML
   assert.equal(loadAppConfig({ ...validEnv, READINESS_ML_CRITICAL: 'true' }).readiness.mlCritical, true);
   assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, READINESS_ML_CRITICAL: 'yes' })).map((p) => p.split(':')[0]), ['READINESS_ML_CRITICAL']);
 });
+
+test('security (FMS-103): no cross-origin callers, no proxy trusted, by default', () => {
+  const cfg = loadAppConfig(validEnv);
+  assert.deepEqual(cfg.cors.allowedOrigins, []);
+  assert.equal(cfg.trustProxy, 0);
+});
+
+test('CORS_ALLOWED_ORIGINS is a comma-separated list of http(s) origins, trailing slashes dropped', () => {
+  assert.deepEqual(loadAppConfig({ ...validEnv, CORS_ALLOWED_ORIGINS: 'https://app.fms.example/, http://localhost:5173 ' }).cors.allowedOrigins, ['https://app.fms.example', 'http://localhost:5173']);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, CORS_ALLOWED_ORIGINS: '*' })).map((p) => p.split(':')[0]), ['CORS_ALLOWED_ORIGINS.0']);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, CORS_ALLOWED_ORIGINS: 'ftp://files.example' })).map((p) => p.split(':')[0]), ['CORS_ALLOWED_ORIGINS.0']);
+});
+
+test('TRUST_PROXY is a number of proxies, 0 to 5: a header cannot be believed without limit', () => {
+  assert.equal(loadAppConfig({ ...validEnv, TRUST_PROXY: '1' }).trustProxy, 1);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, TRUST_PROXY: '6' })).map((p) => p.split(':')[0]), ['TRUST_PROXY']);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, TRUST_PROXY: 'true' })).map((p) => p.split(':')[0]), ['TRUST_PROXY']);
+});
+
+test('rate limits: the documented defaults; each can be raised, none switched off', () => {
+  assert.deepEqual(loadAppConfig(validEnv).rateLimits, { session: 600, upload: 30, device: 120, webhook: 600, anonymous: 120, auth: 30, ipCeiling: 3000 });
+  assert.equal(loadAppConfig({ ...validEnv, RATE_LIMIT_DEVICE_PER_MINUTE: '900' }).rateLimits.device, 900);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, RATE_LIMIT_AUTH_PER_MINUTE: '0' })).map((p) => p.split(':')[0]), ['RATE_LIMIT_AUTH_PER_MINUTE']);
+  assert.deepEqual(problems(() => loadAppConfig({ ...validEnv, RATE_LIMIT_SESSION_PER_MINUTE: 'unlimited' })).map((p) => p.split(':')[0]), ['RATE_LIMIT_SESSION_PER_MINUTE']);
+});

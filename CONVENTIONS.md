@@ -242,6 +242,15 @@ Planned, named here so modules agree on them. The alert engine (FMS-92, docs/ale
 - The contract is the source of truth. A change to an endpoint changes `docs/api-contract.md` in the same PR.
 - A new or changed endpoint also goes in `docs/openapi.yaml` (OpenAPI 3.1; FMS-119, FMS-65). It is the contract, and CI holds it to the code both ways (`test/integration/openapi.test.ts`): **mounting a route without describing it fails**, so does describing one that is not mounted, and so do a missing summary, tag, 401 or path parameter, a schema that is not valid JSON Schema, and an error code not in `ERROR_CODES`. That a response is what the spec says is checked in `test/integration/contract.test.ts`: call your operation there (or in your own test with `expectContract`, `test/support/openapi.ts`), its status and body are validated against the schema. Describe a legacy mount of an operation as `deprecated: true` with its own operation id. `/api-docs` (Swagger UI on the same file) is served outside production.
 
+## Security
+
+Hardening (FMS-103, [docs/security.md](docs/security.md)) is global, so a route gets it without doing anything: response headers, CORS, the CSRF check on cookie-authenticated writes, rate limits by kind of client, the request size limits. What a developer does:
+
+- **A list that sorts** declares its `sort_by` values as a `z.enum` in its schema, maps each to a fixed column, and lists the same values as an `enum` in `docs/openapi.yaml`. Never interpolate a client's string into SQL; `security-sorting.test.ts` fails a documented list that accepts anything else.
+- **A route called without the session cookie** (a device, a webhook) is not a CSRF target and needs nothing. **A browser write** goes through `src/lib/api/client.ts`, which sends the token; do not call `fetch` for it. A route that cannot receive the header (a beacon) is added to `CSRF_TOKEN_EXEMPT` in `src/app.ts` with a reason, and still passes the Origin check.
+- **Never read `X-Forwarded-For` yourself.** `req.ip` is the client's address when `TRUST_PROXY` is right.
+- **A dependency with a known critical advisory fails CI** (`dependency-audit`); update it rather than ignore it.
+
 ## Metrics
 
 The API and the AI service export Prometheus metrics on an internal port ([docs/metrics.md](docs/metrics.md), FMS-75). A new metric goes in `src/shared/metrics` (a gauge read at the scrape, through `setMetricReaders`, or a histogram observed where it happens). **A label is a small, fixed set**: a route template, a status class, a provider code, a job name. Never an id, a URL, a query string, a user or anything a client chooses without a cap: each distinct value is a series in the scraper for ever. `/metrics` is never on the public port, and a metric holds no personal data.

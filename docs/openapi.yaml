@@ -11,6 +11,11 @@ info:
     To try it from /api-docs (served outside production): call POST /auth/login first. The session is an HttpOnly
     cookie the browser keeps and sends with the calls that follow; there is no token to paste.
 
+    Writes made with the session cookie must come from this site and send the CSRF token the sign-in set, as an
+    X-CSRF-Token header equal to the fms_csrf cookie; otherwise 403 FORBIDDEN_CSRF (api-contract §21, docs/security.md).
+    Every call is rate limited by kind of client; over a limit it is 429 RATE_LIMITED with Retry-After (api-contract §20).
+    The "Try it out" button on /api-docs sends the token for you.
+
     The ML service's internal endpoints belong to that service and are not part of this API.
 servers:
   - url: /api/v1
@@ -6729,7 +6734,7 @@ components:
       description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Forbidden:
-      description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission).
+      description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission), or on a write made with the session cookie, FORBIDDEN_CSRF (not from this site, or no valid X-CSRF-Token).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     NotFound:
       description: NOT_FOUND (missing, or outside the caller's depots).

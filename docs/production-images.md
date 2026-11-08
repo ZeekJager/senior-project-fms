@@ -47,6 +47,7 @@ environment at run time.
 
 Required environment for the backend in production: `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`,
 `DATA_ENCRYPTION_KEY` (encrypts licence and phone numbers; losing it loses them, see [driver-data-protection.md](driver-data-protection.md)),
+`TRUST_PROXY=1` behind the web app's nginx (the client's address, for the rate limits and the audit log; see [security.md](security.md)),
 `REDIS_HOST`, `REDIS_PASSWORD` (and the rest of `.env.example` as the deployment needs). Migrations run from the same
 image, as the schema owner, before the new version starts:
 

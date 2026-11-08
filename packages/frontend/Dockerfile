@@ -29,11 +29,15 @@ FROM ${NGINX_IMAGE} AS runtime
 # which the image scan in CI otherwise fails on. Back to the unprivileged user afterwards.
 USER root
 RUN apk upgrade --no-cache
+# Where the start-up script writes the Content-Security-Policy header (FMS-103): the nginx user owns it, the rest of /etc/nginx is root's.
+RUN mkdir -p /etc/nginx/snippets && chown nginx:nginx /etc/nginx/snippets
 USER nginx
 # nginx renders templates/*.template into conf.d at start, filling ${API_UPSTREAM}.
 COPY docker/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY docker/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
+# Runs before nginx starts, with the image's other start-up scripts (envsubst of the template above is one).
+COPY --chmod=0755 docker/nginx/40-content-security-policy.sh /docker-entrypoint.d/40-content-security-policy.sh
 COPY --from=build /app/packages/frontend/dist /usr/share/nginx/html
-ENV API_UPSTREAM=http://backend:3000
+ENV API_UPSTREAM=http://backend:3000 CSP_MODE=report-only CSP_IMG_SOURCES=https://tile.openstreetmap.org
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1

@@ -85,7 +85,7 @@ echo "== Backend"
 docker run -d --name "$PREFIX-backend" --network "$NET" --network-alias backend \
   -e NODE_ENV=production \
   -e DB_HOST=postgres -e DB_NAME=fms_db -e DB_USER=fms_app -e DB_PASSWORD="$DB_APP_PASSWORD" \
-  -e JWT_SECRET="$JWT_SECRET" -e DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" \
+  -e JWT_SECRET="$JWT_SECRET" -e DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" -e TRUST_PROXY=1 \
   -e REDIS_HOST=redis -e REDIS_PASSWORD="$REDIS_PASSWORD" \
   -e ML_SERVICE_URL=http://ai-service:5000 -e ML_SERVICE_TOKEN="$ML_SERVICE_TOKEN" \
   "$BACKEND_IMAGE" >/dev/null
@@ -95,6 +95,14 @@ docker exec "$PREFIX-backend" sh -c 'command -v pg_dump >/dev/null' || fail "pg_
 # Production serves no documentation page, and the image has no dev dependencies.
 docker exec "$PREFIX-backend" sh -c '! test -d /app/node_modules/tsx && ! test -d /app/node_modules/swagger-ui-dist' \
   || fail "the backend image has dev dependencies"
+
+# FMS-103: the API answers with a policy that runs nothing, and no framework banner; its metrics port is not the public one.
+api_headers="$(docker exec "$PREFIX-backend" wget -S -qO- http://127.0.0.1:3000/health/live 2>&1 >/dev/null)"
+echo "$api_headers" | grep -qi "content-security-policy: default-src 'none'" || fail "the API sends no Content-Security-Policy"
+echo "$api_headers" | grep -qi "x-content-type-options: nosniff" || fail "the API sends no X-Content-Type-Options"
+echo "$api_headers" | grep -qi "x-powered-by" && fail "the API names its framework"
+code="$(docker exec "$PREFIX-backend" wget -S -qO- http://127.0.0.1:3000/metrics 2>&1 | awk '/HTTP\//{print $2; exit}')"
+[ "$code" = "404" ] || fail "/metrics on the public port answered $code, not 404"
 
 echo "== ML service"
 docker run -d --name "$PREFIX-ai" --network "$NET" --network-alias ai-service \
@@ -111,6 +119,13 @@ docker exec "$PREFIX-frontend" wget -qO- http://127.0.0.1:8080/ | grep -qi '<div
 docker exec "$PREFIX-frontend" wget -qO- http://127.0.0.1:8080/vehicles/some-route | grep -qi '<div id="root"' || fail "an app route is not the app"
 code="$(docker exec "$PREFIX-frontend" wget -S -qO- http://127.0.0.1:8080/assets/missing.js 2>&1 | awk '/HTTP\//{print $2; exit}')"
 [ "$code" = "404" ] || fail "a missing asset answered $code, not 404"
+# FMS-103: the web app carries its security headers and a Content-Security-Policy (report-only by default), loads no inline script,
+# and its theme script is a file.
+web_headers="$(docker exec "$PREFIX-frontend" wget -S -qO- http://127.0.0.1:8080/ 2>&1 >/dev/null)"
+echo "$web_headers" | grep -qi "content-security-policy-report-only: default-src 'self'; script-src 'self'" || fail "the web app sends no Content-Security-Policy"
+echo "$web_headers" | grep -qi "x-frame-options: deny" || fail "the web app sends no X-Frame-Options"
+docker exec "$PREFIX-frontend" wget -qO- http://127.0.0.1:8080/ | grep -E '<script' | grep -vq 'src=' && fail "the web app's page has an inline script, which its policy forbids"
+docker exec "$PREFIX-frontend" wget -qO- http://127.0.0.1:8080/theme-init.js | grep -q "fms-theme" || fail "/theme-init.js is not the theme script"
 # The API through nginx: a protected route answers 401 from the backend, not 502 from nginx.
 code="$(docker exec "$PREFIX-frontend" wget -S -qO- http://127.0.0.1:8080/api/v1/auth/me 2>&1 | awk '/HTTP\//{print $2; exit}')"
 [ "$code" = "401" ] || fail "/api/v1/auth/me through nginx answered $code, not 401"
