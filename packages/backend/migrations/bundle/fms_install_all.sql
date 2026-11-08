@@ -3368,3 +3368,10 @@ DO $$ BEGIN
     ALTER TABLE trip.trip_stops
         ADD CONSTRAINT chk_trip_stop_completed CHECK (status <> 'completed' OR completed_at IS NOT NULL);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- ===== 064_pg_stat_statements.sql =====
+DO $$ BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+EXCEPTION
+    WHEN undefined_file OR feature_not_supported OR insufficient_privilege THEN
+        RAISE NOTICE 'pg_stat_statements is not available here (%): query statistics are off', SQLERRM;
+END $$;
