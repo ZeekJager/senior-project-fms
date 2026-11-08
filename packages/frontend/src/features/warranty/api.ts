@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
+import type { PageMeta } from '@/lib/api/client'
 import type { FailureComponent } from '@/pages/Maintenance/failures'
 
 // Warranties, warranty claims and recalls (api-contract §10.5, FMS-133, docs/warranties-recalls.md).
@@ -61,6 +62,34 @@ export interface RecallVehicle {
   updated_at: string
 }
 
+/** A manufacturer recall (GET /recalls): fleet-wide; `vehicles` counts the caller's vehicles under it. */
+export interface Recall {
+  id: string
+  campaign_code: string
+  make: string
+  model: string
+  year_from: number
+  year_to: number
+  description: string
+  remedy: string | null
+  issued_on: string | null
+  vehicles: { total: number } & Record<RecallVehicleStatus, number>
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RecallInput {
+  campaign_code: string
+  make: string
+  model: string
+  year_from: number
+  year_to: number
+  description: string
+  remedy: string | null
+  issued_on: string | null
+}
+
 export interface WarrantyInput {
   vehicle_id: string
   component: FailureComponent | null
@@ -90,6 +119,36 @@ export const CLAIM_LABELS: Record<ClaimStatus, string> = {
 export const warrantyKeys = {
   warranties: (vehicleId: string) => ['warranties', vehicleId] as const,
   recalls: (vehicleId: string) => ['recalls', 'by-vehicle', vehicleId] as const,
+  recallList: (page: number) => ['recalls', 'list', page] as const,
+  recallVehicles: (recallId: string) => ['recalls', 'vehicles', recallId] as const,
+}
+
+export const RECALL_PAGE_SIZE = 50
+
+/** GET /recalls (maintenance:read): newest first, with the caller's vehicles under each. */
+export function useRecalls(page: number) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: warrantyKeys.recallList(page),
+    queryFn: async () => {
+      const { data, meta } = await api.requestEnvelope<Recall[]>(`/recalls?page=${page}&page_size=${RECALL_PAGE_SIZE}`)
+      return { recalls: data, meta: meta as unknown as PageMeta }
+    },
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** GET /recalls/{id}/vehicles (maintenance:read): the caller's vehicles under it, open first (at most 100). */
+export function useRecallVehicles(recallId: string | null) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: warrantyKeys.recallVehicles(recallId ?? ''),
+    queryFn: async () => {
+      const { data, meta } = await api.requestEnvelope<RecallVehicle[]>(`/recalls/${recallId}/vehicles?page_size=100`)
+      return { vehicles: data, total: (meta as unknown as PageMeta).total_items }
+    },
+    enabled: recallId !== null,
+  })
 }
 
 /** GET /warranties?vehicle_id= (maintenance:read): live first, then by end date; voided ones too. */
@@ -146,6 +205,27 @@ export function useUpdateClaim() {
   return useMutation({
     mutationFn: ({ recordId, ...body }: { recordId: string; status: Exclude<ClaimStatus, 'claimable'>; amount_cents?: number; reference?: string | null }) =>
       api.request<WarrantyClaim>(`/maintenance-records/${recordId}/warranty-claim`, { method: 'PATCH', json: body }),
+    onSuccess: invalidate,
+  })
+}
+
+/** POST /recalls (maintenance:write, a user who sees every depot): its vehicles are listed as open at once. */
+export function useCreateRecall() {
+  const { api } = useAuth()
+  const invalidate = useInvalidate()
+  return useMutation({
+    mutationFn: (input: RecallInput) => api.request<Recall>('/recalls', { method: 'POST', json: input }),
+    onSuccess: invalidate,
+  })
+}
+
+/** PATCH /recalls/{id} with If-Match: its vehicles are matched again. */
+export function useUpdateRecall() {
+  const { api } = useAuth()
+  const invalidate = useInvalidate()
+  return useMutation({
+    mutationFn: ({ id, version, patch }: { id: string; version: number; patch: Partial<RecallInput> }) =>
+      api.request<Recall>(`/recalls/${id}`, { method: 'PATCH', json: patch, headers: { 'If-Match': `"${version}"` } }),
     onSuccess: invalidate,
   })
 }

@@ -48,3 +48,9 @@ export const RECALL_STATUS: Record<RecallVehicleStatus, { label: string; tone: B
   scheduled: { label: 'Booked', tone: 'info' },
   completed: { label: 'Done', tone: 'success' },
 }
+
+/** What a recall applies to: "Toyota Hilux, 2018 to 2021" (one year: "Toyota Hilux, 2019"). */
+export function recallTarget(r: { make: string; model: string; year_from: number; year_to: number }): string {
+  const years = r.year_from === r.year_to ? String(r.year_from) : `${r.year_from} to ${r.year_to}`
+  return `${r.make} ${r.model}, ${years}`
+}

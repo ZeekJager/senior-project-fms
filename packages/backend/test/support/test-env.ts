@@ -5,7 +5,8 @@
  *
  * - Values already in the environment win (CI sets them explicitly).
  * - Otherwise the repo-root .env (created by `make env`) supplies the
- *   passwords and JWT secret, with host defaults for a `make dev` stack.
+ *   passwords, JWT secret and data encryption key, with host defaults for a
+ *   `make dev` stack; without a data encryption key there, a fixed test-only key.
  * - DB_NAME is always the dedicated test database, never the dev database.
  */
 import { randomBytes } from 'node:crypto';
@@ -51,7 +52,10 @@ export function applyTestEnv(): void {
   setDefault('DB_USER', 'fms_app');
   setDefault('DB_PASSWORD', process.env.DB_APP_PASSWORD ?? dotEnv.DB_APP_PASSWORD);
   setDefault('JWT_SECRET', dotEnv.JWT_SECRET);
-  setDefault('DATA_ENCRYPTION_KEY', dotEnv.DATA_ENCRYPTION_KEY);
+  // The driver-data key (FMS-104): the .env's when it has one (`make env` adds it), else a fixed test-only key. The
+  // test database is dropped and recreated each run, so nothing encrypted with it outlives the run, and every worker
+  // gets the same one (a random key per process would not read what the global setup's migrations wrote).
+  setDefault('DATA_ENCRYPTION_KEY', dotEnv.DATA_ENCRYPTION_KEY ?? 'test-only-data-encryption-key-for-the-test-database-0001');
   // Redis (FMS-72) only when REDIS_HOST is given (CI sets it; the dev stack's
   // Redis is not published to the host). Test keys live under their own prefix,
   // and each test file under its own below it: the files share one Redis, and a

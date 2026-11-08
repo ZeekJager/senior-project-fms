@@ -29,6 +29,7 @@ The fleet now records:
 - **Wiring:** `src/modules/index.ts` gives fleet the warranties ending soon (`provideWarrantyExpiry`). Maintenance imports fleet, so fleet cannot import maintenance.
 - **Screens:**
   - S-22, the vehicle page: *Warranty and recalls*, `packages/frontend/src/pages/VehicleHistory/WarrantySection.tsx`;
+  - S-35 Recalls: `packages/frontend/src/pages/Recalls/`;
   - the claim on a repair's record: `pages/Maintenance/WarrantyClaimBlock.tsx`.
 - **Contract:** api-contract §10.5 and `docs/openapi.yaml`.
 
@@ -173,7 +174,10 @@ The `warranty-expiry-check` job (07:00, fleet module) uses the expiry rules of F
 - *Approved*, with the amount recovered;
 - *Rejected*.
 
-Issuing a recall has no screen yet: it is `POST /recalls`.
+**S-35 Recalls** (`/recalls`, `maintenance:read`): every recall on record, newest first, with its campaign code, what it applies to (make, model and model years), the defect, when it was issued, and the user's vehicles under it by open, booked and done.
+
+- **A recall's panel:** the defect, the remedy, and the user's vehicles under it, open first, each opening its vehicle page at *Warranty and recalls*. *Mark done* (`maintenance:write`) records a remedy done elsewhere.
+- *Issue recall* and *Edit recall* (`maintenance:write`, a user who sees every depot) open a form: the campaign code, when issued, the make, model and first and last model year (blank: the first year only), the defect and the remedy. The form checks what the API checks before sending; a taken campaign code shows under its field. Saving says how many vehicles are listed as open.
 
 ## Tests
 

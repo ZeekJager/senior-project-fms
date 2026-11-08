@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Radar, RadioTower, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -17,6 +17,7 @@ import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
 import { GeofencesPage } from '@/pages/Geofences'
 import { DashboardPage } from '@/pages/placeholders'
+import { RecallsPage } from '@/pages/Recalls'
 import { ReportsPage } from '@/pages/Reports'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
@@ -112,6 +113,14 @@ export const portals: Portal[] = [
         element: <ServiceProgramsPage />,
         permission: 'maintenance:read',
         nav: { label: 'Service programs', icon: CalendarClock },
+      },
+      {
+        // S-35 (FMS-133). Read with maintenance:read; issued and changed with maintenance:write by a user who sees every
+        // depot; each vehicle's recall work marked done with maintenance:write.
+        path: '/recalls',
+        element: <RecallsPage />,
+        permission: 'maintenance:read',
+        nav: { label: 'Recalls', icon: Megaphone },
       },
       {
         // S-19 (FMS-56). prediction:read: admin, fleet manager, depot admin, technician, compliance officer, fleet owner.

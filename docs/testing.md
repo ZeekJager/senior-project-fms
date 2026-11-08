@@ -27,7 +27,7 @@ Integration tests never use your development database. On every run, the global 
 2. applies every migration with the same code `make migrate` uses,
 3. after the run, fails if any table has more rows than right after migrating.
 
-Settings come from your environment, or from the repo-root `.env` that `make env` creates, with host defaults for a running `make dev` stack (`DB_HOST=localhost`, `DB_PORT=5432`). So with the stack up, `npm test` needs no extra setup. To use another server, set `DB_HOST`, `DB_PORT`, `DB_ADMIN_PASSWORD`, `DB_PASSWORD` and `JWT_SECRET`.
+Settings come from your environment, or from the repo-root `.env` that `make env` creates, with host defaults for a running `make dev` stack (`DB_HOST=localhost`, `DB_PORT=5432`). So with the stack up, `npm test` needs no extra setup. To use another server, set `DB_HOST`, `DB_PORT`, `DB_ADMIN_PASSWORD`, `DB_PASSWORD` and `JWT_SECRET`. `DATA_ENCRYPTION_KEY` (FMS-104) comes from `.env` too; an older `.env` without it gets a fixed test-only key, since the test database is recreated every run (`make env` adds the real one to `.env` without touching its other values).
 
 Uploaded documents go to local disk in a temporary folder (`STORAGE_DRIVER=local`), cleared before and after each run. The S3 adapter's own test, `test/integration/s3-storage.test.ts`, is skipped unless `S3_TEST_ENDPOINT` points at an S3-compatible server (MinIO, RustFS) with a bucket named `fms-test` (or `S3_TEST_BUCKET`); set `S3_TEST_ACCESS_KEY_ID` and `S3_TEST_SECRET_ACCESS_KEY` too. CI does not run it.
 

@@ -216,7 +216,7 @@ const failure = (err: unknown, what: string) =>
         : `${what} (${err.code}).`
     : 'Could not reach the server. Try again.'
 
-function CompleteRecallDialog({ recall, onClose }: { recall: RecallVehicle | null; onClose: () => void }) {
+export function CompleteRecallDialog({ recall, onClose }: { recall: RecallVehicle | null; onClose: () => void }) {
   const update = useUpdateRecallVehicle()
   const { toast } = useToast()
   const [error, setError] = useState<string | null>(null)
