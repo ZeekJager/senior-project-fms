@@ -9,7 +9,7 @@ import { logger } from '../../shared/logging/logger';
 import type { AppModule } from '../../shared/module';
 import { incidentLookup } from '../alert';
 import { userDirectory } from '../auth';
-import { depotRefs, HEALTH_BANDS, scoringRefs, serviceRefs, vehicleMaintenance } from '../fleet';
+import { depotRefs, HEALTH_BANDS, recallRefs, scoringRefs, serviceRefs, VEHICLE_EVENTS, vehicleMaintenance } from '../fleet';
 import { settings } from '../settings';
 import { fuelUsage } from '../fuel';
 import { integrationGateway } from '../integration';
@@ -20,6 +20,7 @@ import { mlModelRouter } from './api/ml-model.routes';
 import { predictionFeedbackRouter } from './api/prediction-feedback.routes';
 import { predictionRouter } from './api/prediction.routes';
 import { serviceProgramRouter } from './api/service-program.routes';
+import { warrantyRouter } from './api/warranty.routes';
 import { InventoryService } from './application/inventory.service';
 import { MaintenanceService } from './application/maintenance.service';
 import { MlModelService } from './application/ml-model.service';
@@ -27,6 +28,7 @@ import { PredictionFeedbackService } from './application/prediction-feedback.ser
 import { PredictionService } from './application/prediction.service';
 import { ScoringService } from './application/scoring.service';
 import { ServiceProgramService } from './application/service-program.service';
+import { WarrantyService } from './application/warranty.service';
 import { FailureRepository } from './infrastructure/failure.repository';
 import { featureSpecLoader } from './infrastructure/feature-spec';
 import { InventoryRepository } from './infrastructure/inventory.repository';
@@ -36,6 +38,7 @@ import { PredictionFeedbackRepository } from './infrastructure/prediction-feedba
 import { HttpMlServiceClient, ML_SERVICE_TIMEOUT_MS } from './infrastructure/ml-service.client';
 import { ScoringRepository } from './infrastructure/scoring.repository';
 import { ServiceProgramRepository } from './infrastructure/service-program.repository';
+import { WarrantyRepository } from './infrastructure/warranty.repository';
 
 const maintenanceRepository = new MaintenanceRepository(pool);
 const failureRepository = new FailureRepository(pool);
@@ -53,6 +56,33 @@ const serviceProgramService = new ServiceProgramService({
   events: eventBus,
 });
 
+// Warranties, warranty claims and recalls (FMS-133, docs/warranties-recalls.md).
+const warrantyService = new WarrantyService({
+  repo: new WarrantyRepository(pool),
+  vehicles: {
+    findInScope: (db, by, scope) => vehicleMaintenance.findInScope(db, by, scope),
+    refsByIds: vehicleMaintenance.refsByIds,
+    idsInScope: vehicleMaintenance.idsInScope,
+    forRecall: recallRefs.vehicles,
+    odometers: async (db, ids) => new Map((await serviceRefs.vehicles(db, ids)).map((v) => [v.id, v.odometerKm])),
+  },
+  users: userDirectory,
+  events: eventBus,
+  warningDays: () => settings.value('expiry_warning_days'),
+});
+
+/** What a recall matches on: an edit of anything else leaves the vehicle's recalls as they are. */
+const RECALL_FIELDS: unknown[] = ['make', 'model', 'year'];
+
+// A vehicle registered, or its make, model or year changed, falls under the recalls it now matches (FMS-133).
+for (const type of [VEHICLE_EVENTS.registered, VEHICLE_EVENTS.updated]) {
+  eventBus.subscribe(type, 'maintenance.recall-match', async (event, tx) => {
+    const changed = event.payload.changed_fields;
+    if (Array.isArray(changed) && !changed.some((f) => RECALL_FIELDS.includes(f))) return;
+    if (typeof event.payload.vehicle_id === 'string') await warrantyService.vehicleChanged(tx, event.payload.vehicle_id, event.correlation_id);
+  });
+}
+
 const maintenanceService = new MaintenanceService({
   records: maintenanceRepository,
   vehicles: vehicleMaintenance,
@@ -61,6 +91,7 @@ const maintenanceService = new MaintenanceService({
   users: userDirectory,
   depots: depotRefs,
   services: serviceProgramService,
+  warranties: warrantyService,
   events: eventBus,
 });
 
@@ -146,6 +177,7 @@ router.use(mlModelRouter(mlModelService));
 router.use(predictionRouter(predictionService));
 router.use(predictionFeedbackRouter(predictionFeedbackService));
 router.use(serviceProgramRouter(serviceProgramService));
+router.use(warrantyRouter(warrantyService));
 
 export const maintenanceModule: AppModule = {
   name: 'maintenance',
@@ -185,6 +217,11 @@ export const maintenanceRefs = {
     maintenanceRepository.downtimeProblems(db, recordIds, failureIds),
 };
 
+/** For the expiry job (FMS-26, fleet): the warranties ending within its window (FMS-133). */
+export const warrantyRefs = {
+  endingWithin: (db: Queryable, today: string, window: number) => warrantyService.endingWithin(db, today, window),
+};
+
 /** For tests and scripts: one run of the service-due job (FMS-129), as the scheduler runs it. */
 export const serviceDueJob = {
   run: (context: JobContext) => serviceProgramService.run(context),
@@ -217,6 +254,7 @@ export { MAINTENANCE_EVENTS } from './domain/maintenance';
 export { ML_MODEL_EVENTS, type MlModelView, type ScoringCheck } from './domain/ml-model';
 export { PREDICTION_FEEDBACK_EVENTS, PREDICTION_OUTCOMES } from './domain/prediction-feedback';
 export { SERVICE_DUE_EVENTS } from './domain/service-program';
+export { WARRANTY_EVENTS } from './domain/warranty';
 export type { ServiceDueSummary } from './application/service-program.service';
 export { PREDICTION_EVENTS, RISK_ALERT_BELOW, type MaintenanceRiskView } from './domain/scoring';
 export type { ScoringResult } from './application/scoring.service';

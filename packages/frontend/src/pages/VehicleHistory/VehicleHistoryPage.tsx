@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Truck } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Megaphone, Truck } from 'lucide-react'
 import { useMemo } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState, StatusBadge, VehiclePhoto } from '@/components/shared'
@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { HealthBadge } from '@/features/health/HealthBadge'
 import { ServiceDueBadge, useVehicleServiceDue } from '@/features/service-due'
+import { useVehicleRecalls } from '@/features/warranty'
 import { ApiError } from '@/lib/api/errors'
 import { FUEL_TYPE_LABELS, VEHICLE_TYPE_LABELS, type Vehicle } from '@/pages/Vehicles/types'
 import { useVehicle } from './api'
@@ -17,12 +18,13 @@ import { HealthSection } from './HealthSection'
 import { RepairsSection } from './RepairsSection'
 import { ServiceDueSection } from './ServiceDueSection'
 import { TripsSection } from './TripsSection'
+import { WarrantySection } from './WarrantySection'
 
-type Section = 'repairs' | 'service' | 'trips' | 'fuel' | 'documents' | 'health'
+type Section = 'repairs' | 'service' | 'warranty' | 'trips' | 'fuel' | 'documents' | 'health'
 
 /**
  * S-22 Vehicle history (FMS-136): everything that happened to one vehicle, one section at a time: its repairs
- * and services, its service due (FMS-129), its trips with the route each drove, fuel and odometer, its documents and its health. Each
+ * and services, its service due (FMS-129), its warranties and recalls (FMS-133), its trips with the route each drove, fuel and odometer, its documents and its health. Each
  * section shows only with its read permission; the section is kept in the URL (?section=), so a link opens it.
  */
 export function VehicleHistoryPage() {
@@ -40,6 +42,8 @@ export function VehicleHistoryPage() {
       { value: 'health', label: 'Health', allowed: hasPermission('prediction:read') },
       // Last, so no one's first section changes; vehicle:read, as the page itself (FMS-129).
       { value: 'service', label: 'Service due', allowed: true },
+      // Its warranties and the recalls it is under (FMS-133).
+      { value: 'warranty', label: 'Warranty and recalls', allowed: hasPermission('maintenance:read') },
     ]
     return all.filter((s) => s.allowed)
   }, [hasPermission])
@@ -66,7 +70,12 @@ export function VehicleHistoryPage() {
       <div className="space-y-4 border-b border-line pb-5">
         <BackLink />
         {vehicle.data ? (
-          <Header vehicle={vehicle.data} onHealth={hasPermission('prediction:read') ? () => choose('health') : undefined} onService={() => choose('service')} />
+          <Header
+            vehicle={vehicle.data}
+            onHealth={hasPermission('prediction:read') ? () => choose('health') : undefined}
+            onService={() => choose('service')}
+            onRecalls={hasPermission('maintenance:read') ? () => choose('warranty') : undefined}
+          />
         ) : (
           <HeaderSkeleton />
         )}
@@ -79,6 +88,8 @@ export function VehicleHistoryPage() {
           <RepairsSection vehicle={vehicle.data} />
         ) : section === 'service' ? (
           <ServiceDueSection vehicle={vehicle.data} />
+        ) : section === 'warranty' ? (
+          <WarrantySection vehicle={vehicle.data} />
         ) : section === 'trips' ? (
           <TripsSection vehicle={vehicle.data} />
         ) : section === 'fuel' ? (
@@ -101,10 +112,12 @@ function BackLink() {
   )
 }
 
-function Header({ vehicle, onHealth, onService }: { vehicle: Vehicle; onHealth?: () => void; onService: () => void }) {
+function Header({ vehicle, onHealth, onService, onRecalls }: { vehicle: Vehicle; onHealth?: () => void; onService: () => void; onRecalls?: () => void }) {
   const depots = useDepots()
   // Its most urgent service (FMS-129): said in the header when due or overdue, and opens Service due.
   const service = useVehicleServiceDue(vehicle.id).data?.find((d) => d.status !== 'upcoming')
+  // Its recalls not yet done (FMS-133): said in the header, and open Warranty and recalls.
+  const openRecalls = (useVehicleRecalls(vehicle.id, onRecalls !== undefined).data ?? []).filter((r) => r.status !== 'completed').length
   const depot = depots.data?.find((d) => d.id === vehicle.depot_id)
   const trip = vehicle.current_trip
   return (
@@ -130,6 +143,13 @@ function Header({ vehicle, onHealth, onService }: { vehicle: Vehicle; onHealth?:
             {service && (
               <button type="button" onClick={onService} className="focus-ring rounded-full font-sans" aria-label={`Service ${service.status}: ${service.program.name}. Open Service due.`}>
                 <ServiceDueBadge status={service.status}>{service.status === 'overdue' ? 'Service overdue' : 'Service due'}</ServiceDueBadge>
+              </button>
+            )}
+            {openRecalls > 0 && onRecalls && (
+              <button type="button" onClick={onRecalls} className="focus-ring rounded-full font-sans" aria-label={`${openRecalls} open recall${openRecalls === 1 ? '' : 's'}. Open Warranty and recalls.`}>
+                <Badge tone="danger" icon={<Megaphone />}>
+                  {openRecalls === 1 ? 'Open recall' : `${openRecalls} open recalls`}
+                </Badge>
               </button>
             )}
           </h1>

@@ -30,7 +30,7 @@ function record(overrides: Partial<MaintenanceRecord> = {}): MaintenanceRecord {
   return {
     id: 'r-1', vehicle_id: 'v-1', registration_number: 'AA 3-41207', maintenance_type: 'corrective', description: 'Replace front brake pads',
     status: 'open', priority: 'normal', scheduled_at: null, started_at: null, completed_at: null, odometer_km: null, labour_hours: 2.5,
-    total_cost_cents: 250_000, parts_cost_cents: 18_000, workshop: null, notes: null, completed_by: null, service_program: null,
+    total_cost_cents: 250_000, parts_cost_cents: 18_000, workshop: null, notes: null, completed_by: null, service_program: null, warranty_claim: null,
     parts: [{ part_id: 'p-1', part_number: 'BRK-PAD-01', name: 'Brake pad set', quantity: 4, unit_cost_cents: 4500, line_cost_cents: 18_000 }],
     failures: [wornPads], version: 0, created_at: '2026-10-10T07:00:00Z', updated_at: '2026-10-10T07:00:00Z', ...overrides,
   }

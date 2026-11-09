@@ -4,7 +4,7 @@ import type { EventBus } from '../../../shared/events/event-bus';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { withTransaction } from '../../../shared/infrastructure/transaction';
 import { operatingToday } from '../domain/attendance';
-import { EXPIRY_EVENTS, expiryLevel, type ExpiryRunResult } from '../domain/expiry';
+import { EXPIRY_EVENTS, expiryLevel, type ExpiryRunResult, type WarrantyExpirySource } from '../domain/expiry';
 import type { ExpiryRepository } from '../infrastructure/expiry.repository';
 
 export interface ExpiryServiceDeps {
@@ -16,6 +16,13 @@ export interface ExpiryServiceDeps {
   events: EventBus;
   /** Days ahead of an expiry the first (amber) warning comes: the expiry_warning_days setting (FMS-80). */
   warningDays: () => Promise<number>;
+  /**
+   * The warranties ending within the window (maintenance module, FMS-133), connected by
+   * src/modules/index.ts; null until then, and no warranty is checked.
+   */
+  warranties: () => WarrantyExpirySource | null;
+  /** Of the vehicles asked (internal ids), those not retired, with their public ids. */
+  activeVehicles: (db: Queryable, ids: readonly string[]) => Promise<Map<string, string>>;
 }
 
 /** Who runs a check: a scheduled job (its run's correlation id) or the upload that triggered it. */
@@ -25,7 +32,7 @@ export interface ExpiryCheck {
 }
 
 /**
- * Raises DocumentExpiring and LicenceExpiring (FMS-26): amber within 30
+ * Raises DocumentExpiring, LicenceExpiring and WarrantyExpiring (FMS-26, FMS-133): amber within 30
  * days of the expiry date (the expiry_warning_days setting), red within 7. A level is raised once per subject
  * and expiry date (fleet.expiry_notices), so re-running a check publishes
  * nothing new. Events go into the outbox with the notices, with actor null
@@ -125,6 +132,59 @@ export class ExpiryService {
           },
         );
       });
+      await this.deps.events.publish(client, raised);
+      return { checked: due.length, raised: raised.length };
+    });
+  }
+
+  /**
+   * Every live warranty of a vehicle in service with an end date in the window (FMS-133): the same levels
+   * and notices as a document's. A warranty that ends at an odometer reading only is not warned of: its
+   * end comes with the kilometres, not a date.
+   */
+  async checkWarranties(check: ExpiryCheck): Promise<ExpiryRunResult> {
+    const source = this.deps.warranties();
+    if (!source) return { checked: 0, raised: 0 };
+    const { db, expiry } = this.deps;
+    const today = operatingToday(check.now);
+    const windowDays = await this.deps.warningDays();
+    return withTransaction(db, async (client) => {
+      const ending = await source(client, today, windowDays);
+      const vehicles = await this.deps.activeVehicles(client, [...new Set(ending.map((w) => w.vehicleId))]);
+      const due = ending.filter((w) => vehicles.has(w.vehicleId));
+      const raised: DomainEvent[] = [];
+      for (const w of due) {
+        const level = expiryLevel(w.daysLeft, windowDays)!;
+        const recorded = await expiry.recordNotice(client, {
+          subject: 'warranty',
+          subjectId: w.id,
+          expiresOn: w.endsOn,
+          level,
+          daysLeft: w.daysLeft,
+          correlationId: check.correlationId,
+        });
+        if (!recorded) continue;
+        const vehicleId = vehicles.get(w.vehicleId)!;
+        raised.push(
+          createEvent(
+            EXPIRY_EVENTS.warrantyExpiring,
+            {
+              warranty_id: w.publicId,
+              vehicle_id: vehicleId,
+              provider: w.provider,
+              component: w.component,
+              ends_on: w.endsOn,
+              days_left: w.daysLeft,
+              level,
+            },
+            { actor: null, correlationId: check.correlationId },
+            {
+              id: deterministicEventId(`${EXPIRY_EVENTS.warrantyExpiring}:${w.publicId}:${w.endsOn}:${level}`),
+              aggregate: aggregateKey('vehicle', vehicleId),
+            },
+          ),
+        );
+      }
       await this.deps.events.publish(client, raised);
       return { checked: due.length, raised: raised.length };
     });

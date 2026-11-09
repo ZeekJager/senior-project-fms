@@ -62,7 +62,9 @@ import { DowntimeRepository } from './infrastructure/downtime.repository';
 import { DriverRepository } from './infrastructure/driver.repository';
 import { commandCenterDrivers, commandCenterVehicles } from './infrastructure/command-center.queries';
 import { DvirRepository } from './infrastructure/dvir.repository';
+import type { WarrantyExpirySource } from './domain/expiry';
 import { ExpiryRepository } from './infrastructure/expiry.repository';
+import { activeVehiclePublicIds, recallVehicles } from './infrastructure/recall-vehicles.queries';
 import { fuelDepotInScope, fuelVehicles } from './infrastructure/fuel-reconciliation.queries';
 import { MeterRepository } from './infrastructure/meter.repository';
 import { engineHoursOver, faultyDvirCounts, setHealthScore, vehiclesToScore } from './infrastructure/scoring.queries';
@@ -96,6 +98,16 @@ export function provideMaintenanceLookup(lookup: MaintenanceLookup): void {
 }
 
 let meterSources: MeterSources | null = null;
+
+let warrantyExpirySource: WarrantyExpirySource | null = null;
+
+/**
+ * Connects the warranties ending soon (maintenance module, FMS-133), which the expiry job warns of.
+ * Called once by src/modules/index.ts: maintenance imports fleet.
+ */
+export function provideWarrantyExpiry(source: WarrantyExpirySource): void {
+  warrantyExpirySource = source;
+}
 
 /**
  * Connects what meter readings are made from: fuel logs, completed repairs and the GPS pings' ignition
@@ -255,6 +267,8 @@ const expiryService = new ExpiryService({
   depots: { publicIds: depotPublicIds },
   events: eventBus,
   warningDays: () => settings.value('expiry_warning_days'),
+  warranties: () => warrantyExpirySource,
+  activeVehicles: activeVehiclePublicIds,
 });
 
 // A document uploaded already inside the 30-day window is flagged at once,
@@ -499,6 +513,15 @@ export const serviceRefs = {
   vehicles: serviceVehicles,
   metersAt,
 };
+
+/**
+ * For recalls (FMS-133, maintenance module): the vehicles in service of a make and model, or of ids,
+ * with their model year.
+ */
+export const recallRefs = {
+  vehicles: recallVehicles,
+};
+export type { RecallVehicle } from './infrastructure/recall-vehicles.queries';
 export type { ServiceVehicle } from './infrastructure/service-due.queries';
 export type { FuelVehicle } from './infrastructure/fuel-reconciliation.queries';
 
@@ -517,6 +540,12 @@ export const fleetModule: AppModule = {
       name: 'licence-expiry-check',
       at: '07:00',
       run: (context) => expiryService.checkLicences(context),
+    },
+    {
+      // WarrantyExpiring: the same levels for a warranty's end date (FMS-133).
+      name: 'warranty-expiry-check',
+      at: '07:00',
+      run: (context) => expiryService.checkWarranties(context),
     },
     {
       // Re-copies every driver's account fields, repairing any missed UserAccountChanged.
@@ -593,5 +622,5 @@ export { DEPOT_EVENTS } from './domain/depot';
 export { DRIVER_EVENTS } from './domain/driver';
 export { DOWNTIME_REASONS, isUnplanned, UNPLANNED_REASONS, type DowntimeFailure, type DowntimeReason, type DowntimeRecord } from './domain/downtime';
 export { DOCUMENT_EVENTS } from './domain/document';
-export { EXPIRY_EVENTS } from './domain/expiry';
+export { EXPIRY_EVENTS, type EndingWarranty, type WarrantyExpirySource } from './domain/expiry';
 export { HEALTH_BANDS, HEALTH_FILTERS, VEHICLE_EVENTS, type HealthFilter } from './domain/vehicle';

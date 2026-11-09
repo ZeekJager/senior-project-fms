@@ -50,6 +50,7 @@ Each run writes `job.started`, then `job.succeeded` (with the result and duratio
 |---|---|---|
 | `document-expiry-check` | 07:00 | `DocumentExpiring` for live documents of active vehicles and drivers |
 | `licence-expiry-check` | 07:00 | `LicenceExpiring` for active drivers |
+| `warranty-expiry-check` | 07:00 | `WarrantyExpiring` for live warranties of vehicles in service whose end date is within the window (FMS-133, [warranties-recalls.md](warranties-recalls.md)). A warranty that ends at an odometer reading only is not warned of |
 | `driver-account-sync` | 03:00 | Re-copies drivers' account fields into `fleet.driver_accounts` |
 | `trip-assignment-sync` | 03:20 | Rebuilds `fleet.trip_assignments` (availability read model, FMS-76) from the trip module. Rows it had to repair or remove mean a trip changed without its event: logged as a warning (`kept`, `repaired`, `removed` in the run history) |
 | `downtime-sync` | 03:25 | Re-derives every vehicle's downtime periods (`fleet.downtime_periods`, FMS-131) from its status history and its repairs and failures, 200 vehicles to a transaction. A period added, corrected or removed means a change came without its event: logged as a warning (`vehicles`, `added`, `repaired`, `removed` in the run history). A staff member's reason is kept ([downtime.md](downtime.md)) |
@@ -86,7 +87,7 @@ Re-running a check publishes nothing new, and neither does the upload check over
 
 A document uploaded with an `expires_on` already inside the window is checked at once on `DocumentUploaded`. The event then carries the upload request's correlation id.
 
-The alert engine (FMS-92) turns `DocumentExpiring` and `LicenceExpiring` into alerts.
+The alert engine (FMS-92) turns `DocumentExpiring`, `LicenceExpiring` and `WarrantyExpiring` into alerts.
 
 ## Read models after a direct write
 

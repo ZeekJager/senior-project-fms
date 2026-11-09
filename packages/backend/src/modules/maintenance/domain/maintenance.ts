@@ -1,6 +1,7 @@
 import { AppError } from '../../../shared/errors/app-error';
 import type { FailureEventView } from './failure';
 import type { ServiceItem } from './inventory';
+import type { WarrantyClaimView } from './warranty';
 
 /** As in maintenance.maintenance_type / maintenance_status and chk_maintenance_priority. */
 export const MAINTENANCE_TYPES = ['preventive', 'corrective', 'predictive', 'inspection', 'other'] as const;
@@ -47,6 +48,8 @@ export interface MaintenanceRecordView {
   completed_by: string | null;
   /** The preventive service program this work carries out (FMS-129); completing it starts the program's count again. */
   service_program: { id: string; name: string } | null;
+  /** The warranty claim (FMS-133): null when no warranty covered it. */
+  warranty_claim: WarrantyClaimView | null;
   parts: MaintenancePartLine[];
   /** What failed (FMS-125), oldest first. */
   failures: FailureEventView[];

@@ -39,6 +39,7 @@ import {
 } from '../domain/failure';
 import { INVENTORY_EVENTS } from '../domain/inventory';
 import { recordProgramNeedsPreventive } from '../domain/service-program';
+import type { WarrantyClaimView } from '../domain/warranty';
 import { inventoryEvent } from './inventory.service';
 import type { FailureRepository, FailureRow } from '../infrastructure/failure.repository';
 import type { LockedPart, MaintenanceRepository, RecordRow, RecordWrite } from '../infrastructure/maintenance.repository';
@@ -160,6 +161,15 @@ export interface MaintenanceServiceDeps {
     programForRecord(client: PoolClient, vehicleId: string, programPublicId: string): Promise<string>;
     serviceCompleted(client: PoolClient, caller: Caller, vehicleId: string, programId: string): Promise<void>;
     names(db: Queryable, programIds: readonly string[]): Promise<Map<string, { id: string; name: string }>>;
+  };
+  /**
+   * Warranty claims and recall work (FMS-133): a repair judged claimable or not after each change, its
+   * claim for its view, and the recall work it carries out closed with it.
+   */
+  warranties: {
+    refreshClaims(client: PoolClient, ctx: MutationContext, vehicleId: string, recordIds: readonly string[] | null): Promise<void>;
+    claimViews(db: Queryable, recordIds: readonly string[]): Promise<Map<string, WarrantyClaimView>>;
+    repairClosed(client: PoolClient, caller: Caller, recordId: string, vehiclePublicId: string, outcome: { completedAt: Date } | 'cancelled'): Promise<void>;
   };
   events: EventBus;
   now?: () => Date;
@@ -289,8 +299,10 @@ export class MaintenanceService {
 
       const inserted = await records.findById(client, row.id as string);
       const failed = await this.writeFailures(client, caller, vehicle, inserted, input.failures ?? [], 'failures');
+      // A failure a warranty covers makes the repair claimable (FMS-133).
+      await this.deps.warranties.refreshClaims(client, ctx, vehicle.id, [inserted.id]);
       if (!vehicle.maintenanceFlag) await vehicles.setMaintenanceFlag(client, ctx, vehicle.id, true);
-      const record = (await this.views(client, [inserted]))[0];
+      const record = (await this.views(client, [await records.findById(client, inserted.id)]))[0];
       if (status === 'in_progress') await vehicles.followWorkshop(client, caller, vehicle.id, true, record.id);
       if (record.total_cost_cents < record.parts_cost_cents) {
         warnings.push({ warning: 'COST_BELOW_PARTS', total_cost_cents: record.total_cost_cents, parts_cost_cents: record.parts_cost_cents });
@@ -358,6 +370,14 @@ export class MaintenanceService {
       // A service completed for its program: the program's count on the vehicle starts again from it (FMS-129).
       if (data.status === 'completed' && programId !== null) await this.deps.services.serviceCompleted(client, caller, row.vehicleId, programId);
 
+      // Its work date, odometer or failures may have changed what a warranty covers (FMS-133); recall work it carries out closes with it.
+      await this.deps.warranties.refreshClaims(client, ctx, row.vehicleId, [row.id]);
+      if (data.status === 'completed') {
+        await this.deps.warranties.repairClosed(client, caller, row.id, vehicle.publicId, { completedAt: new Date(data.completed_at!) });
+      } else if (data.status === 'cancelled') {
+        await this.deps.warranties.repairClosed(client, caller, row.id, vehicle.publicId, 'cancelled');
+      }
+
       const isClosing = data.status === 'completed' || data.status === 'cancelled';
       let cleared = false;
       if (isClosing && vehicle.maintenanceFlag && !(await records.hasOtherOpen(client, row.vehicleId, row.id))) {
@@ -403,6 +423,7 @@ export class MaintenanceService {
       if (!row || !vehicle) throw maintenanceNotFound();
       if (row.status === 'cancelled') throw failureOnCancelled();
       const [event] = await this.writeFailures(client, caller, vehicle, row, [input], null);
+      await this.deps.warranties.refreshClaims(client, mutationContext(caller), row.vehicleId, [row.id]);
       await this.deps.events.publish(client, [event]);
       const failure = (await this.deps.failures.forRecords(client, [row.id])).find((f) => f.publicId === event.payload.failure_event_id)!;
       return (await this.failureViews(client, [failure]))[0];
@@ -558,6 +579,7 @@ export class MaintenanceService {
     const finishers = await this.deps.users.findByIds(db, [...new Set(rows.flatMap((r) => (r.completedBy ? [r.completedBy] : [])))]);
     const finisherIds = new Map(finishers.map((u) => [u.id, u.publicId]));
     const programs = await this.deps.services.names(db, rows.flatMap((r) => (r.serviceProgramId ? [r.serviceProgramId] : [])));
+    const claims = await this.deps.warranties.claimViews(db, rows.map((r) => r.id));
     return rows.map((r) => {
       const parts = lines
         .filter((l) => l.recordId === r.id)
@@ -589,6 +611,7 @@ export class MaintenanceService {
         notes: r.notes,
         completed_by: r.completedBy ? (finisherIds.get(r.completedBy) ?? null) : null,
         service_program: r.serviceProgramId ? (programs.get(r.serviceProgramId) ?? null) : null,
+        warranty_claim: claims.get(r.id) ?? null,
         parts,
         failures: failureViews.filter((_, i) => failureRows[i].recordId === r.id),
         version: r.version,
