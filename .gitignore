@@ -2,6 +2,8 @@
 node_modules/
 dist/
 coverage/
+# Load test reports and the API log of each run (FMS-61); CI keeps them as artifacts.
+load-report/
 # Uploaded documents in local development (FMS-17)
 packages/backend/storage/
 .env

@@ -69,6 +69,8 @@ Add a factory here when a second test needs the same kind of row.
 
 For a whole dataset rather than a few rows (demos, load tests), use the seed generator: [seed-data.md](seed-data.md).
 
+Load tests (FMS-61) are their own suite, `npm run load-test -w fms-backend`: a seeded database of their own, the compiled API in production mode, and budgets that fail the run ([load-testing.md](load-testing.md)).
+
 ### Domain events
 
 A service writes its events into the outbox inside the test's transaction (FMS-73), and nothing reacts until the relay delivers them. `test/support/events.ts` has two helpers:

@@ -20,6 +20,7 @@
     "ml:model": "tsx scripts/ml-model.ts",
     "backup:restore": "tsx scripts/backup-restore.ts",
     "simulate:gps": "tsx scripts/simulate-gps.ts",
+    "load-test": "tsx scripts/load/run.ts",
     "routes:roads": "tsx scripts/build-roads.ts",
     "seed": "tsx scripts/seed.ts",
     "seed:reset": "tsx scripts/seed.ts --reset-only",
