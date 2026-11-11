@@ -14,7 +14,12 @@ There are five reports, each for a calendar month in Addis Ababa:
 | `maintenance` | Vehicle with repairs completed in the month, or open at its end | Repairs done (preventive, corrective, inspection and other), open at month end, labour (h), cost (ETB) |
 | `cost` | Vehicle driven or costing anything in the month | Distance, fuel cost, maintenance cost, total, cost per km |
 | `trips` | Trip scheduled to start in the month | Scheduled, route, vehicle, driver, status, started, ended, planned and driven km, on time |
-| `drivers` | Driver who completed a trip, was flagged or had an incident in the month | Trips, distance, driving hours, on-time %, speeding and idling flags, incidents |
+| `drivers` | Driver who completed a trip, was flagged or had an incident in the month | Rank and score (0 to 100), trips, distance, driving hours, on-time %, speeding and idling flags, incidents |
+
+**The driver score (FMS-146).** The rank and score columns are only for a caller who also holds `tracking:read`: the
+score is behavioural data ([analytics.md](analytics.md#the-driver-performance-score)). For them the rows come in rank
+order, the drivers with no score last with the reason in the score column ("Not enough trips"); the CSV and PDF carry
+both columns. A finance clerk (`analytics:read` only) gets the report without them, most trips first, as before.
 
 **Every report has a totals row:** sums, and the overall ratios worked out again from the sums, never averaged.
 

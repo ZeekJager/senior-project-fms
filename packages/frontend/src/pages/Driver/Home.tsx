@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, ScanLine, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
@@ -176,6 +176,23 @@ export function DriverHome() {
             ))}
           </ul>
         </section>
+      )}
+
+      {/* FMS-146: the driver's own monthly score, a screen away. */}
+      {session?.roles.includes('driver') && (
+        <Link
+          to="/driver/score"
+          className="focus-ring flex items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3.5 text-ink shadow-soft hover:bg-surface-muted"
+        >
+          <span className="flex items-center gap-3">
+            <Trophy className="h-5 w-5 text-brand-ink" aria-hidden="true" />
+            <span>
+              <span className="block text-base font-semibold">My score</span>
+              <span className="block text-sm text-ink-muted">How last month went, out of 100</span>
+            </span>
+          </span>
+          <ChevronRight className="h-5 w-5 text-ink-subtle" aria-hidden="true" />
+        </Link>
       )}
     </div>
   )

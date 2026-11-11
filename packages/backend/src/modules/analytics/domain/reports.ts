@@ -104,9 +104,13 @@ export const REPORTS: Record<ReportKind, ReportDefinition> = {
   drivers: {
     title: 'Driver performance',
     rowNoun: { one: 'driver', many: 'drivers' },
+    // Rank and score (FMS-146, docs/analytics.md) only for the roles allowed tracking:read: ReportService drops them
+    // for the others. A driver with no score has its reason in the score column ("Not enough trips").
     columns: [
+      col('rank', 'Rank', 'count'),
       col('driver', 'Driver', 'text'),
       col('depot', 'Depot', 'text'),
+      col('score', 'Score (0-100)', 'count'),
       col('trips_completed', 'Trips', 'count'),
       col('distance_m', 'Distance (km)', 'km'),
       col('driving_minutes', 'Driving (h)', 'hours'),

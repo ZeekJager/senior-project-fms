@@ -140,6 +140,33 @@ describe('S-27 Settings (FMS-80)', () => {
     await waitFor(() => expect(writes).toEqual([{ method: 'PATCH', path: '/settings', body: { fuel_variance_threshold_pct: 20, health_alert_below: 70 } }]))
   })
 
+  it("changes the driver score's weights in a card of their own; refuses them all at 0 (FMS-146)", async () => {
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [] })
+    const { user } = await open()
+    const form = await screen.findByRole('form', { name: 'Driver score weights' })
+    expect(within(form).getByLabelText('Punctuality')).toHaveValue('35')
+    expect(within(form).getByLabelText('Inspections')).toHaveValue('10')
+    // The alert card keeps to its own three.
+    expect(within(screen.getByRole('form', { name: 'Alert settings' })).queryByLabelText('Punctuality')).not.toBeInTheDocument()
+
+    for (const label of ['Punctuality', 'Safety', 'Incidents', 'Inspections']) {
+      await user.clear(within(form).getByLabelText(label))
+      await user.type(within(form).getByLabelText(label), '0')
+    }
+    await user.click(within(form).getByRole('button', { name: 'Save settings' }))
+    expect(await within(form).findByText('At least one weight must be above 0, or no driver could be scored.')).toBeInTheDocument()
+    expect(writes).toEqual([])
+
+    await user.clear(within(form).getByLabelText('Safety'))
+    await user.type(within(form).getByLabelText('Safety'), '50')
+    await user.click(within(form).getByRole('button', { name: 'Save settings' }))
+    await waitFor(() =>
+      expect(writes).toEqual([
+        { method: 'PATCH', path: '/settings', body: { driver_score_weight_punctuality: 0, driver_score_weight_safety: 50, driver_score_weight_incidents: 0, driver_score_weight_dvir: 0 } },
+      ]),
+    )
+  })
+
   it('says why a save was refused', async () => {
     serve({ fleet: { ...FLEET, ...never }, depots: [] })
     server.use(http.put('/api/v1/settings/telemetry-rules/fleet', () => errorEnvelope(403, 'FORBIDDEN_INSUFFICIENT_ROLE', 'Needs settings:write.')))

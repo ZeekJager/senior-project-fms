@@ -192,8 +192,8 @@ describe('GET /reports/{report} (FMS-91)', () => {
     ]);
     const res = await get(`/reports/drivers?month=${MONTH}&depot_id=${w.depot.public_id}`, await signIn(['admin']));
     expect(res.status).toBe(200);
-    // Two trips of 2 h and 3 h; one of two on time.
-    expect(res.body.data.rows).toEqual([{ driver: 'Test Driver', depot: w.depot.name, trips_completed: 2, distance_m: 150_000, driving_minutes: 300, on_time_pct: 50, speeding: 2, idling: 1, incidents: 1 }]);
+    // Two trips of 2 h and 3 h; one of two on time. Two trips are too few for a score (FMS-146, driver-score.test.ts).
+    expect(res.body.data.rows).toEqual([{ rank: null, score: 'Not enough trips', driver: 'Test Driver', depot: w.depot.name, trips_completed: 2, distance_m: 150_000, driving_minutes: 300, on_time_pct: 50, speeding: 2, idling: 1, incidents: 1 }]);
   });
 
   test("scope and permissions: a depot's staff see their depot only; no analytics:read is 403; an unknown report is 404", async () => {

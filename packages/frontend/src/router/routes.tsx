@@ -11,7 +11,7 @@ import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection } from '@/pages/Driver'
+import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverScore } from '@/pages/Driver'
 import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
@@ -265,6 +265,9 @@ export const portals: Portal[] = [
       { path: '/driver/fuel', element: <DriverFuel />, permission: 'fuel:write', nav: { label: 'Fuel', icon: Fuel } },
       // S-13 (FMS-38): an incident, reported from wherever the driver is, through the offline queue.
       { path: '/driver/incident', element: <DriverIncident />, permission: 'incident:write', nav: { label: 'Incident', icon: Siren } },
+      // FMS-146: the driver's own monthly score and its parts; never another driver's, never a ranking. Opened from My
+      // day, not a tab: the bottom bar keeps to the day's work.
+      { path: '/driver/score', element: <DriverScore />, permission: 'trip:execute' },
     ],
   },
 ]

@@ -44,6 +44,9 @@ const TEXT_WIDTHS: Record<string, string> = {
 /** A column's width class in the preview table (fixed layout: their sum sets the table's width when wider than the screen). */
 export function columnWidth(column: Pick<ReportColumn, 'key' | 'kind'>): string {
   if (column.kind === 'datetime') return 'w-[8.5rem]'
+  // The driver's rank is short; the score cell may read "Not enough trips" (FMS-146).
+  if (column.key === 'rank') return 'w-[4.5rem]'
+  if (column.key === 'score') return 'w-[9rem]'
   if (!isNumeric(column.kind)) return TEXT_WIDTHS[column.key] ?? 'w-[10rem]'
   return column.kind === 'count' ? 'w-[6.5rem]' : 'w-[7.5rem]'
 }

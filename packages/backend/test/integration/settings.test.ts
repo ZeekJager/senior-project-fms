@@ -47,6 +47,8 @@ describe('GET and PATCH /settings', () => {
       fuel_variance_threshold_pct: { value: 20, default_value: 20, is_default: true, unit: 'percent', min: 1, max: 100, updated_by: null },
       health_alert_below: { value: 75, default_value: 75, is_default: true, unit: 'score', min: 50, max: 84 },
       expiry_warning_days: { value: 30, default_value: 30, is_default: true, unit: 'days', min: 8, max: 180 },
+      driver_score_weight_punctuality: { value: 35, default_value: 35, is_default: true, unit: 'weight', min: 0, max: 100 },
+      driver_score_weight_dvir: { value: 10, default_value: 10, unit: 'weight' },
     });
 
     const admin = api(await signIn(['admin']));
@@ -57,7 +59,16 @@ describe('GET and PATCH /settings', () => {
       expiry_warning_days: { value: 45, is_default: false },
       health_alert_below: { value: 75, is_default: true },
     });
-    expect(await settings.values()).toEqual({ fuel_variance_threshold_pct: 15, health_alert_below: 75, expiry_warning_days: 45 });
+    expect(await settings.values()).toEqual({
+      fuel_variance_threshold_pct: 15,
+      health_alert_below: 75,
+      expiry_warning_days: 45,
+      // The driver score's weights (FMS-146), at their defaults.
+      driver_score_weight_punctuality: 35,
+      driver_score_weight_safety: 35,
+      driver_score_weight_incidents: 20,
+      driver_score_weight_dvir: 10,
+    });
 
     // Back to the default: stored as NULL, so it follows the code's default.
     const reset = await admin.patch('/settings', { fuel_variance_threshold_pct: null, expiry_warning_days: 30 });

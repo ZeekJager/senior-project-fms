@@ -111,6 +111,44 @@ export function writeState(state: DashboardState): URLSearchParams {
   return p
 }
 
+/** The parts of the driver score (FMS-146), each 0 to 100. */
+export type ScoreComponent = 'punctuality' | 'safety' | 'incidents' | 'dvir'
+
+export interface RankedDriver {
+  driver_id: string
+  name: string
+  depot: string
+  rank: number
+  score: number
+  /** Null when a part could not be judged (no timed trip, under 10 km). */
+  components: Record<ScoreComponent, number | null>
+  trips_completed: number
+}
+
+/** GET /analytics/driver-ranking: a month's scored drivers in rank order (analytics:read and tracking:read). */
+export interface DriverRanking {
+  month: string
+  weights: Record<ScoreComponent, number>
+  drivers: RankedDriver[]
+  /** Drivers active in the month with no score: too few trips. */
+  unscored: number
+  min_trips: number
+}
+
+/** The driver ranking for a month (YYYY-MM) and the depot chosen. */
+export function useDriverRanking(month: string, depotId: string) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['analytics', 'driver-ranking', month, depotId],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const q = new URLSearchParams({ month })
+      if (depotId) q.set('depot_id', depotId)
+      return api.request<DriverRanking>(`/analytics/driver-ranking?${q}`)
+    },
+  })
+}
+
 type Report = 'fleet-summary' | 'utilisation' | 'maintenance-risk'
 
 /** One analytics report for the range and depot; the previous answer stays on screen while the next loads. */

@@ -40,6 +40,53 @@ Each run aggregates on the read replica (FMS-94), upserts the rows on the primar
 
 `GET /analytics/downtime` (FMS-131) is not from the cache: availability, MTBF and MTTR for a month are computed live from fleet's downtime periods (`analytics.downtime_facts`) and when each vehicle joined the fleet and was retired (`analytics.vehicle_service_spans`), on the read replica. See [downtime.md](downtime.md).
 
+## The driver performance score
+
+Card FMS-146 (SE-190). Closes FR-4 and FR-20 of the Requirement Validation Report. One score from 0 to 100 per driver
+per Addis Ababa month, computed live from the analytics views on the read replica (not cached), by the pure function
+`domain/driver-score.ts`.
+
+**The parts**, each 0 to 100:
+
+| Part | From | 100 | 0 | Not judged |
+|---|---|---|---|---|
+| Punctuality | Completed trips ended within 15 minutes of their scheduled end, over those with one | All on time | None | No trip had a scheduled end |
+| Safety | Speeding and idling flags raised on the driver's trips, per 100 km | None | 5 per 100 km | Under 10 km driven |
+| Incidents | The driver's accidents (incident type `accident`), per 100 km | None | 0.5 per 100 km (one every 200 km) | Under 10 km driven |
+| DVIR completion | Completed trips with the driver's pre-trip inspection (`analytics.dvir_facts`, migration 067) | Every trip | None | No completed trip |
+
+Between 100 and 0, a rate falls linearly. A completed trip counts in the month it ended, flags and incidents in the
+month they happened, as in the driver performance report. The km are the trips' actual distances (FMS-145,
+[trip-distance.md](trip-distance.md)).
+
+**At fault.** An incident does not record who was at fault. Until it does, the score counts accidents only, the type a
+driver is answerable for: a breakdown, a flat tyre, theft, vandalism or a road hazard does not lower it.
+
+**The score** is the mean of the parts that can be judged, weighted by the `driver_score_weight_*` settings (defaults
+35, 35, 20, 10: [settings.md](settings.md#driver-score-settingssettings)), over the weights of those parts. A part that
+cannot be judged is left out, not counted as 0. Rounded to a whole number.
+
+- **Fewer than 3 completed trips:** no score (`not_enough_trips`), not a low one. The parts are still worked out, so a
+  driver can see them.
+- **No judged part has a weight:** no score (`nothing_to_judge`).
+
+**The ranking.** The highest score ranks first. A tie goes to the higher punctuality (none counts lowest), then by name
+for a steady order. Drivers equal in both share a rank, and the next rank skips (1, 2, 2, 4). Drivers with no score are
+not ranked.
+
+**Who sees what.** The score is behavioural data, so it is only for the roles allowed `tracking:read`:
+
+| Where | What | Needs |
+|---|---|---|
+| The driver performance report (S-28, [reports.md](reports.md)) and its CSV and PDF | Rank and score columns, rows in rank order | `analytics:read` and `tracking:read`; without `tracking:read` the columns are left out |
+| `GET /analytics/driver-ranking?month=&depot_id=` | Scored drivers in rank order with their parts, and how many had no score | `analytics:read` and `tracking:read` |
+| S-18, the analytics dashboard | *Driver ranking*: last whole month, a horizontal bar per driver (all up to 20, else the top and bottom 10), with a link to the full list in the report | `tracking:read` |
+| `GET /analytics/my-performance?month=` and *My score* in the driver app, from My day | The driver's own score and its parts, with what each came from: never another driver's, never a rank | `trip:execute`, signed in as a driver (404 for staff) |
+
+**Tests.** The scoring is unit-tested (`domain/driver-score.test.ts`): each part, the weights, the minimum-trips rule,
+parts not judged, ties. `test/integration/driver-score.test.ts` covers the report and its CSV, the columns left out for
+a finance clerk, the weights changed in Settings, the ranking and who may read it, and a driver's own record.
+
 ## Not covered
 
 - Weekly and monthly rows (`period_type` `week`, `month`): a range is summed from days instead.
