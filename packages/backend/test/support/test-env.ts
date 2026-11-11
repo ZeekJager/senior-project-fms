@@ -10,9 +10,9 @@
  * - DB_NAME is always the dedicated test database, never the dev database.
  */
 import { randomBytes } from 'node:crypto';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readDotEnv } from '../../scripts/lib/dotenv';
 
 export const TEST_DB_NAME = process.env.TEST_DB_NAME ?? 'fms_test';
 
@@ -21,18 +21,6 @@ export const TEST_STORAGE_DIR = path.join(os.tmpdir(), `${TEST_DB_NAME}-document
 
 if (!TEST_DB_NAME.endsWith('_test')) {
   throw new Error(`TEST_DB_NAME must end with "_test" (got "${TEST_DB_NAME}"); tests drop and recreate it.`);
-}
-
-function readDotEnv(file: string): Record<string, string> {
-  if (!fs.existsSync(file)) return {};
-  const values: Record<string, string> = {};
-  for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#') || !line.includes('=')) continue;
-    const i = line.indexOf('=');
-    values[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-  }
-  return values;
 }
 
 export function applyTestEnv(): void {

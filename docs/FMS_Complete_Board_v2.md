@@ -2028,4 +2028,196 @@ Cards reference these as "the documented budget" and "the documented default". M
 
 ---
 
-*End of FMS Engineering Board Specification — 73 feature cards + 5 reference cards = 78 total*
+## PART 2: FEATURE CARDS — WAVE 5: REQUIREMENT VALIDATION GAPS
+
+These cards close what the Requirement Validation Report (November 2026, master at `5a4a38a`) found partially met or not met.
+Each names the SRS requirement or user story it closes. Numbered after the last card in Jira (FMS-144); create them in Jira
+under the same keys when it is reachable. Not carded, by decision: NFR-8 (TLS ends at the deployment's proxy), NFR-12 (a modular
+monolith deploys as one) and §3.12 d (server errors go to the server log and System health, not the audit log); they are recorded
+as deviations in the SRS revision instead.
+
+---
+
+### FMS-145: Record Each Trip's Actual Distance
+`track-dispatch` `wave-5` · Est: M · Deps: FMS-32, FMS-39 · Priority: High · Closes: FR-8, FR-12, FR-18
+
+**Goal**: Every completed trip knows how far it went, so mileage reconciliation, fuel cost per kilometre and distance travelled work on trips run through the system, not only on seed data.
+
+**Why**: No application code writes `trips.actual_distance_km`. `TripService.end()` sets `actual_end` and `actual_duration_seconds` only. Fuel reconciliation (S-15), the analytics distance KPI (S-18) and the ML model's mileage and fuel-variance features all read the column, so they show zero or nothing for live trips; their tests pass only because test trips carry a distance.
+
+**Where**: `packages/backend/src/modules/trip/application/trip.service.ts` (`end`), a trip-distance calculator in `modules/trip/domain/`, a backfill script under `packages/backend/scripts/`.
+
+**Rule**: When a trip ends, its distance is, in order of preference:
+1. the odometer difference, when trusted (not suspect) readings exist at or near the start and the end (`meter-readings.md`);
+2. the length of the trip's GPS track between `actual_start` and `actual_end`, ignoring jumps a vehicle cannot make (the same speed ceiling the telemetry rules use);
+3. otherwise left empty, with the reason recorded, never guessed from the planned route.
+
+**Done when**:
+- Ending a trip through the API sets `actual_distance_km` and its source (`odometer` or `gps`), inside the same audited mutation, and the `trip.completed` event carries it
+- A backfill fills completed trips that have none, idempotently, and reports how many it could not fill and why
+- Fuel reconciliation, the analytics distance KPI and the driver performance report show non-zero figures for a trip completed in an integration test that never set the distance directly
+- Unit tests for the calculator: odometer preferred, GPS fallback, a GPS spike ignored, too few pings leaves it empty
+
+**Don't**: Use the planned route distance as the actual. A trip that never ran its route must not look as if it did.
+
+**Unknown**: How close to the trip's start and end an odometer reading must be to count. Proposal: within 2 hours or 5 km of GPS travel.
+
+---
+
+### FMS-146: Driver Performance Score and Ranking Chart
+`track-core` `wave-5` · Est: M · Deps: FMS-145, FMS-50 · Priority: Medium · Closes: FR-4, FR-20, user stories "see a driver ranking report" (Fleet Manager) and "see my own performance record" (Driver)
+
+**Goal**: One performance score per driver per month, and a ranking of drivers by it shown as a chart.
+
+**Why**: The monthly Driver performance report lists trips, distance, punctuality, speeding and idling flags and incidents as separate figures. FR-4 asks for a computed score and FR-20 for a chart-based ranking.
+
+**Where**: `packages/backend/src/modules/analytics/` (domain scoring function, report), the Driver performance report (S-28), the analytics dashboard (S-18), the driver's own record in the driver app.
+
+**Score** (0 to 100, documented in `docs/analytics.md`): weighted from punctuality (on-time share), safety (speeding and idling events per 100 km), incidents (at fault, per 100 km) and DVIR completion. Weights are a setting with these defaults: punctuality 35, safety 35, incidents 20, DVIR 10. A driver with fewer than 3 trips in the month gets no score ("not enough trips"), not a low one.
+
+**Done when**:
+- The scoring function is pure and unit-tested for each component, the weights and the minimum-trips rule
+- The Driver performance report gains the score and a rank column; its CSV and PDF exports carry both
+- A horizontal bar chart ranks drivers by score on S-18 (top and bottom 10, with a link to the full list), within the user's depots
+- A driver sees their own score and its components, not other drivers'
+- Ties rank by the higher punctuality
+
+**Don't**: Show the ranking to drivers. Behavioural data stays with the roles allowed `tracking:read`.
+
+**Unknown**: The default weights need the advisor's agreement.
+
+---
+
+### FMS-147: Trip Delay Alert
+`track-dispatch` `wave-5` · Est: S · Deps: FMS-48 · Priority: Medium · Closes: FR-9, user story "be notified when a trip falls significantly behind its ETA" (Dispatcher)
+
+**Goal**: The dispatcher is alerted when a running trip's estimated arrival passes its scheduled end by more than a set margin.
+
+**Why**: Live ETAs are computed (`trip/application/eta.service.ts`, trip-eta) and lateness shows as a state on the dispatch console, but nothing raises an alert.
+
+**Where**: `packages/backend/src/modules/alert/domain/rules.ts` (a `trip_delayed` rule), the ETA update path in `modules/trip/application/eta.service.ts`, settings (the margin).
+
+**Done when**:
+- A `trip_delayed` alert reaches the dispatchers of the trip's depot when its ETA exceeds `scheduled_end` by the margin (default 15 minutes, a depot setting)
+- At most one alert per trip until it recovers within the margin; a trip later delayed again alerts again
+- The alert links to the trip and states how late it is expected to be
+- It is urgent only past a second margin (default 60 minutes), so it follows the urgent channels (email, SMS, push)
+- Integration test: an ETA crossing the margin raises one alert; a second update past it raises none
+
+**Don't**: Alert on a trip with no live position. A stale ETA is not a delay.
+
+**Unknown**: None.
+
+---
+
+### FMS-148: Incidents in the Vehicle History and the Driver Record
+`track-maintenance` `wave-5` · Est: S · Deps: FMS-38 · Priority: Medium · Closes: BR-9
+
+**Goal**: An incident appears in both the vehicle's history and the driver's record, as BR-9 requires.
+
+**Why**: An incident stores its driver and (optionally) its vehicle, and incidents can be filtered by vehicle, but neither the vehicle history (S-22) nor the driver record (S-05) shows them.
+
+**Where**: the vehicle history timeline (S-22), the driver detail (S-05), `GET /incidents` filters (`driver_id`, `vehicle_id`).
+
+**Done when**:
+- S-22's timeline includes the vehicle's incidents (date, severity, driver, status) linking to the incident
+- The driver detail has an Incidents section with the same fields, linking to the vehicle
+- `GET /incidents?driver_id=` exists alongside `vehicle_id`, documented in `openapi.yaml`, scoped to the caller's depots
+- An incident with no vehicle appears on the driver's record only, with "No vehicle recorded"
+
+**Don't**: Copy incidents into either record. Both read the one incident.
+
+**Unknown**: None.
+
+---
+
+### FMS-149: Drivers Alerted to Their Own Deadlines
+`track-maintenance` `wave-5` · Est: S · Deps: FMS-47 · Priority: Medium · Closes: user story "receive an alert when my vehicle is due for maintenance or my licence is close to expiry" (Driver)
+
+**Goal**: A driver receives their own licence-expiry alert and the service-due alerts of the vehicle they drive.
+
+**Why**: The expiry jobs (`fleet/application/expiry.service.ts`) and service-due alerts (`maintenance/application/service-program.service.ts`) go to depot admins and technicians only; drivers receive none.
+
+**Where**: the two services above, the alert recipients, the driver app's inbox.
+
+**Done when**:
+- A driver whose licence is inside the expiry window receives the amber and red warnings, as the depot admin does
+- The driver assigned to a vehicle (current or next scheduled trip) receives that vehicle's ServiceDue and ServiceOverdue alerts
+- Drivers receive them in-app and by push only; email and SMS stay as they are
+- Integration tests for both recipients, and that a driver never receives another driver's licence alert
+
+**Don't**: Let a driver act on a service alert. It is information only; the technician still owns the work.
+
+**Unknown**: None.
+
+---
+
+### FMS-150: Fleet-Wide Health Score Trend
+`track-maintenance` `wave-5` · Est: S · Deps: FMS-55, FMS-56 · Priority: Low · Closes: user story "see a fleet-wide health score trend over time" (Fleet Owner)
+
+**Goal**: The Fleet Owner sees how the fleet's average health score has moved over time.
+
+**Why**: Each night's prediction is stored per vehicle (`maintenance/infrastructure/scoring.repository.ts`), but no screen draws the fleet-wide trend.
+
+**Where**: a `GET /analytics/health-trend?from=&to=` endpoint, the health score screen (S-19).
+
+**Done when**:
+- A line of the daily mean health score over the chosen range (default 90 days), with the share of vehicles in the high-risk band as a second chart, not a second axis
+- Scoped to the caller's depots, read from the stored nightly scores, not recomputed
+- Days with no scoring run are gaps, not zeros
+- Documented in `openapi.yaml`; an integration test over three nights of stored scores
+
+**Don't**: Score on request. The trend reads what the nightly batch stored.
+
+**Unknown**: None.
+
+---
+
+### FMS-151: Approved Exceptions to Assignment Rules
+`track-dispatch` `wave-5` · Est: M · Deps: FMS-31 · Priority: Low · Closes: user story "approve exceptions to standard assignment rules" (Fleet Manager)
+
+**Goal**: An assignment that breaks a standard rule is an exception a Fleet Manager approves, not one the dispatcher makes alone, and the approval is recorded.
+
+**Why**: Today the assignment rules come in two kinds. The safety rules block outright: overlapping trips (BR-1), a vehicle in maintenance (BR-2), an expired licence or wrong class (BR-8). The others only warn and never block (`AssignmentWarning` in `trip/domain/trip.ts`): `DRIVER_ATTENDANCE` (the driver is marked absent, on leave or sick that day) and `PREVIOUS_TRIP_OVERRUN` (a trip of the driver or vehicle still under way runs into this one). A dispatcher can assign through a warning with no approval and no record of the decision beyond the assignment itself.
+
+**Where**: `packages/backend/src/modules/trip/` (assignment), the dispatch board (S-07), alerts, the audit log, settings.
+
+**Rule**: Each warning is configured per depot as *warn* (today's behaviour, the default) or *needs approval*. Under *needs approval*, an assignment that raises it is held as an exception request until a Fleet Manager decides. The safety rules are never exceptions.
+
+**Done when**:
+- With *needs approval* set, an assignment raising the warning is held, with the dispatcher's reason, and the trip shows "awaiting approval" on S-07
+- Fleet Managers of the depot are alerted; approving assigns the trip (re-checking every rule at that moment), refusing tells the dispatcher why
+- The request, the decision, who made it and the reason are in the audit log
+- An approval covers that one trip and that one warning
+- Integration tests: a held request assigns only on approval; a refused one stays unassigned; a safety rule is refused as today, never held
+
+**Don't**: Make BR-1, BR-2 or BR-8 approvable, by anyone.
+
+**Unknown**: Whether the advisor reads the user story as needing this, or whether today's warnings meet it. Confirm before building; it is the lowest priority card in this wave.
+
+---
+
+### FMS-152: Load Profile for 500 Vehicles on the Command Center
+`track-core` `wave-5` · Est: M · Deps: FMS-61 · Priority: Medium · Closes: NFR-3
+
+**Goal**: Show that the Fleet Command Center tracks at least 500 concurrent vehicles without visible lag (NFR-3), with the load suite FMS-61 built.
+
+**Why**: FMS-61's full profile runs 200 vehicles, the fleet the budgets assume; NFR-3 asks for 500. At 200 the API used under a quarter of a core, but the live-map delivery p95 was 461 ms against a 500 ms budget, so 500 vehicles must be measured, not assumed.
+
+**Where**: `packages/backend/scripts/load/profiles.ts` (a `fleet500` profile), `scripts/seed/` (a 500-vehicle dataset size), `.github/workflows/ci.yml` (manual dispatch only), `docs/load-testing.md`.
+
+**Done when**:
+- A seed size with 500 vehicles and their devices, drivers and history, refused in production like the others
+- A `fleet500` profile: 500 vehicles pinging every 10 s for 5 minutes, 25 dashboards on the live map, plus scenario 3's dashboard load
+- The same budgets hold: 0 dropped events, delivery p95 under 500 ms, API CPU p95 under 80%, page p95 under 2 s
+- The run's HTML and JSON reports are linked from `docs/load-testing.md` with the machine they ran on
+- CI can run it on demand (`workflow_dispatch` with a profile input), not on every push
+- If delivery misses its budget, the cause is found and fixed (the outbox relay's poll interval is the first lever) or the result recorded against NFR-3
+
+**Don't**: Lower a budget to make 500 pass.
+
+**Unknown**: Whether a CI runner (2 cores) can generate the load without becoming the bottleneck itself. If not, the profile is run locally and its report kept.
+
+---
+
+*End of FMS Engineering Board Specification — 81 feature cards + 5 reference cards = 86 total*

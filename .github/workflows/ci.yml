@@ -90,6 +90,50 @@ jobs:
           path: packages/backend/coverage/
           retention-days: 14
 
+  # The load suite (FMS-61, docs/load-testing.md): the compiled API with NODE_ENV=production on a seeded database of its
+  # own. Pull requests run the smoke profile, so the suite keeps working; pushes to master and manual runs run the card's
+  # workload. Either fails the job when a budget is missed. The JSON report and the API's log are kept as an artifact.
+  load-test:
+    name: load-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build -w fms-backend
+      - name: Generate per-run secrets
+        run: |
+          for names in "DB_ADMIN_PASSWORD PGPASSWORD" DB_APP_PASSWORD JWT_SECRET DATA_ENCRYPTION_KEY REDIS_PASSWORD; do
+            value=$(openssl rand -hex 32)
+            echo "::add-mask::$value"
+            for name in $names; do echo "$name=$value" >> "$GITHUB_ENV"; done
+          done
+      - name: Start PostgreSQL
+        run: sh scripts/ci/start-postgres.sh
+      - name: Start Redis
+        run: sh scripts/ci/start-redis.sh
+      - name: Create app role
+        run: sh docker/postgres/init/01_app_role.sh
+      - name: Load test
+        run: DB_PASSWORD="$DB_APP_PASSWORD" npm run load-test -w fms-backend -- --profile "$PROFILE"
+        env:
+          PROFILE: ${{ github.event_name == 'pull_request' && 'smoke' || 'full' }}
+          DB_USER: fms_app
+          REDIS_HOST: localhost
+      - name: Upload load report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: load-report
+          path: packages/backend/load-report/
+          retention-days: 30
+
   frontend:
     name: frontend-ci
     runs-on: ubuntu-24.04
