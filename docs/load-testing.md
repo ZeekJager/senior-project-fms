@@ -45,8 +45,8 @@ REDIS_HOST=localhost REDIS_PORT=6391 npm run load-test -w fms-backend
    which would count as a drop the load did not cause.
 4. **The scenarios**, one after another, each with the API's CPU and event-loop lag sampled every 5 seconds from its own metrics
    port ([metrics.md](metrics.md)). Reading the server's own counters keeps the load generator's CPU out of them.
-5. **The report** (`packages/backend/load-report/<profile>.json`) and a line per budget on the console. The exit code is 1 if any
-   budget is missed.
+5. **The report** (`packages/backend/load-report/<profile>.json`), the same as a page (`<profile>.html`) and a line per budget on
+   the console. The exit code is 1 if any budget is missed.
 
 ## The scenarios
 
@@ -134,8 +134,29 @@ No request failed in any scenario, warm-up included. The event loop's lag stayed
 
 `load-report/<profile>-server.log` is the API's log for the run.
 
+### The page
+
+`load-report/<profile>.html` is the report for an administrator, or for the panel: one file with no scripts and nothing fetched,
+so it opens from the CI artifact or a laptop as it is, in the web app's colours, light or dark as the system is, and on a phone.
+
+- **The verdict:** all budgets met, or how many were missed and which.
+- **Four figures:** budgets met, the tightest budget (the highest share of its limit used), requests made and failed, live-map
+  deliveries and drops.
+- **Budgets:** one row each, grouped by scenario: a bar of how much of the limit was used, measured, limit and a status. *Met*,
+  *Close* (met, but at 80% of the limit or more: the one to watch), *Missed*. The status carries an icon and a word, not only a
+  colour.
+- **Each scenario:** what the load was, the latency table (p50, p95, p99, max, rate), the API's CPU and event-loop lag, failed
+  requests, and the warm-up folded away.
+- **About this run:** machine, data, the server's differences from production.
+
+A run writes it. For a report from CI or an earlier run, render it again from the JSON:
+
+```bash
+npm run load-report -w fms-backend -- load-report/full.json    # writes load-report/full.html
+```
+
 ## Tests
 
 `scripts/load/load.test.ts` (unit): percentiles and summaries, the budget checks (a dropped event, a slow endpoint or one failed
 request fails; nothing measured fails), reading Prometheus samples with labels, CPU from two readings, the session's cookies, the
-dashboards' requests and range, and the guard.
+dashboards' requests and range, the guard, what the API under load is not given, and the page (the verdict, a close or missed budget, escaping).

@@ -1,6 +1,7 @@
 /**
  * The load testing suite (FMS-61, docs/load-testing.md). Builds a seeded database of its own, starts the compiled API
- * as in production, runs the scenarios against it, writes a JSON report and exits 1 if any budget is missed.
+ * as in production, runs the scenarios against it, writes a JSON report and a page beside it (the same name, .html),
+ * and exits 1 if any budget is missed.
  *
  *   npm run load-test -w fms-backend                              # the card's workload (about 10 minutes)
  *   npm run load-test -w fms-backend -- --profile smoke           # the same, briefly (pull requests)
@@ -20,6 +21,7 @@ import { closeRedis } from '../../src/shared/cache';
 import { createUsers, datasetSize, fuelVehicles, outboxBacklog, prepareDatabase, registerDevices, seedBudget } from './fixtures';
 import { ServerSampler, type ServerLoad } from './metrics';
 import { BUDGETS, PROFILES, type Profile } from './profiles';
+import { renderHtml, type LoadReport } from './html';
 import { checksFor, formatChecks, type Results } from './report';
 import { runApi } from './scenarios/api';
 import { runDashboard } from './scenarios/dashboard';
@@ -136,7 +138,7 @@ async function main(): Promise<void> {
 
   const checks = checksFor(results);
   const passed = checks.every((c) => c.passed);
-  const report = {
+  const report: LoadReport & { budgets: typeof BUDGETS } = {
     card: 'FMS-61',
     profile: profile.name,
     passed,
@@ -151,8 +153,10 @@ async function main(): Promise<void> {
     results,
   };
   writeFileSync(opts.report, `${JSON.stringify(report, null, 2)}\n`);
+  const page = opts.report.replace(/(\.json)?$/i, '.html');
+  writeFileSync(page, renderHtml(report));
   console.log(`\n${formatChecks(checks)}\n`);
-  log(`${passed ? 'All budgets met' : 'Budgets missed'}. Report: ${opts.report}`);
+  log(`${passed ? 'All budgets met' : 'Budgets missed'}. Report: ${opts.report} (page: ${page})`);
   process.exitCode = passed ? 0 : 1;
 }
 

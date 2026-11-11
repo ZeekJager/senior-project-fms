@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { assertLoadTarget } from './guard';
+import { renderHtml, standing, type LoadReport } from './html';
 import { cpuPercent, sampleValue } from './metrics';
 import { BUDGETS } from './profiles';
 import { checksFor, formatChecks, type Results } from './report';
@@ -153,6 +154,46 @@ describe('the verdict', () => {
     };
     const failed = checksFor(failing).filter((c) => !c.passed).map((c) => c.name);
     expect(failed).toEqual(['GPS: socket events dropped', 'API: GET /trips, p95', 'API: failed requests']);
+  });
+
+  describe('the page', () => {
+    const report = (results: Results): LoadReport => ({
+      card: 'FMS-61',
+      profile: 'full',
+      passed: checksFor(results).every((c) => c.passed),
+      startedAt: '2026-11-10T23:34:03.000Z',
+      finishedAt: '2026-11-10T23:46:36.000Z',
+      commit: '5a4a38af6497aaaa',
+      machine: { node: 'v25.1.0', platform: 'win32', cpu: 'Test CPU <8>', cores: 8, memoryGb: 40 },
+      server: { nodeEnv: 'production', raisedLimits: { RATE_LIMIT_AUTH_PER_MINUTE: '10000' } },
+      dataset: { vehicles: 200, gpsPings: 70800 },
+      checks: checksFor(results),
+      results,
+    });
+
+    test('a budget at 80% of its limit or more is close; a missed one is missed', () => {
+      expect(standing(check('x', 79, '<', 100, 'ms'))).toBe('met');
+      expect(standing(check('x', 80, '<', 100, 'ms'))).toBe('close');
+      expect(standing(check('x', 100, '<', 100, 'ms'))).toBe('missed');
+      expect(standing(check('x', 0, '<=', 0, 'events'))).toBe('met');
+    });
+
+    test('says whether the run passed, lists every budget, and escapes what it prints', () => {
+      const html = renderHtml(report(passing));
+      expect(html).toContain('All budgets met');
+      expect(html).toContain(`${checksFor(passing).length} of ${checksFor(passing).length}`);
+      expect(html).toContain('Test CPU &lt;8&gt;');
+      expect(html).not.toContain('Test CPU <8>');
+      expect(html).not.toMatch(/<script/i);
+    });
+
+    test('names the budgets a failing run missed', () => {
+      const failing: Results = { ...passing, gps: { ...passing.gps!, events: { ...passing.gps!.events, dropped: 3 } } };
+      const html = renderHtml(report(failing));
+      expect(html).toContain('1 of ');
+      expect(html).toContain('budgets missed');
+      expect(html).toContain('Missed: GPS: socket events dropped.');
+    });
   });
 
   test('a budget nothing was measured against fails, rather than passing by default', () => {
