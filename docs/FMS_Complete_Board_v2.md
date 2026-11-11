@@ -2031,8 +2031,8 @@ Cards reference these as "the documented budget" and "the documented default". M
 ## PART 2: FEATURE CARDS — WAVE 5: REQUIREMENT VALIDATION GAPS
 
 These cards close what the Requirement Validation Report (November 2026, master at `5a4a38a`) found partially met or not met.
-Each names the SRS requirement or user story it closes. Numbered after the last card in Jira (FMS-144); create them in Jira
-under the same keys when it is reachable. Not carded, by decision: NFR-8 (TLS ends at the deployment's proxy), NFR-12 (a modular
+Each names the SRS requirement or user story it closes. In Jira under the Wave 5 epic (SE-109), labelled
+`requirement-validation`: FMS-145 is SE-189, and so on in order to FMS-152, SE-196. Not carded, by decision: NFR-8 (TLS ends at the deployment's proxy), NFR-12 (a modular
 monolith deploys as one) and §3.12 d (server errors go to the server log and System health, not the audit log); they are recorded
 as deviations in the SRS revision instead.
 
