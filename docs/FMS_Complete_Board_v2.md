@@ -2222,9 +2222,11 @@ as deviations in the SRS revision instead.
 
 ## PART 2: FEATURE CARDS — WAVE 5 (CONTINUED): DRIVER FIT FOR DISPATCH
 
-Three cards added after the validation report, building on the driver score (FMS-146): what a job asks of a driver, a
-suggestion of who fits it best on the dispatch console, and later a model that predicts it. In Jira under the Wave 5 epic
-(SE-109), labelled `driver-fit`: FMS-153 is SE-197, FMS-154 SE-198, FMS-155 SE-199. In the backlog, not in a sprint. They suggest; they never assign and never block. Dispatch stays a dispatcher's decision.
+Four cards added after the validation report, building on the driver score (FMS-146): what a job asks of a driver, a
+suggestion of who fits it best on the dispatch console, later a model that predicts it, and a limit on how far a driver
+drives in a day and a week. In Jira under the Wave 5 epic
+(SE-109), labelled `driver-fit`: FMS-153 is SE-197, FMS-154 SE-198, FMS-155 SE-199, FMS-156 SE-200. In the backlog, not in a sprint. FMS-154 and FMS-155 suggest; they never
+assign and never block, and dispatch stays a dispatcher's decision. FMS-156 is a safety rule: it blocks.
 
 ---
 
@@ -2270,7 +2272,7 @@ suggestion of who fits it best on the dispatch console, and later a model that p
 - Each available driver in the list has a fit and up to three reasons, for example "Score 86 · rested 14 h · 12 heavy jobs, all on time"
 - The list can be sorted by fit (the default once a trip is chosen) or by name, as today
 - A **fatigue warning**, never a block: past 10 hours driven in the last 24, or under 8 hours since the last trip ended (settings, per fleet). It joins the existing warnings (`AssignmentWarning`)
-- Drivers blocked by a safety rule (BR-1, BR-2, BR-8) stay blocked and get no fit
+- Drivers blocked by a safety rule (BR-1, BR-2, BR-8, and the distance limits of FMS-156) stay blocked and get no fit
 - Only `tracking:read` roles see the fit and its reasons (dispatchers, depot admins, fleet managers), as the driver score
 - The weights and limits are settings; the defaults are documented and tested
 - Unit tests of the fit; integration tests: the order for a fixture depot, the fatigue warning at its limits, the fit hidden without `tracking:read`
@@ -2305,4 +2307,35 @@ suggestion of who fits it best on the dispatch console, and later a model that p
 
 ---
 
-*End of FMS Engineering Board Specification — 84 feature cards + 5 reference cards = 89 total*
+### FMS-156: Daily and Weekly Driving Distance Limits, by Job Load
+`track-dispatch` `wave-5` · Est: M · Deps: FMS-153, FMS-145, FMS-31, FMS-76 · Priority: Medium · Closes: none (an addition; a new safety rule against fatigue accidents)
+
+**Goal**: A driver is never assigned a trip that would take them past a set distance in one day or one week. Heavier jobs count for more of the limit, to reduce accidents from fatigue.
+
+**Why**: Nothing stops a driver being given trip after trip. The overlap rule (BR-1) only keeps two trips apart in time. Each trip's real distance is now measured (FMS-145), and each job's load is known (FMS-153), so how far a driver has driven and is booked to drive can be counted before a trip is assigned.
+
+**Where**: `packages/backend/src/modules/trip/` (assignment, `trip/domain/`), the availability check (`fleet/domain/availability.ts`, `GET /dispatch/availability`), the driving rules on S-27 (`tracking.rule_thresholds`, the fleet's row and each depot's), `Candidates.tsx` and the assignment panel on S-07, `docs/`.
+
+**Rule**: A driver's **load-weighted distance** for a period is the sum, over their trips starting in it, of the trip's distance times its load's weight:
+- light 0.8, standard 1.0, heavy 1.5 (FMS-153's job load);
+- the distance is the measured one for a completed trip (FMS-145), the planned one for a trip assigned or under way, and the planned one for the trip being assigned;
+- a day is a calendar day in Addis Ababa; a week is Monday to Sunday. A trip counts in the day and week it is scheduled to start.
+
+The limits are per depot, with fleet defaults of 500 km a day and 2,500 km a week. The defaults are placeholders until the client confirms them.
+
+**Done when**:
+- Assigning a trip that would take the driver past either limit is refused: `409 CONFLICT_DRIVER_DISTANCE_LIMIT`, naming the period, the limit and the driver's total with the trip and without it. Assigning by the API is refused the same way
+- Changing a trip's times or route re-checks the rule, as the overlap rule is re-checked today
+- On S-07 the driver shows as unavailable for the trip, with the reason: "Would drive 560 of 500 km today"
+- Below the limit, the driver's card shows what is left, for example "180 km left today · 900 this week"; at 80% of a limit it is a warning, never a block
+- The two limits and the three weights are driving rules under Settings (S-27), for the fleet and per depot, audited, with their ranges checked
+- A trip already under way is never stopped by the rule; it only decides new assignments
+- Unit tests of the weighted distance (each load, completed against planned, a trip over midnight counting on its start day, the week boundary); integration tests: refused just over the limit, allowed exactly on it, the 409's details, a depot's own limits, the re-check on a time change
+
+**Don't**: Let it be overridden. It is a safety rule like BR-1, BR-2 and BR-8, so FMS-151's approvals never apply to it. It also does not replace the hours-based fatigue warning in FMS-154: hours behind the wheel and distance are both kept.
+
+**Unknown**: The limits and weights for Ethiopian commercial drivers. Confirm them with the client or the transport authority before the defaults ship; the rule's shape does not depend on them.
+
+---
+
+*End of FMS Engineering Board Specification — 85 feature cards + 5 reference cards = 90 total*
