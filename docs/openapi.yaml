@@ -7501,8 +7501,9 @@ components:
     RuleThresholds:
       type: object
       description: >
-        The telemetry rules' thresholds (FMS-46, FMS-90). In a PUT the four of FMS-46 are required; route deviation's
-        are optional, and one left out keeps the row's value (or the starting one).
+        The telemetry rules' thresholds (FMS-46, FMS-90), with the trip delay alert's margins (FMS-147). In a PUT the four
+        of FMS-46 are required; route deviation's and the margins are optional, and one left out keeps the row's value
+        (or the starting one). trip_delay_urgent_minutes must be above trip_delay_minutes (400 not_above_late).
       additionalProperties: false
       required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes]
       properties:
@@ -7512,10 +7513,12 @@ components:
         idle_minutes: { type: integer, minimum: 1, maximum: 120, description: Minutes at 0 km/h, engine not reported off, that raise an idling flag. }
         route_deviation_m: { type: integer, minimum: 100, maximum: 5000, default: 500, description: Further than this from the trip's road is off route. }
         route_deviation_pings: { type: integer, minimum: 1, maximum: 20, default: 3, description: Consecutive pings off route that raise a route deviation flag; clear_pings back on it resolve it. }
+        trip_delay_minutes: { type: integer, minimum: 5, maximum: 240, default: 15, description: Minutes past its scheduled end a trip under way is expected before its dispatchers are told it is late. }
+        trip_delay_urgent_minutes: { type: integer, minimum: 10, maximum: 720, default: 60, description: Minutes past its scheduled end before the late trip is urgent (email, SMS and push); above trip_delay_minutes. }
     RuleThresholdRow:
       type: object
       description: A row of thresholds as stored, the fleet's or a depot's (a depot's adds depot_id in the list), with who changed it last.
-      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, updated_by, updated_by_name, updated_at]
+      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, trip_delay_minutes, trip_delay_urgent_minutes, updated_by, updated_by_name, updated_at]
       properties:
         speed_limit_kmh: { type: integer, minimum: 20, maximum: 200 }
         speeding_pings: { type: integer, minimum: 1, maximum: 20 }
@@ -7523,6 +7526,8 @@ components:
         idle_minutes: { type: integer, minimum: 1, maximum: 120 }
         route_deviation_m: { type: integer, minimum: 100, maximum: 5000 }
         route_deviation_pings: { type: integer, minimum: 1, maximum: 20 }
+        trip_delay_minutes: { type: integer, minimum: 5, maximum: 240 }
+        trip_delay_urgent_minutes: { type: integer, minimum: 10, maximum: 720 }
         updated_by: { type: [string, 'null'], format: uuid }
         updated_by_name: { type: [string, 'null'] }
         updated_at: { type: [string, 'null'], format: date-time }

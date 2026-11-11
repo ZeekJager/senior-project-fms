@@ -4,7 +4,7 @@ import { settingsKey, type Setting, type SettingKey } from '@/features/settings'
 
 // The settings screen (S-27, FMS-80, api-contract §6.5): settings:write, admin only.
 
-/** The telemetry rules' thresholds: speeding and idling (FMS-46), and route deviation (FMS-90). */
+/** The telemetry rules' thresholds: speeding and idling (FMS-46), route deviation (FMS-90), and the trip delay alert (FMS-147). */
 export interface Thresholds {
   speed_limit_kmh: number
   speeding_pings: number
@@ -12,6 +12,9 @@ export interface Thresholds {
   idle_minutes: number
   route_deviation_m: number
   route_deviation_pings: number
+  /** Minutes past its scheduled end a trip is expected before it is late, and before it is urgent (above the first). */
+  trip_delay_minutes: number
+  trip_delay_urgent_minutes: number
 }
 
 export interface ThresholdsRow extends Thresholds {
@@ -28,7 +31,7 @@ export interface RuleThresholds {
 
 export type ThresholdKey = keyof Thresholds
 
-/** Each threshold's range, as tracking.rule_thresholds checks it (migrations 035 and 060). */
+/** Each threshold's range, as tracking.rule_thresholds checks it (migrations 035, 060 and 068). */
 export const THRESHOLD_LIMITS: Record<ThresholdKey, { min: number; max: number }> = {
   speed_limit_kmh: { min: 20, max: 200 },
   speeding_pings: { min: 1, max: 20 },
@@ -36,10 +39,21 @@ export const THRESHOLD_LIMITS: Record<ThresholdKey, { min: number; max: number }
   idle_minutes: { min: 1, max: 120 },
   route_deviation_m: { min: 100, max: 5000 },
   route_deviation_pings: { min: 1, max: 20 },
+  trip_delay_minutes: { min: 5, max: 240 },
+  trip_delay_urgent_minutes: { min: 10, max: 720 },
 }
 
 /** The fleet's starting thresholds, before anyone changed them. */
-export const DEFAULT_THRESHOLDS: Thresholds = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 500, route_deviation_pings: 3 }
+export const DEFAULT_THRESHOLDS: Thresholds = {
+  speed_limit_kmh: 80,
+  speeding_pings: 3,
+  clear_pings: 3,
+  idle_minutes: 5,
+  route_deviation_m: 500,
+  route_deviation_pings: 3,
+  trip_delay_minutes: 15,
+  trip_delay_urgent_minutes: 60,
+}
 
 const thresholdsKey = ['settings', 'telemetry-rules'] as const
 

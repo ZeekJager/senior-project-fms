@@ -473,6 +473,16 @@ describe('Arrival times (FMS-86)', () => {
     expect(within(arrival).queryByText(/may have lost signal/)).not.toBeInTheDocument()
   })
 
+  it('a late trip’s notification opens it under way, in its own depot (FMS-147)', async () => {
+    const late = { ...underWay(), depot_id: DEPOT }
+    serve([late])
+    server.use(http.get('/api/v1/trips/:id', ({ params }) => (params.id === late.id ? envelope(late) : errorEnvelope(404, 'NOT_FOUND', 'Trip not found.'))))
+    signedInAs(dispatcher)
+    renderApp(`/dispatch?view=under-way&trip=${late.id}`)
+    expect(await screen.findByRole('region', { name: 'Trip under way' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/dispatch?view=under-way&depot=${DEPOT}`))
+  })
+
   it('a new estimate on the socket moves the time at once, without re-reading the trips; an old position says so', async () => {
     let reads = 0
     serve([underWay()])

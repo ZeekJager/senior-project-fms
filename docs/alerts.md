@@ -23,6 +23,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `ServiceDue`, `ServiceOverdue` (FMS-129, [service-programs.md](service-programs.md)): a vehicle's service under a program coming due, falling overdue | `service_due` | medium when due, high when overdue | vehicle | the vehicle and program (31 days): falling overdue raises the alert of its coming due | technician, depot admin |
 | `MlScoringBlocked` (FMS-127, [ml-model-registry.md](ml-model-registry.md)) | `ml_scoring_blocked` | medium when the model is not active, high otherwise | none: fleet-wide | the model and reason (24 h) | admin |
 | `BatteryThresholdExceeded` (FMS-96) | `battery` | `severity`, else high | vehicle | vehicle and metric (60 min) | dispatcher, depot admin |
+| `TripDelayed` (FMS-147, [eta.md](eta.md#the-trip-delay-alert-fms-147)): a trip expected past its scheduled end by the depot's margin (15 min), then its second (60 min) | `trip_delayed` | medium when late, critical when urgent | vehicle, or `depot_id` (the route's) | the trip and the time it fell late (24 h): becoming urgent raises that alert, and tells them again | dispatcher |
 | `IncidentReported` (FMS-38, docs/incidents.md) | `incident` | critical: only a critical incident is an alert | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
 
 The events from FMS-82 and FMS-96 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
@@ -40,7 +41,7 @@ The rule names the **source** (`dedup_key`: for example `vehicle_fault:<vehicle 
 - the severity becomes the higher of the two, never lower;
 - the title and message are refreshed;
 - `AlertUpdated` is published;
-- nobody is notified again.
+- nobody is notified again, unless the rule says a raised severity is news (`renotifyWhenRaised`, the trip delay alert's): then its roles are told again, on the new severity's channels.
 
 After the window, or once the alert is resolved, a repeat opens a new alert.
 

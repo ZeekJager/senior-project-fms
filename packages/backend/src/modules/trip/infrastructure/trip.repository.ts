@@ -5,6 +5,7 @@ import type { Slot } from '../domain/schedule';
 import { Repository } from '../../../shared/infrastructure/repository';
 import type { TripCursor, TripStatus } from '../domain/trip';
 import type { Coordinates, RouteStop } from '../domain/route';
+import type { DelayState } from '../domain/delay';
 import { ETA_INTERVAL_SECONDS, type EtaResult, type EtaStop } from '../domain/eta';
 
 /**
@@ -68,13 +69,20 @@ export interface EtaRow {
   computedAt: Date;
 }
 
-/** A trip as its estimate needs it: state, the route's destination and the stops. */
+/** A trip as its estimate needs it: state, the route's destination and the stops; for the delay alert (FMS-147), its end and parties. */
 export interface EtaTrip {
   id: string;
   publicId: string;
   status: TripStatus;
   destination: Coordinates | null;
   stops: EtaStop[];
+  /** The route's depot, vehicle and driver: internal ids. */
+  depotId: string | null;
+  vehicleId: string | null;
+  driverId: string | null;
+  scheduledEnd: Date | null;
+  /** Where it is going, as the trip names it. */
+  destinationName: string | null;
 }
 
 /** A route as a trip needs it: scope, state and the plan to copy. */
@@ -286,8 +294,21 @@ export class TripRepository extends Repository {
 
   /** A trip by public id with what its estimate needs (FMS-86). The destination is the route's, as its stops were copied from it. */
   async etaTrip(db: Queryable, publicId: string): Promise<EtaTrip | null> {
-    const trip = await db.query<{ id: string; publicId: string; status: TripStatus; lat: number | null; lng: number | null }>(
-      `SELECT t.id, t.public_id AS "publicId", t.status, r.destination_latitude::float8 AS lat, r.destination_longitude::float8 AS lng
+    const trip = await db.query<{
+      id: string;
+      publicId: string;
+      status: TripStatus;
+      lat: number | null;
+      lng: number | null;
+      depotId: string | null;
+      vehicleId: string | null;
+      driverId: string | null;
+      scheduledEnd: Date | null;
+      destinationName: string | null;
+    }>(
+      `SELECT t.id, t.public_id AS "publicId", t.status, r.destination_latitude::float8 AS lat, r.destination_longitude::float8 AS lng,
+              r.depot_id AS "depotId", t.vehicle_id AS "vehicleId", t.driver_id AS "driverId", t.scheduled_end AS "scheduledEnd",
+              coalesce(t.destination, r.destination_name) AS "destinationName"
          FROM trip.trips t LEFT JOIN trip.routes r ON r.id = t.route_id WHERE t.public_id = $1`,
       [publicId],
     );
@@ -305,7 +326,22 @@ export class TripRepository extends Repository {
       status: row.status,
       destination: point(row.lat, row.lng),
       stops: stops.rows.map((s) => ({ id: s.id, sequenceNumber: s.sequenceNumber, coordinates: point(s.lat, s.lng), actualArrival: s.actualArrival })),
+      depotId: row.depotId === null ? null : String(row.depotId),
+      vehicleId: row.vehicleId === null ? null : String(row.vehicleId),
+      driverId: row.driverId === null ? null : String(row.driverId),
+      scheduledEnd: row.scheduledEnd,
+      destinationName: row.destinationName,
     };
+  }
+
+  /** How late a trip was last alerted as, and how many times it fell late (FMS-147). Its estimate row is locked by claimEstimate. */
+  async delayState(db: Queryable, tripId: string): Promise<DelayState> {
+    const res = await db.query<DelayState>('SELECT delay_level AS level, delay_episode AS episode FROM trip.trip_etas WHERE trip_id = $1', [tripId]);
+    return res.rows[0] ?? { level: null, episode: 0 };
+  }
+
+  async saveDelayState(db: Queryable, tripId: string, state: DelayState): Promise<void> {
+    await db.query('UPDATE trip.trip_etas SET delay_level = $2, delay_episode = $3 WHERE trip_id = $1', [tripId, state.level, state.episode]);
   }
 
   /**

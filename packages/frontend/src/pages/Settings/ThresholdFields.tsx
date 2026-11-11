@@ -12,6 +12,8 @@ const FIELDS: { key: ThresholdKey; label: string; unit: string; hint: string }[]
   { key: 'idle_minutes', label: 'Idling after', unit: 'min', hint: 'At 0 km/h with the engine not reported off.' },
   { key: 'route_deviation_m', label: 'Off route beyond', unit: 'm', hint: 'From the trip’s road. GPS drifts 10 to 50 m.' },
   { key: 'route_deviation_pings', label: 'Off route after', unit: 'pings', hint: 'In a row that far out. Cleared like speeding.' },
+  { key: 'trip_delay_minutes', label: 'Trip late after', unit: 'min', hint: 'Expected past its scheduled end. Dispatchers are told.' },
+  { key: 'trip_delay_urgent_minutes', label: 'Trip urgent after', unit: 'min', hint: 'Past its end. Told again by email, SMS and push.' },
 ]
 
 export const toValues = (t: Thresholds): ThresholdValues => ({
@@ -21,6 +23,8 @@ export const toValues = (t: Thresholds): ThresholdValues => ({
   idle_minutes: String(t.idle_minutes),
   route_deviation_m: String(t.route_deviation_m),
   route_deviation_pings: String(t.route_deviation_pings),
+  trip_delay_minutes: String(t.trip_delay_minutes),
+  trip_delay_urgent_minutes: String(t.trip_delay_urgent_minutes),
 })
 
 export function validateThresholds(v: ThresholdValues): { errors: ThresholdErrors; thresholds: Thresholds | null } {
@@ -31,12 +35,16 @@ export function validateThresholds(v: ThresholdValues): { errors: ThresholdError
     if (parsed.ok) out[key] = parsed.value
     else errors[key] = parsed.error
   }
+  // A trip is urgent later than it is late (the API refuses it too).
+  if (out.trip_delay_minutes !== undefined && out.trip_delay_urgent_minutes !== undefined && out.trip_delay_urgent_minutes <= out.trip_delay_minutes) {
+    errors.trip_delay_urgent_minutes = `Enter more than the ${out.trip_delay_minutes} min a trip is late after.`
+  }
   return { errors, thresholds: Object.keys(errors).length ? null : (out as Thresholds) }
 }
 
 export const sameThresholds = (v: ThresholdValues, t: Thresholds) => FIELDS.every(({ key }) => v[key].trim() === String(t[key]))
 
-/** The speeding, idling and route deviation thresholds, two to a row from small screens up. */
+/** The speeding, idling, route deviation and trip delay thresholds, two to a row from small screens up. */
 export function ThresholdFields({ values, errors, onChange, idPrefix }: { values: ThresholdValues; errors: ThresholdErrors; onChange: (key: ThresholdKey, value: string) => void; idPrefix?: string }) {
   return (
     <div className="grid gap-x-4 sm:grid-cols-2">

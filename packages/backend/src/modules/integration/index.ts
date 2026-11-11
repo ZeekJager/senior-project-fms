@@ -13,7 +13,7 @@ import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
 import { userDirectory } from '../auth';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
-import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripRoadsByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS } from '../trip';
+import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripRoadsByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS, type DelayMargins } from '../trip';
 import { deviceRouter } from './api/device.routes';
 import { geofenceRouter } from './api/geofence.routes';
 import { integrationRouter, webhookRouter } from './api/integration.routes';
@@ -28,7 +28,7 @@ import { LocationRulesService } from './application/location-rules.service';
 import { trackingRetentionJob } from './application/tracking-retention.job';
 import { RuleThresholdService } from './application/rule-threshold.service';
 import { NotificationGateway } from './application/notification-gateway';
-import { TelemetryRulesService } from './application/telemetry-rules.service';
+import { TelemetryRulesService, THRESHOLDS_TTL_MS } from './application/telemetry-rules.service';
 import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
 import type { AdapterContext, NotificationChannel, OutboundMessage, ProviderAdapter, ProviderClient } from './domain/adapter';
@@ -166,14 +166,26 @@ const geofences = new GeofenceService({
 });
 
 // Their thresholds from the settings screen (FMS-80): the fleet's and each depot's, admin only.
+const thresholdRepository = new RuleThresholdRepository();
+// The trip delay margins (FMS-147), for the trip module's ETA, cached as the rules cache theirs.
+const delayMarginCache = new Map<string, { value: DelayMargins; until: number }>();
+async function tripDelayMargins(db: Queryable, depotId: string | null): Promise<DelayMargins> {
+  const key = depotId ?? 'fleet';
+  const hit = delayMarginCache.get(key);
+  if (hit && hit.until > Date.now()) return hit.value;
+  const value = await thresholdRepository.delayMargins(db, depotId);
+  delayMarginCache.set(key, { value, until: Date.now() + THRESHOLDS_TTL_MS });
+  return value;
+}
 const ruleThresholds = new RuleThresholdService({
   db: pool,
-  thresholds: new RuleThresholdRepository(),
+  thresholds: thresholdRepository,
   transaction: (fn) => withTransaction(pool, fn),
   refs: { depots: trackingRefs.depots, users: userDirectory },
   onChange: () => {
     telemetryRules.forgetThresholds();
     locationRules.forgetThresholds();
+    delayMarginCache.clear();
   },
 });
 
@@ -281,6 +293,8 @@ export const trackingLookups = {
   /** For a trip's actual distance (FMS-145, trip): the positions recorded during it, and how many there are now. */
   tripTrack: (db: Queryable, trip: { tripId: string; vehicleId: string; start: Date; end: Date }, limit: number) => tracking.tripTrack(db, trip, limit),
   tripTrackCounts: (db: Queryable, trips: readonly { tripId: string; vehicleId: string; start: Date; end: Date }[]) => tracking.tripTrackCounts(db, trips),
+  /** For the trip delay alert (FMS-147, trip): a depot's margins (internal id; null: the fleet's), kept with the thresholds. */
+  tripDelayMargins,
 };
 
 export const gpsDevices = {

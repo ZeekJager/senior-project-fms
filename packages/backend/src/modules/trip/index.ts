@@ -11,6 +11,7 @@ import { cache } from '../../shared/cache';
 import { logger } from '../../shared/logging/logger';
 import { TripDistanceService, type MeasureSummary, type TrackLookup } from './application/distance.service';
 import { EtaService } from './application/eta.service';
+import type { DelayMargins } from './domain/delay';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
 import { TripService, type PositionLookup } from './application/trip.service';
 import { LOCATION_UPDATED } from './domain/eta';
@@ -66,6 +67,16 @@ export function provideTripTrack(lookup: TrackLookup | null): void {
   trackLookup = lookup;
 }
 
+let delayMargins: ((db: Queryable, depotId: string | null) => Promise<DelayMargins>) | null = null;
+
+/**
+ * Connects the trip delay alert's margins (FMS-147): a depot's, kept with the telemetry rules' thresholds by the
+ * integration module, which imports trip. Called once by src/modules/index.ts. Not connected, no trip is judged late.
+ */
+export function provideTripDelayMargins(lookup: ((db: Queryable, depotId: string | null) => Promise<DelayMargins>) | null): void {
+  delayMargins = lookup;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -110,6 +121,14 @@ const etaService = new EtaService({
   events: eventBus,
   roads: () => roadPlanner,
   warn: (fields, message) => logger.warn(fields, message),
+  // The delay alert (FMS-147): each new arrival time against the scheduled end, by the depot's margins.
+  delay: () =>
+    delayMargins && fleetRefs
+      ? {
+          margins: delayMargins,
+          publicIds: { depots: fleetRefs.depots.publicIds, vehicles: fleetRefs.vehicles.publicIds, drivers: fleetRefs.drivers.publicIds },
+        }
+      : null,
 });
 eventBus.subscribe(LOCATION_UPDATED, 'trip.eta', (event, tx) => etaService.onLocationUpdated(tx, event));
 
@@ -168,6 +187,7 @@ export { ROUTE_EVENTS } from './domain/route';
 export { ROUTING_TIMEOUT_MS } from './infrastructure/osrm.planner';
 export { TRIP_EVENTS, type TripSummary } from './domain/trip';
 export { TRIP_ETA_UPDATED } from './domain/eta';
+export { DEFAULT_DELAY_MARGINS, DELAY_MARGIN_LIMITS, TRIP_DELAYED, type DelayMargins } from './domain/delay';
 
 /**
  * For other modules: whether a vehicle or driver is on an assigned or

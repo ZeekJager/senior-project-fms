@@ -42,6 +42,11 @@ export interface AlertRule {
   message: (payload: Payload, names: Names) => string;
   /** Roles told when it opens (tier 0). Escalation then tells ESCALATION_TIERS in turn. Each holds alert:read. */
   audience: readonly string[];
+  /**
+   * A repeat that raises the active alert's severity tells the audience again, on the new severity's channels.
+   * Without it a repeat notifies nobody: the alert they already have just changes.
+   */
+  renotifyWhenRaised?: boolean;
 }
 
 /** Who a critical alert goes to when nobody acknowledges it: fleet managers, then administrators. */
@@ -74,6 +79,9 @@ const DAY = 24 * HOUR;
 const LOCATION_FLAG_TYPES = ['geofence_violation', 'route_deviation'];
 
 const km = (n: number) => `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })} km`;
+/** "14:35", Addis Ababa. */
+const addisClock = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Africa/Addis_Ababa' });
+const minutesLabel = (n: number) => (n >= 120 ? `${Math.floor(n / 60)} h ${n % 60} min` : `${n} minute${n === 1 ? '' : 's'}`);
 const addisDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Addis_Ababa' });
 
 /** What a ServiceDue or ServiceOverdue says of the measures that made it so, against the vehicle's readings. */
@@ -445,6 +453,37 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     title: (_p, n) => `Battery alert on ${vehicleName(n)}`,
     message: (p) => `${capitalize(humanize(str(p, 'metric') ?? 'battery'))} is past its limit${num(p, 'value') !== null && num(p, 'threshold') !== null ? ` (${num(p, 'value')} against ${num(p, 'threshold')})` : ''}.`,
     audience: ['dispatcher', 'depot_admin'],
+  },
+
+  // The trip delay alert (FMS-147, trip): a trip under way expected past its scheduled end by the depot's margin.
+  // `trip_id`, `depot_id`, `vehicle_id`, `driver_id`, `level` (late, urgent), `episode`, `late_minutes`, `margin_minutes`,
+  // `scheduled_end`, `arrival_at`, `destination`. Each time the trip falls late is its own source; becoming urgent raises
+  // that alert to critical, which tells the dispatchers again by email, SMS and push.
+  TripDelayed: {
+    type: () => 'trip_delayed',
+    module: 'trip',
+    facts: (p) => ({
+      severity: str(p, 'level') === 'urgent' ? 'critical' : 'medium',
+      vehicleId: str(p, 'vehicle_id'),
+      driverId: str(p, 'driver_id'),
+      tripId: str(p, 'trip_id'),
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'trip_id') ? { type: 'trip', id: str(p, 'trip_id')! } : null,
+      dedupKey: `trip_delayed:${str(p, 'trip_id')}:${num(p, 'episode') ?? 0}`,
+    }),
+    windowMinutes: DAY,
+    title: (p, n) => `${str(p, 'level') === 'urgent' ? 'Trip far behind schedule' : 'Trip running late'}${n.plate ? `: ${n.plate}` : ''}`,
+    message: (p, n) => {
+      const late = num(p, 'late_minutes');
+      const arrival = str(p, 'arrival_at');
+      const end = str(p, 'scheduled_end');
+      const where = str(p, 'destination') ?? 'its destination';
+      const who = n.plate ?? 'The vehicle';
+      if (late === null || arrival === null || end === null) return `${who} is expected past its trip's scheduled end. Contact the driver.`;
+      return `${who} is expected at ${where} at ${addisClock(arrival)}, ${minutesLabel(late)} after the trip's scheduled end at ${addisClock(end)}. Contact the driver or tell the customer.`;
+    },
+    audience: ['dispatcher'],
+    renotifyWhenRaised: true,
   },
 
   // Incident reports (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`,
