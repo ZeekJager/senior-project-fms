@@ -8159,7 +8159,13 @@ components:
         scheduled_end: { type: [string, 'null'], format: date-time }
         actual_start: { type: [string, 'null'], format: date-time }
         actual_end: { type: [string, 'null'], format: date-time }
-        actual_distance_km: { type: [number, 'null'] }
+        actual_distance_km:
+          type: [number, 'null']
+          description: How far the trip went (FMS-145), measured when it ended and again while late positions arrived. Null until measured, or when no positions were stored during it.
+        actual_distance_source:
+          type: [string, 'null']
+          enum: [odometer, gps, null]
+          description: How the distance was measured, the vehicle's own odometer readings bracketing the trip or the length of its GPS track. Null with no distance, or with one entered before trips were measured (the seed, an import).
         stops:
           type: array
           items: { $ref: '#/components/schemas/TripStop' }

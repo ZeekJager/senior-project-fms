@@ -75,6 +75,11 @@ export interface TripView {
   actual_start: Date | null;
   actual_end: Date | null;
   actual_distance_km: number | null;
+  /**
+   * How the distance was measured (FMS-145): the vehicle's own odometer or the GPS track. Null with no distance, or
+   * with one entered before trips were measured (the seed, an import).
+   */
+  actual_distance_source: 'odometer' | 'gps' | null;
   stops: TripStopView[];
   /** While under way (FMS-86); null otherwise or before the first estimate. */
   eta: TripEta | null;

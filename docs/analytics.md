@@ -9,7 +9,7 @@ The fleet KPIs behind the analytics dashboard (S-18): six read-only endpoints un
 | Column | What |
 |---|---|
 | `utilisation_pct` | 100 when a completed or running trip of the vehicle overlapped the day, else 0 |
-| `distance_m` | Completed trips' `actual_distance_km`, in metres, on the day the trip ended |
+| `distance_m` | Completed trips' `actual_distance_km` (measured as each trip ends, [trip-distance.md](trip-distance.md)), in metres, on the day the trip ended |
 | `trips_completed`, `trips_timed`, `trips_on_time` | Completed trips that day; those with a scheduled end; those that ended within 15 minutes of it |
 | `fuel_ml`, `fuel_cost_cents` | Fuel logged that day (`recorded_at`) |
 | `maintenance_cost_cents` | Maintenance records completed that day (`completed_at`) |

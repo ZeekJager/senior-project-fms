@@ -16,7 +16,7 @@ For a vehicle and a period:
 
 | Figure | From |
 |---|---|
-| Distance | Its completed trips whose `actual_end` is in the period: `actual_distance_km`, summed in whole metres |
+| Distance | Its completed trips whose `actual_end` is in the period: `actual_distance_km` (measured as each trip ends, [trip-distance.md](trip-distance.md)), summed in whole metres |
 | Expected fuel | Distance × rating: metres × ml/km ÷ 1000 |
 | Actual fuel | Its fuel logs whose `recorded_at` is in the period (when the fill-up happened, FMS-115), in ml |
 | Variance | (actual − expected) ÷ expected, in whole percent |

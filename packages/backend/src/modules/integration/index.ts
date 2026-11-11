@@ -278,6 +278,9 @@ export const trackingLookups = {
   positionNear: (db: Queryable, vehicleId: string, at: Date, windowMs: number) => tracking.nearest(db, vehicleId, at, windowMs),
   /** For a trip's live state (FMS-95, trip): a vehicle's newest position. */
   currentPosition: (db: Queryable, vehicleId: string) => tracking.currentPosition(db, vehicleId),
+  /** For a trip's actual distance (FMS-145, trip): the positions recorded during it, and how many there are now. */
+  tripTrack: (db: Queryable, trip: { tripId: string; vehicleId: string; start: Date; end: Date }, limit: number) => tracking.tripTrack(db, trip, limit),
+  tripTrackCounts: (db: Queryable, trips: readonly { tripId: string; vehicleId: string; start: Date; end: Date }[]) => tracking.tripTrackCounts(db, trips),
 };
 
 export const gpsDevices = {
