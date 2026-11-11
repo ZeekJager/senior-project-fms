@@ -3664,3 +3664,25 @@ SELECT
     d.id AS driver_id,
     d.user_id
 FROM fleet.drivers d;
+-- ===== 068_trip_delay_alert.sql =====
+ALTER TABLE tracking.rule_thresholds
+    ADD COLUMN IF NOT EXISTS trip_delay_minutes SMALLINT NOT NULL DEFAULT 15,
+    ADD COLUMN IF NOT EXISTS trip_delay_urgent_minutes SMALLINT NOT NULL DEFAULT 60;
+
+DO $$ BEGIN
+    ALTER TABLE tracking.rule_thresholds ADD CONSTRAINT chk_rule_trip_delay_minutes CHECK (trip_delay_minutes BETWEEN 5 AND 240);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracking.rule_thresholds ADD CONSTRAINT chk_rule_trip_delay_urgent CHECK (
+        trip_delay_urgent_minutes BETWEEN 10 AND 720 AND trip_delay_urgent_minutes > trip_delay_minutes);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE trip.trip_etas
+    ADD COLUMN IF NOT EXISTS delay_level VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS delay_episode INTEGER NOT NULL DEFAULT 0;
+
+DO $$ BEGIN
+    ALTER TABLE trip.trip_etas ADD CONSTRAINT chk_trip_etas_delay CHECK (
+        (delay_level IS NULL OR delay_level IN ('late', 'urgent')) AND delay_episode >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

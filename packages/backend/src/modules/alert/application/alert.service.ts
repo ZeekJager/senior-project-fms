@@ -64,7 +64,7 @@ const iso = (d: Date | null) => (d ? d.toISOString() : null);
  * The alert engine (FMS-92, §34). Events become alerts by their rule (domain/rules.ts): the alert is
  * written first, then its recipients are notified in the same transaction, then AlertCreated goes out.
  * A repeat of the same source within the rule's window updates that alert (one more occurrence, never a
- * lower severity) and notifies nobody again. People acknowledge and resolve alerts; a critical alert
+ * lower severity) and notifies nobody again, unless its rule says a raised severity does (renotifyWhenRaised). People acknowledge and resolve alerts; a critical alert
  * nobody acknowledges escalates, tier by tier, every `escalationMinutes`.
  */
 export class AlertService {
@@ -101,6 +101,8 @@ export class AlertService {
         description: message,
         source_event_id: event.id,
       });
+      // A rule may tell its audience again when the alert grows more severe (a trip delay becoming urgent, FMS-147).
+      if (rule.renotifyWhenRaised && severity !== active.severity) await this.notifyTier(tx, ctx, updated, rule.audience, 'alert', true);
       const [view] = await this.views(tx, [updated]);
       await this.publish(tx, ctx, ALERT_EVENTS.updated, view, {
         status: view.status,
@@ -273,10 +275,18 @@ export class AlertService {
   }
 
   /** Tells the tier's members who see the alert's depot, except anyone already told about it. */
-  private async notifyTier(client: PoolClient, ctx: MutationContext, alert: AlertRow, roles: readonly string[], type: 'alert' | 'alert_escalated'): Promise<number> {
+  /** Tells the roles of the alert's depot, each once; `again`, those already told too (a raised alert). */
+  private async notifyTier(
+    client: PoolClient,
+    ctx: MutationContext,
+    alert: AlertRow,
+    roles: readonly string[],
+    type: 'alert' | 'alert_escalated',
+    again = false,
+  ): Promise<number> {
     const { repo, refs } = this.deps;
     const users = await refs.users.activeWithRoles(client, roles, alert.depotId, DEPOT_UNSCOPED_ROLES);
-    const already = await repo.notified(client, alert.id);
+    const already = again ? new Set<string>() : await repo.notified(client, alert.id);
     const recipients = users.filter((id) => !already.has(id));
     const title = type === 'alert_escalated' ? `Escalated: ${alert.title}` : alert.title;
     const message =

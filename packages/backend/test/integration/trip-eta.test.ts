@@ -9,7 +9,7 @@ import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
 import { gpsDevices } from '../../src/modules/integration';
 import { provideRoutingClient } from '../../src/modules/trip';
-import { createDepot, createDriver, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
+import { createDepot, createDriver, createProvider, createTrip, createUser, createVehicle, type RoleName } from '../support/factories';
 import { deliverEvents, publishedEvents } from '../support/events';
 
 const app = createApp();
@@ -240,6 +240,156 @@ describe('live arrival times (FMS-86)', () => {
     await ping(token, north(0.5), new Date(Date.now() - 30 * SEC));
     expect(await etaEvents(trip)).toEqual([]);
     expect((await pool.query('SELECT count(*)::int AS n FROM trip.trip_etas WHERE trip_id = $1', [trip.id])).rows[0].n).toBe(0);
+  });
+});
+
+describe('the trip delay alert (FMS-147)', () => {
+  /** When the trip from tripUnderWay is expected at its destination, for a ping at north(0.5) recorded `at`. */
+  const arrivalFrom = (at: Date, destination: Point) => plus(at, legSeconds([north(0.5), north(1), north(2), destination]).reduce((a, b) => a + b, 0));
+  /** Moves the scheduled end so the trip is expected `minutes` after it, for a ping recorded `at`. */
+  const lateBy = (trip: Row, at: Date, destination: Point, minutes: number) =>
+    pool.query('UPDATE trip.trips SET scheduled_start = least(scheduled_start, $2), scheduled_end = $2 WHERE id = $1', [trip.id, new Date(arrivalFrom(at, destination).getTime() - minutes * 60 * SEC)]);
+  const delayAlerts = async (trip: Row) =>
+    (
+      await pool.query(
+        `SELECT id, alert_type, severity, title, description AS message, entity_type, entity_id, depot_id::text, source_module, occurrence_count
+           FROM alert.alerts WHERE trip_id = $1 ORDER BY id`,
+        [trip.id],
+      )
+    ).rows as Row[];
+  const notified = async (alert: Row) =>
+    (await pool.query('SELECT recipient_user_id::text AS recipient, channel FROM alert.notifications WHERE alert_id = $1 ORDER BY id', [alert.id])).rows as {
+      recipient: string;
+      channel: string;
+    }[];
+  const delayedEvents = async (trip: Row) => (await publishedEvents('TripDelayed')).filter((e) => e.payload.trip_id === trip.public_id);
+
+  test('an estimate past the margin raises one alert for the depot’s dispatchers; a second update past it raises none', async () => {
+    engine.connect();
+    const { depot, vehicle, trip, token, destination } = await tripUnderWay();
+    const dispatcher = await createUser({ roles: ['dispatcher'], depot });
+    const elsewhere = await createUser({ roles: ['dispatcher'], depot: await createDepot() });
+    const at = new Date(Date.now() - 120 * SEC);
+    await lateBy(trip, at, destination!, 20);
+    await ping(token, north(0.5), at);
+
+    const [alert, ...more] = await delayAlerts(trip);
+    expect(more).toEqual([]);
+    expect(alert).toMatchObject({
+      alert_type: 'trip_delayed',
+      severity: 'medium',
+      source_module: 'trip',
+      entity_type: 'trip',
+      entity_id: trip.public_id,
+      depot_id: String(depot.id),
+      title: `Trip running late: ${vehicle.registration_number}`,
+      occurrence_count: 1,
+    });
+    expect(alert.message).toMatch(new RegExp(`^${vehicle.registration_number} is expected at Customer at \\d\\d:\\d\\d, 20 minutes after the trip's scheduled end at \\d\\d:\\d\\d\\.`));
+    const told = await notified(alert);
+    expect(told).toContainEqual({ recipient: String(dispatcher.id), channel: 'in_app' });
+    expect(told.map((n) => n.recipient)).not.toContain(String(elsewhere.id));
+
+    const [event] = await delayedEvents(trip);
+    expect(event.payload).toMatchObject({ level: 'late', episode: 1, late_minutes: 20, margin_minutes: 15, depot_id: depot.public_id, vehicle_id: vehicle.public_id });
+
+    // Thirty seconds on, still past the margin: the estimate moves, nobody is told again.
+    const next = plus(at, 30);
+    await lateBy(trip, next, destination!, 25);
+    await ping(token, north(0.5), next);
+    expect(await etaEvents(trip)).toHaveLength(2);
+    expect(await delayedEvents(trip)).toHaveLength(1);
+    expect(await delayAlerts(trip)).toEqual([expect.objectContaining({ id: alert.id, occurrence_count: 1 })]);
+    expect(await notified(alert)).toEqual(told);
+  });
+
+  test('past the second margin the same alert becomes critical and the dispatchers are told again, on the urgent channels', async () => {
+    engine.connect();
+    await createProvider({ code: `delay-smtp-${randomUUID().slice(0, 8)}`, provider_type: 'notification', configuration: { channel: 'email', host: '127.0.0.1', port: 2525, tls: 'none', from: 'FMS <alerts@fleet.test>' } });
+    const { depot, vehicle, trip, token, destination } = await tripUnderWay();
+    const dispatcher = await createUser({ roles: ['dispatcher'], depot });
+    const at = new Date(Date.now() - 120 * SEC);
+    await lateBy(trip, at, destination!, 20);
+    await ping(token, north(0.5), at);
+    const [late] = await delayAlerts(trip);
+    expect((await notified(late)).filter((n) => n.recipient === String(dispatcher.id))).toEqual([{ recipient: String(dispatcher.id), channel: 'in_app' }]);
+
+    const next = plus(at, 30);
+    await lateBy(trip, next, destination!, 75);
+    await ping(token, north(0.5), next);
+    const [urgent, ...more] = await delayAlerts(trip);
+    expect(more).toEqual([]);
+    expect(urgent).toMatchObject({ id: late.id, severity: 'critical', title: `Trip far behind schedule: ${vehicle.registration_number}`, occurrence_count: 2 });
+    expect(urgent.message).toContain('75 minutes after');
+    expect((await notified(urgent)).filter((n) => n.recipient === String(dispatcher.id))).toEqual([
+      { recipient: String(dispatcher.id), channel: 'in_app' },
+      { recipient: String(dispatcher.id), channel: 'in_app' },
+      { recipient: String(dispatcher.id), channel: 'email' },
+    ]);
+    expect((await delayedEvents(trip)).map((e) => e.payload.level)).toEqual(['late', 'urgent']);
+  });
+
+  test('a trip that recovers within the margin is alerted again only when it falls late again, as a new alert', async () => {
+    engine.connect();
+    const { trip, token, destination } = await tripUnderWay();
+    const at = new Date(Date.now() - 150 * SEC);
+    await lateBy(trip, at, destination!, 20);
+    await ping(token, north(0.5), at);
+    await lateBy(trip, plus(at, 30), destination!, 5);
+    await ping(token, north(0.5), plus(at, 30));
+    expect((await pool.query('SELECT delay_level, delay_episode FROM trip.trip_etas WHERE trip_id = $1', [trip.id])).rows[0]).toEqual({ delay_level: null, delay_episode: 1 });
+    expect(await delayAlerts(trip)).toHaveLength(1);
+
+    await lateBy(trip, plus(at, 60), destination!, 30);
+    await ping(token, north(0.5), plus(at, 60));
+    const alerts = await delayAlerts(trip);
+    expect(alerts.map((a) => a.severity)).toEqual(['medium', 'medium']);
+    expect((await delayedEvents(trip)).map((e) => e.payload.episode)).toEqual([1, 2]);
+  });
+
+  test('a stale position is no delay, and a depot’s own margin replaces the fleet’s', async () => {
+    engine.connect();
+    const stale = await tripUnderWay();
+    const old = new Date(Date.now() - 6 * 60 * SEC);
+    await lateBy(stale.trip, old, stale.destination!, 90);
+    await ping(stale.token, north(0.5), old);
+    expect(await etaEvents(stale.trip)).toEqual([]);
+    expect(await delayAlerts(stale.trip)).toEqual([]);
+
+    const patient = await tripUnderWay();
+    await pool.query('INSERT INTO tracking.rule_thresholds (depot_id, trip_delay_minutes, trip_delay_urgent_minutes) VALUES ($1, 30, 90)', [patient.depot.id]);
+    const at = new Date(Date.now() - 60 * SEC);
+    await lateBy(patient.trip, at, patient.destination!, 20);
+    await ping(patient.token, north(0.5), at);
+    expect(await etaEvents(patient.trip)).toHaveLength(1);
+    expect(await delayAlerts(patient.trip)).toEqual([]);
+  });
+
+  test('the margins are telemetry rule thresholds: 15 and 60 to start with, the urgent one above the other', async () => {
+    const cookie = await signIn(['admin']);
+    const fleet = (await request(app).get('/api/v1/settings/telemetry-rules').set('Cookie', cookie)).body.data.fleet;
+    expect(fleet).toMatchObject({ trip_delay_minutes: 15, trip_delay_urgent_minutes: 60 });
+    const body = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5 };
+    const depot = await createDepot();
+
+    const refused = await request(app).put(`/api/v1/settings/telemetry-rules/depots/${depot.public_id}`).set('Cookie', cookie).send({ ...body, trip_delay_minutes: 60 });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.details).toEqual([expect.objectContaining({ field: 'trip_delay_urgent_minutes', reason: 'not_above_late' })]);
+    const tooLong = await request(app).put(`/api/v1/settings/telemetry-rules/depots/${depot.public_id}`).set('Cookie', cookie).send({ ...body, trip_delay_minutes: 4 });
+    expect(tooLong.status).toBe(400);
+
+    const saved = await request(app)
+      .put(`/api/v1/settings/telemetry-rules/depots/${depot.public_id}`)
+      .set('Cookie', cookie)
+      .send({ ...body, trip_delay_minutes: 20, trip_delay_urgent_minutes: 45 });
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.depots.find((d: Row) => d.depot_id === depot.public_id)).toMatchObject({ trip_delay_minutes: 20, trip_delay_urgent_minutes: 45 });
+    // Left out, they keep the row's.
+    await request(app).put(`/api/v1/settings/telemetry-rules/depots/${depot.public_id}`).set('Cookie', cookie).send({ ...body, speed_limit_kmh: 70 }).expect(200);
+    expect((await pool.query('SELECT trip_delay_minutes, trip_delay_urgent_minutes FROM tracking.rule_thresholds WHERE depot_id = $1', [depot.id])).rows[0]).toEqual({
+      trip_delay_minutes: 20,
+      trip_delay_urgent_minutes: 45,
+    });
   });
 });
 

@@ -171,7 +171,7 @@ function DrivingRules() {
   }, [drawer, own, fleet])
 
   return (
-    <SettingsCard id="driving-rules" icon={<Gauge />} title="Driving rules" description="Speeding, idling and off-route flags from each vehicle's GPS pings. A depot can have its own.">
+    <SettingsCard id="driving-rules" icon={<Gauge />} title="Driving rules" description="Speeding, idling and off-route flags from each vehicle's GPS pings, and when a trip is running late. A depot can have its own.">
       {rules.isError ? (
         <ErrorState error={rules.error} onRetry={() => void rules.refetch()} />
       ) : !values || !fleet ? (
@@ -240,7 +240,8 @@ function DepotRow({ name, row, onEdit }: { name: string; row: ThresholdsRow; onE
         <p className="text-xs text-ink-subtle">
           <span className="tabular">{row.speed_limit_kmh} km/h</span> after <span className="tabular">{row.speeding_pings}</span>, cleared after{' '}
           <span className="tabular">{row.clear_pings}</span> · idling after <span className="tabular">{row.idle_minutes} min</span> · off route beyond{' '}
-          <span className="tabular">{row.route_deviation_m.toLocaleString('en-US')} m</span> for <span className="tabular">{row.route_deviation_pings}</span>
+          <span className="tabular">{row.route_deviation_m.toLocaleString('en-US')} m</span> for <span className="tabular">{row.route_deviation_pings}</span> · trips late
+          after <span className="tabular">{row.trip_delay_minutes} min</span>, urgent after <span className="tabular">{row.trip_delay_urgent_minutes} min</span>
         </p>
       </div>
       <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit} aria-label={`Edit ${name}'s thresholds`}>

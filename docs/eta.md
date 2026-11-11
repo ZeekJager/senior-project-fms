@@ -1,6 +1,6 @@
 # Arrival times and stop order (FMS-86)
 
-Card FMS-86 (SE-130), architecture §9.2. Dispatchers see when each trip under way will reach its stops and its destination, and can ask for a shorter order of a route's stops. Both use the routing engine (OSRM, [routing.md](routing.md)).
+Card FMS-86 (SE-130), architecture §9.2. Dispatchers see when each trip under way will reach its stops and its destination, and can ask for a shorter order of a route's stops. Both use the routing engine (OSRM, [routing.md](routing.md)). A trip expected well past its scheduled end raises an alert ([The trip delay alert](#the-trip-delay-alert-fms-147), FMS-147).
 
 ## Live arrival times
 
@@ -63,6 +63,34 @@ The estimate is a table of its own, not columns on `trip.trips`. An update every
   - Each vehicle card on a trip shows the arrival time and the next stop.
   - The driver focus panel shows the arrival time and the next stop.
 
+## The trip delay alert (FMS-147)
+
+Card FMS-147 (SE-191), FR-9. The dispatcher is told when a trip under way is expected at its destination well after its scheduled end.
+
+**When.** After each new estimate, the `trip.eta` consumer holds the trip's `arrival_at` against its `scheduled_end`, by the margins of the route's depot. The code is `trip/domain/delay.ts` (pure) and `EtaService.judgeDelay`.
+
+| How late (arrival after the scheduled end) | The trip is | What happens |
+|---|---|---|
+| Within `trip_delay_minutes` (15), or exactly on it | on time | Nothing. A late trip coming back within it **recovers** |
+| More than `trip_delay_minutes` | late | A trip that was not late falls late: a new **episode**, and `TripDelayed` (`level: late`) |
+| More than `trip_delay_urgent_minutes` (60) | urgent | A trip not yet urgent becomes urgent in the same episode: `TripDelayed` (`level: urgent`). A trip first judged this late is urgent at once |
+
+- **Once per episode.** A late trip later still is not alerted again, and an urgent one between the margins stays urgent. Falling late again after recovering is a new episode, and a new alert.
+- **A stale ETA is not a delay.** Only an estimate made from a fresh position is judged (one at most 5 minutes old, as above), so a vehicle that has gone quiet keeps its last estimate and raises nothing. With the routing engine down, there is no new estimate either.
+- **No arrival time** (a route without destination coordinates) or no scheduled end: the trip is not judged.
+- **State.** `trip.trip_etas.delay_level` (`late`, `urgent` or null) and `delay_episode`, with the estimate (migration 068). The estimate's row lock makes two positions at once judge the trip once.
+
+**The margins** are columns of `tracking.rule_thresholds`, next to the telemetry rules' thresholds ([telemetry-rules.md](telemetry-rules.md)): the fleet's row and each depot's that differs. `trip_delay_minutes` is 5-240 and `trip_delay_urgent_minutes` 10-720, and the second must be above the first. An administrator changes them under **Settings → Driving rules** or with `PUT /settings/telemetry-rules/...`. The trip module reads them through the integration module (`trackingLookups.tripDelayMargins`, cached 30 seconds per depot like the thresholds), connected in `src/modules/index.ts`.
+
+**`TripDelayed`** carries `trip_id`, `depot_id`, `vehicle_id`, `driver_id` (public ids), `level`, `episode`, `late_minutes`, `margin_minutes`, `scheduled_end`, `arrival_at`, `destination` and `position_at`.
+
+**The alert** (`trip_delayed`, [alerts.md](alerts.md)) is for the dispatchers of the trip's depot.
+
+- **Late.** Medium, in the app. The title is "Trip running late: AA 3-12345". The message says when the vehicle is expected and how late: "AA 3-12345 is expected at Adama at 14:35, 23 minutes after the trip's scheduled end at 14:12."
+- **Urgent.** The same alert becomes critical, "Trip far behind schedule". The dispatchers are told again, by email, SMS and push as well ([notification-channels.md](notification-channels.md)). Critical, it escalates to fleet managers when nobody acknowledges it.
+- **Its link** opens the trip on Dispatch (S-07), under Under way, in its own depot (`/dispatch?view=under-way&trip=<id>`).
+- **Recovering does not resolve it.** A dispatcher resolves it once they have dealt with it.
+
 ## Stop-order optimisation
 
 `POST /routes/{route_id}/optimise` (`route:write`, depot scope) suggests the order of a route's saved stops that makes the road from origin to destination shortest.
@@ -95,6 +123,7 @@ The estimate is a table of its own, not columns on `trip.trips`. An update every
 
 - **Unit:**
   - `trip/domain/eta.test.ts`: stops reached and behind, the legs into times, at the destination, no destination;
+  - `trip/domain/delay.test.ts` (FMS-147): within and on the margin, falling late, later still, urgent after late and at once, urgent between the margins, recovering and falling late again, a depot's margins;
   - `trip/domain/optimise.test.ts`: fixtures in road order, already the shortest, asymmetric roads, and 200 random tables that are never longer;
   - the planner's `legs` and `table` (`osrm.planner.test.ts`);
   - the real-time contract.
@@ -105,4 +134,10 @@ The estimate is a table of its own, not columns on `trip.trips`. An update every
   - the engine down;
   - no destination;
   - no estimate off a trip;
+  - the delay alert (FMS-147):
+    - one alert past the margin for the depot's dispatchers, none for a second estimate past it;
+    - urgent: the same alert critical, told again by email;
+    - recovering, then a new alert;
+    - a stale position, and a depot's own margin;
+    - the margins in the thresholds API (defaults, urgent above late, kept when left out);
   - optimise: order, never longer, saved by `PATCH`, the refusals, permissions and scope.

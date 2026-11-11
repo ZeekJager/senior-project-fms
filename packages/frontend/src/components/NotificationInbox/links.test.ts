@@ -37,6 +37,11 @@ describe('where a notification leads', () => {
     expect(notificationLink(note('vehicle', { vehicle_id: V }), everything)).toBe('/vehicles')
   })
 
+  it('a trip running late opens it on the dispatch console, for those who dispatch', () => {
+    expect(notificationLink(note('trip', { vehicle_id: V }), { permissions: ['trip:assign'] })).toBe(`/dispatch?view=under-way&trip=${E}`)
+    expect(notificationLink(note('trip', { vehicle_id: V }), technician)).toBeNull()
+  })
+
   it('goes nowhere when the notification is about nothing, or about something the app has no screen for', () => {
     expect(notificationLink(note(null), everything)).toBeNull()
     expect(notificationLink(note('something_new'), everything)).toBeNull()

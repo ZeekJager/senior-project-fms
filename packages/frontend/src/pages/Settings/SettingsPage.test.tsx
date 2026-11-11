@@ -13,7 +13,7 @@ const owner = currentUser(['fleet_owner'], ['depot:read', 'depot:write', 'audit:
 
 const ADDIS = { id: 'd-1', name: 'Addis Ababa Central', code: 'ADD', location: 'Addis Ababa' }
 const ADAMA = { id: 'd-2', name: 'Adama Hub', code: 'ADM', location: 'Adama' }
-const FLEET = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 500, route_deviation_pings: 3 }
+const FLEET = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 500, route_deviation_pings: 3, trip_delay_minutes: 15, trip_delay_urgent_minutes: 60 }
 const never = { updated_by: null, updated_by_name: null, updated_at: null }
 
 /** A fake settings API: thresholds and settings, every write recorded. */
@@ -89,12 +89,38 @@ describe('S-27 Settings (FMS-80)', () => {
     await waitFor(() => expect(writes).toEqual([{ method: 'PUT', path: '/settings/telemetry-rules/fleet', body: { ...FLEET, route_deviation_m: 800 } }]))
   })
 
+  it('trip delay (FMS-147): late after 15 min and urgent after 60 at first; urgent must be later than late', async () => {
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [] })
+    const { user, rules } = await open()
+    const late = within(rules).getByLabelText('Trip late after')
+    const urgent = within(rules).getByLabelText('Trip urgent after')
+    expect(late).toHaveValue('15')
+    expect(urgent).toHaveValue('60')
+
+    await user.clear(late)
+    await user.type(late, '60')
+    await user.click(within(rules).getByRole('button', { name: 'Save driving rules' }))
+    expect(within(rules).getByText('Enter more than the 60 min a trip is late after.')).toBeInTheDocument()
+    expect(writes).toEqual([])
+
+    await user.clear(late)
+    await user.type(late, '20')
+    await user.clear(urgent)
+    await user.type(urgent, '90')
+    await user.click(within(rules).getByRole('button', { name: 'Save driving rules' }))
+    await waitFor(() =>
+      expect(writes).toEqual([{ method: 'PUT', path: '/settings/telemetry-rules/fleet', body: { ...FLEET, trip_delay_minutes: 20, trip_delay_urgent_minutes: 90 } }]),
+    )
+  })
+
   it("a depot's own thresholds: listed, given to another depot, and removed to follow the fleet's again", async () => {
-    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [{ depot_id: 'd-2', speed_limit_kmh: 60, speeding_pings: 2, clear_pings: 3, idle_minutes: 10, route_deviation_m: 1000, route_deviation_pings: 2, ...never }] })
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [{ depot_id: 'd-2', speed_limit_kmh: 60, speeding_pings: 2, clear_pings: 3, idle_minutes: 10, route_deviation_m: 1000, route_deviation_pings: 2, trip_delay_minutes: 20, trip_delay_urgent_minutes: 45, ...never }] })
     const { user } = await open()
     expect(await screen.findByText('Adama Hub')).toBeInTheDocument()
     expect(screen.getByText('60 km/h')).toBeInTheDocument()
     expect(screen.getByText('1,000 m')).toBeInTheDocument()
+    expect(screen.getByText('20 min')).toBeInTheDocument()
+    expect(screen.getByText('45 min')).toBeInTheDocument()
 
     // Only a depot without its own can be chosen; it starts from the fleet's.
     await user.click(screen.getByRole('button', { name: 'Thresholds for a depot' }))
