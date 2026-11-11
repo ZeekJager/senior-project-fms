@@ -33,6 +33,8 @@ export interface TripRow {
   actualStart: Date | null;
   actualEnd: Date | null;
   actualDistanceKm: number | null;
+  /** How the distance was measured (FMS-145); null with a distance entered before, or with none. */
+  actualDistanceSource: 'odometer' | 'gps' | null;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -103,7 +105,30 @@ export interface TripWrite {
   actual_start?: Date;
   actual_end?: Date;
   actual_duration_seconds?: number;
+  /** Measured at the end and after (FMS-145): the distance, how, from how many positions, when. */
+  actual_distance_km?: number | null;
+  actual_distance_source?: 'odometer' | 'gps' | null;
+  actual_distance_points?: number;
+  actual_distance_measured_at?: Date;
 }
+
+/** A completed trip whose distance may be measured (FMS-145). Internal ids. */
+export interface DistanceCandidate {
+  id: string;
+  vehicleId: string | null;
+  actualStart: Date | null;
+  actualEnd: Date | null;
+  actualDistanceKm: number | null;
+  actualDistanceSource: 'odometer' | 'gps' | null;
+  /** Positions it was last measured from; null if never measured. */
+  actualDistancePoints: number | null;
+}
+
+const CANDIDATE_SQL = `
+  SELECT id::text AS id, vehicle_id::text AS "vehicleId", actual_start AS "actualStart", actual_end AS "actualEnd",
+         actual_distance_km::float8 AS "actualDistanceKm", actual_distance_source AS "actualDistanceSource",
+         actual_distance_points AS "actualDistancePoints"
+    FROM trip.trips`;
 
 export interface TripHistoryFilter {
   visibility: TripVisibility;
@@ -129,7 +154,7 @@ const ROW_SQL = `
          t.origin, t.destination, t.planned_distance_km::float8 AS "plannedDistanceKm",
          t.planned_duration_seconds AS "plannedDurationSeconds", t.scheduled_start AS "scheduledStart",
          t.scheduled_end AS "scheduledEnd", t.actual_start AS "actualStart", t.actual_end AS "actualEnd",
-         t.actual_distance_km::float8 AS "actualDistanceKm", t.version, t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+         t.actual_distance_km::float8 AS "actualDistanceKm", t.actual_distance_source AS "actualDistanceSource", t.version, t.created_at AS "createdAt", t.updated_at AS "updatedAt",
          to_char(${AT} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
     FROM trip.trips t
     LEFT JOIN trip.routes r ON r.id = t.route_id`;
@@ -395,6 +420,40 @@ export class TripRepository extends Repository {
 
   update(ctx: MutationContext, id: string, data: TripWrite, client: PoolClient): Promise<Row> {
     return this.mutate(ctx, 'trip.trips', 'UPDATE', id, { ...data }, client);
+  }
+
+  /**
+   * Completed trips to measure again (FMS-145): ended at or after `endedAfter`, and either never measured with no
+   * distance, or measured by the system. A distance entered before FMS-145 (no measurement) is left alone. Newest first.
+   */
+  async distanceCandidates(db: Queryable, endedAfter: Date, limit: number): Promise<DistanceCandidate[]> {
+    const res = await db.query<DistanceCandidate>(
+      `${CANDIDATE_SQL}
+        WHERE status = 'completed' AND actual_end >= $1 AND vehicle_id IS NOT NULL AND actual_start IS NOT NULL
+          AND (actual_distance_measured_at IS NOT NULL OR actual_distance_km IS NULL)
+        ORDER BY actual_end DESC, id DESC
+        LIMIT $2`,
+      [endedAfter, limit],
+    );
+    return res.rows;
+  }
+
+  /** Completed trips never measured and with no distance, after internal id `afterId`, oldest id first: the backfill. */
+  async unmeasured(db: Queryable, afterId: string, limit: number): Promise<DistanceCandidate[]> {
+    const res = await db.query<DistanceCandidate>(
+      `${CANDIDATE_SQL}
+        WHERE status = 'completed' AND actual_distance_km IS NULL AND actual_distance_measured_at IS NULL AND id > $1
+        ORDER BY id
+        LIMIT $2`,
+      [afterId, limit],
+    );
+    return res.rows;
+  }
+
+  /** A candidate as it stands now, its row locked for the measurement's update; null if no longer completed. */
+  async lockCandidate(client: PoolClient, id: string): Promise<DistanceCandidate | null> {
+    const res = await client.query<DistanceCandidate>(`${CANDIDATE_SQL} WHERE id = $1 AND status = 'completed' FOR UPDATE`, [id]);
+    return res.rows[0] ?? null;
   }
 
   insertStop(ctx: MutationContext, tripId: string, sequence: number, stop: RouteStop, client: PoolClient): Promise<Row> {

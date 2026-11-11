@@ -9,6 +9,7 @@ import { tripRouter } from './api/trip.routes';
 import { config } from '../../config';
 import { cache } from '../../shared/cache';
 import { logger } from '../../shared/logging/logger';
+import { TripDistanceService, type MeasureSummary, type TrackLookup } from './application/distance.service';
 import { EtaService } from './application/eta.service';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
 import { TripService, type PositionLookup } from './application/trip.service';
@@ -55,6 +56,16 @@ export function provideTripPositions(lookup: PositionLookup | null): void {
   positionLookup = lookup;
 }
 
+let trackLookup: TrackLookup | null = null;
+
+/**
+ * Connects the positions stored during trips (FMS-145): the integration module's, which imports trip. Called once by
+ * src/modules/index.ts. Not connected, trips end unmeasured and the `trip-distance` job measures them once it is.
+ */
+export function provideTripTrack(lookup: TrackLookup | null): void {
+  trackLookup = lookup;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -74,7 +85,15 @@ const routeService = new RouteService({
   warn: (fields, message) => logger.warn(fields, message),
 });
 const tripRepository = new TripRepository(pool);
+// Each trip's actual distance (FMS-145, docs/trip-distance.md): measured as it ends, and again while late positions arrive.
+const distanceService = new TripDistanceService({
+  db: pool,
+  trips: tripRepository,
+  track: () => trackLookup,
+  warn: (fields, message) => logger.warn(fields, message),
+});
 const tripService = new TripService({
+  distance: distanceService,
   trips: tripRepository,
   routes: routeRepository,
   fleet,
@@ -108,7 +127,27 @@ export const tripModule: AppModule = {
       every: 60,
       run: (context) => routeService.measureMissing(context.correlationId),
     },
+    {
+      // FMS-145: trips completed in the last 8 days that were never measured, or have since gained positions.
+      name: 'trip-distance',
+      every: 60,
+      run: async (context) => flatSummary(await distanceService.remeasureRecent({ userId: null, correlationId: context.correlationId })),
+    },
   ],
+};
+
+/** A measurement summary as a job result: counts only. */
+export function flatSummary(s: MeasureSummary): Record<string, number> {
+  return { checked: s.checked, measured: s.measured, odometer: s.bySource.odometer, gps: s.bySource.gps, no_positions: s.without.no_positions ?? 0, unchanged: s.unchanged };
+}
+
+/**
+ * For tests and `npm run backfill:trip-distance` (FMS-145): the hourly job's work, and measuring every completed
+ * trip never measured.
+ */
+export const tripDistance = {
+  remeasureRecent: (correlationId: string) => distanceService.remeasureRecent({ userId: null, correlationId }),
+  backfill: (correlationId: string, progress?: (s: MeasureSummary) => void) => distanceService.backfill({ userId: null, correlationId }, 500, progress),
 };
 
 /**

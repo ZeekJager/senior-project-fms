@@ -38,6 +38,7 @@ import {
 } from '../domain/trip';
 import type { RequestUser } from '../../../types/express';
 import type { StopRow, TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
+import { distanceWrite, type TripDistanceService } from './distance.service';
 import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
 import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleRequired, type CommandStatus } from '../domain/lifecycle';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
@@ -152,6 +153,8 @@ export interface TripServiceDeps {
    * connected by src/modules/index.ts (it imports trip). Null when not connected: the live state has no position.
    */
   positions?: () => PositionLookup | null;
+  /** Measures a trip's distance as it ends (FMS-145). Absent (unit tests): the trip ends unmeasured, for the job. */
+  distance?: Pick<TripDistanceService, 'measure'>;
   /** One-off routes for unplanned trips (FMS-139). */
   routes: Pick<RouteRepository, 'insert'>;
   /** The fleet and maintenance modules' lookups, connected by src/modules/index.ts. */
@@ -559,21 +562,31 @@ export class TripService {
 
   /**
    * POST /trips/{id}/end: en_route → completed, `actual_end` now (never
-   * before `actual_start`, whatever the clocks say), and the actual duration.
+   * before `actual_start`, whatever the clocks say), the actual duration, and
+   * the actual distance measured from the positions stored during the trip
+   * (FMS-145), all in the one audited change.
    */
   async end(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
-    return this.move(caller, tripId, 'completed', expectedVersion, async (_client, row) => {
+    return this.move(caller, tripId, 'completed', expectedVersion, async (client, row) => {
       const startedAt = row.actualStart;
       const end = startedAt && this.now() < startedAt ? startedAt : this.now();
       const duration = startedAt ? Math.round((end.getTime() - startedAt.getTime()) / 1000) : undefined;
+      const distance = (await this.deps.distance?.measure(client, { id: row.id, vehicleId: row.vehicleId }, startedAt, end)) ?? null;
       return {
-        data: { status: 'completed', actual_end: end, ...(duration !== undefined ? { actual_duration_seconds: duration } : {}) },
+        data: {
+          status: 'completed',
+          actual_end: end,
+          ...(duration !== undefined ? { actual_duration_seconds: duration } : {}),
+          ...(distance ? distanceWrite(distance, this.now()) : {}),
+        },
         event: TRIP_EVENTS.completed,
         payload: (view) => ({
           ...lifecyclePayload(view),
           actual_start: startedAt?.toISOString() ?? null,
           actual_end: end.toISOString(),
           duration_seconds: duration ?? null,
+          actual_distance_km: view.actual_distance_km,
+          actual_distance_source: view.actual_distance_source,
         }),
         warnings: [],
       };
@@ -809,6 +822,7 @@ export class TripService {
       actual_start: r.actualStart,
       actual_end: r.actualEnd,
       actual_distance_km: r.actualDistanceKm,
+      actual_distance_source: r.actualDistanceSource,
       stops: own.map((s) => stopView(s, !!eta)),
       eta: eta
         ? {

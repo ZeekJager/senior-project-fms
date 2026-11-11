@@ -288,6 +288,41 @@ export class TrackingRepository {
     return new Map(res.rows.map(({ vehicleId, ...rest }) => [vehicleId, rest]));
   }
 
+  /**
+   * The positions a trip's distance is measured from (FMS-145): the vehicle's pings (internal ids) recorded between
+   * the trip's start and end, of that trip or of none, oldest first, at most `limit`.
+   */
+  async tripTrack(
+    db: Queryable,
+    trip: { tripId: string; vehicleId: string; start: Date; end: Date },
+    limit: number,
+  ): Promise<{ at: number; latitude: number; longitude: number; speedKmh: number; odometerKm: number | null; source: string }[]> {
+    const res = await db.query<{ at: Date; latitude: number; longitude: number; speedKmh: number; odometerKm: number | null; source: string }>(
+      `SELECT recorded_at AS at, latitude::float8 AS latitude, longitude::float8 AS longitude, speed_kmh AS "speedKmh",
+              odometer_km::float8 AS "odometerKm", source
+         FROM tracking.gps_pings
+        WHERE vehicle_id = $1 AND recorded_at BETWEEN $3 AND $4 AND (trip_id = $2 OR trip_id IS NULL)
+        ORDER BY recorded_at, id
+        LIMIT $5`,
+      [trip.vehicleId, trip.tripId, trip.start, trip.end, limit],
+    );
+    return res.rows.map((r) => ({ ...r, at: r.at.getTime() }));
+  }
+
+  /** How many positions each trip's distance would be measured from now (FMS-145): `tripTrack`'s rows, counted. */
+  async tripTrackCounts(db: Queryable, trips: readonly { tripId: string; vehicleId: string; start: Date; end: Date }[]): Promise<Map<string, number>> {
+    if (trips.length === 0) return new Map();
+    const res = await db.query<{ tripId: string; n: number }>(
+      `SELECT t.trip_id::text AS "tripId",
+              (SELECT count(*) FROM tracking.gps_pings p
+                WHERE p.vehicle_id = t.vehicle_id AND p.recorded_at BETWEEN t.started AND t.ended
+                  AND (p.trip_id = t.trip_id OR p.trip_id IS NULL))::int AS n
+         FROM unnest($1::bigint[], $2::bigint[], $3::timestamptz[], $4::timestamptz[]) AS t(trip_id, vehicle_id, started, ended)`,
+      [trips.map((t) => t.tripId), trips.map((t) => t.vehicleId), trips.map((t) => t.start), trips.map((t) => t.end)],
+    );
+    return new Map(res.rows.map((r) => [r.tripId, r.n]));
+  }
+
   /** A vehicle's newest position (internal id), for a trip's live state (FMS-95). */
   async currentPosition(db: Queryable, vehicleId: string): Promise<{ lat: number; lng: number; speedKmh: number; heading: number | null; recordedAt: Date } | null> {
     const res = await db.query<{ lat: number; lng: number; speedKmh: number; heading: number | null; recordedAt: Date }>(

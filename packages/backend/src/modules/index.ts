@@ -2,7 +2,7 @@ import { config } from '../config';
 import type { AppModule } from '../shared/module';
 import { authModule, provideDepotDirectory } from './auth';
 import { depotDirectory, fleetModule, provideMaintenanceLookup, provideMeterSources, provideWarrantyExpiry, tripRefs } from './fleet';
-import { provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripPositions, ROUTING_TIMEOUT_MS, tripModule } from './trip';
+import { provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripPositions, provideTripTrack, ROUTING_TIMEOUT_MS, tripModule } from './trip';
 import { fuelMeterReadings, fuelModule } from './fuel';
 import { maintenanceModule, maintenanceRefs, warrantyRefs } from './maintenance';
 import { alertModule } from './alert';
@@ -28,6 +28,8 @@ provideMaintenanceRefs(maintenanceRefs);
 provideWarrantyExpiry(warrantyRefs.endingWithin);
 // A trip's live state (FMS-95) shows its vehicle's newest position, which the integration module keeps (it imports trip).
 provideTripPositions(trackingLookups.currentPosition);
+// A trip's actual distance (FMS-145) is measured from the positions stored during it, which the integration module keeps.
+provideTripTrack({ tripTrack: trackingLookups.tripTrack, tripTrackCounts: trackingLookups.tripTrackCounts });
 // Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
 provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
 // Road routing (FMS-84): OSRM through the integration gateway (timeouts, a retry, its circuit breaker).

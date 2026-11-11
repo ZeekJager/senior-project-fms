@@ -3627,3 +3627,25 @@ CREATE OR REPLACE TRIGGER trg_recall_vehicles_updated_at
 ALTER TABLE fleet.expiry_notices DROP CONSTRAINT IF EXISTS chk_expiry_notice_subject;
 ALTER TABLE fleet.expiry_notices ADD CONSTRAINT chk_expiry_notice_subject
     CHECK (subject_type IN ('document', 'licence', 'warranty'));
+-- ===== 066_trip_actual_distance.sql =====
+ALTER TABLE trip.trips ADD COLUMN IF NOT EXISTS actual_distance_source VARCHAR(10);
+ALTER TABLE trip.trips ADD COLUMN IF NOT EXISTS actual_distance_points INTEGER;
+ALTER TABLE trip.trips ADD COLUMN IF NOT EXISTS actual_distance_measured_at TIMESTAMPTZ;
+
+DO $$ BEGIN
+    ALTER TABLE trip.trips
+        ADD CONSTRAINT chk_trip_distance_source CHECK (
+            actual_distance_source IS NULL
+            OR (actual_distance_source IN ('odometer', 'gps') AND actual_distance_km IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE trip.trips
+        ADD CONSTRAINT chk_trip_distance_measured CHECK (
+            (actual_distance_measured_at IS NULL) = (actual_distance_points IS NULL)
+            AND (actual_distance_points IS NULL OR actual_distance_points >= 0));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_trip_trips_unmeasured
+    ON trip.trips (actual_end)
+    WHERE status = 'completed' AND actual_distance_km IS NULL AND actual_distance_measured_at IS NULL;

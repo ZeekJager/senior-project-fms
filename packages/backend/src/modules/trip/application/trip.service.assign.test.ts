@@ -60,6 +60,7 @@ function tripRow(overrides: Partial<TripRow> = {}): TripRow {
     actualStart: null,
     actualEnd: null,
     actualDistanceKm: null,
+    actualDistanceSource: null,
     version: 3,
     createdAt: NOW,
     updatedAt: NOW,
