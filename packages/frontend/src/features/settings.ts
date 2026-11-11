@@ -4,7 +4,15 @@ import { useAuth } from '@/context/AuthContext'
 // Settings an administrator tunes without a code change (FMS-80, api-contract §6.5). Anyone signed in reads
 // them: screens draw their lines from them, the health score's alert line first.
 
-export type SettingKey = 'fuel_variance_threshold_pct' | 'health_alert_below' | 'expiry_warning_days'
+export type SettingKey =
+  | 'fuel_variance_threshold_pct'
+  | 'health_alert_below'
+  | 'expiry_warning_days'
+  // How much each part counts in the driver performance score (FMS-146).
+  | 'driver_score_weight_punctuality'
+  | 'driver_score_weight_safety'
+  | 'driver_score_weight_incidents'
+  | 'driver_score_weight_dvir'
 
 /** A setting as GET /settings returns it. */
 export interface Setting {
@@ -12,7 +20,7 @@ export interface Setting {
   value: number
   default_value: number
   is_default: boolean
-  unit: 'percent' | 'score' | 'days'
+  unit: 'percent' | 'score' | 'days' | 'weight'
   min: number
   max: number
   updated_by: string | null
@@ -25,6 +33,10 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   fuel_variance_threshold_pct: 20,
   health_alert_below: 75,
   expiry_warning_days: 30,
+  driver_score_weight_punctuality: 35,
+  driver_score_weight_safety: 35,
+  driver_score_weight_incidents: 20,
+  driver_score_weight_dvir: 10,
 }
 
 export const settingsKey = ['settings'] as const

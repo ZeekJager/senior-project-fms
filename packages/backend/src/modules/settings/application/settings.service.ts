@@ -2,6 +2,7 @@ import { validationFailed } from '../../../shared/errors/app-error';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
 import {
+  DRIVER_SCORE_WEIGHT_KEYS,
   SETTING_KEYS,
   type SettingChanges,
   type SettingDefinition,
@@ -74,6 +75,18 @@ export class SettingsService {
       return value === null || value === undefined || (value >= d.min && value <= d.max) ? [] : [{ field: key, reason: 'out_of_range' }];
     });
     if (problems.length) throw validationFailed(problems, `Out of range: ${problems.map((p) => `${p.field} (${definitions[p.field].min} to ${definitions[p.field].max})`).join(', ')}.`);
+
+    // The driver score's weights (FMS-146) may each be 0, but not all of them: no driver could be scored.
+    if (DRIVER_SCORE_WEIGHT_KEYS.some((k) => k in changes)) {
+      const current = await this.values();
+      const after = DRIVER_SCORE_WEIGHT_KEYS.map((k) => (k in changes ? (changes[k] ?? definitions[k].default) : current[k]));
+      if (after.every((w) => w === 0)) {
+        throw validationFailed(
+          DRIVER_SCORE_WEIGHT_KEYS.filter((k) => k in changes).map((field) => ({ field, reason: 'all_zero' })),
+          'The driver score needs at least one weight above 0.',
+        );
+      }
+    }
 
     const ctx = { userId: caller.user.id, correlationId: caller.correlationId };
     await this.deps.settings.inTransaction(async (client) => {

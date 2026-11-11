@@ -3,6 +3,7 @@ import { pool, reads } from '../../db';
 import { cache } from '../../shared/cache';
 import type { JobContext } from '../../shared/jobs/job';
 import type { AppModule } from '../../shared/module';
+import { settings } from '../settings';
 import { analyticsRouter } from './api/analytics.routes';
 import { AnalyticsService } from './application/analytics.service';
 import { ReportService } from './application/report.service';
@@ -13,8 +14,21 @@ import { ReportRepository } from './infrastructure/report.repository';
 // through the read replica and kept in Redis per audience and range.
 const analyticsService = new AnalyticsService({ db: pool, reads, repo: new AnalyticsRepository(), cache });
 
-// Monthly reports and exports (FMS-91): live from the analytics views on the read replica, as JSON, CSV or PDF.
-const reportService = new ReportService({ reads, repo: new ReportRepository() });
+// Monthly reports and exports (FMS-91): live from the analytics views on the read replica, as JSON, CSV or PDF. The
+// driver score's weights (FMS-146) are settings an administrator tunes.
+const reportService = new ReportService({
+  reads,
+  repo: new ReportRepository(),
+  weights: async () => {
+    const v = await settings.values();
+    return {
+      punctuality: v.driver_score_weight_punctuality,
+      safety: v.driver_score_weight_safety,
+      incidents: v.driver_score_weight_incidents,
+      dvir: v.driver_score_weight_dvir,
+    };
+  },
+});
 
 const router = Router();
 router.use(analyticsRouter(analyticsService, reportService));

@@ -3,6 +3,16 @@ import type { DataFreshness, ReadSession } from '../../../shared/infrastructure/
 import type { RequestUser } from '../../../types/express';
 import { monthWindow } from '../domain/downtime';
 import {
+  MIN_SCORED_TRIPS,
+  rankDrivers,
+  SCORE_COMPONENTS,
+  scoreDriver,
+  type DriverScore,
+  type ScoreComponent,
+  type ScoreReason,
+  type ScoreWeights,
+} from '../domain/driver-score';
+import {
   centsPerKm,
   formatAddisDateTime,
   formatValue,
@@ -20,7 +30,7 @@ import {
   type ReportRow,
 } from '../domain/reports';
 import type { Audience } from '../infrastructure/analytics.repository';
-import type { ReportRepository } from '../infrastructure/report.repository';
+import type { DriverRow, ReportRepository } from '../infrastructure/report.repository';
 import { renderTablePdf } from '../infrastructure/table-pdf';
 
 export interface ReportQuery {
@@ -54,7 +64,59 @@ export interface ReportFile {
 export interface ReportServiceDeps {
   reads: { session(): Promise<ReadSession> };
   repo: ReportRepository;
+  /** The driver score's weights (FMS-146): the settings', as an administrator left them. */
+  weights: () => Promise<ScoreWeights>;
   now?: () => Date;
+}
+
+/** Behavioural data (the driver score and its ranking) is for the roles that may follow vehicles (FMS-146). */
+export const SCORE_PERMISSION = 'tracking:read';
+const seesScores = (user: RequestUser | undefined) => user?.permissions.includes(SCORE_PERMISSION) ?? false;
+
+/** Why a driver has no score, as a report cell. */
+const NO_SCORE_WORDS: Record<ScoreReason, string> = { not_enough_trips: 'Not enough trips', nothing_to_judge: 'Nothing to judge' };
+
+/** A driver in the ranking (GET /analytics/driver-ranking). */
+export interface RankedDriver {
+  driver_id: string;
+  name: string;
+  depot: string;
+  rank: number;
+  score: number;
+  /** Each component, 0 to 100; null when it could not be judged. */
+  components: Record<ScoreComponent, number | null>;
+  trips_completed: number;
+}
+
+/** GET /analytics/driver-ranking (FMS-146): the month's scored drivers in rank order, and how many had no score. */
+export interface DriverRanking {
+  month: string;
+  period: { from: string; to: string };
+  depot: ReportData['depot'];
+  weights: ScoreWeights;
+  drivers: RankedDriver[];
+  /** Drivers active in the month with no score: fewer than MIN_SCORED_TRIPS trips, or nothing to judge. */
+  unscored: number;
+  min_trips: number;
+  generated_at: string;
+}
+
+/** GET /analytics/my-performance (FMS-146): a driver's own score, its components and what they were worked out from. */
+export interface OwnPerformance {
+  month: string;
+  period: { from: string; to: string };
+  score: number | null;
+  reason: ScoreReason | null;
+  min_trips: number;
+  trips_completed: number;
+  distance_m: number;
+  components: {
+    punctuality: { score: number | null; weight: number; trips_timed: number; trips_on_time: number };
+    safety: { score: number | null; weight: number; speeding: number; idling: number };
+    incidents: { score: number | null; weight: number; accidents: number };
+    dvir: { score: number | null; weight: number; trips_inspected: number };
+  };
+  generated_at: string;
 }
 
 const FILE_NAMES: Record<ReportKind, string> = {
@@ -81,22 +143,28 @@ export class ReportService {
     this.now = deps.now ?? (() => new Date());
   }
 
-  async report(kind: ReportKind, user: RequestUser | undefined, query: ReportQuery): Promise<{ data: ReportData; meta: { data_freshness: DataFreshness } }> {
+  /** The month, the read session, and the caller's audience narrowed to the depot chosen. */
+  private async scoped(user: RequestUser | undefined, query: ReportQuery) {
     const w = monthWindow(query.month, this.now());
     const db = await this.deps.reads.session();
-    const { repo } = this.deps;
     const a: Audience = { scope: staffScope(user) };
     let depot: ReportData['depot'] = null;
     if (query.depot_id) {
-      const found = await repo.depot(db, query.depot_id, a);
+      const found = await this.deps.repo.depot(db, query.depot_id, a);
       // A depot that is unknown, or not one of the caller's, matches nothing: an empty report, as a filter does elsewhere.
       if (found) {
         a.depotId = found.id;
         depot = { id: query.depot_id, name: found.name, code: found.code };
       } else a.scope = { kind: 'none' };
     }
+    return { w, db, a, depot };
+  }
 
-    const { rows, totals } = await this.build(kind, db, a, w.start, w.end);
+  async report(kind: ReportKind, user: RequestUser | undefined, query: ReportQuery): Promise<{ data: ReportData; meta: { data_freshness: DataFreshness } }> {
+    const { w, db, a, depot } = await this.scoped(user, query);
+    const { rows, totals } = await this.build(kind, db, a, w.start, w.end, seesScores(user));
+    // The driver score and rank only for the roles allowed behavioural data (FMS-146).
+    const columns = kind === 'drivers' && !seesScores(user) ? REPORTS[kind].columns.filter((c) => c.key !== 'rank' && c.key !== 'score') : REPORTS[kind].columns;
     return {
       data: {
         report: kind,
@@ -104,7 +172,7 @@ export class ReportService {
         month: w.month,
         period: { from: w.start.toISOString(), to: w.end.toISOString() },
         depot,
-        columns: REPORTS[kind].columns,
+        columns,
         rows,
         totals: rows.length > 0 ? totals : null,
         generated_at: this.now().toISOString(),
@@ -133,7 +201,71 @@ export class ReportService {
     };
   }
 
-  private async build(kind: ReportKind, db: ReadSession, a: Audience, start: Date, end: Date): Promise<{ rows: ReportRow[]; totals: ReportRow }> {
+  /**
+   * GET /analytics/driver-ranking (FMS-146): every driver of the caller's depots (or the one chosen) scored for the
+   * month, in rank order, and how many were active with no score. analytics:read and tracking:read.
+   */
+  async driverRanking(user: RequestUser | undefined, query: ReportQuery): Promise<{ data: DriverRanking; meta: { data_freshness: DataFreshness } }> {
+    const { w, db, a, depot } = await this.scoped(user, query);
+    const weights = await this.deps.weights();
+    const found = await this.deps.repo.drivers(db, a, w.start, w.end);
+    const ranked = rankDrivers(found.map((r) => ({ r, ...flatScore(scoreDriver(r, weights)), name: r.driver })));
+    const drivers = ranked.flatMap(({ row, rank }) =>
+      rank === null
+        ? []
+        : [{ driver_id: row.r.driverId, name: row.name, depot: row.r.depot, rank, score: row.score!, components: row.components, trips_completed: row.r.tripsCompleted }],
+    );
+    return {
+      data: {
+        month: w.month,
+        period: { from: w.start.toISOString(), to: w.end.toISOString() },
+        depot,
+        weights,
+        drivers,
+        unscored: found.length - drivers.length,
+        min_trips: MIN_SCORED_TRIPS,
+        generated_at: this.now().toISOString(),
+      },
+      meta: { data_freshness: db.freshness() },
+    };
+  }
+
+  /**
+   * GET /analytics/my-performance (FMS-146): the signed-in driver's own score for the month and its components, never
+   * anyone else's and never a rank. Null when the caller is not a driver.
+   */
+  async ownPerformance(user: RequestUser | undefined, query: { month?: string }): Promise<{ data: OwnPerformance; meta: { data_freshness: DataFreshness } } | null> {
+    if (!user || user.id === null || !user.roles.includes('driver')) return null;
+    const w = monthWindow(query.month, this.now());
+    const db = await this.deps.reads.session();
+    const weights = await this.deps.weights();
+    const [row] = await this.deps.repo.drivers(db, { scope: { kind: 'all' } }, w.start, w.end, user.id);
+    // A month with nothing done: no row, and no score.
+    const m = row ?? { tripsCompleted: 0, distanceM: 0, tripsTimed: 0, tripsOnTime: 0, speeding: 0, idling: 0, accidents: 0, tripsInspected: 0 };
+    const s = scoreDriver(m, weights);
+    const c = s.components;
+    return {
+      data: {
+        month: w.month,
+        period: { from: w.start.toISOString(), to: w.end.toISOString() },
+        score: s.score,
+        reason: s.reason,
+        min_trips: MIN_SCORED_TRIPS,
+        trips_completed: m.tripsCompleted,
+        distance_m: m.distanceM,
+        components: {
+          punctuality: { ...c.punctuality, trips_timed: m.tripsTimed, trips_on_time: m.tripsOnTime },
+          safety: { ...c.safety, speeding: m.speeding, idling: m.idling },
+          incidents: { ...c.incidents, accidents: m.accidents },
+          dvir: { ...c.dvir, trips_inspected: m.tripsInspected },
+        },
+        generated_at: this.now().toISOString(),
+      },
+      meta: { data_freshness: db.freshness() },
+    };
+  }
+
+  private async build(kind: ReportKind, db: ReadSession, a: Audience, start: Date, end: Date, scores = false): Promise<{ rows: ReportRow[]; totals: ReportRow }> {
     const { repo } = this.deps;
     switch (kind) {
       case 'fuel': {
@@ -261,8 +393,14 @@ export class ReportService {
       }
       case 'drivers': {
         const found = await repo.drivers(db, a, start, end);
+        // With the score (FMS-146), drivers in rank order, those with no score after them; without it, most trips first.
+        const weights = scores ? await this.deps.weights() : null;
+        const ranked: { row: { r: DriverRow; score: number | null; reason: ScoreReason | null }; rank: number | null }[] = weights
+          ? rankDrivers(found.map((r) => ({ r, ...flatScore(scoreDriver(r, weights)), name: r.driver })))
+          : found.map((r) => ({ row: { r, score: null, reason: null }, rank: null }));
         return {
-          rows: found.map((r) => ({
+          rows: ranked.map(({ row: { r, score, reason }, rank }) => ({
+            ...(weights ? { rank, score: score ?? (reason ? NO_SCORE_WORDS[reason] : null) } : {}),
             driver: r.driver,
             depot: r.depot,
             trips_completed: r.tripsCompleted,
@@ -274,6 +412,7 @@ export class ReportService {
             incidents: r.incidents,
           })),
           totals: {
+            ...(weights ? { rank: null, score: null } : {}),
             driver: 'Total',
             depot: plural(found.length, kind),
             trips_completed: sum(found, (r) => r.tripsCompleted),
@@ -303,6 +442,12 @@ function subtitle(data: ReportData, freshness: DataFreshness, now: Date): string
     `Generated ${formatAddisDateTime(now)} (Addis Ababa)`,
     `Data as of ${formatAddisDateTime(freshness.as_of)}${freshness.source === 'replica' ? ', reporting copy' : ''}`,
   ].join(' · ');
+}
+
+/** A score as the ranking reads it: the score, why there is none, and each component's value (punctuality for ties). */
+function flatScore(s: DriverScore): { score: number | null; reason: ScoreReason | null; punctuality: number | null; components: Record<ScoreComponent, number | null> } {
+  const components = Object.fromEntries(SCORE_COMPONENTS.map((c) => [c, s.components[c].score])) as Record<ScoreComponent, number | null>;
+  return { score: s.score, reason: s.reason, punctuality: components.punctuality, components };
 }
 
 /** Staff see their depots (FMS-94's audience); a driver, whose own scope is narrower, sees nothing. */

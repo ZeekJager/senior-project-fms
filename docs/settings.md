@@ -49,6 +49,21 @@ The speeding and idling thresholds ([telemetry-rules.md](telemetry-rules.md)) an
 - `PATCH /settings`: `{ "<key>": <whole number> | null }`, one or more. `null`, or the default itself, goes back to the default, stored as `NULL` so it follows the code if the default changes. All values are checked before any is written (`400`, `reason: out_of_range` per field), and all are written in one transaction.
 - The fuel default is the `FUEL_VARIANCE_THRESHOLD_PCT` environment variable's, so a deployment that set it keeps it until an administrator changes it here.
 - The health line's range ends at 84 because *healthy* starts at 85, which stays fixed. Above 75 the ML service still calls the score `low` risk, so the alert for such a vehicle has low severity.
+### Driver score: `settings.settings`
+
+How much each part counts in the driver performance score (FMS-146, [analytics.md](analytics.md#the-driver-performance-score)).
+The score divides by their sum, so they need not add up to 100, and 0 leaves a part out. They cannot all be 0
+(`400`, `reason: all_zero` on each sent). The screen has them in a card of their own, *Driver score*.
+
+| Key | Default | Range | The part |
+|---|---|---|---|
+| `driver_score_weight_punctuality` | 35 | 0-100 | Trips ended on time |
+| `driver_score_weight_safety` | 35 | 0-100 | Speeding and idling per 100 km |
+| `driver_score_weight_incidents` | 20 | 0-100 | Accidents per 100 km |
+| `driver_score_weight_dvir` | 10 | 0-100 | Trips with the driver's pre-trip inspection |
+
+The defaults are the card's and still need the advisor's agreement.
+
 - The expiry setting moves the warnings only. The lists' *expiring soon* marks (licence status, the vehicle list's document filter, the documents panel) stay at 30 days.
 
 ## Taking effect within a minute

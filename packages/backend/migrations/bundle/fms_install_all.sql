@@ -3649,3 +3649,18 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS idx_trip_trips_unmeasured
     ON trip.trips (actual_end)
     WHERE status = 'completed' AND actual_distance_km IS NULL AND actual_distance_measured_at IS NULL;
+
+-- ===== 067_driver_score_views.sql =====
+CREATE OR REPLACE VIEW analytics.dvir_facts AS
+SELECT
+    r.driver_id,
+    r.trip_id,
+    r.inspection_type,
+    r.submitted_at
+FROM fleet.dvir_reports r;
+
+CREATE OR REPLACE VIEW analytics.driver_users AS
+SELECT
+    d.id AS driver_id,
+    d.user_id
+FROM fleet.drivers d;

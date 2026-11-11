@@ -4,7 +4,8 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { currentUser, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
-import { rangeDays, type FleetSummary, type MaintenanceRisk, type VehicleUtilisation } from './api'
+import { currentMonth, monthLabel, shiftMonth } from '@/lib/month'
+import { rangeDays, type FleetSummary, type MaintenanceRisk, type RankedDriver, type VehicleUtilisation } from './api'
 import { ago, birr, birrPerKm, litres } from './describe'
 
 // jsdom has no canvas: the charts stand in as lists of what they were given.
@@ -12,9 +13,38 @@ vi.mock('@/pages/Analytics/charts', () => ({
   UtilisationByDayChart: ({ daily }: { daily: FleetSummary['daily'] }) => <p>Utilisation chart: {daily.length} days</p>,
   CostByDayChart: ({ daily }: { daily: FleetSummary['daily'] }) => <p>Cost chart: {daily.length} days</p>,
   UtilisationByVehicleChart: ({ vehicles }: { vehicles: VehicleUtilisation[] }) => <p>Vehicle chart: {vehicles.length} bars</p>,
+  DriverRankingChart: ({ drivers, label }: { drivers: RankedDriver[]; label: string }) => (
+    <p>
+      {label}: {drivers.map((d) => `${d.rank}. ${d.name} ${d.score}`).join(', ')}
+    </p>
+  ),
 }))
 
 const manager = currentUser(['fleet_manager'], ['analytics:read', 'vehicle:read', 'depot:read'])
+const trackingManager = currentUser(['fleet_manager'], ['analytics:read', 'vehicle:read', 'depot:read', 'tracking:read'])
+
+const ranked = (n: number): RankedDriver[] =>
+  Array.from({ length: n }, (_, i) => ({
+    driver_id: `d-${i}`,
+    name: `Driver ${i + 1}`,
+    depot: 'Bole',
+    rank: i + 1,
+    score: 100 - i,
+    components: { punctuality: 90, safety: 80, incidents: 100, dvir: 50 },
+    trips_completed: 12,
+  }))
+
+/** GET /analytics/driver-ranking, with the months asked for. */
+function serveRanking(drivers: RankedDriver[], unscored = 0) {
+  const months: string[] = []
+  server.use(
+    http.get('/api/v1/analytics/driver-ranking', ({ request }) => {
+      months.push(new URL(request.url).searchParams.get('month') ?? '')
+      return HttpResponse.json({ data: { month: '2026-10', weights: { punctuality: 35, safety: 35, incidents: 20, dvir: 10 }, drivers, unscored, min_trips: 3 }, meta: meta() })
+    }),
+  )
+  return months
+}
 const dispatcherNoAnalytics = currentUser(['technician'], ['maintenance:read'])
 
 const day = (date: string) => ({
@@ -132,6 +162,52 @@ describe('Analytics dashboard (S-18, FMS-51)', () => {
 
     expect(await screen.findByText('Vehicle chart: 200 bars')).toBeInTheDocument()
     expect(screen.getByText('Days on the road, 200 vehicles, highest first')).toBeInTheDocument()
+  })
+
+  it('ranks the drivers by their score for the last whole month, with the way to the full list (FMS-146)', async () => {
+    serve()
+    const months = serveRanking(ranked(3), 2)
+    signedInAs(trackingManager)
+    renderApp('/dashboard')
+    const last = shiftMonth(currentMonth(), -1)
+
+    expect(await screen.findByText(`Driver ranking, ${monthLabel(last)}: 1. Driver 1 100, 2. Driver 2 99, 3. Driver 3 98`)).toBeInTheDocument()
+    expect(months).toEqual([last])
+    expect(screen.getByRole('link', { name: 'Full list' })).toHaveAttribute('href', `/reports?report=drivers&month=${last}`)
+    expect(screen.getByText(/3 drivers scored · 2 with fewer than 3 trips not scored/)).toBeInTheDocument()
+  })
+
+  it('past 20 drivers, shows the top 10 and the bottom 10', async () => {
+    serve()
+    serveRanking(ranked(25))
+    signedInAs(trackingManager)
+    renderApp('/dashboard')
+
+    const top = await screen.findByText(/^Top 10 drivers/)
+    expect(top.textContent).toMatch(/1\. Driver 1 100.*10\. Driver 10 91$/)
+    expect(screen.getByText(/^Bottom 10 drivers/).textContent).toMatch(/16\. Driver 16 85.*25\. Driver 25 76$/)
+    expect(screen.getByText(/25 drivers scored, 5 between them in the full list/)).toBeInTheDocument()
+  })
+
+  it('says when no driver was scored', async () => {
+    serve()
+    serveRanking([], 4)
+    signedInAs(trackingManager)
+    renderApp('/dashboard')
+
+    expect(await screen.findByText(`No driver scored in ${monthLabel(shiftMonth(currentMonth(), -1))}`)).toBeInTheDocument()
+    expect(screen.getByText('A driver is scored with at least 3 completed trips in the month.')).toBeInTheDocument()
+  })
+
+  it('shows no ranking, and asks for none, without tracking:read: it is behavioural data', async () => {
+    serve()
+    const months = serveRanking(ranked(3))
+    signedInAs(manager)
+    renderApp('/dashboard')
+
+    await screen.findByText('Vehicle chart: 7 bars')
+    expect(screen.queryByRole('heading', { name: 'Driver ranking' })).not.toBeInTheDocument()
+    expect(months).toEqual([])
   })
 
   it('keeps the menu home for a user without analytics:read, and asks for nothing', async () => {

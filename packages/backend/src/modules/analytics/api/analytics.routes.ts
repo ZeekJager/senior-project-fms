@@ -5,7 +5,7 @@ import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { AnalyticsService, Report } from '../application/analytics.service';
-import type { ReportService } from '../application/report.service';
+import { SCORE_PERMISSION, type ReportService } from '../application/report.service';
 import { REPORT_FORMATS, REPORT_KINDS, type ReportKind } from '../domain/reports';
 
 /** Addis Ababa days, both included; a depot by public id. */
@@ -28,6 +28,15 @@ const reportQuery = z.object({
   depot_id: z.uuid().optional(),
   format: z.enum(REPORT_FORMATS).default('json'),
 });
+
+/** The driver ranking (FMS-146): a month in Addis Ababa and a depot by public id. */
+const rankingQuery = z.object({
+  month: z.string().optional(),
+  depot_id: z.uuid().optional(),
+});
+
+/** A driver's own score (FMS-146): a month in Addis Ababa. */
+const ownQuery = z.object({ month: z.string().optional() });
 
 /** A download, as an attachment. Report file names are built of a-z, 0-9, dots and dashes only (ReportService.file). */
 const attachment = (filename: string) => `attachment; filename="${filename}"`;
@@ -58,6 +67,29 @@ export function analyticsRouter(service: AnalyticsService, reports: ReportServic
     asyncHandler(async (req, res) => {
       const { data, meta } = await service.downtime(req.user, parseInput(downtimeQuery, req.query));
       res.json({ data, meta: { ...meta, request_id: req.correlationId } });
+    }),
+  );
+
+  // The driver ranking (FMS-146, docs/analytics.md): behavioural data, so tracking:read as well as analytics:read.
+  router.get(
+    '/analytics/driver-ranking',
+    authorize('analytics:read'),
+    authorize(SCORE_PERMISSION),
+    asyncHandler(async (req, res) => {
+      const { data, meta } = await reports.driverRanking(req.user, parseInput(rankingQuery, req.query));
+      res.json({ data, meta: { ...meta, request_id: req.correlationId } });
+    }),
+  );
+
+  // A driver's own score (FMS-146): trip:execute, as a driver's own screens; signed in as a driver (404 for staff), never
+  // anyone else's, never a rank.
+  router.get(
+    '/analytics/my-performance',
+    authorize('trip:execute'),
+    asyncHandler(async (req, res) => {
+      const found = await reports.ownPerformance(req.user, parseInput(ownQuery, req.query));
+      if (!found) throw notFound('Only a driver has a performance record.');
+      res.json({ data: found.data, meta: { ...found.meta, request_id: req.correlationId } });
     }),
   );
 

@@ -225,3 +225,29 @@ export interface CheckInResult {
   action: 'checked_in' | 'checked_out'
   attendance: AttendanceRecord
 }
+
+/** GET /analytics/my-performance (FMS-146): the driver's own score for a month, and what it was worked out from. */
+export interface MyPerformance {
+  month: string
+  /** 0 to 100; null with a reason. */
+  score: number | null
+  reason: 'not_enough_trips' | 'nothing_to_judge' | null
+  min_trips: number
+  trips_completed: number
+  distance_m: number
+  components: {
+    punctuality: { score: number | null; weight: number; trips_timed: number; trips_on_time: number }
+    safety: { score: number | null; weight: number; speeding: number; idling: number }
+    incidents: { score: number | null; weight: number; accidents: number }
+    dvir: { score: number | null; weight: number; trips_inspected: number }
+  }
+}
+
+/** The driver's own score for a month (YYYY-MM). Never another driver's, never a rank. */
+export function useMyPerformance(month: string) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['analytics', 'my-performance', month],
+    queryFn: () => api.request<MyPerformance>(`/analytics/my-performance?month=${month}`),
+  })
+}

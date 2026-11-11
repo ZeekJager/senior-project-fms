@@ -1,8 +1,24 @@
 import { http, HttpResponse, type RequestHandler } from 'msw'
 import { SETTING_DEFAULTS, type Setting } from '@/features/settings'
 
-const UNITS = { fuel_variance_threshold_pct: 'percent', health_alert_below: 'score', expiry_warning_days: 'days' } as const
-const RANGES = { fuel_variance_threshold_pct: [1, 100], health_alert_below: [50, 84], expiry_warning_days: [8, 180] } as const
+const UNITS = {
+  fuel_variance_threshold_pct: 'percent',
+  health_alert_below: 'score',
+  expiry_warning_days: 'days',
+  driver_score_weight_punctuality: 'weight',
+  driver_score_weight_safety: 'weight',
+  driver_score_weight_incidents: 'weight',
+  driver_score_weight_dvir: 'weight',
+} as const
+const RANGES = {
+  fuel_variance_threshold_pct: [1, 100],
+  health_alert_below: [50, 84],
+  expiry_warning_days: [8, 180],
+  driver_score_weight_punctuality: [0, 100],
+  driver_score_weight_safety: [0, 100],
+  driver_score_weight_incidents: [0, 100],
+  driver_score_weight_dvir: [0, 100],
+} as const
 
 /** GET /settings with every setting at its default. */
 export const DEFAULT_SETTINGS: Setting[] = (Object.keys(SETTING_DEFAULTS) as (keyof typeof SETTING_DEFAULTS)[]).map((key) => ({

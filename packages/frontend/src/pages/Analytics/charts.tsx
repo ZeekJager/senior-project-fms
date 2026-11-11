@@ -8,13 +8,14 @@ import {
   PointElement,
   Tooltip,
   type ChartOptions,
+  type Plugin,
   type TooltipItem,
 } from 'chart.js'
 import { useMemo } from 'react'
 import { Bar, Line } from 'react-chartjs-2'
 import { formatMinor } from '@/components/shared'
 import { baseChartOptions as base, useChartTheme as useTheme } from '@/lib/chartTheme'
-import type { FleetSummary, VehicleUtilisation } from './api'
+import type { FleetSummary, RankedDriver, ScoreComponent, VehicleUtilisation } from './api'
 import { birr, longDay, shortDay } from './describe'
 
 // The S-18 charts (FMS-51), in Chart.js. One axis per chart; series colours are
@@ -38,8 +39,8 @@ function DataTable({ caption, head, rows }: { caption: string; head: string[]; r
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
-          <tr key={String(r[0])}>
+        {rows.map((r, i) => (
+          <tr key={`${i}:${String(r[0])}`}>
             {r.map((c, i) => (
               <td key={i}>{c}</td>
             ))}
@@ -198,6 +199,101 @@ export function UtilisationByVehicleChart({ vehicles }: { vehicles: VehicleUtili
         caption="Utilisation by vehicle"
         head={['Vehicle', 'Depot', 'Utilisation', 'Days on the road', 'Distance (km)']}
         rows={vehicles.map((v) => [v.registration_number, v.depot_name, pctText(v.utilisation_pct), `${v.days_used} of ${v.days}`, v.distance_km])}
+      />
+    </div>
+  )
+}
+
+export const COMPONENT_WORDS: Record<ScoreComponent, string> = { punctuality: 'Punctuality', safety: 'Safety', incidents: 'Incidents', dvir: 'Inspections' }
+
+/** Each part of a driver's score, for a tooltip or a table: "Punctuality 50 · Safety 80 · …", "—" for one not judged. */
+export const componentsText = (c: RankedDriver['components']) =>
+  (Object.keys(COMPONENT_WORDS) as ScoreComponent[]).map((k) => `${COMPONENT_WORDS[k]} ${c[k] ?? '—'}`).join(' · ')
+
+/** The score at the end of each bar, in ink: the value is read without hovering. */
+const scoreLabels = (ink: string): Plugin<'bar'> => ({
+  id: 'scoreLabels',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart
+    const meta = chart.getDatasetMeta(0)
+    ctx.save()
+    ctx.fillStyle = ink
+    ctx.font = '600 11px Inter, system-ui, sans-serif'
+    ctx.textBaseline = 'middle'
+    meta.data.forEach((bar, i) => {
+      const value = chart.data.datasets[0].data[i]
+      ctx.fillText(String(value), bar.x + 6, bar.y)
+    })
+    ctx.restore()
+  },
+})
+
+/**
+ * Drivers ranked by their monthly score (FMS-146), a horizontal bar each on a 0 to 100 axis, highest at the top, with the
+ * score at the end of the bar and its parts in the tooltip. One series, so the panel's heading names it. `nameLength`
+ * cuts a long name: Chart.js gives the names at most a third of the chart, and a half-width chart has less room.
+ */
+export function DriverRankingChart({ drivers, label, nameLength = 24 }: { drivers: RankedDriver[]; label: string; nameLength?: number }) {
+  const t = useTheme()
+  const data = useMemo(
+    () => ({
+      labels: drivers.map((d) => `${d.rank}. ${d.name}`),
+      datasets: [
+        {
+          label: 'Score',
+          data: drivers.map((d) => d.score),
+          backgroundColor: t.series1,
+          borderRadius: 4,
+          borderSkipped: 'start' as const,
+          categoryPercentage: 0.8,
+          barPercentage: 0.9,
+          maxBarThickness: 18,
+        },
+      ],
+    }),
+    [drivers, t],
+  )
+  const options = useMemo(() => {
+    const o = base(t) as ChartOptions<'bar'>
+    o.indexAxis = 'y'
+    o.interaction = { mode: 'nearest', axis: 'y', intersect: false }
+    // Room after the longest bar for its score.
+    o.layout = { padding: { right: 28 } }
+    o.scales = {
+      x: { min: 0, max: 100, grid: { color: t.line }, border: { display: false }, ticks: { color: t.inkMuted, font: { size: 11 }, stepSize: 25 } },
+      y: {
+        grid: { display: false },
+        border: { color: t.line },
+        ticks: {
+          color: t.ink,
+          font: { size: 12 },
+          autoSkip: false,
+          // A long name is cut: the tooltip and the table behind the chart give it whole.
+          callback(value) {
+            const text = String(this.getLabelForValue(Number(value)))
+            return text.length > nameLength ? `${text.slice(0, nameLength - 1)}…` : text
+          },
+        },
+      },
+    }
+    o.plugins!.tooltip!.callbacks = {
+      title: (items) => {
+        const d = drivers[items[0].dataIndex]
+        return d ? `${d.rank}. ${d.name}` : ''
+      },
+      label: (item: TooltipItem<'bar'>) => ` Score ${drivers[item.dataIndex].score} · ${drivers[item.dataIndex].trips_completed} trips · ${drivers[item.dataIndex].depot}`,
+      afterLabel: (item: TooltipItem<'bar'>) => ` ${componentsText(drivers[item.dataIndex].components)}`,
+    }
+    return o
+  }, [drivers, t, nameLength])
+  const plugins = useMemo(() => [scoreLabels(t.ink)], [t.ink])
+  return (
+    <div className="relative" style={{ height: Math.max(96, drivers.length * 26 + 32) }}>
+      <Bar data={data} options={options} plugins={plugins} role="img" aria-label={`${label}, ${drivers.length} drivers, bar chart`} />
+      <DataTable
+        caption={label}
+        head={['Rank', 'Driver', 'Depot', 'Score', 'Parts', 'Trips']}
+        rows={drivers.map((d) => [d.rank, d.name, d.depot, d.score, componentsText(d.components), d.trips_completed])}
       />
     </div>
   )

@@ -2,13 +2,21 @@
 // number with a default in code and a range; settings.settings holds only the ones changed (NULL: the default
 // again). The telemetry rules' thresholds are not here: they have a row per depot in tracking.rule_thresholds.
 
-export const SETTING_KEYS = ['fuel_variance_threshold_pct', 'health_alert_below', 'expiry_warning_days'] as const;
+export const SETTING_KEYS = [
+  'fuel_variance_threshold_pct',
+  'health_alert_below',
+  'expiry_warning_days',
+  'driver_score_weight_punctuality',
+  'driver_score_weight_safety',
+  'driver_score_weight_incidents',
+  'driver_score_weight_dvir',
+] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 export interface SettingDefinition {
   key: SettingKey;
-  /** What the number counts, for the screen: `percent`, `score`, `days`. */
-  unit: 'percent' | 'score' | 'days';
+  /** What the number counts, for the screen: `percent`, `score`, `days`, `weight` (a share of the driver score). */
+  unit: 'percent' | 'score' | 'days' | 'weight';
   min: number;
   max: number;
   default: number;
@@ -28,8 +36,22 @@ export function settingDefinitions(defaults: { fuelVarianceThresholdPct: number 
     // The first expiry warning for a document or driving licence, this many days ahead (FMS-26). Above the
     // 7-day red warning, which stays.
     expiry_warning_days: { key: 'expiry_warning_days', unit: 'days', min: 8, max: 180, default: 30 },
+    // How much each component counts in the driver performance score (FMS-146, docs/analytics.md): the score divides
+    // by their sum, so they need not add up to 100; 0 leaves a component out. They cannot all be 0.
+    driver_score_weight_punctuality: { key: 'driver_score_weight_punctuality', unit: 'weight', min: 0, max: 100, default: 35 },
+    driver_score_weight_safety: { key: 'driver_score_weight_safety', unit: 'weight', min: 0, max: 100, default: 35 },
+    driver_score_weight_incidents: { key: 'driver_score_weight_incidents', unit: 'weight', min: 0, max: 100, default: 20 },
+    driver_score_weight_dvir: { key: 'driver_score_weight_dvir', unit: 'weight', min: 0, max: 100, default: 10 },
   };
 }
+
+/** The driver score's weights: at least one must be above 0, or no driver could be scored. */
+export const DRIVER_SCORE_WEIGHT_KEYS: readonly SettingKey[] = [
+  'driver_score_weight_punctuality',
+  'driver_score_weight_safety',
+  'driver_score_weight_incidents',
+  'driver_score_weight_dvir',
+];
 
 /** Every setting's value: the stored one, else the default. */
 export type SettingValues = Record<SettingKey, number>;

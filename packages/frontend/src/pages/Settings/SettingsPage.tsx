@@ -1,4 +1,4 @@
-import { AlertCircle, Gauge, Pencil, Plus, Siren } from 'lucide-react'
+import { AlertCircle, Gauge, Pencil, Plus, Siren, Trophy } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { ErrorState } from '@/components/shared'
 import { Button, Card, Skeleton, TextField, useToast } from '@/components/ui'
@@ -26,7 +26,31 @@ const SETTING_COPY: Record<SettingKey, { label: string; unit: string; hint: (s: 
     unit: 'days ahead',
     hint: (s) => `The first warning for a document or driving licence; the red one stays at 7 days. ${s.min} to ${s.max}; default ${s.default_value}.`,
   },
+  driver_score_weight_punctuality: {
+    label: 'Punctuality',
+    unit: 'weight',
+    hint: (s) => `Trips ended within 15 minutes of their scheduled end. ${s.min} to ${s.max}; default ${s.default_value}.`,
+  },
+  driver_score_weight_safety: {
+    label: 'Safety',
+    unit: 'weight',
+    hint: (s) => `Speeding and idling per 100 km: 100 with none, 0 at 5 per 100 km. ${s.min} to ${s.max}; default ${s.default_value}.`,
+  },
+  driver_score_weight_incidents: {
+    label: 'Incidents',
+    unit: 'weight',
+    hint: (s) => `Accidents per 100 km: 100 with none, 0 at one every 200 km. ${s.min} to ${s.max}; default ${s.default_value}.`,
+  },
+  driver_score_weight_dvir: {
+    label: 'Inspections',
+    unit: 'weight',
+    hint: (s) => `Completed trips with the driver's pre-trip inspection. ${s.min} to ${s.max}; default ${s.default_value}.`,
+  },
 }
+
+/** The settings each card edits. */
+const ALERT_KEYS: readonly SettingKey[] = ['fuel_variance_threshold_pct', 'health_alert_below', 'expiry_warning_days']
+const SCORE_KEYS: readonly SettingKey[] = ['driver_score_weight_punctuality', 'driver_score_weight_safety', 'driver_score_weight_incidents', 'driver_score_weight_dvir']
 
 /** "Changed by Abebe Kebede, 2 Oct 2026, 09:40", or that it is the default. */
 function changedLine(row: { updated_by_name: string | null; updated_at: string | null } | undefined, fallback: string): string {
@@ -46,7 +70,23 @@ export function SettingsPage() {
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">The thresholds the rules apply. A change takes effect within a minute, and the audit log records who made it.</p>
       </header>
       <DrivingRules />
-      <AlertSettings />
+      <SettingGroup
+        id="alert-settings"
+        icon={<Siren />}
+        title="Alerts and anomalies"
+        description="When fuel, vehicle health and expiring papers raise an alert."
+        formLabel="Alert settings"
+        keys={ALERT_KEYS}
+      />
+      <SettingGroup
+        id="driver-score-settings"
+        icon={<Trophy />}
+        title="Driver score"
+        description="How much each part counts in a driver's monthly score, 0 to 100. The score divides by their sum, so they need not add up to 100; 0 leaves a part out."
+        formLabel="Driver score weights"
+        keys={SCORE_KEYS}
+        check={(next) => (SCORE_KEYS.every((k) => next[k] === 0) ? 'At least one weight must be above 0, or no driver could be scored.' : null)}
+      />
     </div>
   )
 }
@@ -210,8 +250,27 @@ function DepotRow({ name, row, onEdit }: { name: string; row: ThresholdsRow; onE
   )
 }
 
-/** Fuel variance, the health score's alert line and the expiry warning (GET and PATCH /settings). */
-function AlertSettings() {
+/**
+ * A card of settings (GET and PATCH /settings): the alert lines (fuel variance, the health score's alert line, the
+ * expiry warning), or the driver score's weights (FMS-146). `check` refuses a combination before it is sent.
+ */
+function SettingGroup({
+  id,
+  icon,
+  title,
+  description,
+  formLabel,
+  keys,
+  check,
+}: {
+  id: string
+  icon: ReactNode
+  title: string
+  description: string
+  formLabel: string
+  keys: readonly SettingKey[]
+  check?: (next: Record<SettingKey, number>) => string | null
+}) {
   const settings = useSettings()
   const save = useSaveSettings()
   const { toast } = useToast()
@@ -223,7 +282,7 @@ function AlertSettings() {
     if (settings.data) setValues(Object.fromEntries(settings.data.map((s) => [s.key, String(s.value)])))
   }, [settings.data])
 
-  const list = settings.data ?? []
+  const list = (settings.data ?? []).filter((s) => keys.includes(s.key))
   const changed = list.filter((s) => values[s.key] !== undefined && values[s.key]!.trim() !== String(s.value))
 
   async function onSubmit(event: FormEvent) {
@@ -239,6 +298,11 @@ function AlertSettings() {
     }
     setErrors(found)
     if (Object.keys(found).length || !Object.keys(patch).length) return
+    const refused = check?.({ ...(Object.fromEntries(list.map((s) => [s.key, s.value])) as Record<SettingKey, number>), ...patch })
+    if (refused) {
+      setFormError(refused)
+      return
+    }
     try {
       await save.mutateAsync(patch)
       toast({ title: 'Settings saved', description: 'The rules use them within a minute.' })
@@ -248,17 +312,17 @@ function AlertSettings() {
   }
 
   return (
-    <SettingsCard id="alert-settings" icon={<Siren />} title="Alerts and anomalies" description="When fuel, vehicle health and expiring papers raise an alert.">
+    <SettingsCard id={id} icon={icon} title={title} description={description}>
       {settings.isError ? (
         <ErrorState error={settings.error} onRetry={() => void settings.refetch()} />
       ) : settings.isPending ? (
         <div className="space-y-4" aria-busy="true">
-          {[0, 1, 2].map((i) => (
+          {keys.map((i) => (
             <Skeleton key={i} className="h-12" />
           ))}
         </div>
       ) : (
-        <form onSubmit={onSubmit} noValidate className="space-y-4" aria-label="Alert settings">
+        <form onSubmit={onSubmit} noValidate className="space-y-4" aria-label={formLabel}>
           <FormError message={formError} />
           <div className="divide-y divide-line">
             {list.map((s) => {

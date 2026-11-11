@@ -1,12 +1,23 @@
-import { AlertTriangle, BarChart3, Building2, CalendarRange, CircleCheck } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, Building2, CalendarRange, CircleCheck, Trophy } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState } from '@/components/shared'
 import { Badge, Card, cn, FilterSelect, Skeleton } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
-import { RANGES, readState, useAnalytics, writeState, type DashboardState, type FleetSummary, type MaintenanceRisk, type UtilisationSummary } from './api'
-import { CostByDayChart, UtilisationByDayChart, UtilisationByVehicleChart } from './charts'
+import { currentMonth, monthLabel, shiftMonth } from '@/lib/month'
+import {
+  RANGES,
+  readState,
+  useAnalytics,
+  useDriverRanking,
+  writeState,
+  type DashboardState,
+  type FleetSummary,
+  type MaintenanceRisk,
+  type UtilisationSummary,
+} from './api'
+import { CostByDayChart, DriverRankingChart, UtilisationByDayChart, UtilisationByVehicleChart } from './charts'
 import { ago, birr, birrPerKm, clock, litres, percent } from './describe'
 
 /** Behind the primary by more than this, the note says so. */
@@ -118,6 +129,71 @@ function NeedsAttention({ s, risks, canOpenVehicle }: { s: FleetSummary | undefi
   )
 }
 
+/** Shown whole up to this many drivers; past it, the top and bottom 10. */
+const RANKING_SHOWN = 20
+const RANKING_ENDS = 10
+/** Names in a half-width chart are cut shorter: the whole name is in the tooltip and the table behind it. */
+const HALF_NAME_LENGTH = 17
+
+/**
+ * Drivers ranked by their score for the last whole month (FMS-146): every one up to 20, else the top and bottom 10,
+ * with the way to the full list (the driver performance report). Behavioural data: tracking:read.
+ */
+function DriverRanking({ depotId }: { depotId: string }) {
+  const month = shiftMonth(currentMonth(), -1)
+  const ranking = useDriverRanking(month, depotId)
+  const r = ranking.data
+  const drivers = r?.drivers ?? []
+  const split = drivers.length > RANKING_SHOWN
+  const full = `/reports?${new URLSearchParams({ report: 'drivers', month, ...(depotId ? { depot: depotId } : {}) })}`
+  return (
+    <Panel
+      title="Driver ranking"
+      description={`${monthLabel(month)}: punctuality, safety, incidents and inspections, scored 0 to 100`}
+      legend={
+        <Link to={full} className="focus-ring inline-flex items-center gap-1 rounded text-xs font-medium text-brand hover:underline">
+          Full list <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </Link>
+      }
+    >
+      {ranking.isError ? (
+        <ErrorState error={ranking.error} heading="The ranking could not load" onRetry={() => void ranking.refetch()} />
+      ) : !r ? (
+        chartFallback
+      ) : drivers.length === 0 ? (
+        <EmptyState
+          icon={<Trophy />}
+          heading={`No driver scored in ${monthLabel(month)}`}
+          description={`A driver is scored with at least ${r.min_trips} completed trips in the month.`}
+          headingLevel="h3"
+        />
+      ) : (
+        <div className="space-y-4">
+          {split ? (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <section aria-label="Top 10">
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-subtle">Top {RANKING_ENDS}</h3>
+                <DriverRankingChart drivers={drivers.slice(0, RANKING_ENDS)} label={`Top ${RANKING_ENDS} drivers, ${monthLabel(month)}`} nameLength={HALF_NAME_LENGTH} />
+              </section>
+              <section aria-label="Bottom 10">
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-subtle">Bottom {RANKING_ENDS}</h3>
+                <DriverRankingChart drivers={drivers.slice(-RANKING_ENDS)} label={`Bottom ${RANKING_ENDS} drivers, ${monthLabel(month)}`} nameLength={HALF_NAME_LENGTH} />
+              </section>
+            </div>
+          ) : (
+            <DriverRankingChart drivers={drivers} label={`Driver ranking, ${monthLabel(month)}`} />
+          )}
+          <p className="text-xs text-ink-subtle">
+            {drivers.length.toLocaleString()} {drivers.length === 1 ? 'driver' : 'drivers'} scored
+            {split && `, ${(drivers.length - 2 * RANKING_ENDS).toLocaleString()} between them in the full list`}
+            {r.unscored > 0 && ` · ${r.unscored.toLocaleString()} with fewer than ${r.min_trips} trips not scored`} · ties go to the more punctual
+          </p>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
 /**
  * S-18 Analytics dashboard (FMS-51): the fleet's KPIs over a range of days from the analytics API (FMS-50), with a
  * utilisation and a cost chart by day, utilisation by vehicle for the whole fleet, and what needs attention. The
@@ -130,6 +206,8 @@ export function AnalyticsDashboardPage() {
   const update = (patch: Partial<DashboardState>) => setParams(writeState({ ...state, ...patch }), { replace: true })
   const canPickDepot = hasPermission('depot:read')
   const canOpenVehicle = hasPermission({ all: ['vehicle:read', 'depot:read'] })
+  // The driver ranking is behavioural data (FMS-146): only for the roles that may follow vehicles.
+  const canSeeDrivers = hasPermission('tracking:read')
 
   const depots = useDepots()
   const summary = useAnalytics<FleetSummary>('fleet-summary', state)
@@ -217,6 +295,8 @@ export function AnalyticsDashboardPage() {
               {utilisation.data ? <UtilisationByVehicleChart vehicles={utilisation.data.data.vehicles} /> : chartFallback}
             </Panel>
           </div>
+
+          {canSeeDrivers && <DriverRanking depotId={state.depotId} />}
         </>
       )}
     </div>

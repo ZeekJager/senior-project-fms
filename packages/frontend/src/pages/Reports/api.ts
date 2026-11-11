@@ -68,7 +68,8 @@ export const REPORT_OPTIONS: readonly { value: ReportKind; label: string; descri
   {
     value: 'drivers',
     label: 'Driver performance',
-    description: 'Each driver’s completed trips, km and hours behind the wheel, punctuality, speeding and idling flags, and incidents.',
+    description:
+      'Each driver’s completed trips, km and hours behind the wheel, punctuality, speeding and idling flags, and incidents; with tracking access, their score from 0 to 100 and rank.',
     empty: 'No driver completed a trip, was flagged or had an incident',
   },
 ]

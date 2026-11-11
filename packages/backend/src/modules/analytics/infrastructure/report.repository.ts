@@ -57,6 +57,8 @@ export interface TripRow {
 }
 
 export interface DriverRow {
+  /** The driver's public id. */
+  driverId: string;
   driver: string;
   depot: string;
   tripsCompleted: number;
@@ -67,6 +69,10 @@ export interface DriverRow {
   speeding: number;
   idling: number;
   incidents: number;
+  /** Of the incidents, the accidents: those the driver performance score counts (FMS-146). */
+  accidents: number;
+  /** Completed trips that had their driver's pre-trip inspection (FMS-146). */
+  tripsInspected: number;
 }
 
 /** Completed trips by when they ended in the month: their km and driving time. */
@@ -214,18 +220,28 @@ export class ReportRepository {
 
   /**
    * Every driver who completed a trip, was flagged or had an incident in the month, most trips first: their trips'
-   * km, driving time and punctuality, the speeding and idling flags raised on their trips, and their incidents.
+   * km, driving time and punctuality, the speeding and idling flags raised on their trips, and their incidents; for the
+   * driver performance score (FMS-146), their accidents and the trips they inspected before setting off. `ownUserId`
+   * narrows it to one driver, by their sign-in.
    */
-  async drivers(db: Queryable, a: Audience, start: Date, end: Date): Promise<DriverRow[]> {
+  async drivers(db: Queryable, a: Audience, start: Date, end: Date, ownUserId?: string): Promise<DriverRow[]> {
     const w = audience(a, 'd.depot_id', 3);
+    const own =
+      ownUserId === undefined
+        ? { sql: 'TRUE', params: [] as string[] }
+        : { sql: `d.driver_id IN (SELECT driver_id FROM analytics.driver_users WHERE user_id = $${3 + w.params.length})`, params: [ownUserId] };
     const res = await db.query(
       `WITH done AS (
          SELECT driver_id, COUNT(*)::int AS trips,
                 SUM(ROUND(COALESCE(actual_distance_km, 0) * 1000))::bigint AS metres,
                 SUM(ROUND(EXTRACT(EPOCH FROM actual_end - actual_start) / 60))::bigint AS minutes,
                 COUNT(scheduled_end)::int AS timed,
-                COUNT(*) FILTER (WHERE actual_end <= scheduled_end + interval '${ON_TIME_GRACE_MINUTES} minutes')::int AS on_time
-         FROM analytics.trip_history_facts
+                COUNT(*) FILTER (WHERE actual_end <= scheduled_end + interval '${ON_TIME_GRACE_MINUTES} minutes')::int AS on_time,
+                COUNT(*) FILTER (WHERE EXISTS (
+                  SELECT 1 FROM analytics.dvir_facts r
+                  WHERE r.trip_id = t.trip_id AND r.driver_id = t.driver_id AND r.inspection_type = 'pre_trip'
+                ))::int AS inspected
+         FROM analytics.trip_history_facts t
          WHERE status = 'completed' AND driver_id IS NOT NULL AND actual_end >= $1 AND actual_end < $2 GROUP BY 1
        ),
        flags AS (
@@ -233,21 +249,24 @@ export class ReportRepository {
          FROM analytics.telemetry_flag_facts WHERE driver_id IS NOT NULL AND observed_at >= $1 AND observed_at < $2 GROUP BY 1
        ),
        incidents AS (
-         SELECT driver_id, COUNT(*)::int AS incidents FROM analytics.incident_facts
+         SELECT driver_id, COUNT(*)::int AS incidents, COUNT(*) FILTER (WHERE incident_type = 'accident')::int AS accidents
+         FROM analytics.incident_facts
          WHERE driver_id IS NOT NULL AND occurred_at >= $1 AND occurred_at < $2 GROUP BY 1
        )
-       SELECT d.full_name, d.depot_name, COALESCE(t.trips, 0) AS trips, COALESCE(t.metres, 0) AS metres, COALESCE(t.minutes, 0) AS minutes,
+       SELECT d.public_id, d.full_name, d.depot_name, COALESCE(t.trips, 0) AS trips, COALESCE(t.metres, 0) AS metres, COALESCE(t.minutes, 0) AS minutes,
               COALESCE(t.timed, 0) AS timed, COALESCE(t.on_time, 0) AS on_time,
-              COALESCE(f.speeding, 0) AS speeding, COALESCE(f.idling, 0) AS idling, COALESCE(i.incidents, 0) AS incidents
+              COALESCE(f.speeding, 0) AS speeding, COALESCE(f.idling, 0) AS idling, COALESCE(i.incidents, 0) AS incidents,
+              COALESCE(i.accidents, 0) AS accidents, COALESCE(t.inspected, 0) AS inspected
        FROM analytics.driver_directory d
        LEFT JOIN done t ON t.driver_id = d.driver_id
        LEFT JOIN flags f ON f.driver_id = d.driver_id
        LEFT JOIN incidents i ON i.driver_id = d.driver_id
-       WHERE (t.driver_id IS NOT NULL OR f.driver_id IS NOT NULL OR i.driver_id IS NOT NULL) AND ${w.sql}
+       WHERE (t.driver_id IS NOT NULL OR f.driver_id IS NOT NULL OR i.driver_id IS NOT NULL) AND ${w.sql} AND ${own.sql}
        ORDER BY trips DESC, d.full_name`,
-      [start, end, ...w.params],
+      [start, end, ...w.params, ...own.params],
     );
     return res.rows.map((r) => ({
+      driverId: r.public_id,
       driver: r.full_name,
       depot: r.depot_name ?? '',
       tripsCompleted: n(r.trips),
@@ -258,6 +277,8 @@ export class ReportRepository {
       speeding: n(r.speeding),
       idling: n(r.idling),
       incidents: n(r.incidents),
+      accidents: n(r.accidents),
+      tripsInspected: n(r.inspected),
     }));
   }
 
