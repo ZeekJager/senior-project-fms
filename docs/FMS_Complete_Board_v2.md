@@ -2220,4 +2220,89 @@ as deviations in the SRS revision instead.
 
 ---
 
-*End of FMS Engineering Board Specification — 81 feature cards + 5 reference cards = 86 total*
+## PART 2: FEATURE CARDS — WAVE 5 (CONTINUED): DRIVER FIT FOR DISPATCH
+
+Three cards added after the validation report, building on the driver score (FMS-146): what a job asks of a driver, a
+suggestion of who fits it best on the dispatch console, and later a model that predicts it. In Jira under the Wave 5 epic
+(SE-109), labelled `driver-fit`: FMS-153 is SE-197, FMS-154 SE-198, FMS-155 SE-199. In the backlog, not in a sprint. They suggest; they never assign and never block. Dispatch stays a dispatcher's decision.
+
+---
+
+### FMS-153: The Load of a Job on Each Trip
+`track-dispatch` `wave-5` · Est: M · Deps: FMS-32, FMS-145 · Priority: Medium · Closes: none (an addition; the input FMS-154 and FMS-155 need)
+
+**Goal**: Each trip records what the job asks of its driver, so a driver can be matched to it and judged against similar jobs.
+
+**Why**: A trip knows its route, planned distance and duration, stops and schedule, but not its cargo, so a 20 km city run and a loaded 400 km haul overnight look alike to the driver score and to dispatch. Vehicles already store `payload_capacity_kg`.
+
+**Where**: `packages/backend/src/modules/trip/` (`trip.trips`, `trip/domain/`), the new-trip and trip-times drawers on S-07 (`NewTripDrawer.tsx`), `GET /trips`, `docs/openapi.yaml`, a migration, `scripts/seed/`.
+
+**Done when**:
+- A trip can carry `cargo_weight_kg` (optional, not above the assigned vehicle's `payload_capacity_kg` when both are known) and `cargo_kind`: `general` (default), `fragile`, `hazardous`, `refrigerated` or `passengers`
+- The trip's **job load** is worked out, never typed: `light`, `standard` or `heavy`, from the planned distance and duration, the number of stops, hours driven between 22:00 and 06:00 (Addis Ababa), and the cargo's share of the vehicle's payload. The rule is in one pure function with unit tests, its thresholds in `docs/`
+- `GET /trips` and `GET /trips/{id}` return `cargo_weight_kg`, `cargo_kind` and `job_load` with the reasons behind it (for example `long_haul`, `night`, `near_payload`)
+- The dispatcher sets cargo when creating or changing a scheduled trip; the trip card on S-07 shows the job load as a badge
+- The seed gives its trips a realistic mix, so FMS-154 and FMS-155 have jobs of every load to learn from
+- Integration tests: cargo over the vehicle's payload is refused (400); the job load follows each input; a trip without cargo is `general` and loads from its route alone
+
+**Don't**: Ask the driver to enter cargo, or make cargo required: most trips today have none recorded.
+
+**Unknown**: Whether hazardous cargo needs a licence class the driver record does not hold yet (Ethiopian regulation). If it does, that is an eligibility rule (FMS-76), carded separately.
+
+---
+
+### FMS-154: "Fit for This Trip" Suggestion on the Dispatch Console
+`track-dispatch` `wave-5` · Est: M · Deps: FMS-146, FMS-153, FMS-33 · Priority: Medium · Closes: none (an addition; builds on FR-4 and FR-20)
+
+**Goal**: When a dispatcher picks a trip on S-07, its available drivers are ordered by how well they fit that job, each with the reasons in one line.
+
+**Why**: The candidate list shows who is free and why not (`GET /dispatch/availability`, FMS-76), not who is best for the trip. The data for that exists: each driver's monthly score and its parts (FMS-146), the distance they drove (FMS-145), the hours they drove and when, and now the job's load (FMS-153).
+
+**Where**: `packages/backend/src/modules/analytics/` (the fit, from `analytics.*` views on the read replica), `GET /dispatch/availability` (a `fit` per driver), `pages/Dispatch/Candidates.tsx`, settings (the fatigue limits), `docs/`.
+
+**Rule**: A fit from 0 to 100 per available driver for the chosen trip, a weighted sum of:
+- their driver score over the last 3 months (FMS-146), or the depot's median for a driver with too few trips, marked as such;
+- their record on jobs of the same load: trips, on time and safe;
+- how rested they are: hours since their last trip ended, and hours driven in the last 24 hours and 7 days;
+- how evenly work is shared: drivers well under the depot's average hours this week rank a little higher.
+
+**Done when**:
+- Each available driver in the list has a fit and up to three reasons, for example "Score 86 · rested 14 h · 12 heavy jobs, all on time"
+- The list can be sorted by fit (the default once a trip is chosen) or by name, as today
+- A **fatigue warning**, never a block: past 10 hours driven in the last 24, or under 8 hours since the last trip ended (settings, per fleet). It joins the existing warnings (`AssignmentWarning`)
+- Drivers blocked by a safety rule (BR-1, BR-2, BR-8) stay blocked and get no fit
+- Only `tracking:read` roles see the fit and its reasons (dispatchers, depot admins, fleet managers), as the driver score
+- The weights and limits are settings; the defaults are documented and tested
+- Unit tests of the fit; integration tests: the order for a fixture depot, the fatigue warning at its limits, the fit hidden without `tracking:read`
+
+**Don't**: Assign automatically or pre-select a driver, or show the fit to drivers. A driver's fit is about one trip, not a ranking of people.
+
+**Unknown**: Whether the advisor wants "share the work evenly" in the fit at all, and the fatigue limits for Ethiopian commercial drivers (confirm with the client; the defaults above are placeholders).
+
+---
+
+### FMS-155: Predicted Trip Risk for a Driver and a Job
+`track-dispatch` `wave-5` · Est: L · Deps: FMS-154, FMS-127, FMS-55 · Priority: Low · Closes: none (an addition; builds on FR-20)
+
+**Goal**: For a chosen trip, the dispatch console shows each available driver's predicted chance of the trip running late and of a safety event, learnt from the fleet's completed trips.
+
+**Why**: FMS-154 ranks drivers by rules written by hand. With enough history, a model can learn which combinations of driver, job load, time of day, route and rest actually go wrong, and say so before the trip starts. The ML service and its model registry already do this for vehicles (FMS-55, FMS-127).
+
+**Where**: `packages/ai-service/` (a second model beside the maintenance one: its dataset, feature spec and training script), the model registry (FMS-127), `GET /dispatch/availability` (FMS-154's `fit`), `docs/ml-*.md`.
+
+**Done when**:
+- Training data: every completed trip with a measured distance (FMS-145), with features known before it started: the driver's record and score to that day, the job load and cargo (FMS-153), the scheduled hour and weekday, the route's distance and stops, and hours driven and rested before it. Labels: ended more than the delay margin late (FMS-147); a speeding flag or an accident during it
+- No protected attributes as features: no name, age, gender, home address or photo. `docs/` lists every feature
+- The model is registered and served like the maintenance model: versioned, its feature spec checked, scoring refused on a mismatch (FMS-127)
+- It is used only if it beats FMS-154's rules on held-out trips (area under the ROC curve and calibration, reported per depot); otherwise the console keeps the rules and the registry records why
+- On S-07 it adds one reason to a driver's fit: "18% chance of running late" with the two factors that raise it most
+- A minimum of data before it trains at all (for example 2,000 completed trips across 20 drivers), so it never ships learnt from the seed alone; below it, the card's screen says "Not enough trips yet"
+- Tests: the feature spec, training on a fixture dataset, the refusal below the minimum, and the console falling back to the rules when the model is off
+
+**Don't**: Use it to rate, rank or discipline drivers, or let it block an assignment. It informs one trip's choice.
+
+**Unknown**: Whether the fleet will have enough real trips before the project ends. If not, the card ships the pipeline with a demonstration trained on generated data, labelled as such everywhere it shows.
+
+---
+
+*End of FMS Engineering Board Specification — 84 feature cards + 5 reference cards = 89 total*
