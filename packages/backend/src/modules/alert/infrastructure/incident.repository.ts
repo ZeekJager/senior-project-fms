@@ -63,6 +63,8 @@ export interface NewIncident {
 export interface IncidentFilter {
   visibility: IncidentVisibility;
   vehicleId?: string;
+  /** Internal id of the driver involved (FMS-148). */
+  driverId?: string;
   statuses?: readonly IncidentStatus[];
   severities?: readonly AlertSeverity[];
   types?: readonly string[];
@@ -190,6 +192,7 @@ export class IncidentRepository extends Repository {
     params.push(...clause.params);
     const where = [clause.sql];
     if (f.vehicleId) where.push(`i.vehicle_id = ${add(f.vehicleId)}::bigint`);
+    if (f.driverId) where.push(`i.driver_id = ${add(f.driverId)}::bigint`);
     if (f.statuses?.length) where.push(`i.status = ANY(${add(f.statuses)}::text[])`);
     if (f.severities?.length) where.push(`i.severity = ANY(${add(f.severities)}::alert.alert_severity[])`);
     if (f.types?.length) where.push(`i.incident_type = ANY(${add(f.types)}::text[])`);

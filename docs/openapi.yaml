@@ -2912,6 +2912,7 @@ paths:
         - { name: severity, in: query, description: 'Comma-separated: low, medium, high, critical.', schema: { type: string } }
         - { name: incident_type, in: query, description: 'Comma-separated incident types.', schema: { type: string } }
         - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: driver_id, in: query, description: "The driver involved (FMS-148): the driver's record. Not the reporter. Still within the caller's depots.", schema: { type: string, format: uuid } }
         - { name: from, in: query, description: 'An instant, or a date (from the start of that Addis Ababa day).', schema: { type: string } }
         - { name: to, in: query, description: 'An instant, or a date (up to the end of that Addis Ababa day).', schema: { type: string } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }

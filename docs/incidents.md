@@ -38,7 +38,17 @@ The driver form submits through the offline queue (FMS-81), so a report made in 
 `incident:read`: everyone but finance clerks and fleet owners. Newest first (`occurred_at`), paged.
 
 - **Who sees what.** A driver sees only the incidents they reported, never one staff reported about them. Staff see their depot's. An incident no depot owns is seen by those who see every depot. Anyone else's incident by id is `404`, as a missing one is.
-- **Filters.** `status`, `severity` and `incident_type` (comma-separated), `vehicle_id`, `from` and `to` (an instant, or an Addis Ababa date: `to` covers that whole day). An unknown vehicle is an empty page.
+- **Filters.** `status`, `severity` and `incident_type` (comma-separated), `vehicle_id`, `driver_id` (FMS-148), `from` and `to` (an instant, or an Addis Ababa date: `to` covers that whole day). An unknown vehicle or driver is an empty page. `driver_id` is the driver involved, not the reporter, and keeps the caller's depots: a driver's incident at another depot is that depot's to see. Both filters together are that driver's incidents with that vehicle.
+
+## On the vehicle's and the driver's records (FMS-148)
+
+BR-9: an incident belongs to both the vehicle's history and the driver's record. Neither keeps a copy: both read the one incident from `GET /incidents`, by `vehicle_id` and by `driver_id`, so a change shows on both at once.
+
+- **Vehicle history (S-22), Incidents.** Its own section on the vehicle page (`/vehicles/{id}?section=incidents`), for `incident:read`. Each row has the date, what happened, the severity, the driver involved (or "No driver recorded") and the status, newest first, 25 to a page.
+- **Drivers (S-05), Incidents.** An Incidents button on each driver's row, for `incident:read`, opens their incidents in a drawer with the same fields.
+  - Each names its vehicle by plate, linking to that vehicle's Incidents section.
+  - An incident with no vehicle says "No vehicle recorded". It is on the driver's record only, since no vehicle's history can show it.
+- **Opening one.** A row opens the incident in the live map's incident drawer, read-only, or to handle it with `incident:manage` (status, who has it, notes). The lists refresh after a change.
 
 ## Handling: `PATCH /incidents/{id}` (FMS-89)
 

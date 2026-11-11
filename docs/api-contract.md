@@ -1022,7 +1022,7 @@ An alert is a business event requiring attention. A notification is a delivery a
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
 | `POST /incidents` | Create incident | `incident:write` | `description`, `severity`; optional `vehicle_id`, `trip_id`, `driver_id` (staff), `latitude` with `longitude`, `incident_type` (default `other`), `occurred_at` (default now) -> `201 Incident`; Idempotency-Key; a late replay of the same report -> `200` with `meta.created: false` |
-| `GET /incidents` | List incidents | `incident:read` | `status`, `severity`, `incident_type` (comma-separated), `vehicle_id`, `from`, `to`, `page`, `page_size` -> Paged `Incident[]`, newest first; a driver sees only what they reported, staff their depots' |
+| `GET /incidents` | List incidents | `incident:read` | `status`, `severity`, `incident_type` (comma-separated), `vehicle_id`, `driver_id` (the driver involved, FMS-148), `from`, `to`, `page`, `page_size` -> Paged `Incident[]`, newest first; a driver sees only what they reported, staff their depots' |
 | `GET /incidents/{incident_id}` | Incident detail | `incident:read` | `Incident` |
 | `PATCH /incidents/{incident_id}` | Handle incident (FMS-89) | `incident:manage` | `IncidentUpdate` (`status`, `assigned_to`, `notes`; at least one) -> `Incident` |
 

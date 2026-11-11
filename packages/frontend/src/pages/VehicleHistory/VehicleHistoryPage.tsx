@@ -15,16 +15,17 @@ import { DocumentsSection } from './DocumentsSection'
 import { formatDay, formatKm } from './format'
 import { FuelSection } from './FuelSection'
 import { HealthSection } from './HealthSection'
+import { IncidentsSection } from './IncidentsSection'
 import { RepairsSection } from './RepairsSection'
 import { ServiceDueSection } from './ServiceDueSection'
 import { TripsSection } from './TripsSection'
 import { WarrantySection } from './WarrantySection'
 
-type Section = 'repairs' | 'service' | 'warranty' | 'trips' | 'fuel' | 'documents' | 'health'
+type Section = 'repairs' | 'service' | 'warranty' | 'incidents' | 'trips' | 'fuel' | 'documents' | 'health'
 
 /**
  * S-22 Vehicle history (FMS-136): everything that happened to one vehicle, one section at a time: its repairs
- * and services, its service due (FMS-129), its warranties and recalls (FMS-133), its trips with the route each drove, fuel and odometer, its documents and its health. Each
+ * and services, its service due (FMS-129), its warranties and recalls (FMS-133), its incidents (FMS-148), its trips with the route each drove, fuel and odometer, its documents and its health. Each
  * section shows only with its read permission; the section is kept in the URL (?section=), so a link opens it.
  */
 export function VehicleHistoryPage() {
@@ -44,6 +45,8 @@ export function VehicleHistoryPage() {
       { value: 'service', label: 'Service due', allowed: true },
       // Its warranties and the recalls it is under (FMS-133).
       { value: 'warranty', label: 'Warranty and recalls', allowed: hasPermission('maintenance:read') },
+      // Its incidents, as on each driver's record (FMS-148, BR-9).
+      { value: 'incidents', label: 'Incidents', allowed: hasPermission('incident:read') },
     ]
     return all.filter((s) => s.allowed)
   }, [hasPermission])
@@ -90,6 +93,8 @@ export function VehicleHistoryPage() {
           <ServiceDueSection vehicle={vehicle.data} />
         ) : section === 'warranty' ? (
           <WarrantySection vehicle={vehicle.data} />
+        ) : section === 'incidents' ? (
+          <IncidentsSection vehicle={vehicle.data} />
         ) : section === 'trips' ? (
           <TripsSection vehicle={vehicle.data} />
         ) : section === 'fuel' ? (

@@ -72,6 +72,8 @@ export interface IncidentQuery extends Page {
   severity?: AlertSeverity[];
   incident_type?: string[];
   vehicle_id?: string;
+  /** The driver involved (FMS-148): their record's incidents, in the caller's depots like any other. */
+  driver_id?: string;
   from?: Date;
   to?: Date;
 }
@@ -210,12 +212,16 @@ export class IncidentService {
   async list(caller: Caller, query: IncidentQuery): Promise<{ items: IncidentView[]; meta: ReturnType<typeof pageMeta> }> {
     const { incidents, refs } = this.deps;
     return incidents.inTransaction(async (client) => {
-      // A vehicle named in the filter that does not exist matches nothing: an empty page, not an error.
+      // A vehicle or driver named in the filter that does not exist matches nothing: an empty page, not an error.
+      // The caller's visibility still decides which of their incidents show, so the driver is looked up fleet-wide.
       const vehicleId = query.vehicle_id ? await refs.vehicles.idOf(client, query.vehicle_id) : undefined;
       if (vehicleId === null) return { items: [], meta: pageMeta(query, 0) };
+      const driverId = query.driver_id ? await refs.drivers.findInScope(client, query.driver_id, { kind: 'all' }) : undefined;
+      if (driverId === null) return { items: [], meta: pageMeta(query, 0) };
       const { rows, total } = await incidents.list(client, {
         visibility: visibilityOf(caller.user),
         vehicleId,
+        driverId,
         statuses: query.status,
         severities: query.severity,
         types: query.incident_type,
