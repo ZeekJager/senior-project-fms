@@ -46,7 +46,9 @@ const QUERIES: Record<string, string> = {
                  t.cargo_weight_kg, t.cargo_kind
             FROM trip.trips t JOIN trip.routes r ON r.id = t.route_id
             LEFT JOIN fleet.vehicles v ON v.id = t.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = t.driver_id
-           ORDER BY t.scheduled_start NULLS LAST, r.name, t.status, v.registration_number NULLS LAST, privacy.decrypt_text(dr.license_number) NULLS LAST`,
+           -- The cargo too (FMS-153): unscheduled drafts of one route with no crew differ only in it, and must not swap.
+           ORDER BY t.scheduled_start NULLS LAST, r.name, t.status, v.registration_number NULLS LAST, privacy.decrypt_text(dr.license_number) NULLS LAST,
+                    t.cargo_kind, t.cargo_weight_kg NULLS LAST`,
   // Meter readings (FMS-126): a manual one is recorded when the seed registers the vehicle, so its time is left out.
   meters: `SELECT v.registration_number, m.meter, m.value, m.source, m.suspect, CASE WHEN m.source = 'manual' THEN NULL ELSE m.recorded_at END AS recorded_at
              FROM fleet.meter_readings m JOIN fleet.vehicles v ON v.id = m.vehicle_id
