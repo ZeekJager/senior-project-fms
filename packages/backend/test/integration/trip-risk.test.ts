@@ -252,6 +252,8 @@ const board = (cookie: string, q: Record<string, string>) => request(app).get(`/
 /** A depot with a scheduled trip three hours ahead, a rested driver, a tired one (driven 9 h, ended 1 h ago) and one with an expired licence. */
 async function scene() {
   const depot = await createDepot();
+  // The trip is a heavy 340 km (510 load-weighted): above the default daily distance limit (FMS-156), which is not what this tests.
+  await pool.query('INSERT INTO tracking.rule_thresholds (depot_id, daily_distance_km) VALUES ($1, 1000)', [depot.id]);
   const r = await route(depot);
   const vehicle = (await createVehicle({ depot })) as Row;
   const rested = (await createDriver({ depot })).driver as Row;
