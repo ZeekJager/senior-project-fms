@@ -256,6 +256,6 @@ export { PREDICTION_FEEDBACK_EVENTS, PREDICTION_OUTCOMES } from './domain/predic
 export { SERVICE_DUE_EVENTS } from './domain/service-program';
 export { WARRANTY_EVENTS } from './domain/warranty';
 export type { ServiceDueSummary } from './application/service-program.service';
-export { PREDICTION_EVENTS, RISK_ALERT_BELOW, type MaintenanceRiskView } from './domain/scoring';
+export { PREDICTION_EVENTS, PREDICTION_TYPE, RISK_ALERT_BELOW, type MaintenanceRiskView } from './domain/scoring';
 export type { ScoringResult } from './application/scoring.service';
 export { MlServiceError } from './infrastructure/ml-service.client';

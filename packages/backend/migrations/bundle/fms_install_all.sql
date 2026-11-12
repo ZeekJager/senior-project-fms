@@ -3686,3 +3686,13 @@ DO $$ BEGIN
     ALTER TABLE trip.trip_etas ADD CONSTRAINT chk_trip_etas_delay CHECK (
         (delay_level IS NULL OR delay_level IN ('late', 'urgent')) AND delay_episode >= 0);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- ===== 069_health_score_history.sql =====
+CREATE OR REPLACE VIEW analytics.health_score_history AS
+SELECT
+    p.vehicle_id,
+    p.prediction_type,
+    p.health_score,
+    p.risk_level,
+    p.as_of
+FROM maintenance.maintenance_predictions p
+WHERE p.health_score IS NOT NULL;

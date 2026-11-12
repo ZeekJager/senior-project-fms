@@ -1,12 +1,31 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { DEFAULT_SETTINGS } from '@/test/msw/handlers'
 import { server } from '@/test/msw/server'
 import type { MaintenanceRisk, PredictionFeedback } from '@/features/health/health'
 import type { Vehicle } from '@/pages/Vehicles/types'
+import type { HealthTrendDay } from './api'
+
+// Chart.js draws on a canvas, which jsdom has not: the trend's tests check what the page hands its charts (FMS-150).
+vi.mock('./HealthTrendCharts', () => ({
+  MeanHealthChart: ({ days }: { days: HealthTrendDay[] }) => (
+    <ol aria-label="Average health score by day">
+      {days.map((d) => (
+        <li key={d.date}>{`${d.date} ${d.mean_health_score ?? 'gap'}`}</li>
+      ))}
+    </ol>
+  ),
+  HighRiskShareChart: ({ days }: { days: HealthTrendDay[] }) => (
+    <ol aria-label="Share at high risk by day">
+      {days.map((d) => (
+        <li key={d.date}>{`${d.date} ${d.high_risk_pct ?? 'gap'}`}</li>
+      ))}
+    </ol>
+  ),
+}))
 
 const DEPOT = '11111111-1111-4111-8111-111111111111'
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
@@ -418,5 +437,71 @@ describe('Vehicle health (S-19)', () => {
     renderApp('/vehicles')
     await screen.findByRole('heading', { name: 'Vehicles' })
     expect(screen.queryByRole('link', { name: 'Vehicle health' })).not.toBeInTheDocument()
+  })
+
+  describe('the fleet-wide trend (FMS-150)', () => {
+    const owner = currentUser(['fleet_owner'], ['vehicle:read', 'depot:read', 'prediction:read', 'maintenance:read', 'analytics:read'])
+    const day = (date: string, mean: number | null, high: number | null, n: number | null = 3): HealthTrendDay => ({
+      date,
+      vehicles_scored: mean === null ? null : n,
+      mean_health_score: mean,
+      high_risk_pct: high,
+    })
+    function serveTrend(days: HealthTrendDay[]) {
+      const asked: URLSearchParams[] = []
+      server.use(
+        http.get('/api/v1/analytics/health-trend', ({ request }) => {
+          asked.push(new URL(request.url).searchParams)
+          return envelope({ days })
+        }),
+      )
+      return asked
+    }
+
+    it('draws the daily average and the high-risk share, a night with no run a gap, over 90 days by default', async () => {
+      serveHealth([vehicle(60)])
+      const asked = serveTrend([day('2026-11-08', 70.5, 20), day('2026-11-09', null, null), day('2026-11-10', 66, 33)])
+      signedInAs(owner)
+      renderApp('/predictive-maintenance')
+
+      const section = await screen.findByRole('region', { name: 'Fleet health trend' })
+      expect(await within(section).findByText('Down 4.5 points, from 70.5 to 66')).toBeInTheDocument()
+      expect(within(within(section).getByRole('list', { name: 'Average health score by day' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+        '2026-11-08 70.5',
+        '2026-11-09 gap',
+        '2026-11-10 66',
+      ])
+      expect(within(within(section).getByRole('list', { name: 'Share at high risk by day' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+        '2026-11-08 20',
+        '2026-11-09 gap',
+        '2026-11-10 33',
+      ])
+      expect(within(section).getByText(/Last scored 10 Nov 2026: 66 across 3 vehicles/)).toBeInTheDocument()
+      // 90 days to today, both included.
+      const from = asked[0].get('from')!
+      const today = new Date(Date.now() + 3 * 3_600_000).toISOString().slice(0, 10)
+      expect(Math.round((Date.parse(today) - Date.parse(from)) / 86_400_000)).toBe(89)
+      expect(asked[0].get('depot_id')).toBeNull()
+
+      const user = userEvent.setup()
+      await user.click(within(section).getByRole('button', { name: 'Range: Last 90 days' }))
+      await user.click(await screen.findByRole('option', { name: 'Last 30 days' }))
+      await waitFor(() => expect(asked.length).toBe(2))
+      expect(Math.round((Date.parse(today) - Date.parse(asked[1].get('from')!)) / 86_400_000)).toBe(29)
+    })
+
+    it('says so when the range has no scores, and is not shown without analytics:read', async () => {
+      serveHealth([vehicle(60)])
+      serveTrend([day('2026-11-09', null, null), day('2026-11-10', null, null)])
+      signedInAs(owner)
+      renderApp('/predictive-maintenance')
+      expect(await screen.findByText('No scores in this range')).toBeInTheDocument()
+      cleanup()
+
+      signedInAs(technician)
+      renderApp('/predictive-maintenance')
+      await screen.findByRole('heading', { name: 'Vehicle health', level: 1 })
+      expect(screen.queryByRole('region', { name: 'Fleet health trend' })).not.toBeInTheDocument()
+    })
   })
 })

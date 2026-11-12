@@ -48,6 +48,28 @@ A Health column between Status and Current trip, sortable by score. It is hidden
 - **The list** is sorted riskiest first: health score ascending, unscored vehicles last, plate to break ties. Each row has the vehicle, its badge, the breakdown risk in a word (High at 40 and below, Medium, Low), the depot and when it was last scored. At-risk rows are lightly tinted.
 - **The header** says when the fleet was last scored, and which model is active (`GET /ml-models?status=active`).
 - **A row,** its badge or its View button opens the breakdown.
+- **The fleet health trend** (FMS-150), above the list, for those who also read analytics: below.
+
+## The fleet-wide trend (FMS-150)
+
+Card FMS-150 (SE-194). How the fleet's health has moved, for the Fleet Owner's user story "see a fleet-wide health score trend over time".
+
+**`GET /analytics/health-trend?from=&to=&depot_id=`** (`analytics:read` and `prediction:read`: admins, fleet managers, fleet owners and compliance officers).
+
+- **One entry per Addis Ababa day** of the range, oldest first: `mean_health_score` (to one decimal), `vehicles_scored` and `high_risk_pct` (whole percent).
+- **Default range:** the 90 days to today. At most 366 days.
+- **Read, not recomputed.** It reads the scores the nightly batch stored (`maintenance.maintenance_predictions`, active and superseded alike), through `analytics.health_score_history` (migration 069) on the read replica. Nothing is scored on request.
+- **One score per vehicle per day:** a night scored twice (a rerun) counts the later score once.
+- **A day with no scoring run is a gap:** every figure null, never 0, so the line breaks there.
+- **High risk** is the stored `risk_level` `high`: a score of 40 or less.
+- **Depots:** the caller's (all of them for those who see every depot), or the one asked for. A vehicle counts in the depot it belongs to today.
+
+**On S-19,** above the vehicle list, for those who also hold `analytics:read`:
+- two charts side by side, each with one axis: the **average health score** (the axis fitted to the scores, in tens, with no fill, since it does not start at 0) and the **share at high risk** (from 0, filled);
+- a line under the heading saying how the average moved over the range ("Down 4.5 points, from 70.5 to 66");
+- a **Range** of the last 30 or 90 days (the default), 6 months or 12 months; it follows the page's depot filter;
+- a tooltip per day with the vehicles scored, and "No scoring run" in a gap;
+- a table behind each chart for screen readers, and "No scores in this range" when no night scored.
 
 ## The breakdown
 
@@ -69,6 +91,10 @@ A drawer, from either screen:
 ## Tests
 
 - `features/health/health.test.ts`: bands, staleness and views, factor labels and values, ages.
+- The trend (FMS-150):
+  - `analytics/domain/health-trend.test.ts`: every day of the range, gaps as nulls, the rounding;
+  - `test/integration/health-trend.test.ts`: three nights of stored scores with a night missed and a rerun, the 90-day default, depot scope and filter, both permissions, bad ranges;
+  - S-19's test: the two charts, the summary, the range picker, the empty range, and no trend without `analytics:read`.
 - `pages/PredictiveMaintenance/PredictiveMaintenancePage.test.tsx`:
   - riskiest first, with the band colours, STALE and not scored;
   - views and their counts;

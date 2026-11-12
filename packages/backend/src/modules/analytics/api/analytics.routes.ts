@@ -50,6 +50,17 @@ const REPORTS: readonly Report[] = ['fleet-summary', 'utilisation', 'fuel-effici
  */
 export function analyticsRouter(service: AnalyticsService, reports: ReportService): Router {
   const router = Router();
+  // The fleet-wide health score trend (FMS-150): analytics and the health scores themselves (prediction:read).
+  router.get(
+    '/analytics/health-trend',
+    authorize('analytics:read'),
+    authorize('prediction:read'),
+    asyncHandler(async (req, res) => {
+      const { data, meta } = await service.healthTrend(req.user, parseInput(analyticsQuery, req.query));
+      res.json({ data, meta: { ...meta, request_id: req.correlationId } });
+    }),
+  );
+
   for (const report of REPORTS) {
     router.get(
       `/analytics/${report}`,
