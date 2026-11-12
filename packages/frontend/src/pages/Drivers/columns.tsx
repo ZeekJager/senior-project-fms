@@ -1,4 +1,4 @@
-import { ArrowRight, FileText, MapPin, Paperclip, Pencil, RotateCcw } from 'lucide-react'
+import { ArrowRight, FileText, MapPin, Paperclip, Pencil, RotateCcw, Siren } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
 import { Badge, Button, cn, Skeleton } from '@/components/ui'
@@ -15,6 +15,9 @@ export interface ColumnContext {
   onEdit: (driver: Driver) => void
   onReinstate: (driver: Driver) => void
   onOpenDocuments: (driver: Driver) => void
+  /** incident:read: the driver's incidents (FMS-148). */
+  canReadIncidents: boolean
+  onOpenIncidents: (driver: Driver) => void
 }
 
 /** Today's attendance that makes a driver a dispatch risk: a warning, not a block (FMS-21). */
@@ -200,14 +203,19 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
     })
   }
 
-  if (ctx.canWrite) {
+  if (ctx.canWrite || ctx.canReadIncidents) {
     columns.push({
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
-      width: 'w-[128px]',
+      width: ctx.canWrite && ctx.canReadIncidents ? 'w-[168px]' : 'w-[128px]',
       align: 'right',
       cell: (d) => (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-1.5">
+          {ctx.canReadIncidents && (
+            <Button size="sm" variant="ghost" leadingIcon={<Siren className="h-3.5 w-3.5" />} aria-label={`Incidents of ${d.full_name}`} onClick={() => ctx.onOpenIncidents(d)}>
+              <span className="sr-only sm:not-sr-only">Incidents</span>
+            </Button>
+          )}
           {ctx.canWrite && d.status === 'active' && (
             <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} aria-label={`Edit ${d.full_name}`} onClick={() => ctx.onEdit(d)}>
               Edit

@@ -396,9 +396,40 @@ describe('GET /incidents', () => {
     expect(await q('from=2026-10-21&to=2026-10-21')).toEqual([b.public_id]);
     expect(await q('page=2&page_size=2')).toEqual([a.public_id]);
 
-    for (const bad of ['severity=urgent', 'status=open,lost', 'incident_type=meteor', 'vehicle_id=1', 'sort=priority']) {
+    for (const bad of ['severity=urgent', 'status=open,lost', 'incident_type=meteor', 'vehicle_id=1', 'driver_id=1', 'sort=priority']) {
       expect((await api.get(`/incidents?${bad}`, cookie)).status, bad).toBe(400);
     }
+  });
+
+  test("driver_id (FMS-148): the driver's record, with or without a vehicle, in the caller's depots only; with vehicle_id, both", async () => {
+    const depot = await createDepot();
+    const otherDepot = await createDepot();
+    const vehicle = await createVehicle({ depot });
+    const { driver } = await createDriver({ depot });
+    const { driver: someoneElse } = await createDriver({ depot });
+    const reporter = await createUser({ roles: ['driver'], depot });
+    const at = (iso: string) => ({ depot_id: depot.id, occurred_at: iso });
+    const withVehicle = await insertIncident(reporter, { ...at('2026-10-20T09:00:00Z'), driver_id: driver.id, vehicle_id: vehicle.id, incident_type: 'accident' });
+    const onFoot = await insertIncident(reporter, { ...at('2026-10-22T09:00:00Z'), driver_id: driver.id });
+    const notTheirs = await insertIncident(reporter, { ...at('2026-10-21T09:00:00Z'), driver_id: someoneElse.id, vehicle_id: vehicle.id });
+    // Their incident while at another depot: that depot's staff see it, this depot's do not.
+    const elsewhere = await insertIncident(reporter, { depot_id: otherDepot.id, occurred_at: '2026-10-23T09:00:00Z', driver_id: driver.id });
+
+    const { cookie } = await signIn(['dispatcher'], depot);
+    const q = async (query: string, as = cookie) => ids(await api.get(`/incidents?${query}`, as));
+    const record = await api.get(`/incidents?driver_id=${pub(driver)}`, cookie);
+    expect(ids(record)).toEqual([onFoot.public_id, withVehicle.public_id]);
+    expect(record.body.data[0]).toMatchObject({ driver_id: pub(driver), vehicle_id: null });
+    expect(record.body.data[1]).toMatchObject({ driver_id: pub(driver), vehicle_id: pub(vehicle) });
+    // The vehicle's record has the same incident: one row, read from both.
+    expect(await q(`vehicle_id=${pub(vehicle)}`)).toEqual([notTheirs.public_id, withVehicle.public_id]);
+    expect(await q(`vehicle_id=${pub(vehicle)}&driver_id=${pub(driver)}`)).toEqual([withVehicle.public_id]);
+    expect(await q(`driver_id=${randomUUID()}`)).toEqual([]);
+
+    const theirStaff = await signIn(['dispatcher'], otherDepot);
+    expect(await q(`driver_id=${pub(driver)}`, theirStaff.cookie)).toEqual([elsewhere.public_id]);
+    const manager = await signIn(['fleet_manager']);
+    expect(await q(`driver_id=${pub(driver)}`, manager.cookie)).toEqual([elsewhere.public_id, onFoot.public_id, withVehicle.public_id]);
   });
 });
 

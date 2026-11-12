@@ -274,9 +274,12 @@ export function useUpdateIncident(depotId: string) {
   return useMutation({
     mutationFn: ({ id, change }: { id: string; change: { status?: IncidentStatus; assigned_to?: string | null; notes?: string | null } }) =>
       api.request<Incident>(`/incidents/${id}`, { method: 'PATCH', json: change }),
-    onSuccess: (incident) =>
+    onSuccess: (incident) => {
       queryClient.setQueryData<Overview>(overviewKeys.depot(depotId), (o) =>
         o ? patchIncident(o, incident.id, { status: incident.status, assigned_to: incident.assigned_to, notes: incident.notes, updated_at: incident.updated_at }) : o,
-      ),
+      )
+      // The vehicle's and the driver's incident lists (FMS-148, features/incidents) show it changed too.
+      void queryClient.invalidateQueries({ queryKey: ['incidents', 'history'] })
+    },
   })
 }

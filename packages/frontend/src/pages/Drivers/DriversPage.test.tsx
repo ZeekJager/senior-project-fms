@@ -311,6 +311,52 @@ describe('Driver Management (S-05)', () => {
     expect(within(rowFor(present.full_name)).queryByText(/today/)).not.toBeInTheDocument()
   })
 
+  it("opens a driver's incidents (FMS-148): each with its vehicle, linking to its history, or no vehicle recorded", async () => {
+    const d = driver({ full_name: 'Tigist Haile' })
+    serveDrivers([d])
+    const VEHICLE = '33333333-3333-4333-8333-333333333333'
+    const asked: URLSearchParams[] = []
+    const incident = (id: string, overrides: Record<string, unknown>) => ({
+      id, incident_type: 'accident', severity: 'high', status: 'open', description: 'Clipped a minibus at Megenagna', vehicle_id: VEHICLE, driver_id: d.id,
+      trip_id: null, depot_id: DEPOT_A, reported_by: 'u-9', latitude: null, longitude: null, occurred_at: '2026-10-22T07:30:00Z', created_at: '2026-10-22T07:31:00Z',
+      assigned_to: null, notes: null, resolved_at: null, resolved_by: null, updated_at: '2026-10-22T07:31:00Z', ...overrides,
+    })
+    server.use(
+      http.get('/api/v1/incidents', ({ request }) => {
+        asked.push(new URL(request.url).searchParams)
+        const items = [incident('i-2', {}), incident('i-1', { incident_type: 'medical', severity: 'medium', description: 'Felt faint at the depot gate', vehicle_id: null })]
+        return HttpResponse.json({ data: items, meta: { page: 1, page_size: 25, total_items: 2, total_pages: 1 } })
+      }),
+      http.get(`/api/v1/vehicles/${VEHICLE}`, () => envelope({ id: VEHICLE, registration_number: 'AA 3-20001' })),
+    )
+    const user = userEvent.setup()
+    await openDrivers(currentUser(['dispatcher'], ['driver:read', 'depot:read', 'vehicle:read', 'incident:read']))
+
+    await user.click(await screen.findByRole('button', { name: 'Incidents of Tigist Haile' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Incidents: Tigist Haile' })
+    expect(asked[0].get('driver_id')).toBe(d.id)
+    const items = within(within(drawer).getByRole('list', { name: 'Incidents of Tigist Haile' })).getAllByRole('listitem')
+    expect(items[0]).toHaveTextContent(/High.*Open.*Accident.*Clipped a minibus/)
+    expect(await within(items[0]).findByRole('link', { name: 'AA 3-20001' })).toHaveAttribute('href', `/vehicles/${VEHICLE}?section=incidents`)
+    expect(items[1]).toHaveTextContent('No vehicle recorded')
+    expect(within(drawer).getByText('2 on record, newest first')).toBeInTheDocument()
+
+    // One opens in place of the list; closing it goes back to the list.
+    await user.click(within(items[1]).getByText('Felt faint at the depot gate'))
+    const one = await screen.findByRole('dialog', { name: 'Medical' })
+    expect(within(one).getByText('Tigist Haile')).toBeInTheDocument()
+    await user.click(within(one).getByRole('button', { name: 'Close' }))
+    expect(await screen.findByRole('dialog', { name: 'Incidents: Tigist Haile' })).toBeInTheDocument()
+  })
+
+  it('shows no Incidents button without incident:read', async () => {
+    const d = driver()
+    serveDrivers([d])
+    await openDrivers(dispatcher)
+    await within(await screen.findByRole('table', { name: 'Drivers' })).findByText(d.full_name)
+    expect(screen.queryByRole('button', { name: /^Incidents of / })).not.toBeInTheDocument()
+  })
+
   it('says so when a depot has no drivers', async () => {
     serveDrivers([])
     await openDrivers()

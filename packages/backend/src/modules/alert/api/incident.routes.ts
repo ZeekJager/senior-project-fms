@@ -78,6 +78,7 @@ const listQuery = z
     severity: list.pipe(z.array(z.enum(SEVERITIES)).min(1)).optional(),
     incident_type: list.pipe(z.array(z.enum(INCIDENT_TYPES)).min(1)).optional(),
     vehicle_id: z.uuid().optional(),
+    driver_id: z.uuid().optional(),
     from: instantOrDate.optional(),
     to: instantOrDate.optional(),
   })

@@ -404,6 +404,41 @@ describe('Vehicle history (S-22)', () => {
     expect(screen.queryByRole('button', { name: /Void the/ })).not.toBeInTheDocument()
   })
 
+  it('lists its incidents with their driver, by vehicle_id; one opens read-only without incident:manage (FMS-148)', async () => {
+    serveVehicle()
+    const asked: URLSearchParams[] = []
+    const incident = (id: string, overrides: Record<string, unknown>) => ({
+      id, incident_type: 'accident', severity: 'high', status: 'open', description: 'Clipped a minibus at Megenagna', vehicle_id: VEHICLE_ID, driver_id: DRIVER,
+      trip_id: null, depot_id: DEPOT, reported_by: 'u-9', latitude: null, longitude: null, occurred_at: '2026-10-22T07:30:00Z', created_at: '2026-10-22T07:31:00Z',
+      assigned_to: null, notes: null, resolved_at: null, resolved_by: null, updated_at: '2026-10-22T07:31:00Z', ...overrides,
+    })
+    server.use(
+      http.get('/api/v1/incidents', ({ request }) => {
+        asked.push(new URL(request.url).searchParams)
+        return page([
+          incident('i-2', {}),
+          incident('i-1', { incident_type: 'breakdown', severity: 'medium', status: 'resolved', description: 'Gearbox would not engage', driver_id: null, occurred_at: '2026-09-02T05:00:00Z', notes: 'Clutch cable replaced.' }),
+        ])
+      }),
+    )
+    signedInAs(currentUser(['fleet_manager'], ['vehicle:read', 'depot:read', 'driver:read', 'incident:read']))
+    const user = userEvent.setup()
+    renderApp(`/vehicles/${VEHICLE_ID}?section=incidents`)
+
+    const table = await screen.findByRole('table', { name: 'Incidents of AA 3-20001' })
+    await waitFor(() => expect(within(table).getAllByRole('row')).toHaveLength(3))
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows[0]).toHaveTextContent(/Accident.*Clipped a minibus at Megenagna.*High.*Tigist Haile.*Open/)
+    expect(rows[1]).toHaveTextContent(/Breakdown.*Medium.*No driver recorded.*Resolved/)
+    expect(asked[0].get('vehicle_id')).toBe(VEHICLE_ID)
+    expect(screen.getByRole('heading', { name: 'Incidents' }).nextElementSibling).toHaveTextContent('2 incidents, newest first')
+
+    await user.click(within(rows[1]).getByText('Gearbox would not engage'))
+    const drawer = await screen.findByRole('dialog', { name: 'Breakdown: AA 3-20001' })
+    expect(within(drawer).getByText('Clutch cable replaced.')).toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+  })
+
   it('says when the vehicle is not found', async () => {
     server.use(
       http.get(`/api/v1/vehicles/${VEHICLE_ID}`, () => HttpResponse.json({ error: { code: 'NOT_FOUND', message: 'Vehicle not found.' } }, { status: 404 })),

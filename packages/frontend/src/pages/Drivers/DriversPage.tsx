@@ -15,6 +15,7 @@ import { describeFilters } from '@/lib/describeFilters'
 import { useDrivers, useLicenceCounts, useReinstateDriver } from './api'
 import { driverColumns } from './columns'
 import { DriverFormDrawer } from './DriverFormDrawer'
+import { DriverIncidentsDrawer } from './DriverIncidentsDrawer'
 import { hasActiveFilters, readFilters, writeFilters, type DriverFilters, type SortKey } from './filters'
 import { RetireDriverDialog } from './RetireDriverDialog'
 import type { Driver, LicenseStatus } from './types'
@@ -47,6 +48,7 @@ export function DriversPage() {
   const canReadDocs = hasPermission('document:read')
   const canUploadDocs = hasPermission('document:write')
   const canDeleteDocs = hasPermission('document:delete')
+  const canReadIncidents = hasPermission('incident:read')
 
   function update(patch: Partial<DriverFilters>, options: { keepPage?: boolean } = {}) {
     setParams(writeFilters({ ...filters, ...patch, ...(options.keepPage ? {} : { page: 1 }) }), { replace: true })
@@ -73,6 +75,7 @@ export function DriversPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [retiring, setRetiring] = useState<Driver | null>(null)
   const [docsFor, setDocsFor] = useState<Driver | null>(null)
+  const [incidentsFor, setIncidentsFor] = useState<Driver | null>(null)
 
   const openCreate = () => {
     setEditing(null)
@@ -100,6 +103,8 @@ export function DriversPage() {
           toast({ title: 'Could not reinstate the driver', description: err instanceof ApiError ? err.code : undefined, tone: 'danger' }),
       }),
     onOpenDocuments: setDocsFor,
+    canReadIncidents,
+    onOpenIncidents: setIncidentsFor,
   })
 
   const depotOptions = [{ value: '', label: 'All depots' }, ...(depots.data ?? []).map((d) => ({ value: d.id, label: d.name }))]
@@ -225,6 +230,7 @@ export function DriversPage() {
         }
       />
       <RetireDriverDialog driver={retiring} onClose={() => setRetiring(null)} />
+      <DriverIncidentsDrawer driver={incidentsFor} onClose={() => setIncidentsFor(null)} />
       <DocumentsDrawer
         owner={docsFor && { type: 'driver', id: docsFor.id, label: docsFor.full_name }}
         documents={docs.data ?? []}
