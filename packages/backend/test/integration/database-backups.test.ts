@@ -93,7 +93,8 @@ describe('database backups', () => {
     expect(createHash('sha256').update(file.body as Buffer).digest('hex')).toBe(done.body.data.checksum_sha256);
     // pg_dump's custom format.
     expect((file.body as Buffer).subarray(0, 5).toString()).toBe('PGDMP');
-    const tampered = await download(link.body.data.url.replace(/signature=./, 'signature=0'));
+    // Always a different first digit: overwriting it with a fixed one leaves 1 signature in 16 unchanged.
+    const tampered = await download(link.body.data.url.replace(/signature=(.)/, (_: string, c: string) => `signature=${c === '0' ? '1' : '0'}`));
     expect(tampered.status).toBe(401);
 
     const audit = await auditActions(await internalId(id));
