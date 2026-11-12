@@ -31,9 +31,11 @@ export default defineConfig({
         target: apiProxyTarget,
         ws: true,
       },
+      // The browser's Host is kept here too (no changeOrigin): the API's CSRF check (FMS-103) compares the page's Origin
+      // (localhost:5173) with the Host it receives, and a rewritten Host (backend:3000) would refuse every write. This is what the
+      // production nginx does (proxy_set_header Host $http_host).
       '/api': {
         target: apiProxyTarget,
-        changeOrigin: true,
       },
     },
   }
