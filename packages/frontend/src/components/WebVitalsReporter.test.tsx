@@ -1,4 +1,4 @@
-import { act, screen } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { Metric } from 'web-vitals'
 import { currentUser, renderApp, signedInAs, signedOut } from '@/test/auth'
@@ -36,6 +36,8 @@ describe('WebVitalsReporter', () => {
     const t = setup()
     renderApp('/driver', { children: t.element })
     await screen.findByRole('button', { name: 'Notifications' })
+    // The reporter starts in an effect, which can run after the shell is on screen (slow CI runners): wait for it.
+    await waitFor(() => expect(t.observer).toHaveBeenCalled())
 
     act(() => t.report(lcp))
     act(() => t.hide())
