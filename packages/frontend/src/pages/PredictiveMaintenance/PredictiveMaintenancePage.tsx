@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { DataTable, EmptyState, ListToolbar, type Column } from '@/components/shared'
 import { Button, FilterSelect, Skeleton } from '@/components/ui'
+import { useAuth } from '@/context/AuthContext'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useDepots } from '@/features/depots'
 import { useActiveModel } from '@/features/health/api'
@@ -12,6 +13,7 @@ import { useSetting } from '@/features/settings'
 import type { Vehicle } from '@/pages/Vehicles/types'
 import { readFilters, useHealthCounts, useHealthList, writeFilters, type HealthFilters, type HealthSort } from './api'
 import { HealthPanel } from './HealthPanel'
+import { HealthTrend } from './HealthTrend'
 
 /** What each view holds; the alert line is a setting (health_alert_below, FMS-80). */
 function viewHints(line: number): Record<HealthView, string> {
@@ -56,6 +58,9 @@ export function PredictiveMaintenancePage() {
   const model = useActiveModel(true)
   const depotMap = useMemo(() => new Map((depots.data ?? []).map((d) => [d.id, d])), [depots.data])
   const [open, setOpen] = useState<Vehicle | null>(null)
+  // The fleet-wide trend (FMS-150) is an analytics read too: the fleet owner's, not every technician's.
+  const { hasPermission } = useAuth()
+  const canTrend = hasPermission('analytics:read')
 
   const lastScored = useMemo(() => {
     const times = (list.data?.vehicles ?? []).map((v) => v.health_score_updated_at).filter((t): t is string => t !== null)
@@ -158,6 +163,8 @@ export function PredictiveMaintenancePage() {
           {model.data ? <span className="whitespace-nowrap">· model {model.data.version}</span> : model.isSuccess && <span>· no model active</span>}
         </p>
       </header>
+
+      {canTrend && <HealthTrend depotId={filters.depotId} depotName={filters.depotId ? (depotMap.get(filters.depotId)?.name ?? null) : null} />}
 
       <section aria-label="Vehicle health list">
         <DataTable

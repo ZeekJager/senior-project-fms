@@ -5,7 +5,9 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { JobContext } from '../../../shared/jobs/job';
 import type { RequestUser } from '../../../types/express';
 import { DOWNTIME_REASONS, isUnplanned, type DowntimeReason } from '../../fleet';
+import { PREDICTION_TYPE } from '../../maintenance';
 import { addTotals, downtimeKpis, monthWindow, NO_TOTALS, vehicleTotals, type DowntimeTotals } from '../domain/downtime';
+import { HEALTH_TREND_DEFAULT_DAYS, healthTrend } from '../domain/health-trend';
 import {
   ALERT_SEVERITIES,
   BACKFILL_DAYS,
@@ -200,6 +202,29 @@ export class AnalyticsService {
         vehicles: rows,
       },
       meta: { month: w.month, from: w.start.toISOString(), to: w.end.toISOString(), data_freshness: db.freshness() },
+    };
+  }
+
+  /**
+   * GET /analytics/health-trend (FMS-150, docs/vehicle-health.md): each day's mean health score of the caller's
+   * vehicles and the share that were high risk, from the scores the nightly batch stored, never scored on request.
+   * The 90 days to today by default. A day with no scoring run is a gap (nulls). Read from the replica.
+   */
+  async healthTrend(user: RequestUser | undefined, query: AnalyticsQuery) {
+    const today = addisDay(this.now());
+    const to = query.to && query.to < today ? query.to : today;
+    const range = rangeOf({ from: query.from ?? shiftDay(to, 1 - HEALTH_TREND_DEFAULT_DAYS), to }, this.now());
+    const db = await this.deps.reads.session();
+    const a: Audience = { scope: staffScope(user) };
+    if (query.depot_id) {
+      const depotId = await this.deps.repo.depotInScope(db, query.depot_id, a.scope);
+      if (depotId) a.depotId = depotId;
+      else a.scope = { kind: 'none' };
+    }
+    const scored = await this.deps.repo.scoredDays(db, a, PREDICTION_TYPE, dayStart(range.from), dayStart(shiftDay(range.to, 1)));
+    return {
+      data: { days: healthTrend(range, scored) },
+      meta: { from: range.from, to: range.to, days: range.days, data_freshness: db.freshness() },
     };
   }
 

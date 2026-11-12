@@ -1,6 +1,7 @@
 import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { DowntimeFact, ServiceSpan } from '../domain/downtime';
+import type { ScoredDay } from '../domain/health-trend';
 import { ON_TIME_GRACE_MINUTES, shiftDay, type DayFigures } from '../domain/kpis';
 
 /** Whose figures: the caller's depots, narrowed to one depot (an internal id) when asked. */
@@ -333,6 +334,24 @@ export class AnalyticsRepository {
   }
 
   /** Each vehicle's highest active risk (its latest prediction of each type), by internal vehicle id. */
+  /**
+   * The stored health scores (FMS-150) of the audience's vehicles from `start` to `end`, by Addis Ababa day: each
+   * vehicle's last score of the day, so a night scored twice counts once. A vehicle counts in its depot of today.
+   */
+  async scoredDays(db: Queryable, a: Audience, predictionType: string, start: Date, end: Date): Promise<ScoredDay[]> {
+    const w = audience(a, 'v.depot_id', 4);
+    const res = await db.query(
+      `SELECT day::text AS day, count(*)::int AS vehicles, sum(health_score)::int AS score_sum, count(*) FILTER (WHERE risk_level = 'high')::int AS high_risk
+         FROM (SELECT DISTINCT ON (h.vehicle_id, ${localDay('h.as_of')}) ${localDay('h.as_of')} AS day, h.health_score, h.risk_level
+                 FROM analytics.health_score_history h JOIN analytics.vehicle_directory v ON v.vehicle_id = h.vehicle_id
+                WHERE h.prediction_type = $1 AND h.as_of >= $2 AND h.as_of < $3 AND ${w.sql}
+                ORDER BY h.vehicle_id, ${localDay('h.as_of')}, h.as_of DESC) d
+        GROUP BY day ORDER BY day`,
+      [predictionType, start, end, ...w.params],
+    );
+    return res.rows.map((r) => ({ day: r.day as string, vehicles: n(r.vehicles), scoreSum: n(r.score_sum), highRisk: n(r.high_risk) }));
+  }
+
   async risks(db: Queryable, a: Audience): Promise<Map<string, { riskScore: number; predictionType: string; failureType: string | null; generatedAt: Date }>> {
     const w = audience(a, 'v.depot_id', 1);
     const res = await db.query(

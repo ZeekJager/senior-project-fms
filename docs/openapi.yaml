@@ -2666,6 +2666,60 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /analytics/health-trend:
+    get:
+      tags: [Analytics]
+      operationId: getHealthTrend
+      summary: The fleet-wide health score trend (FMS-150)
+      description: >
+        Each Addis Ababa day of the range, oldest first: the mean health score of the caller's vehicles (or the
+        chosen depot's) as the nightly batch stored it (FMS-55), to one decimal, how many were scored, and the share
+        of them in the high-risk band (risk_level high, a score of 40 or less), in whole percent. A vehicle scored
+        twice in a day counts once, by its later score. A day with no scoring run has every figure null: a gap, not
+        a zero. Read from the stored scores on the read replica; nothing is scored on request
+        (docs/vehicle-health.md). Needs analytics:read and prediction:read.
+      parameters:
+        - { name: from, in: query, description: 'An Addis Ababa day. Default: 89 days before to.', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'An Addis Ababa day. Default and latest: today.', schema: { type: string, format: date } }
+        - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives only gaps.', schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: One entry per day.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [days]
+                    properties:
+                      days:
+                        type: array
+                        items:
+                          type: object
+                          required: [date, vehicles_scored, mean_health_score, high_risk_pct]
+                          properties:
+                            date: { type: string, format: date }
+                            vehicles_scored: { type: [integer, 'null'] }
+                            mean_health_score: { type: [number, 'null'], minimum: 0, maximum: 100 }
+                            high_risk_pct: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+                  meta:
+                    type: object
+                    required: [request_id, from, to, days, data_freshness]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      from: { type: string, format: date }
+                      to: { type: string, format: date }
+                      days: { type: integer }
+                      data_freshness: { $ref: '#/components/schemas/DataFreshness' }
+        '400':
+          description: VALIDATION_FAILED (to before_from, or range_too_long past 366 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /analytics/driver-ranking:
     get:
       tags: [Analytics]

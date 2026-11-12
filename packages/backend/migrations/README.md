@@ -72,6 +72,7 @@ This directory is the **replacement PostgreSQL baseline** for the Fleet Manageme
 | 066 | `trip` | Each trip's actual distance, measured (FMS-145, docs/trip-distance.md): `trips.actual_distance_source` (`odometer` or `gps`; null with a distance entered before, by the seed or an import), `actual_distance_points` (the positions it was measured from) and `actual_distance_measured_at` (set together with the count: measured, a distance found or not); a source needs a distance (`chk_trip_distance_source`); `idx_trip_trips_unmeasured` for the backfill |
 | 067 | `analytics` | The driver performance score (FMS-146, docs/analytics.md): read-only view `dvir_facts` (each inspection with its driver, trip and type, for the score's DVIR completion) and `driver_users` (each driver's sign-in, so a driver's own score is found from it; not a column of `driver_directory`, which 054 re-creates with `CREATE OR REPLACE`) |
 | 068 | `tracking`, `trip` | The trip delay alert (FMS-147, docs/eta.md): `rule_thresholds.trip_delay_minutes` (15) and `trip_delay_urgent_minutes` (60, above the first; `chk_rule_trip_delay_urgent`); `trip_etas.delay_level` (`late` or `urgent` while a trip is alerted as late, else null) and `delay_episode` (how many times it has fallen late, one alert each) |
+| 069 | `analytics` | The fleet-wide health score trend (FMS-150, docs/vehicle-health.md): `analytics.health_score_history`, every health score the nightly batch stored (active or superseded) with its `risk_level` and `as_of`, read by `GET /analytics/health-trend` |
 
 ## Important
 

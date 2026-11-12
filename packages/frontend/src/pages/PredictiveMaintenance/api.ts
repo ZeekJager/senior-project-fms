@@ -126,3 +126,34 @@ export function useHealthCounts(depotId: string, search: string) {
   const counts = Object.fromEntries(views.map((v, i) => [v || 'all', results[i].data])) as Record<HealthView | 'all', number | undefined>
   return { counts, isLoading: results.some((r) => r.isPending) }
 }
+
+/** A day of the fleet-wide health score trend (FMS-150); every figure null on a day with no scoring run. */
+export interface HealthTrendDay {
+  date: string
+  vehicles_scored: number | null
+  mean_health_score: number | null
+  high_risk_pct: number | null
+}
+
+/** The trend's ranges on S-19, in days; 90 is the default. */
+export const TREND_RANGES = [30, 90, 180, 365] as const
+export type TrendRange = (typeof TREND_RANGES)[number]
+
+const addisToday = () => new Date(Date.now() + 3 * 3_600_000).toISOString().slice(0, 10)
+const daysBefore = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10)
+
+/** GET /analytics/health-trend (analytics:read and prediction:read): the last `days` days to today, for a depot or all of the caller's. */
+export function useHealthTrend(days: TrendRange, depotId: string, enabled: boolean) {
+  const { api } = useAuth()
+  return useQuery({
+    enabled,
+    queryKey: ['health-trend', days, depotId] as const,
+    queryFn: async () => {
+      const q = new URLSearchParams({ from: daysBefore(addisToday(), days - 1) })
+      if (depotId) q.set('depot_id', depotId)
+      return (await api.request<{ days: HealthTrendDay[] }>(`/analytics/health-trend?${q}`)).days
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
+  })
+}
