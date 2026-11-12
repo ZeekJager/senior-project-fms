@@ -7,13 +7,15 @@ export interface Viewer {
   permissions: readonly string[]
 }
 
-type Subject = Pick<InboxNotification, 'entity' | 'vehicle_id' | 'driver_id'>
+type Subject = Pick<InboxNotification, 'entity' | 'vehicle_id' | 'driver_id'> & { type?: string }
 
 /**
  * Where the alert behind a notification is dealt with, by what it is about. The screens take list filters, not
  * record ids, so this is the right list, narrowed to the vehicle when the screen can be (maintenance).
  */
 function destination(n: Subject): string | null {
+  // A driver's own notice (FMS-149: their licence, their next vehicle's service) opens their day, not the office's screen.
+  if (n.type === 'alert_personal') return '/driver'
   switch (n.entity?.type) {
     case 'dvir_report':
       return n.vehicle_id ? `/maintenance?vehicle=${encodeURIComponent(n.vehicle_id)}` : '/maintenance'

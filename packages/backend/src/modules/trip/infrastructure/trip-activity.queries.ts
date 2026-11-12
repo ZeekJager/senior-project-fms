@@ -105,6 +105,23 @@ async function activeTripsBy(db: Queryable, column: 'vehicle_id' | 'driver_id', 
   return new Map(res.rows.map(({ owner_id, ...trip }) => [owner_id, trip]));
 }
 
+/**
+ * The driver (internal fleet.drivers id) of each vehicle's current or next trip (FMS-149): the one under way, else its
+ * earliest assigned trip that has not ended yet. A vehicle with neither has no entry.
+ */
+export async function vehicleDriversNow(db: Queryable, vehicleIds: readonly string[], now: Date): Promise<Map<string, string>> {
+  if (vehicleIds.length === 0) return new Map();
+  const res = await db.query<{ vehicle_id: string; driver_id: string }>(
+    `SELECT DISTINCT ON (t.vehicle_id) t.vehicle_id::text AS vehicle_id, t.driver_id::text AS driver_id
+       FROM trip.trips t
+      WHERE t.vehicle_id = ANY($1::bigint[]) AND t.driver_id IS NOT NULL
+        AND (t.status = 'en_route' OR (t.status = 'assigned' AND t.scheduled_end >= $2))
+      ORDER BY t.vehicle_id, (t.status = 'en_route') DESC, t.scheduled_start ASC NULLS LAST, t.id`,
+    [vehicleIds, now],
+  );
+  return new Map(res.rows.map((r) => [r.vehicle_id, r.driver_id]));
+}
+
 /** A trip under way, both ids, for GPS ingestion (FMS-88): pings carry the trip's internal id. */
 export interface EnRouteTrip {
   id: string;

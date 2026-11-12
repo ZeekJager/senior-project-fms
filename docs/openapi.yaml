@@ -9265,7 +9265,7 @@ components:
       required: [id, type, title, message, alert_id, entity, vehicle_id, driver_id, read, read_at, created_at]
       properties:
         id: { type: string, format: uuid }
-        type: { type: string, description: 'What kind: alert, alert_escalated.' }
+        type: { type: string, description: "What kind: alert, alert_escalated, or alert_personal (a driver's own notice: their licence expiring, their next vehicle's service; FMS-149)." }
         title: { type: string }
         message: { type: string }
         alert_id: { type: [string, 'null'], format: uuid, description: The alert it is about, if any. }
@@ -9289,7 +9289,7 @@ components:
         id: { type: string, format: uuid }
         channel: { type: string, enum: [in_app, email, sms, push] }
         status: { type: string, enum: [queued, sent, delivered, failed, cancelled] }
-        type: { type: string, description: 'alert or alert_escalated.' }
+        type: { type: string, description: 'alert, alert_escalated or alert_personal (FMS-149).' }
         recipient:
           type: object
           required: [id, name]

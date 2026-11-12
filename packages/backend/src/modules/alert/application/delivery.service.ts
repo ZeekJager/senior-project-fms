@@ -82,9 +82,17 @@ export class DeliveryService {
   constructor(private readonly deps: DeliveryServiceDeps) {}
 
   /** Queues an alert's messages outside the inbox for these recipients (internal ids). How many. */
-  async queue(tx: PoolClient, ctx: MutationContext, alert: Pick<AlertRow, 'id' | 'severity'>, recipients: readonly string[], content: { type: string; title: string; message: string }): Promise<number> {
+  async queue(
+    tx: PoolClient,
+    ctx: MutationContext,
+    alert: Pick<AlertRow, 'id' | 'severity'>,
+    recipients: readonly string[],
+    content: { type: string; title: string; message: string },
+    /** The channels instead of the severity's (FMS-149: a driver's own notice, push only). */
+    only?: readonly DeliveryChannel[],
+  ): Promise<number> {
     const { repo, gateway, users } = this.deps;
-    const wanted = CHANNELS_BY_SEVERITY[alert.severity];
+    const wanted = only ?? CHANNELS_BY_SEVERITY[alert.severity];
     if (recipients.length === 0 || wanted.length === 0) return 0;
     const on = await gateway.channels(tx);
     const channels = wanted.filter((c) => on.has(c));
@@ -147,7 +155,7 @@ export class DeliveryService {
       title: m.title,
       message: m.message,
       raisedAt: m.alert.createdAt,
-      path: alertPath(m.alert.entityType, m.alert.entityId),
+      path: alertPath(m.alert.entityType, m.alert.entityId, m.type),
       appUrl: this.deps.appUrl,
       alertId: m.alert.publicId,
     };

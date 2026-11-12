@@ -144,6 +144,22 @@ export class DriverRepository extends Repository {
     return res.rows[0] ?? null;
   }
 
+  /**
+   * The user account of each driver (internal ids) still driving: not retired, and their account active (FMS-149, the
+   * alerts a driver receives of their own). Keyed by driver id.
+   */
+  async activeAccountsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; user_id: string }>(
+      `SELECT d.id::text AS id, d.user_id::text AS user_id
+         FROM fleet.drivers d
+         JOIN fleet.driver_accounts a ON a.user_id = d.user_id
+        WHERE d.id = ANY($1::bigint[]) AND d.is_active AND a.account_status = 'active'`,
+      [ids],
+    );
+    return new Map(res.rows.map((r) => [r.id, r.user_id]));
+  }
+
   /** Public id and name (the account's) of drivers by internal id, for the live map (FMS-45). */
   async namesByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; fullName: string | null }>> {
     if (ids.length === 0) return new Map();
