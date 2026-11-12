@@ -205,6 +205,8 @@ export { TRIP_EVENTS, type TripSummary } from './domain/trip';
 export { TRIP_ETA_UPDATED } from './domain/eta';
 export { DEFAULT_DELAY_MARGINS, DELAY_MARGIN_LIMITS, TRIP_DELAYED, type DelayMargins } from './domain/delay';
 export { DEFAULT_EXCEPTION_POLICIES, EXCEPTION_POLICIES, type ExceptionPolicies, type ExceptionPolicy } from './domain/exception';
+// The job load (FMS-153), pure: the trip risk model (FMS-155) works out the load of each trip in a driver's record.
+export { JOB_LOAD_LEVELS, jobLoad, nightHours, type JobLoadInput, type JobLoadLevel } from './domain/job-load';
 
 /**
  * For other modules: whether a vehicle or driver is on an assigned or

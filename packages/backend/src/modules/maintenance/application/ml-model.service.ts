@@ -4,9 +4,15 @@ import type { MutationContext } from '../../../shared/infrastructure/audited-mut
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { JobContext } from '../../../shared/jobs/job';
 import {
+  beatsRules,
+  isDemonstration,
   ML_MODEL_EVENTS,
   mlModelFeaturesMismatch,
+  mlModelNotBetterThanRules,
   mlModelNotFound,
+  TRIP_RISK_MODEL,
+  type TripRiskBlockedReason,
+  type TripRiskCheck,
   type MlModelView,
   type RegisteredModel,
   type ScoringBlockedReason,
@@ -38,6 +44,8 @@ export interface MlModelServiceDeps {
   client: () => MlServiceClient | null;
   /** The feature spec the core's extractor implements (feature_spec.json). */
   spec: () => FeatureSpec;
+  /** The trip risk model's (trip_risk_spec.json, FMS-155). */
+  tripRiskSpec: () => FeatureSpec;
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   /** The feedback on each version's high-risk predictions (FMS-128), for the precision figure. */
   feedback: Pick<PredictionFeedbackRepository, 'countsFor'>;
@@ -56,6 +64,43 @@ export class MlModelService {
 
   private now(): Date {
     return this.deps.now?.() ?? new Date();
+  }
+
+  /** The spec a model of this name must have been trained on. */
+  private specFor(name: string): FeatureSpec {
+    return name === TRIP_RISK_MODEL ? this.deps.tripRiskSpec() : this.deps.spec();
+  }
+
+  /**
+   * For the dispatch console (FMS-155): the trip risk model the ML service serves, registered on first sight, and whether
+   * the console may ask it: it must be active, trained on the core's trip risk spec, and the artefact registered. No event
+   * and no alert: the console polls, and without a model it keeps the rules. Never throws: a service that cannot be asked
+   * is `unavailable`.
+   */
+  async checkTripRisk(correlationId: string): Promise<TripRiskCheck> {
+    const client = this.deps.client();
+    if (!client) return { ok: false, reason: 'service_off', version: null };
+    let served: ServedModel | null;
+    try {
+      served = await client.servedTripRiskModel(correlationId);
+    } catch (err) {
+      this.deps.log.warn({ err: err instanceof Error ? err.message : String(err) }, 'trip risk: the ML service could not say which model it serves');
+      return { ok: false, reason: 'unavailable', version: null };
+    }
+    // A service answering with another model's description has no trip risk model to offer.
+    if (!served || served.name !== TRIP_RISK_MODEL) return { ok: false, reason: 'no_model', version: null };
+    const { row } = await this.register({ userId: null, correlationId }, served);
+    const expected = this.deps.tripRiskSpec().hash;
+    const reason: TripRiskBlockedReason | null =
+      row.featureSpecHash !== expected || served.featureSpecHash !== expected
+        ? 'feature_spec_mismatch'
+        : row.artefactSha256 !== served.artefactSha256
+          ? 'artefact_mismatch'
+          : row.status !== 'active'
+            ? 'not_active'
+            : null;
+    if (reason) return { ok: false, reason, version: row.version };
+    return { ok: true, version: row.version, demonstration: isDemonstration(row.trainingData) };
   }
 
   /**
@@ -161,7 +206,9 @@ export class MlModelService {
       const sameName = await models.lockName(client, target.name);
       const locked = sameName.find((m) => m.id === target.id)!;
       if (locked.status !== 'active') {
-        if (locked.featureSpecHash !== this.deps.spec().hash) throw mlModelFeaturesMismatch();
+        if (locked.featureSpecHash !== this.specFor(locked.name).hash) throw mlModelFeaturesMismatch();
+        // A trip risk model is used only when it beat the rules (FMS-155); the registry keeps it, with why, all the same.
+        if (locked.name === TRIP_RISK_MODEL && !beatsRules(locked.metrics)) throw mlModelNotBetterThanRules((locked.metrics.decision as { why?: unknown } | undefined)?.why);
         const at = this.now();
         for (const other of sameName) if (other.status === 'active') await models.retire(client, ctx, other.id, at);
         await models.activate(client, ctx, locked.id, at, ctx.userId === null ? null : String(ctx.userId));
@@ -173,7 +220,6 @@ export class MlModelService {
   private async views(db: Queryable, rows: MlModelRow[]): Promise<MlModelView[]> {
     const ids = [...new Set(rows.flatMap((r) => (r.activatedBy ? [r.activatedBy] : [])))];
     const users = new Map((await this.deps.users.findByIds(db, ids)).map((u) => [u.id, u.publicId]));
-    const hash = this.deps.spec().hash;
     const counts = await this.deps.feedback.countsFor(db, rows.map((r) => ({ name: r.name, version: r.version })));
     const statsOf = (r: MlModelRow): ModelFeedbackStats => {
       const c = counts.find((x) => x.modelName === r.name && x.modelVersion === r.version);
@@ -199,7 +245,8 @@ export class MlModelService {
       features: r.features,
       feature_spec_version: r.featureSpecVersion,
       feature_spec_hash: r.featureSpecHash,
-      features_match: r.featureSpecHash === hash,
+      features_match: r.featureSpecHash === this.specFor(r.name).hash,
+      demonstration: isDemonstration(r.trainingData),
       metrics: r.metrics,
       training_data: r.trainingData,
       trained_at: r.trainedAt,

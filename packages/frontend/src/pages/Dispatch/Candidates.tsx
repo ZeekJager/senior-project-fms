@@ -1,9 +1,10 @@
 import { licenceText } from '@/lib/licence'
-import { CalendarClock, Check, Clock, Truck, UserRound, Wrench } from 'lucide-react'
+import { Activity, CalendarClock, Check, Clock, FlaskConical, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Badge, cn, Skeleton } from '@/components/ui'
 import { driverLook, formatTime, reasonText, VEHICLE_TYPE_LABELS, vehicleLook } from './format'
-import type { AvailabilityResult, BoardDriver, BoardVehicle, DriverState, VehicleState } from './types'
+import { lateLine, safetyLine, tripRiskNote } from './tripRisk'
+import type { AvailabilityResult, BoardDriver, BoardTripRisk, BoardVehicle, DriverState, VehicleState } from './types'
 
 // The right panel: the depot's drivers and vehicles, with the card's colours.
 // Every one stays selectable: the API is the last word on what can be
@@ -75,32 +76,74 @@ function Detail({ children, icon }: { children: ReactNode; icon?: ReactNode }) {
   return <span className="mt-1 flex items-center gap-1 text-xs text-ink-muted [&_svg]:h-3.5 [&_svg]:w-3.5">{icon}{children}</span>
 }
 
-export function DriverList({ drivers, selectedId, onSelect }: { drivers: BoardDriver[]; selectedId: string | null; onSelect: (d: BoardDriver) => void }) {
+/** Why the drivers carry no trip risk, or that it is a demonstration (FMS-155). */
+function TripRiskNote({ risk }: { risk: BoardTripRisk | null | undefined }) {
+  const note = tripRiskNote(risk)
+  if (!note) return null
   return (
-    <ul className="space-y-1" aria-label="Drivers">
-      {sortDrivers(drivers).map((d) => {
-        const look = driverLook(d)
-        const reasons = reasonsLine(d.availability, ['driver_absent', 'driver_on_leave', 'driver_sick'])
-        return (
-          <Row
-            key={d.driver_id}
-            selected={d.driver_id === selectedId}
-            onSelect={() => onSelect(d)}
-            label={`${d.full_name}, ${look.label}`}
-            icon={<UserRound />}
-            title={d.full_name}
-            subtitle={d.license_categories.length > 0 ? `Licence ${licenceText(d.license_categories)}` : 'No licence class on file'}
-            badge={<StateBadge {...look} />}
-            detail={
-              <>
-                {d.current_trip && <Detail icon={<Clock />}>On a trip until {formatTime(d.current_trip.end)}</Detail>}
-                {reasons && <Detail>{reasons}</Detail>}
-              </>
+    <p
+      className={cn(
+        'mb-2 flex items-start gap-1.5 rounded-control px-2.5 py-1.5 text-xs [&_svg]:mt-px [&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:shrink-0',
+        note.tone === 'info' ? 'bg-brand-soft text-ink' : 'bg-surface-muted text-ink-muted',
+      )}
+    >
+      {note.tone === 'info' ? <FlaskConical aria-hidden="true" /> : <Activity aria-hidden="true" />}
+      {note.text}
+    </p>
+  )
+}
+
+export function DriverList({
+  drivers,
+  selectedId,
+  onSelect,
+  tripRisk,
+}: {
+  drivers: BoardDriver[]
+  selectedId: string | null
+  onSelect: (d: BoardDriver) => void
+  /** The board's trip risk (FMS-155), with a chosen trip and tracking:read. */
+  tripRisk?: BoardTripRisk | null
+}) {
+  return (
+    <>
+      <TripRiskNote risk={tripRisk} />
+      <ul className="space-y-1" aria-label="Drivers">
+        {sortDrivers(drivers).map((d) => {
+          const look = driverLook(d)
+          const reasons = reasonsLine(d.availability, ['driver_absent', 'driver_on_leave', 'driver_sick'])
+          return (
+            <Row
+              key={d.driver_id}
+              selected={d.driver_id === selectedId}
+              onSelect={() => onSelect(d)}
+              label={`${d.full_name}, ${look.label}`}
+              icon={<UserRound />}
+              title={d.full_name}
+              subtitle={d.license_categories.length > 0 ? `Licence ${licenceText(d.license_categories)}` : 'No licence class on file'}
+              badge={<StateBadge {...look} />}
+              detail={
+                <>
+                  {d.current_trip && <Detail icon={<Clock />}>On a trip until {formatTime(d.current_trip.end)}</Detail>}
+                  {reasons && <Detail>{reasons}</Detail>}
+                  {d.trip_risk && (
+                    <span className="mt-1 block text-xs text-ink-muted" data-testid="trip-risk">
+                      <span className="flex items-start gap-1 [&_svg]:mt-px [&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:shrink-0">
+                        <Activity aria-hidden="true" />
+                        <span>
+                          <span className="font-medium text-ink">{lateLine(d.trip_risk)}</span>
+                          <span className="block">{safetyLine(d.trip_risk)}</span>
+                        </span>
+                      </span>
+                    </span>
+                  )}
+    </>
             }
           />
         )
       })}
     </ul>
+    </>
   )
 }
 

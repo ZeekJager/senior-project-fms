@@ -48,7 +48,7 @@ import { ExpiryService } from './application/expiry.service';
 import { MeterService, type MeterSources } from './application/meter.service';
 import { DOCUMENT_EVENTS } from './domain/document';
 import { VEHICLE_EVENTS } from './domain/vehicle';
-import type { OpenWorkSummary, ServiceDueSummary } from './domain/dispatch';
+import type { OpenWorkSummary, ServiceDueSummary, TripRiskProvider } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
 import { attendanceCodeKey } from './domain/attendance-code';
@@ -91,6 +91,13 @@ type MaintenanceLookup = {
   downtimeProblems: DowntimeProblemLookup;
 };
 let maintenanceLookup: MaintenanceLookup | null = null;
+
+/** The trip risk model on the board (FMS-155), the analytics module's: connected by src/modules/index.ts, as analytics imports maintenance, which imports fleet. */
+let tripRiskProvider: TripRiskProvider | null = null;
+
+export function provideTripRisk(provider: TripRiskProvider | null): void {
+  tripRiskProvider = provider;
+}
 
 /** Connects the maintenance module's lookup. Called once by src/modules/index.ts: fleet cannot import maintenance, which imports fleet. */
 export function provideMaintenanceLookup(lookup: MaintenanceLookup): void {
@@ -309,6 +316,8 @@ const dispatchService = new DispatchService({
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds },
   maintenance: () => maintenanceLookup,
   inTransaction: (fn) => vehicleRepository.inTransaction(fn),
+  tripRisk: () => tripRiskProvider,
+  log: logger,
 });
 
 const router = Router();

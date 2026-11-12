@@ -71,6 +71,16 @@ When scoring is blocked:
 
 An ML service that cannot be reached, refuses the token, or answers without the fields above throws `MlServiceError`, and nothing is registered. The service is called through the integration gateway: a timeout on each attempt, retries, and its circuit breaker ([integrations.md](integrations.md#services-of-the-stack)).
 
+## The trip risk model (FMS-155)
+
+The registry holds a second model by name, `trip-risk` ([ml-trip-risk.md](ml-trip-risk.md)), beside `predictive-maintenance`. The same rules hold, with three differences:
+
+- **Seen by the dispatch board.** It is registered the first time the board (or `npm run ml:model -- list`) finds the ML service serving one (`GET /models/trip-risk`), not by the scoring job. No `MlScoringBlocked` event or alert: the board polls, and without the model it keeps the rules.
+- **Its own spec.** Its hash is checked against `trip_risk_spec.json` (`ML_TRIP_RISK_SPEC_PATH`, by default `../ai-service/trip_risk_spec.json`), not `feature_spec.json`.
+- **It must beat the rules.** Activating a version whose `metrics.decision.beats_rules` is not true is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `does_not_beat_rules`, with the reasons training recorded. It stays registered, so the registry shows why the console kept the rules.
+
+`npm run ml:model -- activate tr-2026.11 --name trip-risk --by admin@example.com` activates one. `list` shows each model's name, and marks a demonstration (trained on generated data, `demonstration: true`).
+
 ## Predictions
 
 `maintenance.maintenance_predictions (model_name, model_version)` is a foreign key to the registry. A prediction naming a version the registry does not hold cannot be stored, so every score is traceable to its model. The nightly scoring stores each one with the model `checkServing` allowed.

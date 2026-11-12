@@ -35,7 +35,7 @@ import { InventoryRepository } from './infrastructure/inventory.repository';
 import { MaintenanceRepository } from './infrastructure/maintenance.repository';
 import { MlModelRepository, type MlModelListFilter } from './infrastructure/ml-model.repository';
 import { PredictionFeedbackRepository } from './infrastructure/prediction-feedback.repository';
-import { HttpMlServiceClient, ML_SERVICE_TIMEOUT_MS } from './infrastructure/ml-service.client';
+import { HttpMlServiceClient, ML_SERVICE_TIMEOUT_MS, MlServiceError, type TripRiskRequest } from './infrastructure/ml-service.client';
 import { ScoringRepository } from './infrastructure/scoring.repository';
 import { ServiceProgramRepository } from './infrastructure/service-program.repository';
 import { WarrantyRepository } from './infrastructure/warranty.repository';
@@ -103,6 +103,8 @@ const inventoryService = new InventoryService({
 });
 
 const featureSpec = featureSpecLoader(config.ml.featureSpecPath);
+// The trip risk model's (FMS-155): its own spec, shared with the ML service the same way.
+const tripRiskSpec = featureSpecLoader(config.ml.tripRiskSpecPath);
 
 /**
  * The ML service (FMS-54) through the integration gateway: timeouts, retries and its circuit breaker.
@@ -122,6 +124,7 @@ const mlModelService = new MlModelService({
   models: new MlModelRepository(pool),
   client: mlClient,
   spec: featureSpec,
+  tripRiskSpec,
   users: userDirectory,
   feedback: feedbackRepository,
   events: eventBus,
@@ -237,6 +240,20 @@ export const mlRegistry = {
   featureSpec,
 };
 
+/**
+ * For the trip risk model (FMS-155, docs/ml-trip-risk.md), read by the analytics module: whether the console may ask the
+ * model the ML service serves (registered on first sight), and the asking. Its spec is the one the extractor implements.
+ */
+export const tripRiskModels = {
+  check: (correlationId: string) => mlModelService.checkTripRisk(correlationId),
+  predict: async (items: readonly TripRiskRequest[], correlationId: string) => {
+    const client = mlClient();
+    if (!client) throw new MlServiceError('ML_SERVICE_URL is not set');
+    return client.predictTripRisk(items, correlationId);
+  },
+  spec: tripRiskSpec,
+};
+
 /** For `npm run ml:model` (FMS-127): the registry, and activation by a named administrator. */
 /** For tests and scripts: one run of the nightly scoring (FMS-55), as the scheduler runs it. */
 export const maintenanceScoring = {
@@ -251,7 +268,9 @@ export const mlModelAdmin = {
 export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/failure';
 export { INVENTORY_EVENTS, SERVICE_ITEMS, type ServiceItem } from './domain/inventory';
 export { MAINTENANCE_EVENTS } from './domain/maintenance';
-export { ML_MODEL_EVENTS, type MlModelView, type ScoringCheck } from './domain/ml-model';
+export { MAINTENANCE_MODEL, ML_MODEL_EVENTS, TRIP_RISK_MODEL, type MlModelView, type ScoringCheck, type TripRiskCheck } from './domain/ml-model';
+export type { TripRiskPrediction, TripRiskRequest } from './infrastructure/ml-service.client';
+export type { FeatureSpec } from './infrastructure/feature-spec';
 export { PREDICTION_FEEDBACK_EVENTS, PREDICTION_OUTCOMES } from './domain/prediction-feedback';
 export { SERVICE_DUE_EVENTS } from './domain/service-program';
 export { WARRANTY_EVENTS } from './domain/warranty';

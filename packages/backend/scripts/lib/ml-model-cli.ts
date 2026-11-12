@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { pool } from '../../src/db';
-import { mlModelAdmin, type MlModelView } from '../../src/modules/maintenance';
+import { mlModelAdmin, tripRiskModels, type MlModelView } from '../../src/modules/maintenance';
 
 export const ML_MODEL_USAGE = [
   'Usage: npm run ml:model -- list [--status registered|active|retired]',
-  '       npm run ml:model -- activate <version> --by <admin email> [--name predictive-maintenance]',
+  '       npm run ml:model -- activate <version> --by <admin email> [--name predictive-maintenance|trip-risk]',
 ].join('\n');
 
 const STATUSES = ['registered', 'active', 'retired'] as const;
@@ -15,9 +15,19 @@ const ALL = { page: 1, page_size: 100 };
 
 const day = (d: Date | null) => (d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') : '-');
 
+/** ROC-AUC: the maintenance model's, or the trip risk model's on lateness (FMS-155), with whether it beat the rules. */
+function aucOf(m: MlModelView): string {
+  if (typeof m.metrics.roc_auc === 'number') return m.metrics.roc_auc.toFixed(3);
+  const late = (m.metrics.late as { model?: { roc_auc?: unknown } } | undefined)?.model?.roc_auc;
+  if (typeof late !== 'number') return '-';
+  const beats = (m.metrics.decision as { beats_rules?: unknown } | undefined)?.beats_rules === true;
+  return `${late.toFixed(3)}${beats ? '' : ' (does not beat the rules)'}`;
+}
+
 function describe(m: MlModelView): string {
-  const auc = typeof m.metrics.roc_auc === 'number' ? m.metrics.roc_auc.toFixed(3) : '-';
+  const auc = aucOf(m) + (m.demonstration ? ' demonstration' : '');
   return [
+    m.name.padEnd(22),
     m.version.padEnd(16),
     m.status.padEnd(10),
     (m.features_match ? 'yes' : 'NO').padEnd(14),
@@ -59,12 +69,14 @@ export async function mlModelCommand(argv: string[], out: (line: string) => void
   if (command === 'list') {
     const status = values.status as (typeof STATUSES)[number] | undefined;
     if (status !== undefined && !STATUSES.includes(status)) throw new Error(ML_MODEL_USAGE);
+    // The trip risk model registers when it is first seen (FMS-155): look now, so a new one can be activated.
+    await tripRiskModels.check(randomUUID());
     const { items } = await mlModelAdmin.list({ ...ALL, status });
     if (items.length === 0) {
       out('No model registered yet: the scoring job registers the one the ML service serves.');
       return;
     }
-    out(['VERSION'.padEnd(16), 'STATUS'.padEnd(10), 'FEATURES MATCH'.padEnd(14), 'ROC-AUC', 'FIRST SEEN (UTC)'.padEnd(17), 'ACTIVATED (UTC)'].join(' '));
+    out(['NAME'.padEnd(22), 'VERSION'.padEnd(16), 'STATUS'.padEnd(10), 'FEATURES MATCH'.padEnd(14), 'ROC-AUC', 'FIRST SEEN (UTC)'.padEnd(17), 'ACTIVATED (UTC)'].join(' '));
     for (const m of items) out(describe(m));
     return;
   }

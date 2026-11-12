@@ -43,4 +43,12 @@ describe('the feature spec hash', () => {
     expect(spec.features).toHaveLength(19);
     expect(spec.features[0]).toBe('mileage_km');
   });
+
+  test("is the ML service's spec_hash() of trip_risk_spec.json too (FMS-155)", () => {
+    // `python -c "from ml.trip_risk.spec import spec_hash; print(spec_hash())"` in packages/ai-service.
+    const spec = featureSpecLoader('../ai-service/trip_risk_spec.json')();
+    expect(spec.hash).toBe('87d091cafee4f398c2bda7dbf2e905972dbce272298da6eb0ae77fc9cdb2a6d2');
+    expect(spec.features).toHaveLength(22);
+    expect(spec.features[0]).toBe('driver_trips_90d');
+  });
 });

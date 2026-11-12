@@ -1,0 +1,372 @@
+{
+  "spec_version": 1,
+  "description": "The trip risk model's inputs and labels (FMS-155, docs/ml-trip-risk.md). One row is one driver on one trip at t, the trip's scheduled_start: what was known before it started. The driver's record, the job (FMS-153), when it runs, the route's record, and how rested the driver was. The core computes every input from analytics.trip_risk_facts (migration 073) by tripRiskFeatures (maintenance/domain/trip-risk.ts), for training (npm run ml:trip-risk-dataset) and for the dispatch console alike. No protected attribute is an input: no name, age, gender, address or photo.",
+  "id_columns": [
+    {
+      "name": "trip_id",
+      "type": "string",
+      "description": "The trip's public id, or GEN-T000001 in generated data. Never an input."
+    },
+    {
+      "name": "driver_id",
+      "type": "string",
+      "description": "The driver's public id, or GEN-D001. The split holds whole drivers out. Never an input."
+    },
+    {
+      "name": "depot_id",
+      "type": "string",
+      "description": "The trip's depot, for the per-depot report. Never an input."
+    },
+    {
+      "name": "as_of",
+      "type": "datetime",
+      "description": "t, the trip's scheduled_start (UTC, ISO 8601). Never an input."
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "description": "fleet (exported from the core) or generated (scripts/generate_trip_risk_data.py). A dataset is one or the other; a model trained on generated data is a demonstration."
+    }
+  ],
+  "features": [
+    {
+      "name": "driver_trips_90d",
+      "type": "int",
+      "unit": "trips",
+      "min": 0,
+      "max": 500,
+      "decimals": 0,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Count of the driver's completed trips whose actual_end is in [t - 90 days, t). Capped at 500.",
+      "when_missing": "0 (no completed trip in the window)."
+    },
+    {
+      "name": "driver_late_share_90d",
+      "type": "float",
+      "unit": "share",
+      "min": 0,
+      "max": 1,
+      "decimals": 3,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Of the driver's completed trips whose actual_end is in [t - 90 days, t) that had a scheduled_end, the share that were late (as the label late, with the margin of each trip's depot).",
+      "when_missing": "0 (none of them had a scheduled_end)."
+    },
+    {
+      "name": "driver_safety_share_90d",
+      "type": "float",
+      "unit": "share",
+      "min": 0,
+      "max": 1,
+      "decimals": 3,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Of the driver's completed trips whose actual_end is in [t - 90 days, t), the share that had a safety event (as the label safety_event).",
+      "when_missing": "0 (no completed trip in the window)."
+    },
+    {
+      "name": "driver_same_load_trips_90d",
+      "type": "int",
+      "unit": "trips",
+      "min": 0,
+      "max": 500,
+      "decimals": 0,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Count of the driver's completed trips whose actual_end is in [t - 90 days, t) whose job load level (FMS-153) is this trip's. Capped at 500.",
+      "when_missing": "0."
+    },
+    {
+      "name": "driver_same_load_late_share_90d",
+      "type": "float",
+      "unit": "share",
+      "min": 0,
+      "max": 1,
+      "decimals": 3,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "driver_late_share_90d over the same-load trips only.",
+      "when_missing": "0."
+    },
+    {
+      "name": "job_load_points",
+      "type": "int",
+      "unit": "points",
+      "min": 0,
+      "max": 8,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "The trip's job load points (trip/domain/job-load.ts, docs/job-load.md): distance, planned time, stops, night hours and the cargo's share of the payload.",
+      "when_missing": "0 (nothing known: a light job)."
+    },
+    {
+      "name": "planned_distance_km",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 3000,
+      "decimals": 1,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "trip.trips.planned_distance_km. Capped at 3000.",
+      "when_missing": "0 (not planned)."
+    },
+    {
+      "name": "planned_duration_h",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 72,
+      "decimals": 2,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "planned_duration_seconds / 3600, else the scheduled window (scheduled_end - scheduled_start). Capped at 72.",
+      "when_missing": "0 (neither known)."
+    },
+    {
+      "name": "stops",
+      "type": "int",
+      "unit": "stops",
+      "min": 0,
+      "max": 100,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "The trip's stops (trip.trip_stops). Capped at 100.",
+      "when_missing": "0."
+    },
+    {
+      "name": "night_hours",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 24,
+      "decimals": 2,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Hours of [scheduled_start, scheduled_end] between 22:00 and 06:00 in Addis Ababa (nightHours, FMS-153). Capped at 24.",
+      "when_missing": "0 (no scheduled end)."
+    },
+    {
+      "name": "cargo_share",
+      "type": "float",
+      "unit": "share",
+      "min": 0,
+      "max": 1,
+      "decimals": 3,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "cargo_weight_kg / the vehicle's payload_capacity_kg (FMS-153). Capped at 1.",
+      "when_missing": "0 (no cargo weight, no vehicle yet, or no payload recorded)."
+    },
+    {
+      "name": "cargo_hazardous",
+      "type": "int",
+      "unit": "flag",
+      "min": 0,
+      "max": 1,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "1 when cargo_kind is hazardous.",
+      "when_missing": "0."
+    },
+    {
+      "name": "cargo_fragile",
+      "type": "int",
+      "unit": "flag",
+      "min": 0,
+      "max": 1,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "1 when cargo_kind is fragile.",
+      "when_missing": "0."
+    },
+    {
+      "name": "cargo_refrigerated",
+      "type": "int",
+      "unit": "flag",
+      "min": 0,
+      "max": 1,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "1 when cargo_kind is refrigerated.",
+      "when_missing": "0."
+    },
+    {
+      "name": "cargo_passengers",
+      "type": "int",
+      "unit": "flag",
+      "min": 0,
+      "max": 1,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "1 when cargo_kind is passengers.",
+      "when_missing": "0."
+    },
+    {
+      "name": "start_hour",
+      "type": "int",
+      "unit": "h",
+      "min": 0,
+      "max": 23,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "The hour of t in Addis Ababa (UTC+3), 0 to 23.",
+      "when_missing": "Never missing: t is always known."
+    },
+    {
+      "name": "weekday",
+      "type": "int",
+      "unit": "day",
+      "min": 0,
+      "max": 6,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "The weekday of t in Addis Ababa, Monday 0 to Sunday 6.",
+      "when_missing": "Never missing."
+    },
+    {
+      "name": "hours_since_last_trip",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 336,
+      "decimals": 1,
+      "window_days": 14,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Hours from the latest actual_end of the driver's completed trips before t, to t; 0 while the driver is on a trip at t. Capped at 336 (14 days).",
+      "when_missing": "336 (no earlier trip)."
+    },
+    {
+      "name": "hours_driven_24h",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 24,
+      "decimals": 2,
+      "window_days": 1,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Hours of the driver's trips (actual_start to actual_end, or to t while under way) inside [t - 24 h, t).",
+      "when_missing": "0."
+    },
+    {
+      "name": "hours_driven_7d",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 168,
+      "decimals": 2,
+      "window_days": 7,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "As hours_driven_24h, inside [t - 7 days, t).",
+      "when_missing": "0."
+    },
+    {
+      "name": "route_trips_90d",
+      "type": "int",
+      "unit": "trips",
+      "min": 0,
+      "max": 5000,
+      "decimals": 0,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Count of the route's completed trips (any driver) whose actual_end is in [t - 90 days, t). Capped at 5000.",
+      "when_missing": "0 (no route, or none in the window)."
+    },
+    {
+      "name": "route_late_share_90d",
+      "type": "float",
+      "unit": "share",
+      "min": 0,
+      "max": 1,
+      "decimals": 3,
+      "window_days": 90,
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "formula": "Of those with a scheduled_end, the share that were late.",
+      "when_missing": "0."
+    }
+  ],
+  "target": [
+    {
+      "name": "late",
+      "type": "int",
+      "values": [
+        0,
+        1
+      ],
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "definition": "1 when the trip's actual_end is more than trip_delay_minutes (its depot's, else the fleet's, FMS-147) after its scheduled_end; else 0. Training and evaluation only."
+    },
+    {
+      "name": "safety_event",
+      "type": "int",
+      "values": [
+        0,
+        1
+      ],
+      "sources": [
+        "analytics.trip_risk_facts"
+      ],
+      "definition": "1 when a speeding flag was raised on the trip, or the driver had an accident (incident type accident) between its actual_start and actual_end; else 0. Training and evaluation only."
+    }
+  ],
+  "eligible": "Completed trips with a driver, a scheduled_start and scheduled_end, an actual_start and actual_end, and a measured distance (actual_distance_source set, FMS-145).",
+  "minimum": {
+    "trips": 2000,
+    "drivers": 20
+  }
+}

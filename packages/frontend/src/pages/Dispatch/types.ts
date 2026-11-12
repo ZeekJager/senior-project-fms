@@ -110,6 +110,33 @@ export interface BoardDriver {
   attendance: 'present' | 'absent' | 'late' | 'on_leave' | 'sick' | 'other' | null
   availability: AvailabilityResult
   current_trip: { trip_id: string; end: string } | null
+  /** The trip risk model's chances on the chosen trip (FMS-155): tracking:read, an active model, a driver free for it. */
+  trip_risk?: DriverTripRisk | null
+}
+
+/** An input that raises a chance, with the value the model was given (docs/ml-trip-risk.md). */
+export interface TripRiskFactor {
+  feature: string
+  value: number
+}
+
+/** One driver's predicted chances on one trip (FMS-155): advice for this trip, never a block or a ranking. */
+export interface DriverTripRisk {
+  late_probability: number
+  safety_event_probability: number
+  factors: { late: TripRiskFactor[]; safety_event: TripRiskFactor[] }
+}
+
+/** Whether the board carries the model's chances, and why not. */
+export interface BoardTripRisk {
+  status: 'ok' | 'not_enough_trips' | 'off' | 'unavailable'
+  reason: string | null
+  model_version: string | null
+  /** Trained on generated trips, not this fleet's. */
+  demonstration: boolean
+  trips: number
+  drivers: number
+  minimum: { trips: number; drivers: number }
 }
 
 export interface OpenWork {
@@ -138,6 +165,8 @@ export interface BoardVehicle {
 export interface DispatchBoard {
   depot_id: string
   window: { start: string; end: string }
+  /** With a chosen trip and tracking:read (FMS-155); null or absent otherwise. */
+  trip_risk?: BoardTripRisk | null
   drivers: BoardDriver[]
   vehicles: BoardVehicle[]
 }

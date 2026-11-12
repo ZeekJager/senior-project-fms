@@ -5,9 +5,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 # The model the service starts with, trained at build time from the seeded dataset (the same data every
 # build). It lives outside /app, so the source volume of docker-compose.yml does not hide it.
+# The trip risk model (FMS-155) beside it: a demonstration trained on generated trips (docs/ml-trip-risk.md).
 RUN python scripts/generate_training_data.py --out /tmp/training_data.csv \
  && python scripts/train.py --data /tmp/training_data.csv --out /opt/models \
- && rm /tmp/training_data.csv
+ && python scripts/generate_trip_risk_data.py --out /tmp/trip_risk_generated.csv \
+ && python scripts/train_trip_risk.py --data /tmp/trip_risk_generated.csv --out /opt/models \
+ && rm /tmp/training_data.csv /tmp/trip_risk_generated.csv
 ENV ML_MODELS_DIR=/opt/models
 RUN useradd --system --uid 10001 ml
 USER ml

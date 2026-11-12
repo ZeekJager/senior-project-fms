@@ -275,7 +275,7 @@ export function DispatchPage() {
                   Drivers <span className="text-xs font-normal text-ink-subtle">{drivers.filter((d) => d.state === 'idle').length} available</span>
                 </h2>
                 <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
-                  {board.isPending ? <CandidatesSkeleton /> : <DriverList drivers={shownDrivers} selectedId={assignable ? driverId : null} onSelect={(d) => assignable && choose('driver', d.driver_id)} />}
+                  {board.isPending ? <CandidatesSkeleton /> : <DriverList drivers={shownDrivers} selectedId={assignable ? driverId : null} onSelect={(d) => assignable && choose('driver', d.driver_id)} tripRisk={trip ? board.data?.trip_risk : null} />}
                 </div>
               </div>
               <div className="min-w-0">

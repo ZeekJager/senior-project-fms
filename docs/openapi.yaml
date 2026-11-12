@@ -8839,7 +8839,7 @@ components:
 
     DispatchBoard:
       type: object
-      required: [depot_id, window, drivers, vehicles]
+      required: [depot_id, window, trip_risk, drivers, vehicles]
       properties:
         depot_id: { type: string, format: uuid }
         window:
@@ -8848,11 +8848,16 @@ components:
           properties:
             start: { type: string, format: date-time }
             end: { type: string, format: date-time }
+        trip_risk:
+          description: With exclude_trip_id and tracking:read (FMS-155, docs/ml-trip-risk.md), whether the drivers carry the trip risk model's chances, and why not; null otherwise.
+          oneOf:
+            - type: 'null'
+            - { $ref: '#/components/schemas/BoardTripRisk' }
         drivers:
           type: array
           items:
             type: object
-            required: [driver_id, full_name, license_categories, vehicle_types, state, attendance, availability, current_trip]
+            required: [driver_id, full_name, license_categories, vehicle_types, state, attendance, availability, current_trip, trip_risk]
             properties:
               driver_id: { type: string, format: uuid }
               full_name: { type: string }
@@ -8865,6 +8870,11 @@ components:
               attendance: { type: [string, 'null'], enum: [present, absent, late, on_leave, sick, other, null] }
               availability: { $ref: '#/components/schemas/AvailabilityResult' }
               current_trip: { $ref: '#/components/schemas/BoardTrip' }
+              trip_risk:
+                description: The trip risk model's chances on the trip being staffed (FMS-155), for a driver free for it, once a model is active; null otherwise. Advice, never a block.
+                oneOf:
+                  - type: 'null'
+                  - { $ref: '#/components/schemas/DriverTripRisk' }
         vehicles:
           type: array
           items:
@@ -10239,10 +10249,49 @@ components:
               confirmed_issue: { type: integer }
               precision: { type: [number, 'null'] }
 
+    BoardTripRisk:
+      type: object
+      description: "Whether the board carries the trip risk model's chances (FMS-155). ok: the active model's (demonstration when trained on generated trips). not_enough_trips: no usable model and fewer than the minimum trips to train one. off: no usable model (reason). unavailable: the ML service failed."
+      required: [status, reason, model_version, demonstration, trips, drivers, minimum]
+      properties:
+        status: { type: string, enum: [ok, not_enough_trips, off, unavailable] }
+        reason: { type: [string, 'null'], enum: [service_off, no_model, unavailable, feature_spec_mismatch, artefact_mismatch, not_active, null] }
+        model_version: { type: [string, 'null'], example: tr-2026.11 }
+        demonstration: { type: boolean }
+        trips: { type: integer, description: Completed, measured trips there are to train on. }
+        drivers: { type: integer, description: Drivers of those trips. }
+        minimum:
+          type: object
+          required: [trips, drivers]
+          properties:
+            trips: { type: integer, example: 2000 }
+            drivers: { type: integer, example: 20 }
+
+    DriverTripRisk:
+      type: object
+      required: [late_probability, safety_event_probability, factors]
+      properties:
+        late_probability: { type: number, minimum: 0, maximum: 1, description: The chance the trip ends more than its depot's delay margin late. }
+        safety_event_probability: { type: number, minimum: 0, maximum: 1, description: The chance of a speeding flag or an accident during it. }
+        factors:
+          type: object
+          description: The inputs that raise each chance most, at most two each, with the value the model was given.
+          required: [late, safety_event]
+          properties:
+            late: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/TripRiskFactor' } }
+            safety_event: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/TripRiskFactor' } }
+
+    TripRiskFactor:
+      type: object
+      required: [feature, value]
+      properties:
+        feature: { type: string, description: 'An input of trip_risk_spec.json, e.g. hours_driven_24h.' }
+        value: { type: number }
+
     MlModel:
       type: object
       description: A registered predictive maintenance model version (FMS-127). Written once when first seen; only its status changes.
-      required: [id, name, version, status, algorithm, features, feature_spec_version, feature_spec_hash, features_match, metrics, training_data, trained_at, artefact_sha256, first_seen_at, activated_at, activated_by, retired_at, feedback]
+      required: [id, name, version, status, algorithm, features, feature_spec_version, feature_spec_hash, features_match, demonstration, metrics, training_data, trained_at, artefact_sha256, first_seen_at, activated_at, activated_by, retired_at, feedback]
       properties:
         id: { type: string, format: uuid }
         name: { type: string, example: predictive-maintenance }
@@ -10253,6 +10302,7 @@ components:
         feature_spec_version: { type: integer }
         feature_spec_hash: { type: string, pattern: '^[0-9a-f]{64}$', description: 'SHA-256 of the canonical feature definitions it was trained on (feature_spec.json).' }
         features_match: { type: boolean, description: "Whether feature_spec_hash is the core's: false, it can never score." }
+        demonstration: { type: boolean, description: 'Trained on generated data (training_data.source generated): a trip risk demonstration (FMS-155), labelled so wherever it shows.' }
         metrics: { type: object, additionalProperties: true, description: 'As the ML service reported them: roc_auc, brier, at_alert_threshold (precision, recall, f1), and more.' }
         training_data: { type: object, additionalProperties: true, description: 'Which data: file and its SHA-256, rows, vehicles, dates, split.' }
         trained_at: { type: string, format: date-time }

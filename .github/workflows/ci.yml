@@ -198,6 +198,15 @@ jobs:
           set -euo pipefail
           python scripts/train.py --data "$RUNNER_TEMP/a.csv" --out "$RUNNER_TEMP/models" --version pm-0000.00
           python scripts/evaluate.py "$RUNNER_TEMP/models/pm-0000.00" --data "$RUNNER_TEMP/a.csv"
+      # The trip risk model (FMS-155): its generated trips the same bytes twice, then trained, graded and re-graded.
+      - name: Train and grade the trip risk model
+        run: |
+          set -euo pipefail
+          python scripts/generate_trip_risk_data.py --out "$RUNNER_TEMP/trips-a.csv"
+          python scripts/generate_trip_risk_data.py --out "$RUNNER_TEMP/trips-b.csv"
+          cmp "$RUNNER_TEMP/trips-a.csv" "$RUNNER_TEMP/trips-b.csv"
+          python scripts/train_trip_risk.py --data "$RUNNER_TEMP/trips-a.csv" --out "$RUNNER_TEMP/models" --version tr-0000.00
+          python scripts/evaluate_trip_risk.py "$RUNNER_TEMP/models/tr-0000.00" --data "$RUNNER_TEMP/trips-a.csv"
 
   migrations:
     name: migrations-ci

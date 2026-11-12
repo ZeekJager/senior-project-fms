@@ -3803,3 +3803,45 @@ ALTER TABLE fleet.drivers
         license_categories <@ ARRAY['motorcycle', 'automobile', 'taxi_1', 'taxi_2', 'public_1', 'public_2', 'dry_cargo_1',
                                     'dry_cargo_2', 'dry_cargo_3', 'liquid_cargo_1', 'liquid_cargo_2', 'special']::TEXT[]
     );
+
+-- ===== 073_trip_risk_facts.sql =====
+CREATE OR REPLACE VIEW analytics.trip_risk_facts AS
+SELECT
+    t.id AS trip_id,
+    t.public_id,
+    t.driver_id,
+    d.public_id AS driver_public_id,
+    t.route_id,
+    r.depot_id,
+    dp.public_id AS depot_public_id,
+    t.status::text AS status,
+    t.scheduled_start,
+    t.scheduled_end,
+    t.actual_start,
+    t.actual_end,
+    t.planned_distance_km::float8 AS planned_distance_km,
+    t.planned_duration_seconds,
+    (SELECT count(*)::int FROM trip.trip_stops s WHERE s.trip_id = t.id) AS stop_count,
+    t.cargo_weight_kg::float8 AS cargo_weight_kg,
+    t.cargo_kind,
+    v.payload_capacity_kg::float8 AS payload_capacity_kg,
+    t.actual_distance_source IS NOT NULL AS measured,
+    CASE
+        WHEN t.status::text <> 'completed' OR t.scheduled_end IS NULL OR t.actual_end IS NULL THEN NULL
+        ELSE t.actual_end > t.scheduled_end + make_interval(mins => COALESCE(
+            (SELECT th.trip_delay_minutes FROM tracking.rule_thresholds th WHERE th.depot_id = r.depot_id),
+            (SELECT th.trip_delay_minutes FROM tracking.rule_thresholds th WHERE th.depot_id IS NULL ORDER BY th.id LIMIT 1),
+            15))
+    END AS late,
+    (t.actual_start IS NOT NULL AND (
+        EXISTS (SELECT 1 FROM tracking.telemetry_flags f WHERE f.trip_id = t.id AND f.flag_type = 'speeding')
+        OR EXISTS (
+            SELECT 1 FROM alert.incident_reports i
+             WHERE i.driver_id = t.driver_id AND i.incident_type = 'accident'
+               AND i.occurred_at >= t.actual_start AND i.occurred_at <= COALESCE(t.actual_end, now()))
+    )) AS safety_event
+FROM trip.trips t
+LEFT JOIN fleet.drivers d ON d.id = t.driver_id
+LEFT JOIN trip.routes r ON r.id = t.route_id
+LEFT JOIN fleet.depots dp ON dp.id = r.depot_id
+LEFT JOIN fleet.vehicles v ON v.id = t.vehicle_id;

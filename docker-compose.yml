@@ -100,6 +100,8 @@ services:
       # The feature spec shared with the ML service (FMS-127): ML_FEATURE_SPEC_PATH's
       # default, ../ai-service/feature_spec.json, from /app as from packages/backend.
       - ./packages/ai-service/feature_spec.json:/ai-service/feature_spec.json:ro
+      # The trip risk model's (FMS-155), ML_TRIP_RISK_SPEC_PATH's default the same way.
+      - ./packages/ai-service/trip_risk_spec.json:/ai-service/trip_risk_spec.json:ro
     environment:
       NODE_ENV: development
       PORT: "3000"
