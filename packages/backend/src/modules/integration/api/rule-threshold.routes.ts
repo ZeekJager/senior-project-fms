@@ -4,7 +4,7 @@ import { notFound } from '../../../shared/errors/app-error';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authenticated, authorize } from '../../auth';
-import { DELAY_MARGIN_LIMITS } from '../../trip';
+import { DELAY_MARGIN_LIMITS, EXCEPTION_POLICIES } from '../../trip';
 import type { Caller, RuleThresholdService, ThresholdInput } from '../application/rule-threshold.service';
 import { LOCATION_THRESHOLD_LIMITS } from '../domain/location-rules';
 import { THRESHOLD_LIMITS } from '../domain/telemetry-rules';
@@ -28,6 +28,9 @@ const thresholdsBody = z
     route_deviation_pings: whole(LOCATION_THRESHOLD_LIMITS.routeDeviationPings).optional(),
     trip_delay_minutes: whole(DELAY_MARGIN_LIMITS.lateMinutes).optional(),
     trip_delay_urgent_minutes: whole(DELAY_MARGIN_LIMITS.urgentMinutes).optional(),
+    // FMS-151: warn (the assignment goes ahead) or approve (held for a fleet manager).
+    driver_attendance_exception: z.enum(EXCEPTION_POLICIES).optional(),
+    trip_overrun_exception: z.enum(EXCEPTION_POLICIES).optional(),
   })
   .transform(
     (b): ThresholdInput => ({
@@ -39,6 +42,8 @@ const thresholdsBody = z
       routeDeviationPings: b.route_deviation_pings,
       tripDelayMinutes: b.trip_delay_minutes,
       tripDelayUrgentMinutes: b.trip_delay_urgent_minutes,
+      attendanceException: b.driver_attendance_exception,
+      overrunException: b.trip_overrun_exception,
     }),
   );
 

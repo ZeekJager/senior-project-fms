@@ -36,8 +36,9 @@ export function DispatchPage() {
   const depots = useDepots()
   const depotId = params.get('depot') ?? depots.data?.[0]?.id ?? ''
   const view: View = VIEWS.find((v) => v === params.get('view')) ?? 'unassigned'
-  const { hasPermission } = useAuth()
+  const { hasPermission, session } = useAuth()
   const canWrite = hasPermission('trip:write')
+  const canApprove = hasPermission('assignment-exception:approve')
   const [newTripOpen, setNewTripOpen] = useState(false)
   const [timesOpen, setTimesOpen] = useState(false)
   const setParam = (key: string, value: string | null) => {
@@ -61,6 +62,12 @@ export function DispatchPage() {
     const next = new URLSearchParams(params)
     next.delete('trip')
     if (linked.data?.depot_id) next.set('depot', linked.data.depot_id)
+    // The tab the trip is listed in: a request to approve (FMS-151) is on a trip not yet under way.
+    if (linked.data) {
+      const tab = linked.data.status === 'en_route' ? 'under-way' : linked.data.status === 'assigned' ? 'assigned' : null
+      if (tab) next.set('view', tab)
+      else next.delete('view')
+    }
     setParams(next, { replace: true })
     if (linked.data) setSelectedTripId(linked.data.id)
   }, [linkedId, linked.data, linked.isError])
@@ -110,10 +117,16 @@ export function DispatchPage() {
     assign.reset()
   }
 
-  async function submit() {
+  async function submit(reason?: string) {
     if (!trip || !driverId || !vehicleId) return
     try {
-      const result = await assign.mutateAsync({ trip, driverId, vehicleId })
+      const result = await assign.mutateAsync({ trip, driverId, vehicleId, reason })
+      // FMS-151: held for a fleet manager's approval. The trip shows it waiting.
+      if (result.held) {
+        setWarnings(null)
+        toast({ title: 'Sent for approval', description: `${tripTitle(trip)} is assigned once a fleet manager approves it.` })
+        return
+      }
       setWarnings(result.warnings)
       toast({ title: `${tripTitle(result.trip)} assigned`, description: `${driver?.full_name ?? 'Driver'} with ${vehicle?.registration_number ?? 'the vehicle'}.` })
     } catch (err) {
@@ -227,8 +240,12 @@ export function DispatchPage() {
               busy={assign.isPending}
               error={assign.error}
               warnings={warnings}
-              onAssign={submit}
+              onAssign={(reason) => void submit(reason)}
               onChangeTimes={canWrite ? () => setTimesOpen(true) : undefined}
+              canApprove={canApprove}
+              viewerId={session?.user.id}
+              driverName={(id) => names.get(id)}
+              plate={(id) => plates.get(id)}
             />
           ) : (
             <Card>

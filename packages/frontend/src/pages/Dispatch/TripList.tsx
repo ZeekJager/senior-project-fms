@@ -1,6 +1,6 @@
-import { ArrowRight, CalendarClock, Clock, Truck, UserRound } from 'lucide-react'
+import { ArrowRight, CalendarClock, CircleSlash, Clock, Hourglass, Truck, UserRound } from 'lucide-react'
 import { StatusBadge } from '@/components/shared'
-import { cn, Skeleton } from '@/components/ui'
+import { Badge, cn, Skeleton } from '@/components/ui'
 import { etaSummary } from '@/features/trip-eta'
 import { formatWindow, tripEnds, tripTitle } from './format'
 import type { Trip } from './types'
@@ -48,7 +48,19 @@ export function TripList({ trips, isLoading, selectedId, onSelect, driverName, p
             >
               <div className="flex items-start justify-between gap-3">
                 <p className="min-w-0 truncate text-sm font-semibold text-ink">{tripTitle(trip)}</p>
-                <StatusBadge status={trip.status} />
+                <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                  {trip.exception?.status === 'pending' && (
+                    <Badge tone="warning" icon={<Hourglass />}>
+                      Awaiting approval
+                    </Badge>
+                  )}
+                  {trip.exception?.status === 'refused' && (
+                    <Badge tone="danger" icon={<CircleSlash />}>
+                      Approval refused
+                    </Badge>
+                  )}
+                  <StatusBadge status={trip.status} />
+                </span>
               </div>
               {ends && trip.route_name && (
                 <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-ink-muted">

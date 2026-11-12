@@ -32,6 +32,9 @@ function destination(n: Subject): string | null {
     case 'telemetry_flag':
     case 'incident':
       return '/command-center?view=attention'
+    case 'trip_assignment':
+      // An assignment held for approval, or refused (FMS-151): the dispatch console opens the trip.
+      return `/dispatch?trip=${encodeURIComponent(n.entity.id)}`
     case 'trip':
       // A trip running late (FMS-147): the dispatch console opens it among those under way.
       return `/dispatch?view=under-way&trip=${encodeURIComponent(n.entity.id)}`

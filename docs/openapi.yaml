@@ -523,6 +523,10 @@ paths:
         CONFLICT_VEHICLE_FLAGGED); the driver is eligible (CONFLICT_DRIVER_NOT_ELIGIBLE); BR-1 and
         BR-3 overlaps, touching ends included (CONFLICT_DRIVER_OVERLAP, CONFLICT_VEHICLE_OVERLAP).
         Publishes TripAssigned. Audited.
+        FMS-151 (docs/assignment-exceptions.md): a warning the trip's depot sets to approve holds the
+        assignment. Without exception_reason it is 409 CONFLICT_APPROVAL_REQUIRED naming each held warning;
+        with one, 202 with the request (AssignmentExceptionRequested), and the trip unchanged until a fleet
+        manager decides. The safety rules above are never held.
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -541,7 +545,24 @@ paths:
                   type: integer
                   minimum: 0
                   description: The trip's version as the dispatcher saw it.
+                exception_reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  description: Why, when a warning needs a fleet manager's approval (FMS-151). Ignored otherwise.
       responses:
+        '202':
+          description: Held for a fleet manager's approval (FMS-151); the trip is unchanged.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/AssignmentException' }
+                  meta: { $ref: '#/components/schemas/Meta' }
         '200':
           description: Assigned (or already assigned to the same pair, unchanged).
           headers:
@@ -572,7 +593,80 @@ paths:
             CONFLICT_CONCURRENT_MODIFICATION, CONFLICT_INVALID_STATE_TRANSITION, CONFLICT_DEPOT_MISMATCH,
             CONFLICT_VEHICLE_FLAGGED, CONFLICT_DRIVER_NOT_ELIGIBLE, CONFLICT_DRIVER_OVERLAP or
             CONFLICT_VEHICLE_OVERLAP. A detail's record_id names the conflicting trip or the open
-            maintenance record.
+            maintenance record. CONFLICT_APPROVAL_REQUIRED (FMS-151): a held warning and no exception_reason;
+            each detail names one (driver_absent, driver_on_leave, driver_sick, or previous_trip_overrun with the
+            trip under way as record_id).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /assignment-exceptions/{exception_id}/approve:
+    post:
+      tags: [Trips]
+      operationId: approveAssignmentException
+      summary: Approve an assignment held for approval (FMS-151)
+      description: >
+        Needs assignment-exception:approve (admin, fleet manager), in the trip's depot (else 404), and never by the
+        one who asked (403 own_request). Every assignment rule is read again now: a safety rule refuses as an
+        assignment would, and a held warning the request did not ask about is 409 CONFLICT_APPROVAL_REQUIRED
+        (refuse it; the dispatcher asks again). The trip is assigned to the driver and vehicle asked for:
+        TripAssigned with exception_id, and AssignmentExceptionDecided. Audited.
+      parameters:
+        - $ref: '#/components/parameters/ExceptionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { $ref: '#/components/responses/AssignmentExceptionDecision' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >
+            CONFLICT_INVALID_STATE_TRANSITION (already decided: exception_approved, exception_refused,
+            exception_withdrawn; or the trip can no longer be assigned), CONFLICT_APPROVAL_REQUIRED, or any
+            refusal of POST /trips/{trip_id}/assign.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /assignment-exceptions/{exception_id}/refuse:
+    post:
+      tags: [Trips]
+      operationId: refuseAssignmentException
+      summary: Refuse an assignment held for approval (FMS-151)
+      description: >
+        Needs assignment-exception:approve, in the trip's depot (else 404). The trip stays as it is; the depot's
+        dispatchers are told why (AssignmentExceptionDecided, an alert). Audited.
+      parameters:
+        - $ref: '#/components/parameters/ExceptionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { $ref: '#/components/responses/AssignmentExceptionDecision' }
+        '400':
+          description: VALIDATION_FAILED (no reason).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (already decided).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /trips/{trip_id}/start:
@@ -7198,6 +7292,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ExceptionId:
+      name: exception_id
+      in: path
+      required: true
+      description: An assignment held for approval (FMS-151).
+      schema: { type: string, format: uuid }
     MlModelId:
       name: model_id
       in: path
@@ -7365,6 +7465,24 @@ components:
     NotFound:
       description: NOT_FOUND (missing, or outside the caller's depots).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    AssignmentExceptionDecision:
+      description: The request as decided (FMS-151); meta has the trip as it is now and, on approval, its warnings.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/AssignmentException' }
+              meta:
+                type: object
+                required: [trip, warnings, request_id]
+                properties:
+                  trip: { $ref: '#/components/schemas/Trip' }
+                  warnings:
+                    type: array
+                    items: { $ref: '#/components/schemas/AssignmentWarning' }
+                  request_id: { type: string, format: uuid }
 
   schemas:
     Uptime:
@@ -7570,10 +7688,12 @@ components:
         route_deviation_pings: { type: integer, minimum: 1, maximum: 20, default: 3, description: Consecutive pings off route that raise a route deviation flag; clear_pings back on it resolve it. }
         trip_delay_minutes: { type: integer, minimum: 5, maximum: 240, default: 15, description: Minutes past its scheduled end a trip under way is expected before its dispatchers are told it is late. }
         trip_delay_urgent_minutes: { type: integer, minimum: 10, maximum: 720, default: 60, description: Minutes past its scheduled end before the late trip is urgent (email, SMS and push); above trip_delay_minutes. }
+        driver_attendance_exception: { type: string, enum: [warn, approve], default: warn, description: 'FMS-151: a driver marked absent, on leave or sick that day only warns, or holds the assignment for a fleet manager.' }
+        trip_overrun_exception: { type: string, enum: [warn, approve], default: warn, description: 'FMS-151: a trip of the driver or vehicle still under way running into this one only warns, or holds the assignment.' }
     RuleThresholdRow:
       type: object
       description: A row of thresholds as stored, the fleet's or a depot's (a depot's adds depot_id in the list), with who changed it last.
-      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, trip_delay_minutes, trip_delay_urgent_minutes, updated_by, updated_by_name, updated_at]
+      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, trip_delay_minutes, trip_delay_urgent_minutes, driver_attendance_exception, trip_overrun_exception, updated_by, updated_by_name, updated_at]
       properties:
         speed_limit_kmh: { type: integer, minimum: 20, maximum: 200 }
         speeding_pings: { type: integer, minimum: 1, maximum: 20 }
@@ -7583,6 +7703,8 @@ components:
         route_deviation_pings: { type: integer, minimum: 1, maximum: 20 }
         trip_delay_minutes: { type: integer, minimum: 5, maximum: 240 }
         trip_delay_urgent_minutes: { type: integer, minimum: 10, maximum: 720 }
+        driver_attendance_exception: { type: string, enum: [warn, approve] }
+        trip_overrun_exception: { type: string, enum: [warn, approve] }
         updated_by: { type: [string, 'null'], format: uuid }
         updated_by_name: { type: [string, 'null'] }
         updated_at: { type: [string, 'null'], format: date-time }
@@ -8396,6 +8518,11 @@ components:
           oneOf:
             - type: 'null'
             - $ref: '#/components/schemas/TripEta'
+        exception:
+          description: An assignment held for approval (FMS-151) while it waits, or once refused; null otherwise.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/AssignmentException'
         version: { type: integer }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -8547,6 +8674,29 @@ components:
             warning: { const: DRIVER_ATTENDANCE }
             field: { const: driver_id }
             attendance: { type: string, enum: [absent, on_leave, sick] }
+
+    AssignmentException:
+      type: object
+      description: An assignment held for a fleet manager's approval (FMS-151, docs/assignment-exceptions.md).
+      required: [id, trip_id, status, driver_id, vehicle_id, warnings, reason, requested_by, requested_by_name, requested_at, decided_by, decided_by_name, decided_at, decision_reason]
+      properties:
+        id: { type: string, format: uuid }
+        trip_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, approved, refused, withdrawn] }
+        driver_id: { type: string, format: uuid, description: The driver asked for. }
+        vehicle_id: { type: string, format: uuid, description: The vehicle asked for. }
+        warnings:
+          type: array
+          description: The warnings held, the ones an approval covers.
+          items: { $ref: '#/components/schemas/AssignmentWarning' }
+        reason: { type: string, description: Why the dispatcher asks. }
+        requested_by: { type: [string, 'null'], format: uuid }
+        requested_by_name: { type: [string, 'null'] }
+        requested_at: { type: string, format: date-time }
+        decided_by: { type: [string, 'null'], format: uuid }
+        decided_by_name: { type: [string, 'null'] }
+        decided_at: { type: [string, 'null'], format: date-time }
+        decision_reason: { type: [string, 'null'], description: Why it was refused, or the approval's note. }
 
     VehicleStatusValue:
       type: string

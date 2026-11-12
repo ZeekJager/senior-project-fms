@@ -13,7 +13,7 @@ const owner = currentUser(['fleet_owner'], ['depot:read', 'depot:write', 'audit:
 
 const ADDIS = { id: 'd-1', name: 'Addis Ababa Central', code: 'ADD', location: 'Addis Ababa' }
 const ADAMA = { id: 'd-2', name: 'Adama Hub', code: 'ADM', location: 'Adama' }
-const FLEET = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 500, route_deviation_pings: 3, trip_delay_minutes: 15, trip_delay_urgent_minutes: 60 }
+const FLEET = { speed_limit_kmh: 80, speeding_pings: 3, clear_pings: 3, idle_minutes: 5, route_deviation_m: 500, route_deviation_pings: 3, trip_delay_minutes: 15, trip_delay_urgent_minutes: 60, driver_attendance_exception: 'warn' as const, trip_overrun_exception: 'warn' as const }
 const never = { updated_by: null, updated_by_name: null, updated_at: null }
 
 /** A fake settings API: thresholds and settings, every write recorded. */
@@ -113,19 +113,33 @@ describe('S-27 Settings (FMS-80)', () => {
     )
   })
 
+  it('assignment exceptions (FMS-151): each warning warns at first; one set to need approval is saved with the rest', async () => {
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [] })
+    const { user } = await open()
+    const form = await screen.findByRole('form', { name: "The fleet's driving rules" })
+    expect(within(form).getByLabelText('Driver marked absent')).toHaveValue('warn')
+    await user.selectOptions(within(form).getByLabelText('Previous trip running over'), 'approve')
+    await user.click(within(form).getByRole('button', { name: 'Save driving rules' }))
+    await waitFor(() =>
+      expect(writes).toEqual([{ method: 'PUT', path: '/settings/telemetry-rules/fleet', body: { ...FLEET, trip_overrun_exception: 'approve' } }]),
+    )
+  })
+
   it("a depot's own thresholds: listed, given to another depot, and removed to follow the fleet's again", async () => {
-    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [{ depot_id: 'd-2', speed_limit_kmh: 60, speeding_pings: 2, clear_pings: 3, idle_minutes: 10, route_deviation_m: 1000, route_deviation_pings: 2, trip_delay_minutes: 20, trip_delay_urgent_minutes: 45, ...never }] })
+    const writes = serve({ fleet: { ...FLEET, ...never }, depots: [{ depot_id: 'd-2', speed_limit_kmh: 60, speeding_pings: 2, clear_pings: 3, idle_minutes: 10, route_deviation_m: 1000, route_deviation_pings: 2, trip_delay_minutes: 20, trip_delay_urgent_minutes: 45, driver_attendance_exception: 'approve', trip_overrun_exception: 'warn', ...never }] })
     const { user } = await open()
     expect(await screen.findByText('Adama Hub')).toBeInTheDocument()
     expect(screen.getByText('60 km/h')).toBeInTheDocument()
     expect(screen.getByText('1,000 m')).toBeInTheDocument()
     expect(screen.getByText('20 min')).toBeInTheDocument()
     expect(screen.getByText('45 min')).toBeInTheDocument()
+    // FMS-151: the depot holds an absent driver for a fleet manager.
+    expect(screen.getByText(/approval for absent driver/)).toBeInTheDocument()
 
     // Only a depot without its own can be chosen; it starts from the fleet's.
     await user.click(screen.getByRole('button', { name: 'Thresholds for a depot' }))
     let drawer = await screen.findByRole('dialog', { name: 'Thresholds for a depot' })
-    expect(within(drawer).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a depot…', 'Addis Ababa Central'])
+    expect(within(within(drawer).getByLabelText('Depot')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a depot…', 'Addis Ababa Central'])
     await user.click(within(drawer).getByRole('button', { name: 'Save thresholds' }))
     expect(within(drawer).getByText('Choose a depot.')).toBeInTheDocument()
     await user.selectOptions(within(drawer).getByLabelText('Depot'), 'd-1')
@@ -138,6 +152,8 @@ describe('S-27 Settings (FMS-80)', () => {
     await user.click(screen.getByRole('button', { name: "Edit Adama Hub's thresholds" }))
     drawer = await screen.findByRole('dialog', { name: 'Adama Hub thresholds' })
     expect(within(drawer).getByLabelText('Speed limit')).toHaveValue('60')
+    expect(within(drawer).getByLabelText('Driver marked absent')).toHaveValue('approve')
+    expect(within(drawer).getByLabelText('Previous trip running over')).toHaveValue('warn')
     await user.click(within(drawer).getByRole('button', { name: 'Use the fleet’s' }))
     await waitFor(() => expect(writes.at(-1)).toEqual({ method: 'DELETE', path: '/settings/telemetry-rules/depots/d-2', body: null }))
   })

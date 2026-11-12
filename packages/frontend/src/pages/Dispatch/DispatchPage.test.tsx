@@ -515,4 +515,104 @@ describe('Arrival times (FMS-86)', () => {
     expect(within(arrival).getByText(/may have lost signal/)).toBeInTheDocument()
     expect(reads).toBe(before)
   })
+
+  describe('approved exceptions to the assignment rules (FMS-151)', () => {
+    const request = (overrides: Partial<NonNullable<Trip['exception']>> = {}): NonNullable<Trip['exception']> => ({
+      id: 'e0000000-0000-4000-8000-000000000001',
+      trip_id: 'a0000000-0000-4000-8000-000000000001',
+      status: 'pending',
+      driver_id: 'd-2',
+      vehicle_id: 'v-1',
+      warnings: [{ warning: 'DRIVER_ATTENDANCE', field: 'driver_id', attendance: 'absent' }],
+      reason: 'Only licensed driver free today.',
+      requested_by: 'u-9',
+      requested_by_name: 'Hana Dispatcher',
+      requested_at: '2026-11-01T07:00:00Z',
+      decided_by: null,
+      decided_by_name: null,
+      decided_at: null,
+      decision_reason: null,
+      ...overrides,
+    })
+
+    it('an assignment the depot holds asks for a reason, and is sent to a fleet manager with it', async () => {
+      const t = trip()
+      serve([t])
+      const sent: unknown[] = []
+      server.use(
+        http.post(`/api/v1/trips/${t.id}/assign`, async ({ request: req }) => {
+          const body = (await req.json()) as Record<string, unknown>
+          sent.push(body)
+          if (!body.exception_reason) {
+            return errorEnvelope(409, 'CONFLICT_APPROVAL_REQUIRED', 'This assignment needs a fleet manager’s approval.', [{ field: 'driver_id', reason: 'driver_absent' }])
+          }
+          return HttpResponse.json({ data: request({ reason: String(body.exception_reason) }), meta: { request_id: 'r-1' } }, { status: 202 })
+        }),
+      )
+      const user = userEvent.setup()
+      await openConsole()
+      await chooseTrip(user)
+      await user.click(await within(drivers()).findByRole('button', { name: 'Sara Haile, Absent today' }))
+      await user.click(within(vehicles()).getByRole('button', { name: 'AA 3-10001, Available' }))
+      await user.click(screen.getByRole('button', { name: 'Assign' }))
+
+      const panel = screen.getByRole('region', { name: 'Assignment panel' })
+      expect(await within(panel).findByText('Needs a fleet manager’s approval')).toBeInTheDocument()
+      expect(within(panel).getByText('Sara Haile is marked absent that day.')).toBeInTheDocument()
+      // Not a refusal, and Assign waits: the way on is the request.
+      expect(screen.getByRole('button', { name: 'Assign' })).toBeDisabled()
+      await user.click(within(panel).getByRole('button', { name: 'Ask for approval' }))
+      expect(within(panel).getByText('Say why, for the fleet manager.')).toBeInTheDocument()
+      expect(sent).toHaveLength(1)
+
+      await user.type(within(panel).getByLabelText('Why this assignment'), 'Absence logged by mistake.')
+      await user.click(within(panel).getByRole('button', { name: 'Ask for approval' }))
+      await waitFor(() => expect(sent.at(-1)).toEqual({ driver_id: 'd-2', vehicle_id: 'v-1', version: 0, exception_reason: 'Absence logged by mistake.' }))
+      expect(await screen.findByRole('status')).toHaveTextContent('Sent for approval')
+    })
+
+    it('a trip awaiting approval says so; a fleet manager approves it, or refuses it only with a reason', async () => {
+      const t = trip({ exception: request() })
+      serve([t])
+      const decisions: { url: string; body: unknown }[] = []
+      server.use(
+        http.post('/api/v1/assignment-exceptions/:id/:decision', async ({ request: req }) => {
+          decisions.push({ url: new URL(req.url).pathname, body: await req.json() })
+          return HttpResponse.json({ data: request({ status: 'approved' }), meta: { request_id: 'r-1', trip: { ...t, status: 'assigned', exception: null }, warnings: [] } })
+        }),
+      )
+      signedInAs(currentUser(['fleet_manager'], ['trip:assign', 'trip:read', 'trip:write', 'depot:read', 'assignment-exception:approve']))
+      renderApp('/dispatch')
+      const user = userEvent.setup()
+      expect(await within(await trips()).findByText('Awaiting approval')).toBeInTheDocument()
+      await chooseTrip(user)
+
+      const panel = screen.getByRole('region', { name: 'Assignment panel' })
+      expect(within(panel).getByText('Awaiting a fleet manager’s approval')).toBeInTheDocument()
+      expect(await within(panel).findByText(/Sara Haile with AA 3-10001, asked by Hana Dispatcher/)).toBeInTheDocument()
+      expect(within(panel).getByText('Only licensed driver free today.')).toBeInTheDocument()
+
+      await user.click(within(panel).getByRole('button', { name: 'Refuse' }))
+      expect(within(panel).getByText('Say why you refuse it: the dispatcher is told.')).toBeInTheDocument()
+      expect(decisions).toEqual([])
+
+      await user.click(within(panel).getByRole('button', { name: 'Approve and assign' }))
+      await waitFor(() => expect(decisions).toEqual([{ url: '/api/v1/assignment-exceptions/e0000000-0000-4000-8000-000000000001/approve', body: {} }]))
+    })
+
+    it('the one who asked waits for someone else; a refusal shows why', async () => {
+      signedInAs(currentUser(['fleet_manager'], ['trip:assign', 'trip:read', 'depot:read', 'assignment-exception:approve']))
+      serve([trip({ exception: request({ requested_by: 'u-1' }) }), trip({ id: 'a0000000-0000-4000-8000-000000000002', route_name: 'Hawassa run', exception: request({ status: 'refused', decided_by_name: 'Meron Manager', decided_at: '2026-11-01T08:00:00Z', decision_reason: 'Call the reserve driver.' }) })])
+      renderApp('/dispatch')
+      const user = userEvent.setup()
+      await chooseTrip(user)
+      const panel = screen.getByRole('region', { name: 'Assignment panel' })
+      expect(within(panel).getByText('Another fleet manager decides on a request you made.')).toBeInTheDocument()
+      expect(within(panel).queryByRole('button', { name: 'Approve and assign' })).not.toBeInTheDocument()
+
+      expect(within(await trips()).getByText('Approval refused')).toBeInTheDocument()
+      await chooseTrip(user, /Hawassa run/)
+      expect(within(screen.getByRole('region', { name: 'Assignment panel' })).getByText(/Meron Manager refused it .*: Call the reserve driver\./)).toBeInTheDocument()
+    })
+  })
 })

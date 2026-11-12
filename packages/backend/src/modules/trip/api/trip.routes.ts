@@ -8,6 +8,7 @@ import { authorize } from '../../auth';
 import type { Caller } from '../application/route.service';
 import type { TripService } from '../application/trip.service';
 import { COMMAND_STATUSES } from '../domain/lifecycle';
+import { exceptionNotFound } from '../domain/exception';
 import { TRIP_STATUSES, stopNotFound, tripNotFound } from '../domain/trip';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -90,7 +91,13 @@ const assignBody = z.strictObject({
   driver_id: z.uuid(),
   vehicle_id: z.uuid(),
   version: z.number().int().min(0),
+  /** FMS-151: why, when a warning the depot holds needs a fleet manager's approval. */
+  exception_reason: z.string().trim().min(1).max(500).optional(),
 });
+
+/** POST /assignment-exceptions/{id}/approve: an optional note; /refuse: why, required (FMS-151). */
+const approveBody = z.strictObject({ note: z.string().trim().min(1).max(500).optional() });
+const refuseBody = z.strictObject({ reason: z.string().trim().min(1).max(500) });
 
 /** POST /trips/{id}/start and /end take no body (an empty JSON object is fine). */
 const noBody = z.strictObject({});
@@ -217,10 +224,34 @@ export function tripRouter(service: TripService): Router {
     idempotent(),
     asyncHandler(async (req, res) => {
       const id = tripId(req);
-      const { trip, warnings } = await service.assign(caller(req), id, parseInput(assignBody, req.body));
-      res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { warnings, request_id: req.correlationId } });
+      const outcome = await service.assign(caller(req), id, parseInput(assignBody, req.body));
+      // FMS-151: held for a fleet manager's approval: 202 with the request; the trip is unchanged.
+      if (outcome.exception) {
+        res.status(202).set('ETag', etagFor(outcome.trip.version)).json({ data: outcome.exception, meta: { request_id: req.correlationId } });
+        return;
+      }
+      res.set('ETag', etagFor(outcome.trip.version)).json({ data: outcome.trip, meta: { warnings: outcome.warnings, request_id: req.correlationId } });
     }),
   );
+
+  // FMS-151: a fleet manager decides on an assignment held for approval. The trip comes back in meta.
+  const decision = (path: 'approve' | 'refuse') =>
+    router.post(
+      `/assignment-exceptions/:exceptionId/${path}`,
+      authorize('assignment-exception:approve'),
+      idempotent(),
+      asyncHandler(async (req, res) => {
+        const id = req.params.exceptionId;
+        if (!UUID.test(id)) throw exceptionNotFound();
+        const result =
+          path === 'approve'
+            ? await service.approveException(caller(req), id, parseInput(approveBody, req.body ?? {}).note)
+            : await service.refuseException(caller(req), id, parseInput(refuseBody, req.body).reason);
+        res.json({ data: result.exception, meta: { trip: result.trip, warnings: result.warnings, request_id: req.correlationId } });
+      }),
+    );
+  decision('approve');
+  decision('refuse');
 
   // Lifecycle commands (FMS-32). Optional If-Match: a trip that changed since is 409.
   const command = (path: string, run: (req: Request, id: string, version: number | null) => ReturnType<TripService['start']>) =>

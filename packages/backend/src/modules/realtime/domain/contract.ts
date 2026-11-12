@@ -127,11 +127,23 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 const pick = (from: Record<string, unknown>, keys: readonly string[]) => Object.fromEntries(keys.filter((k) => k in from).map((k) => [k, from[k]]));
 
 /**
- * The trip events (TRIP_EVENTS, a stop completed among them, FMS-95), and a new arrival estimate (TripEtaUpdated,
+ * The trip events (TRIP_EVENTS, a stop completed and an assignment held for approval among them, FMS-95, FMS-151), and a new arrival estimate (TripEtaUpdated,
  * FMS-86, at most every 30 s per trip): each becomes `trip.updated` with the trip as it is now, its `eta` included, and
  * `change` naming the event.
  */
-const TRIP_TYPES = ['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted', 'TripStopCompleted', 'TripEtaUpdated'] as const;
+const TRIP_TYPES = [
+  'TripCreated',
+  'TripUpdated',
+  'TripCancelled',
+  'TripAssigned',
+  'TripStarted',
+  'TripCompleted',
+  'TripStopCompleted',
+  'TripEtaUpdated',
+  // An assignment held for approval, and the decision (FMS-151): the console shows the trip awaiting, or refused.
+  'AssignmentExceptionRequested',
+  'AssignmentExceptionDecided',
+] as const;
 
 const tripUpdated: Forwarder = async (event, lookups) => {
   const tripId = str(event.payload.trip_id);
