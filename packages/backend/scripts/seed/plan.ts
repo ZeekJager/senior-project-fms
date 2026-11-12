@@ -432,14 +432,17 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     const fullDay = route.duration_seconds > 4 * 3600;
     const crewed = status === 'completed' || status === 'assigned' || status === 'en_route' || (status === 'cancelled' && rng.chance(0.5));
 
-    let day = rng.int(...DAYS[status]);
+    // A full-day route runs up to ~20 h, and a completed trip up to 1.25 times that: begun yesterday it could end after
+    // midnight, in the anchor day, so its end and its fill-up would be after the seed ran. It starts two days back at least.
+    const days: [number, number] = status === 'completed' && fullDay ? [DAYS.completed[0], -2] : DAYS[status];
+    let day = rng.int(...days);
     let slot = rng.int(0, 2);
     let vehicle: number | null = null;
     let driver: number | null = null;
     if (crewed && driversIn[depot].length > 0) {
       for (let attempt = 0; attempt < 30 && driver === null; attempt++) {
         if (attempt > 0) {
-          day = rng.int(...DAYS[status]);
+          day = rng.int(...days);
           slot = rng.int(0, 2);
         }
         const tripEnd = at(day + 1, 0);
