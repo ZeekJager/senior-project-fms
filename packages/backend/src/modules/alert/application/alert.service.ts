@@ -7,7 +7,8 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { limitOffset, pageMeta, type Page } from '../../../shared/http/pagination';
 import type { RequestUser } from '../../../types/express';
 import { ACTIVE_STATUSES, ALERT_EVENTS, alertNotActive, alertNotFound, moreSevere, priorityOf, type AlertSeverity, type AlertStatus, type AlertView } from '../domain/alert';
-import { ALERT_RULES, ESCALATION_TIERS, tiersOf, type AlertRule } from '../domain/rules';
+import { PERSONAL_CHANNELS } from '../domain/delivery';
+import { ALERT_RULES, ESCALATION_TIERS, PERSONAL_NOTIFICATION_TYPE, tiersOf, type AlertRule, type Names, type Payload } from '../domain/rules';
 import type { AlertRepository, AlertRow } from '../infrastructure/alert.repository';
 
 /** What the alert engine needs from fleet, trip and auth (connected in alert/index.ts). */
@@ -19,6 +20,8 @@ export interface AlertRefs {
   drivers: {
     subject(db: Queryable, publicId: string): Promise<{ id: string; publicId: string; depotId: string | null } | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+    /** FMS-149: the user accounts of drivers still driving (internal ids), by driver id. */
+    activeAccounts(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
   };
   depots: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;
@@ -28,6 +31,8 @@ export interface AlertRefs {
   trips: {
     idsByPublicIds(db: Queryable, publicIds: readonly string[]): Promise<Map<string, string>>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
+    /** FMS-149: the driver (internal id) of each vehicle's trip under way, else its next assigned one. */
+    vehicleDrivers(db: Queryable, vehicleIds: readonly string[], now: Date): Promise<Map<string, string>>;
   };
   users: {
     activeWithRoles(db: Queryable, roles: readonly string[], depotId: string | null, unscopedRoles: readonly string[]): Promise<string[]>;
@@ -43,7 +48,14 @@ export interface AlertServiceDeps {
   inbox: { announce(tx: PoolClient, userIds: readonly string[], reason: 'delivered', ctx: MutationContext): Promise<unknown> };
   /** Queues their email, SMS and push by the alert's severity (FMS-93), in the same transaction. */
   delivery?: {
-    queue(tx: PoolClient, ctx: MutationContext, alert: Pick<AlertRow, 'id' | 'severity'>, recipients: readonly string[], content: { type: string; title: string; message: string }): Promise<number>;
+    queue(
+      tx: PoolClient,
+      ctx: MutationContext,
+      alert: Pick<AlertRow, 'id' | 'severity'>,
+      recipients: readonly string[],
+      content: { type: string; title: string; message: string },
+      channels?: readonly ('email' | 'sms' | 'push')[],
+    ): Promise<number>;
   };
   /** A critical alert unacknowledged this long escalates to the next tier, and again after as long. */
   escalationMinutes: number;
@@ -103,6 +115,8 @@ export class AlertService {
       });
       // A rule may tell its audience again when the alert grows more severe (a trip delay becoming urgent, FMS-147).
       if (rule.renotifyWhenRaised && severity !== active.severity) await this.notifyTier(tx, ctx, updated, rule.audience, 'alert', true);
+      // FMS-149: the driver it concerns hears of it growing more severe (amber to red, due to overdue).
+      if (severity !== active.severity) await this.notifyPersonal(tx, ctx, updated, rule, payload, names, occurredAt, true);
       const [view] = await this.views(tx, [updated]);
       await this.publish(tx, ctx, ALERT_EVENTS.updated, view, {
         status: view.status,
@@ -133,6 +147,7 @@ export class AlertService {
       details: payload,
     });
     await this.notifyTier(tx, ctx, alert, rule.audience, 'alert');
+    await this.notifyPersonal(tx, ctx, alert, rule, payload, names, occurredAt);
     const [view] = await this.views(tx, [alert]);
     await this.publish(tx, ctx, ALERT_EVENTS.created, view, {
       alert_type: view.type,
@@ -296,6 +311,39 @@ export class AlertService {
     if (notified > 0) await this.deps.inbox.announce(client, recipients, 'delivered', ctx);
     // A critical or high alert also goes out by email, SMS and push, sent by the delivery job (FMS-93).
     await this.deps.delivery?.queue(client, ctx, alert, recipients, { type, title, message });
+    return notified;
+  }
+
+  /**
+   * FMS-149: the driver an alert concerns (its rule's `personal`), told in their own words, in the inbox and by push only:
+   * never email or SMS, which stay their audience's. `raised`: the alert grew more severe, and they are told again.
+   * A driver retired, or whose account is not active, is not told.
+   */
+  private async notifyPersonal(
+    client: PoolClient,
+    ctx: MutationContext,
+    alert: AlertRow,
+    rule: AlertRule,
+    payload: Payload,
+    names: Names,
+    at: Date,
+    raised = false,
+  ): Promise<number> {
+    const personal = rule.personal;
+    if (!personal) return 0;
+    const { repo, refs } = this.deps;
+    let driverId: string | null = null;
+    if (personal.who === 'driver') driverId = alert.driverId;
+    else if (alert.vehicleId) driverId = (await refs.trips.vehicleDrivers(client, [alert.vehicleId], at)).get(String(alert.vehicleId)) ?? null;
+    if (!driverId) return 0;
+    const userId = (await refs.drivers.activeAccounts(client, [String(driverId)])).get(String(driverId));
+    if (!userId) return 0;
+    // Told once per alert unless it grew more severe; and never twice when they are also in its audience.
+    if (!raised && (await repo.notified(client, alert.id)).has(userId)) return 0;
+    const content = { type: PERSONAL_NOTIFICATION_TYPE, title: personal.title(payload, names), message: personal.message(payload, names) };
+    const notified = await repo.notify(client, ctx, alert.id, [userId], content);
+    if (notified > 0) await this.deps.inbox.announce(client, [userId], 'delivered', ctx);
+    await this.deps.delivery?.queue(client, ctx, alert, [userId], content, PERSONAL_CHANNELS);
     return notified;
   }
 

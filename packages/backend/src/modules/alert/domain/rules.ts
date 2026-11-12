@@ -47,7 +47,24 @@ export interface AlertRule {
    * Without it a repeat notifies nobody: the alert they already have just changes.
    */
   renotifyWhenRaised?: boolean;
+  /**
+   * FMS-149: a driver who is told too, in their own words, in the app and by push only (PERSONAL_CHANNELS): `driver`,
+   * the alert's driver (their own licence); `vehicle_driver`, the driver of the vehicle's trip under way, else its next
+   * assigned one. Told when the alert opens and again when it grows more severe (amber to red, due to overdue). It is
+   * information: the alert stays the audience's to act on.
+   */
+  personal?: PersonalNotice;
 }
+
+/** What a driver is told of an alert about them or their vehicle (FMS-149). */
+export interface PersonalNotice {
+  who: 'driver' | 'vehicle_driver';
+  title: (payload: Payload, names: Names) => string;
+  message: (payload: Payload, names: Names) => string;
+}
+
+/** The notification type of what a driver is told of their own (FMS-149): it opens their own screen, not the alert's. */
+export const PERSONAL_NOTIFICATION_TYPE = 'alert_personal';
 
 /** Who a critical alert goes to when nobody acknowledges it: fleet managers, then administrators. */
 export const ESCALATION_TIERS: readonly (readonly string[])[] = [['fleet_manager'], ['admin']];
@@ -129,6 +146,17 @@ function serviceRule(overdue: boolean): AlertRule {
         : `${vehicleName(n)} is due for service${measures ? ` at ${measures}` : ''}. Book it into the workshop.`;
     },
     audience: ['technician', 'depot_admin'],
+    // FMS-149: the driver of its next trip knows; the workshop still books it.
+    personal: {
+      who: 'vehicle_driver',
+      title: (p, n) => `${str(p, 'program_name') ?? 'Service'} ${overdue ? 'overdue' : 'due'}: ${vehicleName(n)}`,
+      message: (p, n) => {
+        const measures = serviceMeasures(p);
+        return overdue
+          ? `${vehicleName(n)}, the vehicle you drive next, is past its service${measures ? `, which fell due at ${measures}` : ''}. The workshop books it in; tell the depot of anything you notice on it.`
+          : `${vehicleName(n)}, the vehicle you drive next, is due for service${measures ? ` at ${measures}` : ''}. The workshop books it in; there is nothing for you to do.`;
+      },
+    },
   };
 }
 
@@ -194,6 +222,13 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     title: (p) => `Driving licence expires ${daysLabel(num(p, 'days_left'))}`,
     message: (p) => `A driver's licence expires on ${str(p, 'license_expiry') ?? 'its expiry date'}. Renew it before their next trip.`,
     audience: ['depot_admin'],
+    // FMS-149: and the driver whose licence it is, only them.
+    personal: {
+      who: 'driver',
+      title: (p) => `Your driving licence expires ${daysLabel(num(p, 'days_left'))}`,
+      message: (p) =>
+        `Your driving licence expires on ${str(p, 'license_expiry') ?? 'its expiry date'}. Renew it and show the new one at the depot office: without a valid licence you cannot be given trips.`,
+    },
   },
 
   // FMS-133: a vehicle's warranty ending within 30 days (amber), 7 (red), raised by the expiry job (FMS-26).

@@ -12,7 +12,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 |---|---|---|---|---|---|
 | `VehicleFaultDetected` (DVIR, FMS-36) | `vehicle_fault` | `severity` if given, else high | vehicle | the vehicle (60 min) | technician, depot admin |
 | `DocumentExpiring` (FMS-26) | `document_expiring` | red: high, amber: medium | the vehicle or driver owning it | the document and expiry date (31 days) | depot admin |
-| `LicenceExpiring` (FMS-26) | `licence_expiring` | red: high, amber: medium | driver (`depot_id`) | the driver and expiry date (31 days) | depot admin |
+| `LicenceExpiring` (FMS-26) | `licence_expiring` | red: high, amber: medium | driver (`depot_id`) | the driver and expiry date (31 days) | depot admin; the driver, their own (FMS-149) |
 | `WarrantyExpiring` (FMS-133, [warranties-recalls.md](warranties-recalls.md)) | `warranty_expiring` | red: high, amber: medium | vehicle | the warranty and end date (31 days) | technician, depot admin |
 | `VehicleRecallOpened` (FMS-133): a manufacturer's recall now applies to the vehicle | `vehicle_recall` | high | vehicle | the vehicle and recall (31 days) | technician, depot admin |
 | `FuelAnomalyDetected` (the monthly reconciliation, FMS-41, [fuel-reconciliation.md](fuel-reconciliation.md); per fill-up, FMS-82) | `fuel_anomaly` | `severity`, else high | vehicle | vehicle and anomaly type (24 h) | depot admin, fleet manager |
@@ -20,7 +20,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `GeofenceViolated` (FMS-90, [geofences.md](geofences.md)): left a yard, entered a no-go zone | `geofence_violation` | high | vehicle, or `depot_id` | vehicle and fence (30 min) | dispatcher, depot admin |
 | `RouteDeviationDetected` (FMS-90): off the trip's road for 3 pings | `route_deviation` | medium | vehicle, or `depot_id` | vehicle and trip (60 min) | dispatcher, depot admin |
 | `MaintenanceRiskDetected` (FMS-55, [ml-scoring.md](ml-scoring.md)): a health score falling below 75 | `maintenance_risk` | `risk_level` (medium or high), else medium | vehicle | vehicle (24 h) | technician, depot admin |
-| `ServiceDue`, `ServiceOverdue` (FMS-129, [service-programs.md](service-programs.md)): a vehicle's service under a program coming due, falling overdue | `service_due` | medium when due, high when overdue | vehicle | the vehicle and program (31 days): falling overdue raises the alert of its coming due | technician, depot admin |
+| `ServiceDue`, `ServiceOverdue` (FMS-129, [service-programs.md](service-programs.md)): a vehicle's service under a program coming due, falling overdue | `service_due` | medium when due, high when overdue | vehicle | the vehicle and program (31 days): falling overdue raises the alert of its coming due | technician, depot admin; the vehicle's driver (FMS-149) |
 | `MlScoringBlocked` (FMS-127, [ml-model-registry.md](ml-model-registry.md)) | `ml_scoring_blocked` | medium when the model is not active, high otherwise | none: fleet-wide | the model and reason (24 h) | admin |
 | `BatteryThresholdExceeded` (FMS-96) | `battery` | `severity`, else high | vehicle | vehicle and metric (60 min) | dispatcher, depot admin |
 | `TripDelayed` (FMS-147, [eta.md](eta.md#the-trip-delay-alert-fms-147)): a trip expected past its scheduled end by the depot's margin (15 min), then its second (60 min) | `trip_delayed` | medium when late, critical when urgent | vehicle, or `depot_id` (the route's) | the trip and the time it fell late (24 h): becoming urgent raises that alert, and tells them again | dispatcher |
@@ -56,6 +56,18 @@ Tier 0 is the rule's roles; escalation then tells fleet managers (tier 1), then 
 - anyone whose roles see every depot (admin, fleet manager, fleet owner, compliance officer).
 
 Anyone already told about the alert is skipped. A batch of notifications is one statement and one audit entry (`alert.notified`, with the count).
+
+**The driver it concerns (FMS-149).** Two rules also tell one driver, in their own words (notification type `alert_personal`), for information only. The alert stays its audience's to acknowledge and resolve, and a driver holds no `alert:ack`.
+- **`licence_expiring`:** the driver whose licence it is, never another driver. For example: *Your driving licence expires in 5 days*.
+- **`service_due`:** the driver of the vehicle's trip under way, else of its next assigned trip that has not ended. For example: *AA-12345, the vehicle you drive next, is due for service… The workshop books it in.* Nobody is told when the vehicle has no such trip.
+
+When they are told:
+- when the alert opens;
+- again when the alert grows more severe (amber to red, due to overdue). Their audience is not told again.
+
+Who is never told: a retired driver, or one whose account is not active.
+
+The driver gets it in the inbox and by push, whatever the severity, and never by email or SMS (`PERSONAL_CHANNELS`). It opens their day (`/driver`).
 
 **Beyond the app (FMS-93).** The same people get a critical alert by email, SMS and push as well, and a high one by push: [notification-channels.md](notification-channels.md). An escalation goes out the same way to the next tier.
 

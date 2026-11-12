@@ -23,6 +23,13 @@ describe('where a notification leads', () => {
     expect(notificationLink(note('maintenance_prediction', { vehicle_id: V }), technician)).toBe('/maintenance')
   })
 
+  it("a driver's own notice opens their day, whatever the alert is about (FMS-149)", () => {
+    expect(notificationLink({ ...note('driver', { driver_id: D }), type: 'alert_personal' }, driverOnly)).toBe('/driver')
+    expect(notificationLink({ ...note('vehicle', { vehicle_id: V }), type: 'alert_personal' }, driverOnly)).toBe('/driver')
+    // The office's copy of the same alert opens the drivers, which a driver may not.
+    expect(notificationLink({ ...note('driver', { driver_id: D }), type: 'alert' }, driverOnly)).toBeNull()
+  })
+
   it('a document opens the vehicles or the drivers, by whose it is', () => {
     expect(notificationLink(note('document', { vehicle_id: V }), everything)).toBe('/vehicles')
     expect(notificationLink(note('document', { driver_id: D }), everything)).toBe('/drivers')

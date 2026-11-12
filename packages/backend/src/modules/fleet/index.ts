@@ -473,6 +473,8 @@ export const alertRefs = {
   drivers: {
     subject: (db: Queryable, publicId: string) => driverRepository.alertSubject(db, publicId),
     publicIds: (db: Queryable, ids: readonly string[]) => driverRepository.publicIdsByIds(db, ids),
+    /** FMS-149: the accounts of drivers still driving, by driver id, for the alerts of their own. */
+    activeAccounts: (db: Queryable, ids: readonly string[]) => driverRepository.activeAccountsByIds(db, ids),
   },
   depots: {
     idOf: (db: Queryable, publicId: string) => resolveDepotInScope(db, publicId, { kind: 'all' }),

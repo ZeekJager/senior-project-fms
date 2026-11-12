@@ -268,6 +268,9 @@ export {
  */
 export { enRouteTripOfDriver, enRouteTripsForVehicles, tripSpansOfDriver, tripSpansOfVehicles, type EnRouteTrip, type TripSpan } from './infrastructure/trip-activity.queries';
 
+/** For the alert engine (FMS-149): the driver of each vehicle's trip under way, else its next assigned one. */
+export { vehicleDriversNow } from './infrastructure/trip-activity.queries';
+
 /** For the live map (FMS-45): each vehicle's trip under way, with its route and driver. */
 export { liveTripsForVehicles, type LiveTrip } from './infrastructure/trip-activity.queries';
 

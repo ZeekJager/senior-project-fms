@@ -7,7 +7,7 @@ import type { AppModule } from '../../shared/module';
 import { userDirectory } from '../auth';
 import { alertRefs, incidentRefs } from '../fleet';
 import { notificationGateway } from '../integration';
-import { tripLookups } from '../trip';
+import { tripLookups, vehicleDriversNow } from '../trip';
 import { alertRouter } from './api/alert.routes';
 import { incidentRouter } from './api/incident.routes';
 import { notificationRouter } from './api/notification.routes';
@@ -62,7 +62,7 @@ const service = new AlertService({
     vehicles: alertRefs.vehicles,
     drivers: alertRefs.drivers,
     depots: alertRefs.depots,
-    trips: { idsByPublicIds: tripLookups.idsByPublicIds, publicIds: tripLookups.publicIds },
+    trips: { idsByPublicIds: tripLookups.idsByPublicIds, publicIds: tripLookups.publicIds, vehicleDrivers: vehicleDriversNow },
     users: {
       activeWithRoles: (db, roles, depotId, unscoped) => userDirectory.activeWithRoles(db, roles, depotId, unscoped),
       publicIds: userPublicIds,

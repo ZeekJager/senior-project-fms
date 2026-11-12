@@ -24,6 +24,12 @@ export const CHANNELS_BY_SEVERITY: Record<AlertSeverity, readonly DeliveryChanne
   low: [],
 };
 
+/**
+ * What reaches a driver of their own alerts (FMS-149: their licence, their next vehicle's service): the inbox and push,
+ * whatever the severity. Never email or SMS.
+ */
+export const PERSONAL_CHANNELS: readonly DeliveryChannel[] = ['push'];
+
 /** Attempts per message, the first included. After the last, it is failed. */
 export const MAX_DELIVERY_ATTEMPTS = 5;
 /** Minutes to wait after attempt n (1-based) failed: 1, 5, 15, then 60. */
@@ -65,7 +71,9 @@ export const addisTime = (d: Date) => addis.format(d);
 const cut = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
 
 /** What the alert is about, for the screen a push or an email link opens (the inbox's links, FMS-48). */
-export function alertPath(entityType: string | null, entityId: string | null): string {
+export function alertPath(entityType: string | null, entityId: string | null, notificationType?: string): string {
+  // A driver's own notice (FMS-149) opens their own screen: the alert's is not theirs to act on.
+  if (notificationType === 'alert_personal') return '/driver';
   switch (entityType) {
     case 'dvir_report':
     case 'maintenance_prediction':
@@ -135,7 +143,7 @@ export interface DeliveryView {
   id: string;
   channel: NotificationChannel;
   status: DeliveryStatus;
-  /** `alert` or `alert_escalated`. */
+  /** `alert`, `alert_escalated`, or `alert_personal` (what a driver is told of their own, FMS-149). */
   type: string;
   recipient: { id: string | null; name: string | null };
   attempts: number;

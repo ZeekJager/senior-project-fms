@@ -17,6 +17,7 @@ The rules are `CHANNELS_BY_SEVERITY` in `alert/domain/delivery.ts`.
 - **Escalations count too.** When a critical alert escalates, the next tier gets it on the same channels.
 - **Channels must be on.** A channel is on when an active notification provider delivers it. A channel that is off queues nothing.
 - **Inactive users get nothing.** Neither do users already told about the alert.
+- **A driver's own alerts (FMS-149)** reach them in FMS and by push, whatever the severity, and never by email or SMS: their licence expiring, and the service due of the vehicle they drive next (`PERSONAL_CHANNELS`, [alerts.md](alerts.md#who-is-told)). A push opens `/driver`.
 
 Each user sees their own rules and addresses under **Notification settings** (S-29, `/notification-settings`), opened from the account card.
 

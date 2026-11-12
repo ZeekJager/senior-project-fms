@@ -9,7 +9,7 @@ import { useRealtimeEvent, useRealtimeStatus } from '@/lib/realtime/context'
 /** A notification as GET /notifications returns it (api-contract §12.1). */
 export interface InboxNotification {
   id: string
-  /** `alert` or `alert_escalated`. */
+  /** `alert`, `alert_escalated`, or `alert_personal`: a driver's own notice (FMS-149). */
   type: string
   title: string
   message: string
