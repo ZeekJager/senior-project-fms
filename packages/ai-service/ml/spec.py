@@ -46,7 +46,11 @@ def spec_hash() -> str:
     registry (FMS-127) stores it, and the core refuses a model whose hash is
     not the one its extractor implements.
     """
-    spec = load_spec()
+    return hash_of(load_spec())
+
+
+def hash_of(spec: dict[str, Any]) -> str:
+    """The hash of any feature spec's `features` and `target` (the trip risk spec's too, FMS-155)."""
     canonical = json.dumps(
         {"features": spec["features"], "target": spec["target"]},
         sort_keys=True,

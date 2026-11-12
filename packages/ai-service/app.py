@@ -6,6 +6,9 @@ an internal HTTP API, so the core never runs Python. docs/ml-service.md.
 
 Reads ML_SERVICE_TOKEN (required, at least 32 characters), ML_MODELS_DIR
 (default ./models) and ML_MODEL_VERSION (default: the newest folder there).
+
+The trip risk model (FMS-155, docs/ml-trip-risk.md) is optional: the newest tr-* folder
+in ML_MODELS_DIR, or ML_TRIP_RISK_MODEL_VERSION. Without one, its endpoints say so.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, create_model
 from ml import artefact
 from ml.serving import Predictor
 from ml.spec import load_spec
+from ml.trip_risk import serving as trip_risk
+from ml.trip_risk.spec import load_spec as load_trip_risk_spec
 
 ROOT = Path(__file__).resolve().parent
 AUTH_HEADER = "X-Internal-Token"
@@ -35,6 +40,8 @@ REQUEST_ID_HEADER = "X-Request-Id"
 MIN_TOKEN_LENGTH = 32
 # One nightly scoring call scores this many vehicles at most (FMS-55 sends batches).
 MAX_BATCH = 500
+# One dispatch board asks for a depot's available drivers on one trip at once (FMS-155).
+MAX_TRIP_RISK_BATCH = 200
 # Seconds, the same buckets as the API's http_request_duration_seconds (FMS-75, docs/metrics.md).
 LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 2, 5, 10)
 # Probes and the scrape itself say nothing about the service's users.
@@ -46,11 +53,17 @@ class Settings:
     token: str
     models_dir: Path
     model_version: str | None = None
+    trip_risk_version: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Settings":
         shared_with_core = env.get("ML_SERVICE_TOKEN", "")
-        return cls(shared_with_core, Path(env.get("ML_MODELS_DIR") or ROOT / "models"), env.get("ML_MODEL_VERSION") or None)
+        return cls(
+            shared_with_core,
+            Path(env.get("ML_MODELS_DIR") or ROOT / "models"),
+            env.get("ML_MODEL_VERSION") or None,
+            env.get("ML_TRIP_RISK_MODEL_VERSION") or None,
+        )
 
 
 def model_folder(settings: Settings) -> Path:
@@ -82,6 +95,29 @@ class PredictRequest(BaseModel):
 class BatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     items: list[PredictRequest] = Field(min_length=1, max_length=MAX_BATCH)
+
+
+# The trip risk inputs (trip_risk_spec.json), the same way: every input required, within its range, nothing else.
+TripRiskFeatures = create_model(
+    "TripRiskFeatures",
+    __config__=ConfigDict(extra="forbid"),
+    **{
+        f["name"]: (int if f["type"] == "int" else float, Field(ge=f["min"], le=f["max"], strict=True))
+        for f in load_trip_risk_spec()["features"]
+    },
+)
+
+
+class TripRiskItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    trip_id: str = Field(min_length=1, max_length=64)
+    driver_id: str = Field(min_length=1, max_length=64)
+    features: TripRiskFeatures  # type: ignore[valid-type]
+
+
+class TripRiskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[TripRiskItem] = Field(min_length=1, max_length=MAX_TRIP_RISK_BATCH)
 
 
 class ServiceError(Exception):
@@ -128,6 +164,7 @@ class ServiceMetrics:
             "ml_prediction_duration_seconds", "Time to score one request's vehicles", buckets=LATENCY_BUCKETS, registry=self.registry
         )
         self.vehicles = Counter("ml_predicted_vehicles_total", "Vehicles scored", registry=self.registry)
+        self.trip_risk = Counter("ml_trip_risk_predictions_total", "Drivers scored for a trip (FMS-155)", registry=self.registry)
         self.model = Gauge("ml_model_info", "1 for the model being served", ["version"], registry=self.registry, multiprocess_mode="max")
         self.model.labels(version=model_version).set(1)
         self.load = Gauge("ml_model_load_seconds", "Seconds the model took to load", registry=self.registry, multiprocess_mode="max")
@@ -156,11 +193,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     started = time.perf_counter()
     predictor = Predictor.load(folder)
     _, metrics = artefact.read(folder)
+    # Optional, but a folder that is there must be usable: a tampered or mismatched one stops the service as the other does.
+    trip_folder = settings.models_dir / settings.trip_risk_version if settings.trip_risk_version else trip_risk.newest(settings.models_dir)
+    trip_predictor = trip_risk.TripRiskPredictor.load(trip_folder) if trip_folder else None
     load_seconds = round(time.perf_counter() - started, 2)
 
     # No interactive docs: the API is internal, and documented in docs/api-contract.md §10.3.
     app = FastAPI(title="FMS predictive maintenance", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.predictor = predictor
+    app.state.trip_predictor = trip_predictor
     service_metrics = ServiceMetrics(predictor.version, load_seconds)
     app.state.metrics = service_metrics
 
@@ -219,7 +260,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, Any]:
         """Liveness, without a token: the model is loaded (the service does not start without one)."""
-        return {"status": "ok", "model_version": predictor.version, "load_seconds": load_seconds}
+        return {
+            "status": "ok",
+            "model_version": predictor.version,
+            "trip_risk_model_version": trip_predictor.version if trip_predictor else None,
+            "load_seconds": load_seconds,
+        }
 
     @app.get("/metrics", dependencies=[Depends(scrape_authorized)])
     def scrape() -> Response:
@@ -237,6 +283,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/internal/ml/predict-maintenance/batch", dependencies=[Depends(authorized)])
     def predict_batch(body: BatchRequest, request: Request) -> dict[str, Any]:
         return {"data": predictions(body.items), "meta": meta(request)}
+
+    def trip_model() -> trip_risk.TripRiskPredictor:
+        if trip_predictor is None:
+            raise ServiceError(404, "NOT_FOUND", "No trip risk model is loaded.")
+        return trip_predictor
+
+    @app.get("/models/trip-risk", dependencies=[Depends(authorized)])
+    def trip_risk_model(request: Request) -> dict[str, Any]:
+        """The trip risk model serving now (FMS-155), for the registry; 404 when the service runs without one."""
+        return {"data": trip_model().describe(), "meta": {"request_id": request.state.request_id}}
+
+    @app.post("/internal/ml/predict-trip-risk", dependencies=[Depends(authorized)])
+    def predict_trip_risk(body: TripRiskRequest, request: Request) -> dict[str, Any]:
+        """Each driver's chances on one trip, in the order asked (FMS-155)."""
+        model = trip_model()
+        with service_metrics.prediction.time():
+            out = model.predict([item.features.model_dump() for item in body.items])
+        service_metrics.trip_risk.inc(len(body.items))
+        data = [{"trip_id": item.trip_id, "driver_id": item.driver_id, **p} for item, p in zip(body.items, out)]
+        return {"data": data, "meta": {"request_id": request.state.request_id, "model_version": model.version}}
 
     return app
 

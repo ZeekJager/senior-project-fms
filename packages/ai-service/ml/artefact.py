@@ -46,10 +46,20 @@ def _json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
 
-def save(folder: Path, model, metadata: dict[str, Any], metrics: dict[str, Any], importance: pd.DataFrame) -> dict[str, Any]:
-    """Writes the folder, which must not exist yet: a version names one model, never two. Returns the metadata as saved."""
-    if not VERSION.match(metadata["model_version"]):
-        raise ArtefactError(f"model_version {metadata['model_version']!r} is not like pm-2026.10")
+def save(
+    folder: Path,
+    model,
+    metadata: dict[str, Any],
+    metrics: dict[str, Any],
+    importance: pd.DataFrame,
+    version: re.Pattern[str] = VERSION,
+) -> dict[str, Any]:
+    """
+    Writes the folder, which must not exist yet: a version names one model, never two. Returns the metadata as saved.
+    `version` is the model's version pattern: pm-2026.10 for maintenance, tr-2026.11 for trip risk (FMS-155).
+    """
+    if not version.match(metadata["model_version"]):
+        raise ArtefactError(f"model_version {metadata['model_version']!r} does not match {version.pattern}")
     if folder.exists():
         raise ArtefactError(f"{folder} already exists; train under another --version")
     folder.mkdir(parents=True)
@@ -71,18 +81,22 @@ def read(folder: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return metadata, metrics
 
 
-def load(folder: Path):
+def load(folder: Path, expected_hash: str | None = None, expected_features: list[str] | None = None):
     """
     (model, metadata). Refuses a model whose file is not the one its metadata
     names (the file is a pickle, so it is checked before it is opened) or whose
-    inputs are not the ones this code's feature spec defines.
+    inputs are not the ones this code's feature spec defines. The spec is the
+    maintenance model's unless `expected_hash` and `expected_features` name another
+    (the trip risk model's, FMS-155).
     """
+    expected_hash = expected_hash or spec_hash()
+    expected_features = expected_features or feature_names()
     metadata, _ = read(folder)
     path = folder / MODEL_FILE
     if not path.is_file() or sha256(path) != metadata.get("artefact_sha256"):
         raise ArtefactError(f"{path} does not match the checksum in {METADATA_FILE}")
-    if metadata.get("feature_spec_hash") != spec_hash() or metadata.get("features") != feature_names():
+    if metadata.get("feature_spec_hash") != expected_hash or metadata.get("features") != expected_features:
         raise ArtefactError(
-            f"{folder.name} was trained on feature spec {metadata.get('feature_spec_hash')}, this code implements {spec_hash()}"
+            f"{folder.name} was trained on feature spec {metadata.get('feature_spec_hash')}, this code implements {expected_hash}"
         )
     return joblib.load(path), metadata

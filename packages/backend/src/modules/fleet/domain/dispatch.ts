@@ -70,6 +70,35 @@ export interface ServiceDueSummary {
   programs: { program_id: string; name: string; status: 'due' | 'overdue'; due_by: string[] }[];
 }
 
+/**
+ * The trip risk model's chances for one available driver on the trip being staffed (FMS-155, docs/ml-trip-risk.md),
+ * and the two inputs that raise each most, with their values. Advice for one trip: never a block or a ranking of people.
+ */
+export interface DriverTripRisk {
+  late_probability: number;
+  safety_event_probability: number;
+  factors: { late: { feature: string; value: number }[]; safety_event: { feature: string; value: number }[] };
+}
+
+/** Whether the board carries the model's chances, and why not (FMS-155): the analytics module's TripRiskSummary. */
+export interface BoardTripRisk {
+  status: 'ok' | 'not_enough_trips' | 'off' | 'unavailable';
+  reason: string | null;
+  model_version: string | null;
+  demonstration: boolean;
+  trips: number;
+  drivers: number;
+  minimum: { trips: number; drivers: number };
+}
+
+/** The trip risk model, as the board asks it; connected by src/modules/index.ts (the analytics module's tripRisk). */
+export interface TripRiskProvider {
+  forTrip(tripPublicId: string, driverPublicIds: readonly string[], correlationId: string): Promise<{ summary: BoardTripRisk; drivers: Map<string, DriverTripRisk> }>;
+}
+
+/** Who sees the model's chances: as the driver score (FMS-146), behavioural data. */
+export const TRIP_RISK_PERMISSION = 'tracking:read';
+
 export interface BoardDriver {
   driver_id: string;
   full_name: string;
@@ -82,6 +111,11 @@ export interface BoardDriver {
   availability: AvailabilityResult;
   /** The trip under way now, if any. */
   current_trip: { trip_id: string; end: Date } | null;
+  /**
+   * The trip risk model's chances on the trip being staffed (FMS-155): with `exclude_trip_id`, `tracking:read`, an active
+   * model, and the driver free for the trip. Null otherwise.
+   */
+  trip_risk: DriverTripRisk | null;
 }
 
 export interface BoardVehicle {
@@ -103,6 +137,8 @@ export interface BoardVehicle {
 export interface DispatchBoard {
   depot_id: string;
   window: { start: Date; end: Date };
+  /** With a trip and `tracking:read` (FMS-155): whether the drivers carry the model's chances, and why not. Null otherwise. */
+  trip_risk: BoardTripRisk | null;
   drivers: BoardDriver[];
   vehicles: BoardVehicle[];
 }

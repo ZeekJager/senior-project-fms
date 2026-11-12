@@ -313,7 +313,8 @@ Vehicle status and availability (FMS-76):
 Dispatcher board (FMS-33, screen S-07):
 
 - **`GET /dispatch/availability`** (`trip:assign`: admin, fleet manager, dispatcher). `depot_id` defaults to the caller's own depot; someone who sees several (or none of their own) must give one (`400 VALIDATION_FAILED`, `reason: "required"`), and one outside their scope is `400 references_missing_record`. `from`/`to` are the trip's window, as for vehicle status (none means now); `exclude_trip_id` is the trip being staffed, whose own assignment is not a conflict.
-- **`DispatchBoard`:** `depot_id`, `window`, `drivers[]` and `vehicles[]`. A driver: `driver_id`, `full_name`, `license_categories`, `vehicle_types` (what the licence covers), `state`, `attendance` (on the window's first day), `availability` (`availability`, `reasons[]`, for the window, as in vehicle status), `service_due` (FMS-129: `null`, or `status` `due` or `overdue` and `programs[]` with `program_id`, `name`, `status`, `due_by`; a warning, never a block), `current_trip` (`trip_id`, `end`) when under way. A vehicle: `vehicle_id`, `registration_number`, `make`, `model`, `vehicle_type`, `status`, `state`, `availability`, `open_work` (the open maintenance record behind a flag: `id`, `description`, `status`, `priority`, `opened_at`; dispatchers hold no `maintenance:read`), `current_trip`. Active drivers of the depot (their account's depot) and its vehicles that are not retired, by name and plate.
+- **Trip risk (FMS-155, [ml-trip-risk.md](ml-trip-risk.md)).** With `exclude_trip_id` and `tracking:read`, `DispatchBoard.trip_risk` says whether the drivers carry the trip risk model's chances: `status` `ok` (the active model's; `demonstration` when it learnt from generated trips), `not_enough_trips` (no usable model, and fewer than `minimum` completed, measured trips and drivers: `trips`, `drivers`), `off` (no usable model: `reason` `service_off`, `no_model`, `not_active`, `feature_spec_mismatch` or `artefact_mismatch`) or `unavailable` (the ML service failed). With `ok`, each driver free for the trip has `trip_risk`: `late_probability`, `safety_event_probability` and `factors` (`late[]`, `safety_event[]`: at most two `{ feature, value }` each). Otherwise, and for a blocked driver, `null`. Advice for one trip: never a block, and the order of the drivers does not change.
+- **`DispatchBoard`:** `depot_id`, `window`, `trip_risk`, `drivers[]` and `vehicles[]`. A driver: `driver_id`, `full_name`, `license_categories`, `vehicle_types` (what the licence covers), `state`, `attendance` (on the window's first day), `availability` (`availability`, `reasons[]`, for the window, as in vehicle status), `service_due` (FMS-129: `null`, or `status` `due` or `overdue` and `programs[]` with `program_id`, `name`, `status`, `due_by`; a warning, never a block), `current_trip` (`trip_id`, `end`) when under way. A vehicle: `vehicle_id`, `registration_number`, `make`, `model`, `vehicle_type`, `status`, `state`, `availability`, `open_work` (the open maintenance record behind a flag: `id`, `description`, `status`, `priority`, `opened_at`; dispatchers hold no `maintenance:read`), `current_trip`. Active drivers of the depot (their account's depot) and its vehicles that are not retired, by name and plate.
 - **`state`** is about now, for the console's colours. Drivers: `idle` (green: free, present or not yet marked), `near_end` (amber: under way, ending within 30 minutes or late), `en_route` (red), `absent` (grey: absent, on leave or sick that day; a warning, still assignable), `unavailable` (blocked for the window). Vehicles: `idle` (green), `flagged` (red: maintenance flag or in the workshop), `en_route` (grey), `unavailable`.
 
 Vehicle rules (FMS-15):
@@ -725,19 +726,20 @@ Inventory rules (FMS-23):
 | `PATCH /maintenance-predictions/{prediction_id}/feedback` | The author changes it, for 7 days | `prediction:read` + `maintenance:write` | the fields to change -> `PredictionFeedback`; `403 not_author`, `409 edit_window_closed` |
 | `GET /ml-models` | The model registry (FMS-127) | `prediction:read` | `status?`, paging -> `MlModel[]`, newest first; each with `feedback` (FMS-128) |
 | `GET /ml-models/{model_id}` | One registered model | `prediction:read` | `MlModel` |
-| `POST /ml-models/{model_id}/activate` | Let a registered model score | `ml-model:activate` (admin) | -> `MlModel`; `409` when trained on other inputs |
+| `POST /ml-models/{model_id}/activate` | Let a registered model score | `ml-model:activate` (admin) | -> `MlModel`; `409` when trained on other inputs, or a trip risk model that did not beat the rules |
 
 **The model registry (FMS-127).** Every prediction can be traced to the model, data and metrics behind it. How it works: [docs/ml-model-registry.md](ml-model-registry.md).
 
 - **`MlModel`:**
   - `id`, `name`, `version`, `status` (`registered`, `active`, `retired`);
-  - `algorithm`, `features` (in order), `feature_spec_version`, `feature_spec_hash`, `features_match`;
+  - `algorithm`, `features` (in order), `feature_spec_version`, `feature_spec_hash`, `features_match`, `demonstration` (trained on generated data);
   - `metrics` (`roc_auc`, `brier`, `at_alert_threshold.precision`, `.recall`, `.f1`, ...), `training_data` (file and its SHA-256, rows, vehicles, dates, split);
   - `trained_at`, `artefact_sha256`, `first_seen_at`, `activated_at`, `activated_by`, `retired_at`.
 - **Registration** is the scoring job's alone, the first time the ML service serves a version (`GET /model`, §10.3). There is no endpoint to register or change a model.
 - **Scoring needs** the served model to be active and trained on the core's feature spec: its `feature_spec_hash` is the SHA-256 of `feature_spec.json`'s inputs and label, hashed the same way in Python and Node. Otherwise nothing is scored, and administrators get an `ml_scoring_blocked` alert (`MlScoringBlocked`).
 - **Activation** is explicit: a new version scores only once an administrator activates it, here or with `npm run ml:model -- activate <version> --by <email>`. It retires the model that was active (one active model per name). Activating a retired model again is a rollback. A model with `features_match: false` is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `feature_spec_mismatch`.
 - **Predictions** name a registered model: `maintenance_predictions (model_name, model_version)` references the registry.
+- **The trip risk model (FMS-155)**, `name: trip-risk`, is registered the same way when the dispatch board (or `npm run ml:model -- list`) first sees the ML service serve it (`GET /models/trip-risk`), against its own spec, `trip_risk_spec.json`. Activating one that did not beat the rules on held-out drivers (`metrics.decision.beats_rules` false) is `409 CONFLICT_INVALID_STATE_TRANSITION`, reason `does_not_beat_rules`, with why; it stays registered. [ml-trip-risk.md](ml-trip-risk.md).
 
 **The nightly scoring (FMS-55).** The job `maintenance-scoring` (02:00) scores every vehicle in service. Only the batch writes scores: no endpoint calls the model. How it works: [docs/ml-scoring.md](ml-scoring.md).
 
@@ -761,10 +763,12 @@ The predictive maintenance service (FMS-54, [ml-service.md](ml-service.md)) is r
 
 | Method + path | Purpose | Request / response |
 |---|---|---|
-| `GET /health` | Liveness, no token | `{ status: "ok", model_version, load_seconds }` |
+| `GET /health` | Liveness, no token | `{ status: "ok", model_version, trip_risk_model_version, load_seconds }` |
 | `GET /model` | The model serving now (for the registry, FMS-127) | `name`, `model_version`, `trained_at`, `algorithm`, `features`, `feature_spec_version`, `feature_spec_hash`, `artefact_sha256`, `training_data`, `metrics`, `health_score`, `risk_levels`, `prediction_horizon_days` |
 | `POST /internal/ml/predict-maintenance` | One vehicle | `PredictRequest` -> `Prediction` |
 | `POST /internal/ml/predict-maintenance/batch` | 1 to 500 vehicles (the nightly scoring) | `{ items: PredictRequest[] }` -> `Prediction[]`, in the same order |
+| `GET /models/trip-risk` | The trip risk model serving now (FMS-155), for the registry | As `GET /model`, with `demonstration` and `minimum`; `metrics` holds each label's model and rules grades, per depot, and `decision`. `404 NOT_FOUND` when the service runs without one |
+| `POST /internal/ml/predict-trip-risk` | 1 to 200 drivers on one trip (the dispatch board) | `{ items: [{ trip_id, driver_id, features }] }` -> `[{ trip_id, driver_id, late_probability, safety_event_probability, factors: { late, safety_event }, model_version, demonstration }]`, in the same order; `features` exactly `trip_risk_spec.json`'s inputs; `404` without a model |
 
 ```http
 POST /internal/ml/predict-maintenance

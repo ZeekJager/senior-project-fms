@@ -22,7 +22,7 @@ CI tags each image with the full commit SHA. A deployment pins an image by that 
 
 - **Backend.** Multi-stage: a build stage compiles TypeScript with `tsc` (`npm run build`); a second stage installs
   production dependencies only (`npm ci --omit=dev`), so there is no `tsx`, `vitest` or `swagger-ui-dist`; the runtime
-  stage copies `dist/`, the dependencies, `migrations/` and `feature_spec.json`, and installs `postgresql16-client`
+  stage copies `dist/`, the dependencies, `migrations/`, `feature_spec.json` and `trip_risk_spec.json` (FMS-155), and installs `postgresql16-client`
   for database backups (FMS-144). The folder layout mirrors the repository (`/app/packages/backend`), so the default
   `ML_FEATURE_SPEC_PATH` (`../ai-service/feature_spec.json`) and the migration lookup need no setting. API documentation
   pages are off in production (`NODE_ENV=production`) and the spec is not in the image.

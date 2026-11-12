@@ -5,6 +5,8 @@
 # Dependencies are installed in a build stage into a virtualenv; the model is trained at build time
 # from the seeded dataset (the same data every build), so the image starts with a model and needs
 # only ML_SERVICE_TOKEN at run time. Runs as an unprivileged user, uvicorn with 2 workers.
+# The trip risk model (FMS-155) is trained too, from generated trips: a demonstration, labelled
+# so wherever it shows, that an administrator activates only if they want it (docs/ml-trip-risk.md).
 
 ARG PYTHON_IMAGE=python:3.12-slim
 
@@ -17,7 +19,9 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
 RUN python scripts/generate_training_data.py --out /tmp/training_data.csv \
- && python scripts/train.py --data /tmp/training_data.csv --out /opt/models
+ && python scripts/train.py --data /tmp/training_data.csv --out /opt/models \
+ && python scripts/generate_trip_risk_data.py --out /tmp/trip_risk_generated.csv \
+ && python scripts/train_trip_risk.py --data /tmp/trip_risk_generated.csv --out /opt/models
 
 FROM ${PYTHON_IMAGE} AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 ML_MODELS_DIR=/opt/models
@@ -28,7 +32,7 @@ RUN mkdir -p /tmp/prometheus && chown ml /tmp/prometheus
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/models /opt/models
-COPY app.py feature_spec.json ./
+COPY app.py feature_spec.json trip_risk_spec.json ./
 COPY ml ./ml
 USER ml
 EXPOSE 5000

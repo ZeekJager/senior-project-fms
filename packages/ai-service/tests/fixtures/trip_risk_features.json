@@ -1,0 +1,253 @@
+{
+  "description": "Trip risk inputs (trip_risk_spec.json) both the ML service (ml/trip_risk/features.py) and the core (maintenance/domain/trip-risk.ts) must compute exactly, for the same job and history. Times are UTC.",
+  "cases": [
+    {
+      "name": "a new driver on a loaded night run: no record, fully rested, the job and the night only",
+      "job": {
+        "scheduled_start": "2026-11-12T18:30:00Z",
+        "scheduled_end": "2026-11-13T02:15:00Z",
+        "planned_distance_km": 412.25,
+        "planned_duration_seconds": null,
+        "stops": 7,
+        "cargo_weight_kg": 7350,
+        "cargo_kind": "hazardous",
+        "payload_capacity_kg": 8000
+      },
+      "driver": [],
+      "route": [],
+      "expected": {
+        "driver_trips_90d": 0,
+        "driver_late_share_90d": 0.0,
+        "driver_safety_share_90d": 0.0,
+        "driver_same_load_trips_90d": 0,
+        "driver_same_load_late_share_90d": 0.0,
+        "job_load_points": 7,
+        "planned_distance_km": 412.3,
+        "planned_duration_h": 7.75,
+        "stops": 7,
+        "night_hours": 7.25,
+        "cargo_share": 0.919,
+        "cargo_hazardous": 1,
+        "cargo_fragile": 0,
+        "cargo_refrigerated": 0,
+        "cargo_passengers": 0,
+        "start_hour": 21,
+        "weekday": 3,
+        "hours_since_last_trip": 336.0,
+        "hours_driven_24h": 0.0,
+        "hours_driven_7d": 0.0,
+        "route_trips_90d": 0,
+        "route_late_share_90d": 0.0
+      }
+    },
+    {
+      "name": "a busy driver still on a trip at t: driven most of the day, a mixed record, some heavy jobs late",
+      "job": {
+        "scheduled_start": "2026-11-12T06:00:00Z",
+        "scheduled_end": "2026-11-12T16:00:00Z",
+        "planned_distance_km": 320,
+        "planned_duration_seconds": 34200,
+        "stops": 2,
+        "cargo_weight_kg": null,
+        "cargo_kind": "general",
+        "payload_capacity_kg": null
+      },
+      "driver": [
+        {
+          "scheduled_end": "2026-11-12T07:00:00Z",
+          "actual_start": "2026-11-12T01:10:00Z",
+          "actual_end": null,
+          "late": null,
+          "safety_event": false,
+          "job_load_points": 3
+        },
+        {
+          "scheduled_end": "2026-11-11T20:00:00Z",
+          "actual_start": "2026-11-11T13:00:00Z",
+          "actual_end": "2026-11-11T21:20:00Z",
+          "late": true,
+          "safety_event": false,
+          "job_load_points": 3
+        },
+        {
+          "scheduled_end": "2026-11-10T12:00:00Z",
+          "actual_start": "2026-11-10T04:00:00Z",
+          "actual_end": "2026-11-10T11:50:00Z",
+          "late": false,
+          "safety_event": true,
+          "job_load_points": 4
+        },
+        {
+          "scheduled_end": null,
+          "actual_start": "2026-11-03T05:00:00Z",
+          "actual_end": "2026-11-03T08:00:00Z",
+          "late": null,
+          "safety_event": false,
+          "job_load_points": 0
+        },
+        {
+          "scheduled_end": "2026-08-01T10:00:00Z",
+          "actual_start": "2026-08-01T05:00:00Z",
+          "actual_end": "2026-08-01T10:30:00Z",
+          "late": true,
+          "safety_event": false,
+          "job_load_points": 3
+        },
+        {
+          "scheduled_end": "2026-11-12T09:00:00Z",
+          "actual_start": "2026-11-12T06:30:00Z",
+          "actual_end": "2026-11-12T09:00:00Z",
+          "late": false,
+          "safety_event": false,
+          "job_load_points": 1
+        }
+      ],
+      "route": [
+        {
+          "scheduled_end": "2026-11-11T20:00:00Z",
+          "actual_start": "2026-11-11T13:00:00Z",
+          "actual_end": "2026-11-11T21:20:00Z",
+          "late": true,
+          "safety_event": false,
+          "job_load_points": 3
+        },
+        {
+          "scheduled_end": "2026-10-30T20:00:00Z",
+          "actual_start": "2026-10-30T13:00:00Z",
+          "actual_end": "2026-10-30T19:40:00Z",
+          "late": false,
+          "safety_event": false,
+          "job_load_points": 3
+        },
+        {
+          "scheduled_end": "2026-10-29T20:00:00Z",
+          "actual_start": "2026-10-29T13:00:00Z",
+          "actual_end": "2026-10-29T20:10:00Z",
+          "late": false,
+          "safety_event": true,
+          "job_load_points": 3
+        }
+      ],
+      "expected": {
+        "driver_trips_90d": 3,
+        "driver_late_share_90d": 0.5,
+        "driver_safety_share_90d": 0.333,
+        "driver_same_load_trips_90d": 2,
+        "driver_same_load_late_share_90d": 0.5,
+        "job_load_points": 4,
+        "planned_distance_km": 320.0,
+        "planned_duration_h": 9.5,
+        "stops": 2,
+        "night_hours": 0.0,
+        "cargo_share": 0.0,
+        "cargo_hazardous": 0,
+        "cargo_fragile": 0,
+        "cargo_refrigerated": 0,
+        "cargo_passengers": 0,
+        "start_hour": 9,
+        "weekday": 3,
+        "hours_since_last_trip": 0.0,
+        "hours_driven_24h": 13.17,
+        "hours_driven_7d": 21.0,
+        "route_trips_90d": 3,
+        "route_late_share_90d": 0.333
+      }
+    },
+    {
+      "name": "a short day trip with nothing planned beyond its start: a rested driver, rounding at the third decimal",
+      "job": {
+        "scheduled_start": "2026-11-15T04:00:00Z",
+        "scheduled_end": null,
+        "planned_distance_km": null,
+        "planned_duration_seconds": null,
+        "stops": 0,
+        "cargo_weight_kg": 1000,
+        "cargo_kind": "passengers",
+        "payload_capacity_kg": 0
+      },
+      "driver": [
+        {
+          "scheduled_end": "2026-11-01T10:00:00Z",
+          "actual_start": "2026-11-01T05:00:00Z",
+          "actual_end": "2026-11-01T10:00:00Z",
+          "late": false,
+          "safety_event": false,
+          "job_load_points": 1
+        },
+        {
+          "scheduled_end": "2026-11-02T10:00:00Z",
+          "actual_start": "2026-11-02T05:00:00Z",
+          "actual_end": "2026-11-02T10:00:00Z",
+          "late": false,
+          "safety_event": false,
+          "job_load_points": 1
+        },
+        {
+          "scheduled_end": "2026-11-03T10:00:00Z",
+          "actual_start": "2026-11-03T05:00:00Z",
+          "actual_end": "2026-11-03T11:00:00Z",
+          "late": true,
+          "safety_event": false,
+          "job_load_points": 1
+        },
+        {
+          "scheduled_end": "2026-11-04T10:00:00Z",
+          "actual_start": "2026-11-04T05:00:00Z",
+          "actual_end": "2026-11-04T10:00:00Z",
+          "late": false,
+          "safety_event": false,
+          "job_load_points": 1
+        },
+        {
+          "scheduled_end": "2026-11-05T10:00:00Z",
+          "actual_start": "2026-11-05T05:00:00Z",
+          "actual_end": "2026-11-05T10:00:00Z",
+          "late": false,
+          "safety_event": false,
+          "job_load_points": 1
+        },
+        {
+          "scheduled_end": "2026-11-06T10:00:00Z",
+          "actual_start": "2026-11-06T05:00:00Z",
+          "actual_end": "2026-11-06T11:00:00Z",
+          "late": true,
+          "safety_event": false,
+          "job_load_points": 1
+        },
+        {
+          "scheduled_end": "2026-11-07T10:00:00Z",
+          "actual_start": "2026-11-07T05:00:00Z",
+          "actual_end": "2026-11-07T10:00:00Z",
+          "late": false,
+          "safety_event": true,
+          "job_load_points": 1
+        }
+      ],
+      "route": [],
+      "expected": {
+        "driver_trips_90d": 7,
+        "driver_late_share_90d": 0.286,
+        "driver_safety_share_90d": 0.143,
+        "driver_same_load_trips_90d": 0,
+        "driver_same_load_late_share_90d": 0.0,
+        "job_load_points": 0,
+        "planned_distance_km": 0.0,
+        "planned_duration_h": 0.0,
+        "stops": 0,
+        "night_hours": 0.0,
+        "cargo_share": 0.0,
+        "cargo_hazardous": 0,
+        "cargo_fragile": 0,
+        "cargo_refrigerated": 0,
+        "cargo_passengers": 1,
+        "start_hour": 7,
+        "weekday": 6,
+        "hours_since_last_trip": 186.0,
+        "hours_driven_24h": 0.0,
+        "hours_driven_7d": 0.0,
+        "route_trips_90d": 0,
+        "route_late_share_90d": 0.0
+      }
+    }
+  ]
+}

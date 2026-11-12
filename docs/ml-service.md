@@ -18,6 +18,8 @@ The model (FMS-53, [ml-model.md](ml-model.md)) runs behind an internal HTTP API,
 | `GET /model` | Yes | The model serving now: version, inputs, feature spec version and hash, artefact checksum, training data, metrics. The registry (FMS-127) records it, and the core refuses to score when its own spec hash differs |
 | `POST /internal/ml/predict-maintenance` | Yes | One vehicle |
 | `POST /internal/ml/predict-maintenance/batch` | Yes | 1 to 500 vehicles, answered in the same order |
+| `GET /models/trip-risk` | Yes | The trip risk model serving now (FMS-155, [ml-trip-risk.md](ml-trip-risk.md)), for the registry; `404` without one |
+| `POST /internal/ml/predict-trip-risk` | Yes | 1 to 200 drivers on one trip: each one's chance of running late and of a safety event, with the two inputs raising each most |
 
 A prediction carries:
 
@@ -75,6 +77,7 @@ ML_SERVICE_TOKEN=<32+ characters> uvicorn app:create_app --factory --port 5000
 
 - `ML_MODELS_DIR` is the folder of model versions (default `./models`).
 - `ML_MODEL_VERSION` picks one; by default the newest version there serves (`pm-2026.10.2` after `pm-2026.10`).
+- The trip risk model is optional: `ML_TRIP_RISK_MODEL_VERSION`, or the newest `tr-*` folder there. Without one the service starts all the same and its trip risk endpoints answer `404`; a trip risk folder that fails its checksum or spec stops it, as the maintenance model's does.
 - The model is loaded once, at start-up. A missing model, a checksum or spec mismatch, or a short token stops the service from starting, with the reason.
 
 **In Docker** (`make dev`), the image trains its model when it is built: the seeded dataset, then `train.py`, into `/opt/models`, outside the source volume. A build trains a model graded like any other: `train.py` writes nothing when the model misses a criterion, and the build fails. The container answers its health check within about 3 s of starting.

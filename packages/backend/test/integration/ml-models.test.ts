@@ -263,7 +263,7 @@ describe('the ML service', () => {
   test('a wrong token, a bad answer or no service registers nothing', async () => {
     serving = servedModel(version());
     config.ml.service = { ...config.ml.service!, token: 'y'.repeat(40) };
-    await expect(mlRegistry.checkServing(job())).rejects.toThrow(new MlServiceError('GET /model answered 401'));
+    await expect(mlRegistry.checkServing(job())).rejects.toThrow(new MlServiceError('GET /model answered 401', 401));
     config.ml.service = { ...config.ml.service, token: TOKEN };
 
     serving = { ...servedModel(version()), feature_spec_hash: 'not-a-hash' };
@@ -319,8 +319,8 @@ describe('npm run ml:model: the registry from the command line', () => {
     await mlRegistry.checkServing(job());
     const admin = await createUser({ roles: ['admin'] });
     const listed = await run('list');
-    expect(listed[0]).toMatch(/^VERSION\s+STATUS\s+FEATURES MATCH/);
-    expect(listed[1].split(/\s+/).slice(0, 4)).toEqual([v, 'registered', 'yes', '0.831']);
+    expect(listed[0]).toMatch(/^NAME\s+VERSION\s+STATUS\s+FEATURES MATCH/);
+    expect(listed[1].split(/\s+/).slice(0, 5)).toEqual(['predictive-maintenance', v, 'registered', 'yes', '0.831']);
 
     expect(await run('activate', v, '--by', String(admin.email).toUpperCase())).toEqual([expect.stringContaining(`predictive-maintenance ${v} is active`)]);
     const [row] = await registry();

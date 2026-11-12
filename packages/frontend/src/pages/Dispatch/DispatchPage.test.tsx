@@ -724,3 +724,42 @@ describe('The load of a job on each trip (FMS-153)', () => {
     expect(screen.queryByRole('button', { name: 'Change cargo' })).not.toBeInTheDocument()
   })
 })
+
+describe('Predicted trip risk (FMS-155)', () => {
+  const minimum = { trips: 2000, drivers: 20 }
+
+  it('each free driver shows their chances on the chosen trip with what raises them; a demonstration says so', async () => {
+    serve([trip()], {
+      trip_risk: { status: 'ok', reason: null, model_version: 'tr-2026.11', demonstration: true, trips: 0, drivers: 0, minimum },
+      drivers: [
+        driver({
+          trip_risk: {
+            late_probability: 0.184,
+            safety_event_probability: 0.004,
+            factors: { late: [{ feature: 'hours_driven_24h', value: 10.5 }, { feature: 'night_hours', value: 6 }], safety_event: [] },
+          },
+        }),
+        absent,
+      ],
+    })
+    const user = userEvent.setup()
+    await openConsole()
+    await chooseTrip(user)
+
+    const abebe = await within(drivers()).findByRole('button', { name: 'Abebe Kebede, Available' })
+    expect(within(abebe).getByTestId('trip-risk')).toHaveTextContent('18% chance of running late: 10.5 h driven in the last day, 6 h at night')
+    expect(within(abebe).getByTestId('trip-risk')).toHaveTextContent('under 1% chance of a safety event')
+    expect(within(within(drivers()).getByRole('button', { name: /Sara Haile/ })).queryByTestId('trip-risk')).not.toBeInTheDocument()
+    expect(screen.getByText(/Trip risk is a demonstration: the model learnt from generated trips/)).toBeInTheDocument()
+  })
+
+  it('too few trips to learn from says how far there is to go; the order of the drivers is unchanged', async () => {
+    serve([trip()], { trip_risk: { status: 'not_enough_trips', reason: 'no_model', model_version: null, demonstration: false, trips: 412, drivers: 9, minimum } })
+    const user = userEvent.setup()
+    await openConsole()
+    await chooseTrip(user)
+    expect(await screen.findByText('Not enough trips yet for a trip risk prediction: 412 of 2,000 completed trips, 9 of 20 drivers.')).toBeInTheDocument()
+    expect(within(drivers()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Abebe Kebede, Available', 'Sara Haile, Absent today'])
+    expect(within(drivers()).queryByTestId('trip-risk')).not.toBeInTheDocument()
+  })
+})

@@ -4,7 +4,18 @@ import { AppError } from '../../../shared/errors/app-error';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { operatingToday, type AttendanceStatus } from '../domain/attendance';
 import type { AvailabilityWindow } from '../domain/availability';
-import { drivableTypes, driverBoardState, vehicleBoardState, type DispatchBoard, type OpenWorkSummary, type ServiceDueSummary } from '../domain/dispatch';
+import {
+  drivableTypes,
+  driverBoardState,
+  TRIP_RISK_PERMISSION,
+  vehicleBoardState,
+  type BoardTripRisk,
+  type DispatchBoard,
+  type DriverTripRisk,
+  type OpenWorkSummary,
+  type ServiceDueSummary,
+  type TripRiskProvider,
+} from '../domain/dispatch';
 import type { availabilityStore } from '../infrastructure/availability.repository';
 import type { AvailabilityService } from './availability.service';
 import type { Caller } from './caller';
@@ -24,6 +35,9 @@ export interface DispatchServiceDeps {
     serviceDueSummaries(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceDueSummary>>;
   } | null;
   inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
+  /** The trip risk model (FMS-155), connected by src/modules/index.ts; null when it is not. */
+  tripRisk?: () => TripRiskProvider | null;
+  log?: { warn(obj: object, msg: string): void };
   now?: () => Date;
 }
 
@@ -51,7 +65,7 @@ export class DispatchService {
     const { store, availability } = this.deps;
     const now = this.deps.now?.() ?? new Date();
     const window = query.window ?? { start: now, end: now };
-    return this.deps.inTransaction(async (client) => {
+    const board = await this.deps.inTransaction(async (client): Promise<DispatchBoard> => {
       const scope = depotScope(caller.user);
       let depotId: string | null;
       if (query.depotId) depotId = await this.deps.depots.resolveInScope(client, query.depotId, scope);
@@ -79,6 +93,7 @@ export class DispatchService {
       return {
         depot_id: (await this.deps.depots.publicIds(client, [depotId])).get(depotId)!,
         window: { start: window.start, end: window.end },
+        trip_risk: null,
         drivers: drivers.map((d) => {
           const result = answer.drivers.get(d.id)!;
           const underWay = driversUnderWay.get(d.id) ?? null;
@@ -92,6 +107,7 @@ export class DispatchService {
             attendance: marked,
             availability: result,
             current_trip: trip(underWay ?? undefined),
+            trip_risk: null,
           };
         }),
         vehicles: vehicles.map((v) => {
@@ -113,5 +129,26 @@ export class DispatchService {
         }),
       };
     });
+    if (query.excludeTripId && caller.user.permissions.includes(TRIP_RISK_PERMISSION)) await this.addTripRisk(caller, query.excludeTripId, board);
+    return board;
+  }
+
+  /**
+   * The trip risk model's chances (FMS-155) for the drivers free for the trip, outside the board's transaction: it reads
+   * the replica and asks the ML service. Advice only: a failure leaves the board as it is, with the reason.
+   */
+  private async addTripRisk(caller: Caller, tripPublicId: string, board: DispatchBoard): Promise<void> {
+    const provider = this.deps.tripRisk?.();
+    if (!provider) return;
+    const free = board.drivers.filter((d) => d.availability.availability !== 'unavailable').map((d) => d.driver_id);
+    let risk: { summary: BoardTripRisk; drivers: Map<string, DriverTripRisk> };
+    try {
+      risk = await provider.forTrip(tripPublicId, free, caller.correlationId);
+    } catch (err) {
+      this.deps.log?.warn({ err: err instanceof Error ? err.message : String(err), trip_id: tripPublicId }, 'trip risk: left off the board');
+      return;
+    }
+    board.trip_risk = risk.summary;
+    for (const d of board.drivers) d.trip_risk = risk.drivers.get(d.driver_id) ?? null;
   }
 }

@@ -16,6 +16,36 @@ export type ScoringBlockedReason = (typeof SCORING_BLOCKED_REASONS)[number];
 
 export const ML_MODEL_EVENTS = { scoringBlocked: 'MlScoringBlocked' } as const;
 
+/** The models the registry holds, by name: the nightly maintenance scoring's (FMS-55), and the trip risk model (FMS-155). */
+export const MAINTENANCE_MODEL = 'predictive-maintenance';
+export const TRIP_RISK_MODEL = 'trip-risk';
+
+/**
+ * Why the dispatch console may not ask the trip risk model (FMS-155): no ML service configured; the service serves none;
+ * or as for scoring. The console then keeps the rules.
+ */
+export const TRIP_RISK_BLOCKED_REASONS = ['service_off', 'no_model', 'unavailable', ...SCORING_BLOCKED_REASONS] as const;
+export type TripRiskBlockedReason = (typeof TRIP_RISK_BLOCKED_REASONS)[number];
+
+/** The trip risk model the service serves, when the console may ask it. */
+export type TripRiskCheck =
+  | { ok: true; version: string; demonstration: boolean }
+  | { ok: false; reason: TripRiskBlockedReason; version: string | null };
+
+/**
+ * Whether a trip risk model beat the rules on held-out drivers (metrics.decision.beats_rules, written by
+ * train_trip_risk.py): only one that did may be activated. Anything else, or nothing, is no.
+ */
+export function beatsRules(metrics: Record<string, unknown>): boolean {
+  const decision = metrics.decision as { beats_rules?: unknown } | undefined;
+  return decision?.beats_rules === true;
+}
+
+/** A model trained on generated trips (train_trip_risk.py: training_data.source), shown as a demonstration everywhere. */
+export function isDemonstration(trainingData: Record<string, unknown>): boolean {
+  return trainingData.source === 'generated';
+}
+
 /** What the ML service says about the model it serves (GET /model, FMS-54), as the registry records it. */
 export interface ServedModel {
   name: string;
@@ -52,6 +82,8 @@ export interface MlModelView {
   feature_spec_hash: string;
   /** Whether its inputs are the ones the core's extractor computes now: false means it can never score. */
   features_match: boolean;
+  /** Trained on generated data (a trip risk demonstration, FMS-155): labelled so wherever it shows. */
+  demonstration: boolean;
   metrics: Record<string, unknown>;
   training_data: Record<string, unknown>;
   trained_at: Date;
@@ -115,6 +147,14 @@ export function featureSpecHash(spec: { features: unknown; target: unknown }): s
 }
 
 export const mlModelNotFound = () => new AppError(404, 'NOT_FOUND', 'Model not found.');
+
+export const mlModelNotBetterThanRules = (why: unknown) =>
+  new AppError(
+    409,
+    'CONFLICT_INVALID_STATE_TRANSITION',
+    `This trip risk model did not beat the rules on drivers it had not seen, so the console keeps the rules${Array.isArray(why) && why.length > 0 ? `: ${why.join('; ')}` : ''}.`,
+    [{ field: 'metrics', reason: 'does_not_beat_rules' }],
+  );
 
 export const mlModelFeaturesMismatch = () =>
   new AppError(409, 'CONFLICT_INVALID_STATE_TRANSITION', "This model's inputs are not the ones the core computes: it cannot score.", [
