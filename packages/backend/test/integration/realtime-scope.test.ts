@@ -51,6 +51,9 @@ const SAMPLES: Record<string, (w: World) => Record<string, unknown>> = {
   ...Object.fromEntries(['TripCreated', 'TripUpdated', 'TripCancelled', 'TripAssigned', 'TripStarted', 'TripCompleted', 'TripStopCompleted'].map((t) => [t, (w: World) => ({ trip_id: w.trip, driver_id: w.driver })])),
   // A new arrival estimate (FMS-86): the trip update again, carrying its eta.
   TripEtaUpdated: (w) => ({ trip_id: w.trip, arrival_at: new Date().toISOString(), stops: [] }),
+  // FMS-151: an assignment held for approval, and the decision. They name the trip, not a driver to send to.
+  AssignmentExceptionRequested: (w) => ({ trip_id: w.trip, exception_id: '00000000-0000-4000-8000-000000000151', warnings: ['DRIVER_ATTENDANCE'] }),
+  AssignmentExceptionDecided: (w) => ({ trip_id: w.trip, exception_id: '00000000-0000-4000-8000-000000000151', decision: 'refused', reason: 'No' }),
 };
 
 const envelope = (type: string, payload: Record<string, unknown>) => ({

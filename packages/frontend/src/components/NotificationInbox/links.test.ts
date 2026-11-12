@@ -40,6 +40,8 @@ describe('where a notification leads', () => {
   it('a trip running late opens it on the dispatch console, for those who dispatch', () => {
     expect(notificationLink(note('trip', { vehicle_id: V }), { permissions: ['trip:assign'] })).toBe(`/dispatch?view=under-way&trip=${E}`)
     expect(notificationLink(note('trip', { vehicle_id: V }), technician)).toBeNull()
+    // FMS-151: an assignment held for approval opens the trip on the console.
+    expect(notificationLink(note('trip_assignment'), { permissions: ['trip:assign'] })).toBe(`/dispatch?trip=${E}`)
   })
 
   it('goes nowhere when the notification is about nothing, or about something the app has no screen for', () => {

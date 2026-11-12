@@ -80,6 +80,9 @@ export function alertPath(entityType: string | null, entityId: string | null): s
     case 'telemetry_flag':
     case 'incident':
       return '/command-center?view=attention';
+    case 'trip_assignment':
+      // An assignment held for approval or refused (FMS-151): the dispatch console opens the trip.
+      return entityId ? `/dispatch?trip=${encodeURIComponent(entityId)}` : '/dispatch';
     case 'trip':
       // The dispatch console opens the trip among those under way (FMS-147).
       return entityId ? `/dispatch?view=under-way&trip=${encodeURIComponent(entityId)}` : '/dispatch?view=under-way';

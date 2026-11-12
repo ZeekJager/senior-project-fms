@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import { auditedMutation, type MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import { recordAuditEntry } from '../../../shared/infrastructure/audit-log';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import type { DelayMargins } from '../../trip';
+import { DEFAULT_EXCEPTION_POLICIES, type DelayMargins, type ExceptionPolicies } from '../../trip';
 import { DEFAULT_THRESHOLD_SET, type ThresholdSet } from '../application/rule-threshold.service';
 
 /** A row of tracking.rule_thresholds: the fleet's (depotId null) or a depot's. Internal ids. */
@@ -16,7 +16,8 @@ export interface ThresholdRow extends ThresholdSet {
 const COLUMNS = `id, depot_id AS "depotId", speed_limit_kmh AS "speedLimitKmh", speeding_pings AS "speedingPings",
        clear_pings AS "clearPings", idle_minutes AS "idleMinutes", route_deviation_m AS "routeDeviationM",
        route_deviation_pings AS "routeDeviationPings", trip_delay_minutes AS "tripDelayMinutes",
-       trip_delay_urgent_minutes AS "tripDelayUrgentMinutes", updated_by AS "updatedBy", updated_at AS "updatedAt"`;
+       trip_delay_urgent_minutes AS "tripDelayUrgentMinutes", attendance_exception AS "attendanceException",
+       overrun_exception AS "overrunException", updated_by AS "updatedBy", updated_at AS "updatedAt"`;
 
 const TABLE = 'tracking.rule_thresholds';
 
@@ -29,6 +30,8 @@ const columnsOf = (t: ThresholdSet) => ({
   route_deviation_pings: t.routeDeviationPings,
   trip_delay_minutes: t.tripDelayMinutes,
   trip_delay_urgent_minutes: t.tripDelayUrgentMinutes,
+  attendance_exception: t.attendanceException,
+  overrun_exception: t.overrunException,
 });
 
 /** Changes to tracking.rule_thresholds from the settings screen (FMS-80), each audited. */
@@ -50,6 +53,19 @@ export class RuleThresholdRepository {
       [depotId],
     );
     return res.rows[0] ?? { lateMinutes: DEFAULT_THRESHOLD_SET.tripDelayMinutes, urgentMinutes: DEFAULT_THRESHOLD_SET.tripDelayUrgentMinutes };
+  }
+
+  /** The exception policies (FMS-151) of a depot (internal id): its own row's, else the fleet's. Read on the caller's transaction. */
+  async exceptionPolicies(db: Queryable, depotId: string | null): Promise<ExceptionPolicies> {
+    const res = await db.query<ExceptionPolicies>(
+      `SELECT attendance_exception AS attendance, overrun_exception AS overrun
+         FROM tracking.rule_thresholds
+        WHERE depot_id = $1 OR depot_id IS NULL
+        ORDER BY depot_id NULLS LAST
+        LIMIT 1`,
+      [depotId],
+    );
+    return res.rows[0] ?? DEFAULT_EXCEPTION_POLICIES;
   }
 
   /** The fleet's row (depotId null) or a depot's, if it has one. Changes queue behind each other, so two cannot both insert a depot's row. */

@@ -2,7 +2,7 @@ import { config } from '../config';
 import type { AppModule } from '../shared/module';
 import { authModule, provideDepotDirectory } from './auth';
 import { depotDirectory, fleetModule, provideMaintenanceLookup, provideMeterSources, provideWarrantyExpiry, tripRefs } from './fleet';
-import { provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripDelayMargins, provideTripPositions, provideTripTrack, ROUTING_TIMEOUT_MS, tripModule } from './trip';
+import { provideExceptionPolicies, provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripDelayMargins, provideTripPositions, provideTripTrack, ROUTING_TIMEOUT_MS, tripModule } from './trip';
 import { fuelMeterReadings, fuelModule } from './fuel';
 import { maintenanceModule, maintenanceRefs, warrantyRefs } from './maintenance';
 import { alertModule } from './alert';
@@ -32,6 +32,8 @@ provideTripPositions(trackingLookups.currentPosition);
 provideTripTrack({ tripTrack: trackingLookups.tripTrack, tripTrackCounts: trackingLookups.tripTrackCounts });
 // The trip delay alert (FMS-147) uses each depot's margins, kept with the telemetry rules' thresholds by the integration module.
 provideTripDelayMargins(trackingLookups.tripDelayMargins);
+// Assignment exceptions (FMS-151): each depot's policy, warn or approve, also kept with the thresholds.
+provideExceptionPolicies(trackingLookups.exceptionPolicies);
 // Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
 provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
 // Road routing (FMS-84): OSRM through the integration gateway (timeouts, a retry, its circuit breaker).

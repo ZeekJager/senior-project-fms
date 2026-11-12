@@ -232,6 +232,12 @@ function DrivingRules() {
   )
 }
 
+/** Which assignment warnings the row holds for a fleet manager (FMS-151), or null when both only warn. */
+function approvals(row: ThresholdsRow): string | null {
+  const held = [row.driver_attendance_exception === 'approve' ? 'absent driver' : null, row.trip_overrun_exception === 'approve' ? 'previous trip running over' : null].filter(Boolean)
+  return held.length ? `approval for ${held.join(' and ')}` : null
+}
+
 function DepotRow({ name, row, onEdit }: { name: string; row: ThresholdsRow; onEdit: () => void }) {
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3">
@@ -242,6 +248,7 @@ function DepotRow({ name, row, onEdit }: { name: string; row: ThresholdsRow; onE
           <span className="tabular">{row.clear_pings}</span> · idling after <span className="tabular">{row.idle_minutes} min</span> · off route beyond{' '}
           <span className="tabular">{row.route_deviation_m.toLocaleString('en-US')} m</span> for <span className="tabular">{row.route_deviation_pings}</span> · trips late
           after <span className="tabular">{row.trip_delay_minutes} min</span>, urgent after <span className="tabular">{row.trip_delay_urgent_minutes} min</span>
+          {approvals(row) && <> · {approvals(row)}</>}
         </p>
       </div>
       <Button size="sm" variant="secondary" leadingIcon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit} aria-label={`Edit ${name}'s thresholds`}>

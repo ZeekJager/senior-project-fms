@@ -13,7 +13,9 @@ import { TripDistanceService, type MeasureSummary, type TrackLookup } from './ap
 import { EtaService } from './application/eta.service';
 import type { DelayMargins } from './domain/delay';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
-import { TripService, type PositionLookup } from './application/trip.service';
+import { TripService, type ExceptionPolicyLookup, type PositionLookup } from './application/trip.service';
+import { AssignmentExceptionRepository } from './infrastructure/assignment-exception.repository';
+import { userDirectory } from '../auth';
 import { LOCATION_UPDATED } from './domain/eta';
 import { OsrmRoadPlanner, type RoadPlanner, type RoutingGatewayClient } from './infrastructure/osrm.planner';
 import { RouteRepository } from './infrastructure/route.repository';
@@ -77,6 +79,17 @@ export function provideTripDelayMargins(lookup: ((db: Queryable, depotId: string
   delayMargins = lookup;
 }
 
+let exceptionPolicies: ExceptionPolicyLookup | null = null;
+
+/**
+ * Connects each depot's exception policies (FMS-151): whether a warning only warns or holds the assignment for a
+ * fleet manager, kept with the telemetry rules' thresholds by the integration module, which imports trip. Called once
+ * by src/modules/index.ts. Not connected, every warning only warns.
+ */
+export function provideExceptionPolicies(lookup: ExceptionPolicyLookup | null): void {
+  exceptionPolicies = lookup;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -107,6 +120,9 @@ const tripService = new TripService({
   distance: distanceService,
   trips: tripRepository,
   routes: routeRepository,
+  exceptions: new AssignmentExceptionRepository(pool),
+  policies: () => exceptionPolicies,
+  users: userDirectory,
   fleet,
   maintenance,
   events: eventBus,
@@ -188,6 +204,7 @@ export { ROUTING_TIMEOUT_MS } from './infrastructure/osrm.planner';
 export { TRIP_EVENTS, type TripSummary } from './domain/trip';
 export { TRIP_ETA_UPDATED } from './domain/eta';
 export { DEFAULT_DELAY_MARGINS, DELAY_MARGIN_LIMITS, TRIP_DELAYED, type DelayMargins } from './domain/delay';
+export { DEFAULT_EXCEPTION_POLICIES, EXCEPTION_POLICIES, type ExceptionPolicies, type ExceptionPolicy } from './domain/exception';
 
 /**
  * For other modules: whether a vehicle or driver is on an assigned or

@@ -295,6 +295,8 @@ export const trackingLookups = {
   tripTrackCounts: (db: Queryable, trips: readonly { tripId: string; vehicleId: string; start: Date; end: Date }[]) => tracking.tripTrackCounts(db, trips),
   /** For the trip delay alert (FMS-147, trip): a depot's margins (internal id; null: the fleet's), kept with the thresholds. */
   tripDelayMargins,
+  /** For assignment (FMS-151, trip): a depot's exception policies, read on the assignment's transaction, never cached. */
+  exceptionPolicies: (db: Queryable, depotId: string | null) => thresholdRepository.exceptionPolicies(db, depotId),
 };
 
 export const gpsDevices = {

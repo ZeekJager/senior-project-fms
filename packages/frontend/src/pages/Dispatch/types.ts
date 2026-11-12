@@ -25,7 +25,27 @@ export interface Trip {
   stops?: TripStop[]
   /** Under way: the latest arrival estimate (FMS-86); null before the first, or not under way. */
   eta?: TripEta | null
+  /** An assignment held for a fleet manager's approval (FMS-151) while it waits, or once refused; null otherwise. */
+  exception?: AssignmentException | null
   version: number
+}
+
+/** An assignment held for approval (FMS-151): who and what was asked for, why, and what became of it. */
+export interface AssignmentException {
+  id: string
+  trip_id: string
+  status: 'pending' | 'approved' | 'refused' | 'withdrawn'
+  driver_id: string
+  vehicle_id: string
+  warnings: AssignmentWarning[]
+  reason: string
+  requested_by: string | null
+  requested_by_name: string | null
+  requested_at: string
+  decided_by: string | null
+  decided_by_name: string | null
+  decided_at: string | null
+  decision_reason: string | null
 }
 
 export interface TripStop {

@@ -3,7 +3,7 @@ import { useAuth } from '@/context/AuthContext'
 import { etaEventOf } from '@/features/trip-eta'
 import { useRealtimeEvent } from '@/lib/realtime/context'
 import type { Coordinates, Route } from '@/pages/Routes/api'
-import type { AssignmentWarning, DispatchBoard, ShiftedTrip, Trip } from './types'
+import type { AssignmentException, AssignmentWarning, DispatchBoard, ShiftedTrip, Trip } from './types'
 
 // Server state for the dispatcher console (S-07). Socket events mark it stale
 // (RealtimeProvider, FMS-43: trip.updated, vehicle.status.changed); polling
@@ -156,18 +156,40 @@ export function useTrip(id: string | null) {
   })
 }
 
-/** POST /trips/{id}/assign with the version on screen; a retry replays rather than repeats. */
+/** What POST /assign answered: the trip assigned with its warnings, or (202, FMS-151) the request held for approval. */
+export type AssignResult = { held: false; trip: Trip; warnings: AssignmentWarning[] } | { held: true; exception: AssignmentException }
+
+/**
+ * POST /trips/{id}/assign with the version on screen; a retry replays rather than repeats. `reason` goes with an
+ * assignment a fleet manager must approve (FMS-151).
+ */
 export function useAssignTrip() {
   const { api } = useAuth()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ trip, driverId, vehicleId }: { trip: Trip; driverId: string; vehicleId: string }) => {
-      const { data, meta } = await api.requestEnvelope<Trip>(`/trips/${trip.id}/assign`, {
+    mutationFn: async ({ trip, driverId, vehicleId, reason }: { trip: Trip; driverId: string; vehicleId: string; reason?: string }): Promise<AssignResult> => {
+      const { data, meta } = await api.requestEnvelope<Trip | AssignmentException>(`/trips/${trip.id}/assign`, {
         method: 'POST',
-        json: { driver_id: driverId, vehicle_id: vehicleId, version: trip.version },
+        json: { driver_id: driverId, vehicle_id: vehicleId, version: trip.version, ...(reason ? { exception_reason: reason } : {}) },
         idempotencyKey: true,
       })
-      return { trip: data, warnings: (meta.warnings as AssignmentWarning[] | undefined) ?? [] }
+      // A request names its trip; a trip is the trip.
+      if ('trip_id' in data) return { held: true, exception: data }
+      return { held: false, trip: data, warnings: (meta.warnings as AssignmentWarning[] | undefined) ?? [] }
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['dispatch'] }),
+  })
+}
+
+/** A fleet manager approves (the trip is assigned) or refuses (why, required) a held assignment (FMS-151). */
+export function useDecideException() {
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ exception, decision, text }: { trip: Trip; exception: AssignmentException; decision: 'approve' | 'refuse'; text?: string }) => {
+      const body = decision === 'approve' ? (text ? { note: text } : {}) : { reason: text }
+      const { data, meta } = await api.requestEnvelope<AssignmentException>(`/assignment-exceptions/${exception.id}/${decision}`, { method: 'POST', json: body, idempotencyKey: true })
+      return { exception: data, trip: meta.trip as Trip }
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['dispatch'] }),
   })

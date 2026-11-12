@@ -15,7 +15,16 @@ export interface Thresholds {
   /** Minutes past its scheduled end a trip is expected before it is late, and before it is urgent (above the first). */
   trip_delay_minutes: number
   trip_delay_urgent_minutes: number
+  /** FMS-151: whether the driver's attendance, and a previous trip running over, only warn or hold an assignment for a fleet manager. */
+  driver_attendance_exception: ExceptionPolicy
+  trip_overrun_exception: ExceptionPolicy
 }
+
+/** `warn`: the assignment goes ahead with the warning. `approve`: it waits for a fleet manager (FMS-151). */
+export type ExceptionPolicy = 'warn' | 'approve'
+
+export const POLICY_KEYS = ['driver_attendance_exception', 'trip_overrun_exception'] as const
+export type PolicyKey = (typeof POLICY_KEYS)[number]
 
 export interface ThresholdsRow extends Thresholds {
   updated_by: string | null
@@ -29,7 +38,8 @@ export interface RuleThresholds {
   depots: (ThresholdsRow & { depot_id: string })[]
 }
 
-export type ThresholdKey = keyof Thresholds
+/** The thresholds that are numbers. */
+export type ThresholdKey = Exclude<keyof Thresholds, PolicyKey>
 
 /** Each threshold's range, as tracking.rule_thresholds checks it (migrations 035, 060 and 068). */
 export const THRESHOLD_LIMITS: Record<ThresholdKey, { min: number; max: number }> = {
@@ -53,6 +63,8 @@ export const DEFAULT_THRESHOLDS: Thresholds = {
   route_deviation_pings: 3,
   trip_delay_minutes: 15,
   trip_delay_urgent_minutes: 60,
+  driver_attendance_exception: 'warn',
+  trip_overrun_exception: 'warn',
 }
 
 const thresholdsKey = ['settings', 'telemetry-rules'] as const

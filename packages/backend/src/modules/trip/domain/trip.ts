@@ -1,4 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
+import type { AssignmentExceptionView } from './exception';
 
 export const TRIP_STATUSES = ['draft', 'scheduled', 'assigned', 'en_route', 'completed', 'cancelled'] as const;
 export type TripStatus = (typeof TRIP_STATUSES)[number];
@@ -83,6 +84,11 @@ export interface TripView {
   stops: TripStopView[];
   /** While under way (FMS-86); null otherwise or before the first estimate. */
   eta: TripEta | null;
+  /**
+   * An assignment held for a fleet manager's approval (FMS-151): the trip's newest request while it waits, or once
+   * it was refused (why, for the dispatcher). Null otherwise: none, approved or withdrawn.
+   */
+  exception: AssignmentExceptionView | null;
   version: number;
   created_at: Date;
   updated_at: Date;
@@ -108,6 +114,10 @@ export const TRIP_EVENTS = {
   completed: 'TripCompleted',
   /** A stop of a trip under way was marked done (FMS-95); the console reads it as `trip.updated`. */
   stopCompleted: 'TripStopCompleted',
+  /** An assignment was held for a fleet manager's approval (FMS-151); the trip itself is unchanged. */
+  exceptionRequested: 'AssignmentExceptionRequested',
+  /** A fleet manager approved (the trip is assigned, TripAssigned too) or refused a held assignment (FMS-151). */
+  exceptionDecided: 'AssignmentExceptionDecided',
 } as const;
 
 export const stopNotFound = () => new AppError(404, 'NOT_FOUND', 'Stop not found.');

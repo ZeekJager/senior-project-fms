@@ -486,6 +486,56 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     renotifyWhenRaised: true,
   },
 
+  // Assignment exceptions (FMS-151, docs/assignment-exceptions.md): `exception_id`, `trip_id`, `depot_id` (the
+  // route's), `proposed_driver_id`, `proposed_vehicle_id`, `warnings`, `reason`, `route_name`, `scheduled_start`.
+  // An assignment held for approval: the depot's fleet managers decide.
+  AssignmentExceptionRequested: {
+    type: () => 'assignment_exception',
+    module: 'trip',
+    facts: (p) => ({
+      severity: 'medium',
+      vehicleId: null,
+      driverId: null,
+      tripId: str(p, 'trip_id'),
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'trip_id') ? { type: 'trip_assignment', id: str(p, 'trip_id')! } : null,
+      dedupKey: `assignment_exception:${str(p, 'exception_id')}`,
+    }),
+    windowMinutes: DAY,
+    title: (p) => `Assignment needs approval${str(p, 'route_name') ? `: ${str(p, 'route_name')}` : ''}`,
+    message: (p) => {
+      const warnings = Array.isArray(p.warnings) ? (p.warnings as unknown[]) : [];
+      const what = [
+        warnings.includes('DRIVER_ATTENDANCE') ? 'the driver is marked absent, on leave or sick that day' : null,
+        warnings.includes('PREVIOUS_TRIP_OVERRUN') ? 'a trip still under way runs into it' : null,
+      ].filter(Boolean);
+      const start = str(p, 'scheduled_start');
+      return `A dispatcher asks to assign the trip${start ? ` of ${addisClock(start)}` : ''} although ${what.join(' and ') || 'it raises a warning'}. Reason given: ${str(p, 'reason') ?? 'none'}. Approve or refuse it on the dispatch console.`;
+    },
+    audience: ['fleet_manager'],
+  },
+
+  // A held assignment refused (FMS-151): the depot's dispatchers are told why. An approval assigns the trip, which
+  // the console shows; it is not an alert.
+  AssignmentExceptionDecided: {
+    type: () => 'assignment_exception_refused',
+    module: 'trip',
+    when: (p) => p.decision === 'refused',
+    facts: (p) => ({
+      severity: 'low',
+      vehicleId: null,
+      driverId: null,
+      tripId: str(p, 'trip_id'),
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'trip_id') ? { type: 'trip_assignment', id: str(p, 'trip_id')! } : null,
+      dedupKey: `assignment_exception_refused:${str(p, 'exception_id')}`,
+    }),
+    windowMinutes: DAY,
+    title: (p) => `Assignment refused${str(p, 'route_name') ? `: ${str(p, 'route_name')}` : ''}`,
+    message: (p) => `A fleet manager refused the assignment you asked for. Why: ${str(p, 'reason') ?? 'no reason given'}. Choose another driver or vehicle.`,
+    audience: ['dispatcher'],
+  },
+
   // Incident reports (FMS-38): `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`,
   // `incident_type`. Only a critical incident is an alert; every one reaches the command center's incident list.
   IncidentReported: {

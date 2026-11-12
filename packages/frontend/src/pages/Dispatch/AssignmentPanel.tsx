@@ -5,6 +5,7 @@ import type { ServiceDueSummary } from '@/features/service-due'
 import { ApiError } from '@/lib/api/errors'
 import { useTrip } from './api'
 import { formatDay, formatTime, formatWindow, reasonText, tripEnds, tripTitle, VEHICLE_TYPE_LABELS } from './format'
+import { AskApproval, AwaitingApproval, RefusedNote } from './ExceptionPanel'
 import { TripArrival } from './TripArrival'
 import type { AssignmentWarning, BoardDriver, BoardVehicle, OpenWork, Trip } from './types'
 
@@ -17,9 +18,17 @@ interface AssignmentPanelProps {
   error: unknown
   /** Warnings from the last successful assignment. */
   warnings: AssignmentWarning[] | null
-  onAssign: () => void
+  /** Assign; with a reason, ask a fleet manager to approve it (FMS-151). */
+  onAssign: (reason?: string) => void
   /** Given when the user may move the trip's times (trip:write, FMS-139). */
   onChangeTimes?: () => void
+  /** FMS-151: the viewer may approve or refuse held assignments (assignment-exception:approve). */
+  canApprove?: boolean
+  /** The viewer's public id: nobody decides on their own request. */
+  viewerId?: string
+  /** Names for a request's driver and vehicle, from the board. */
+  driverName?: (id: string) => string | undefined
+  plate?: (id: string) => string | undefined
 }
 
 /**
@@ -27,9 +36,14 @@ interface AssignmentPanelProps {
  * API's answer. Refusals (BR-1, BR-2, BR-3, eligibility) stay here, inline,
  * with what they are about: never a toast that disappears (FMS-33).
  */
-export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, onAssign, onChangeTimes }: AssignmentPanelProps) {
+export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, onAssign, onChangeTimes, canApprove = false, viewerId, driverName, plate }: AssignmentPanelProps) {
   const sameAsNow = trip.status === 'assigned' && driver?.driver_id === trip.driver_id && vehicle?.vehicle_id === trip.vehicle_id
   const licenceGap = driver && vehicle && !driver.vehicle_types.includes(vehicle.vehicle_type)
+  // FMS-151: an assignment held for approval, or the last one refused.
+  const exception = trip.exception ?? null
+  const pending = exception?.status === 'pending' ? exception : null
+  const own = pending !== null && viewerId !== undefined && pending.requested_by === viewerId
+  const needsApproval = error instanceof ApiError && error.code === 'CONFLICT_APPROVAL_REQUIRED'
   return (
     <Card className="p-5" role="region" aria-label="Assignment panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -51,9 +65,28 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
         />
       </div>
 
+      {pending && (
+        <div className="mt-4">
+          <AwaitingApproval
+            trip={trip}
+            exception={pending}
+            driverName={driverName?.(pending.driver_id) ?? 'The driver'}
+            plate={plate?.(pending.vehicle_id) ?? 'the vehicle'}
+            canDecide={canApprove && !own}
+            ownRequest={own}
+          />
+        </div>
+      )}
+      {exception?.status === 'refused' && error == null && !warnings && (
+        <div className="mt-4">
+          <RefusedNote exception={exception} />
+        </div>
+      )}
+
       <div className="mt-4 space-y-2" role="alert">
-        {error != null && <Refusal error={error} vehicle={vehicle} />}
+        {error != null && !needsApproval && <Refusal error={error} vehicle={vehicle} />}
       </div>
+      {needsApproval && <AskApproval error={error} driverName={driver?.full_name ?? 'The driver'} busy={busy} onAsk={(reason) => onAssign(reason)} />}
       <div className="space-y-2">
         {error == null && vehicle?.open_work && <WorkOrder work={vehicle.open_work} />}
         {error == null && vehicle?.service_due && <ServiceWarning registration={vehicle.registration_number} due={vehicle.service_due} />}
@@ -81,7 +114,7 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
       </div>
 
       <div className="mt-4 flex justify-end">
-        <Button onClick={onAssign} loading={busy} disabled={!driver || !vehicle || sameAsNow}>
+        <Button onClick={() => onAssign()} loading={busy && !needsApproval} disabled={!driver || !vehicle || sameAsNow || needsApproval}>
           {trip.status === 'assigned' ? 'Re-assign' : 'Assign'}
         </Button>
       </div>
@@ -167,7 +200,7 @@ export function Note({ tone, icon, title, children }: { tone: 'danger' | 'warnin
   return (
     <div className={cn('flex animate-fade-in items-start gap-2.5 rounded-control border px-3.5 py-3 text-sm [&>svg]:mt-0.5 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0', tones[tone])}>
       {icon}
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         {title && <p className="font-semibold">{title}</p>}
         {children}
       </div>

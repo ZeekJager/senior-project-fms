@@ -40,6 +40,19 @@ import type { RequestUser } from '../../../types/express';
 import type { StopRow, TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
 import { distanceWrite, type TripDistanceService } from './distance.service';
 import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
+import {
+  DEFAULT_EXCEPTION_POLICIES,
+  approvalRequired,
+  exceptionDecided,
+  exceptionNotFound,
+  exceptionOutdated,
+  heldWarnings,
+  ownRequest,
+  uncovered,
+  type AssignmentExceptionView,
+  type ExceptionPolicies,
+} from '../domain/exception';
+import type { AssignmentExceptionRepository, ExceptionRow } from '../infrastructure/assignment-exception.repository';
 import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleRequired, type CommandStatus } from '../domain/lifecycle';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
 import type { Coordinates, RouteStop } from '../domain/route';
@@ -126,7 +139,39 @@ export interface TripAssignment {
   driver_id: string;
   vehicle_id: string;
   version: number;
+  /** Why, when the assignment raises a warning the depot holds for approval (FMS-151): the request is sent with it. */
+  exception_reason?: string;
 }
+
+/** A depot's exception policies (FMS-151): its own, else the fleet's. The integration module's (it keeps the thresholds). */
+export type ExceptionPolicyLookup = (db: Queryable, depotId: string | null) => Promise<ExceptionPolicies>;
+
+/** The users named on a request (FMS-151): public ids and names, by internal id. The auth module's directory. */
+export interface UserNames {
+  findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string; fullName: string }[]>;
+}
+
+/**
+ * POST /trips/{id}/assign: the trip assigned with its warnings, or (`exception`) the assignment held for approval
+ * (FMS-151): the trip unchanged, and the warnings held.
+ */
+export interface AssignOutcome {
+  trip: TripView;
+  warnings: AssignmentWarning[];
+  exception: AssignmentExceptionView | null;
+}
+
+type ExceptionStore = Pick<AssignmentExceptionRepository, 'latestByTrips' | 'find' | 'lock' | 'pendingOf' | 'insert' | 'update'>;
+
+/** Without the store (unit tests): no requests, and none can be made, as nothing holds an assignment without policies. */
+const NO_EXCEPTIONS: ExceptionStore = {
+  latestByTrips: async () => [],
+  find: async () => null,
+  lock: () => Promise.reject(new Error('trip: no exception store')),
+  pendingOf: async () => null,
+  insert: () => Promise.reject(new Error('trip: no exception store')),
+  update: () => Promise.reject(new Error('trip: no exception store')),
+};
 
 export interface TripServiceDeps {
   trips: Pick<
@@ -157,6 +202,12 @@ export interface TripServiceDeps {
   distance?: Pick<TripDistanceService, 'measure'>;
   /** One-off routes for unplanned trips (FMS-139). */
   routes: Pick<RouteRepository, 'insert'>;
+  /** Assignments held for approval (FMS-151). Absent (unit tests): none. */
+  exceptions?: ExceptionStore;
+  /** Each depot's exception policies (FMS-151), connected by src/modules/index.ts; not connected, every warning only warns. */
+  policies?: () => ExceptionPolicyLookup | null;
+  /** Names of who asked and who decided (FMS-151). Absent (unit tests): none. */
+  users?: UserNames;
   /** The fleet and maintenance modules' lookups, connected by src/modules/index.ts. */
   fleet: () => FleetRefs;
   maintenance: () => MaintenanceRefs;
@@ -174,7 +225,13 @@ export interface TripServiceDeps {
  * depot); a driver sees only the trips they drive.
  */
 export class TripService {
-  constructor(private readonly deps: TripServiceDeps) {}
+  private readonly exceptions: ExceptionStore;
+  private readonly users: UserNames;
+
+  constructor(private readonly deps: TripServiceDeps) {
+    this.exceptions = deps.exceptions ?? NO_EXCEPTIONS;
+    this.users = deps.users ?? { findByIds: async () => [] };
+  }
 
   /** Trip history, newest first (sort_order=asc for earliest first), with keyset paging. */
   async history(caller: Caller, query: TripHistoryQuery): Promise<{ items: TripView[]; nextCursor: string | null }> {
@@ -342,6 +399,8 @@ export class TripService {
         await trips.update(ctx, s.id, { scheduled_start: s.start, scheduled_end: s.end }, client);
       }
       if (Object.keys(data).length > 0) await trips.update(ctx, row.id, data, client);
+      // A cancelled trip's request waiting for approval (FMS-151) is withdrawn.
+      if (patch.status === 'cancelled') await this.withdrawPending(client, caller, row.id);
       const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
 
       const events: DomainEvent[] = [];
@@ -448,73 +507,225 @@ export class TripService {
    *
    * A trip still under way that runs into this one is a warning, never a block.
    */
-  async assign(caller: Caller, tripId: string, input: TripAssignment): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+  async assign(caller: Caller, tripId: string, input: TripAssignment): Promise<AssignOutcome> {
     const { trips } = this.deps;
     return trips.inTransaction(async (client) => {
       const row = await trips.findVisible(client, tripId, await this.visibility(client, caller), true);
       if (!row) throw tripNotFound();
       if (input.version !== row.version) throw staleVersion();
-      if (!ASSIGNABLE_STATUSES.includes(row.status) || !row.scheduledStart || !row.scheduledEnd) throw notAssignable(row.status);
-      const start = row.scheduledStart;
-      const end = row.scheduledEnd;
-      const scope = depotScope(caller.user);
-      const fleet = this.deps.fleet();
+      const checked = await this.checkAssignment(client, caller, row, input.driver_id, input.vehicle_id);
+      const ctx = mutationContext(caller);
 
-      // Share-locked: a maintenance flag, status change or retirement cannot land mid-assignment.
-      const vehicle = await fleet.vehicles.forAssignment(client, input.vehicle_id, scope);
-      if (!vehicle) throw assignmentRefNotFound('vehicle_id');
-      const driver = await fleet.drivers.forAssignment(client, input.driver_id, scope);
-      if (!driver) throw assignmentRefNotFound('driver_id');
-
-      // Fleet availability (FMS-76), read on this transaction after the locks: the
-      // vehicle's status and flag (BR-2), the trip's depot, the driver's attendance.
-      // At the trip's start: what it reads here does not depend on the window's end.
-      const answer = await fleet.availability.check(client, {
-        vehicleIds: [vehicle.id],
-        driverIds: [driver.id],
-        window: { start, end: start },
-        excludeTripId: row.publicId,
-        ...(row.depotId ? { depotId: row.depotId } : {}),
-      });
-      const availability = readAvailability(answer.vehicles.get(vehicle.id)!, answer.drivers.get(driver.id)!);
-      if (availability.refusal) throw await this.refusal(client, availability.refusal, vehicle.id);
-
-      const eligibility = await fleet.drivers.eligibility(client, driver.id, start, vehicle.id);
-      if (!eligibility.eligible) throw driverNotEligible(eligibility.reasons);
-
-      const driverClash = await trips.overlapping(client, 'driver_id', driver.id, start, end, row.id);
-      if (driverClash) throw driverOverlap(driverClash);
-      const vehicleClash = await trips.overlapping(client, 'vehicle_id', vehicle.id, start, end, row.id);
-      if (vehicleClash) throw vehicleOverlap(vehicleClash);
-
-      const warnings = [
-        ...availability.warnings,
-        ...(await this.overruns(client, 'driver_id', driver.id, row.id, start)),
-        ...(await this.overruns(client, 'vehicle_id', vehicle.id, row.id, start)),
-      ];
-
-      const changed = row.driverId !== driver.id || row.vehicleId !== vehicle.id || row.status !== 'assigned';
-      if (changed) await trips.update(mutationContext(caller), row.id, { driver_id: driver.id, vehicle_id: vehicle.id, status: 'assigned' }, client);
-      const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
-      if (changed) {
-        const previousDriver = row.driverId ? ((await fleet.drivers.publicIds(client, [row.driverId])).get(row.driverId) ?? null) : null;
-        const previousVehicle = row.vehicleId ? ((await fleet.vehicles.publicIds(client, [row.vehicleId])).get(row.vehicleId) ?? null) : null;
+      // FMS-151: a warning the depot holds is an exception a fleet manager approves, with the dispatcher's reason.
+      const held = heldWarnings(checked.warnings, await this.policiesFor(client, row.depotId));
+      if (held.length > 0) {
+        const reason = input.exception_reason?.trim();
+        if (!reason) throw approvalRequired(held);
+        // A new request replaces the one waiting.
+        await this.withdrawPending(client, caller, row.id);
+        const created = await this.exceptions.insert(
+          ctx,
+          {
+            trip_id: row.id,
+            driver_id: checked.driver.id,
+            vehicle_id: checked.vehicle.id,
+            warnings: JSON.stringify(held),
+            reason,
+            requested_by: caller.user.id,
+          },
+          client,
+        );
+        const view = (await this.views(client, [row]))[0];
+        const exception = view.exception!;
         await this.deps.events.publish(client, [
-          tripEvent(caller, TRIP_EVENTS.assigned, {
+          tripEvent(caller, TRIP_EVENTS.exceptionRequested, {
             trip_id: view.id,
-            driver_id: view.driver_id,
-            vehicle_id: view.vehicle_id,
-            previous_driver_id: previousDriver,
-            previous_vehicle_id: previousVehicle,
-            route_id: view.route_id,
+            exception_id: String(created.public_id),
             depot_id: view.depot_id,
-            scheduled_start: start.toISOString(),
-            scheduled_end: end.toISOString(),
+            proposed_driver_id: input.driver_id,
+            proposed_vehicle_id: input.vehicle_id,
+            warnings: held.map((w) => w.warning),
+            reason,
+            scheduled_start: checked.start.toISOString(),
+            route_name: view.route_name,
           }),
         ]);
+        return { trip: view, warnings: held, exception };
       }
-      return { trip: view, warnings };
+
+      // Assigned without needing approval: a request still waiting is moot.
+      await this.withdrawPending(client, caller, row.id);
+      const view = await this.applyAssignment(client, caller, row, checked, null);
+      return { trip: view, warnings: checked.warnings, exception: null };
     });
+  }
+
+  /**
+   * POST /assignment-exceptions/{id}/approve (FMS-151): a fleet manager approves a held assignment, and the trip is
+   * assigned to the driver and vehicle asked for. Every rule is checked again now: a safety rule refuses as an
+   * assignment would, and a held warning the request did not ask about is 409 (refuse it; the dispatcher asks again).
+   * Never by the one who asked. The approval covers that trip and those warnings only.
+   */
+  async approveException(caller: Caller, exceptionId: string, note: string | undefined): Promise<{ exception: AssignmentExceptionView; trip: TripView; warnings: AssignmentWarning[] }> {
+    return this.decide(caller, exceptionId, async (client, row, ex) => {
+      if (ex.requestedBy !== null && String(ex.requestedBy) === String(caller.user.id)) throw ownRequest();
+      const fleet = this.deps.fleet();
+      const driverPublicId = (await fleet.drivers.publicIds(client, [ex.driverId])).get(ex.driverId)!;
+      const vehiclePublicId = (await fleet.vehicles.publicIds(client, [ex.vehicleId])).get(ex.vehicleId)!;
+      const checked = await this.checkAssignment(client, caller, row, driverPublicId, vehiclePublicId);
+      const missing = uncovered(heldWarnings(checked.warnings, await this.policiesFor(client, row.depotId)), ex.warnings);
+      if (missing.length > 0) throw exceptionOutdated(missing);
+      await this.exceptions.update(
+        mutationContext(caller),
+        ex.id,
+        { status: 'approved', decided_by: caller.user.id, decided_at: this.now(), decision_reason: note?.trim() || null },
+        client,
+      );
+      const trip = await this.applyAssignment(client, caller, row, checked, ex.publicId);
+      return { trip, warnings: checked.warnings, decision: 'approved' };
+    });
+  }
+
+  /** POST /assignment-exceptions/{id}/refuse (FMS-151): the trip stays as it is; the dispatchers are told why. */
+  async refuseException(caller: Caller, exceptionId: string, reason: string): Promise<{ exception: AssignmentExceptionView; trip: TripView; warnings: AssignmentWarning[] }> {
+    return this.decide(caller, exceptionId, async (client, row, ex) => {
+      await this.exceptions.update(
+        mutationContext(caller),
+        ex.id,
+        { status: 'refused', decided_by: caller.user.id, decided_at: this.now(), decision_reason: reason.trim() },
+        client,
+      );
+      return { trip: (await this.views(client, [await this.deps.trips.findById(client, row.id)]))[0], warnings: [], decision: 'refused' };
+    });
+  }
+
+  /**
+   * A decision on a waiting request: the trip locked first (as an assignment locks it), in the caller's depots
+   * (else 404), then the request; one already decided is 409. AssignmentExceptionDecided goes out with it.
+   */
+  private async decide(
+    caller: Caller,
+    exceptionId: string,
+    step: (client: PoolClient, row: TripRow, ex: ExceptionRow) => Promise<{ trip: TripView; warnings: AssignmentWarning[]; decision: 'approved' | 'refused' }>,
+  ): Promise<{ exception: AssignmentExceptionView; trip: TripView; warnings: AssignmentWarning[] }> {
+    const { trips } = this.deps;
+    const { exceptions } = this;
+    return trips.inTransaction(async (client) => {
+      const found = await exceptions.find(client, exceptionId);
+      if (!found) throw exceptionNotFound();
+      const row = await trips.findVisible(client, found.tripPublicId, await this.visibility(client, caller), true);
+      if (!row) throw exceptionNotFound();
+      const ex = await exceptions.lock(client, found.id);
+      if (ex.status !== 'pending') throw exceptionDecided(ex.status);
+      const { trip, warnings, decision } = await step(client, row, ex);
+      const [exception] = await this.exceptionViews(client, [await exceptions.lock(client, ex.id)]);
+      await this.deps.events.publish(client, [
+        tripEvent(caller, TRIP_EVENTS.exceptionDecided, {
+          trip_id: trip.id,
+          exception_id: ex.publicId,
+          depot_id: trip.depot_id,
+          decision,
+          reason: exception.decision_reason,
+          requested_by: exception.requested_by,
+          route_name: trip.route_name,
+          scheduled_start: trip.scheduled_start?.toISOString() ?? null,
+        }),
+      ]);
+      return { exception, trip, warnings };
+    });
+  }
+
+  /** The trip's request still waiting, withdrawn: a new request, an assignment that needs none, or a cancelled trip. */
+  private async withdrawPending(client: PoolClient, caller: Caller, tripId: string): Promise<void> {
+    const pending = await this.exceptions.pendingOf(client, tripId);
+    if (pending) await this.exceptions.update(mutationContext(caller), pending.id, { status: 'withdrawn', decided_by: caller.user.id, decided_at: this.now() }, client);
+  }
+
+  private async policiesFor(db: Queryable, depotId: string | null): Promise<ExceptionPolicies> {
+    const lookup = this.deps.policies?.() ?? null;
+    return lookup ? lookup(db, depotId) : DEFAULT_EXCEPTION_POLICIES;
+  }
+
+  /**
+   * Every assignment rule for this driver and vehicle on the trip (FMS-31), on the locked trip row: the safety
+   * rules throw; the warnings come back. Read the same way for an assignment and for an approval (FMS-151).
+   */
+  private async checkAssignment(client: PoolClient, caller: Caller, row: TripRow, driverPublicId: string, vehiclePublicId: string) {
+    const { trips } = this.deps;
+    if (!ASSIGNABLE_STATUSES.includes(row.status) || !row.scheduledStart || !row.scheduledEnd) throw notAssignable(row.status);
+    const start = row.scheduledStart;
+    const end = row.scheduledEnd;
+    const scope = depotScope(caller.user);
+    const fleet = this.deps.fleet();
+
+    // Share-locked: a maintenance flag, status change or retirement cannot land mid-assignment.
+    const vehicle = await fleet.vehicles.forAssignment(client, vehiclePublicId, scope);
+    if (!vehicle) throw assignmentRefNotFound('vehicle_id');
+    const driver = await fleet.drivers.forAssignment(client, driverPublicId, scope);
+    if (!driver) throw assignmentRefNotFound('driver_id');
+
+    // Fleet availability (FMS-76), read on this transaction after the locks: the
+    // vehicle's status and flag (BR-2), the trip's depot, the driver's attendance.
+    // At the trip's start: what it reads here does not depend on the window's end.
+    const answer = await fleet.availability.check(client, {
+      vehicleIds: [vehicle.id],
+      driverIds: [driver.id],
+      window: { start, end: start },
+      excludeTripId: row.publicId,
+      ...(row.depotId ? { depotId: row.depotId } : {}),
+    });
+    const availability = readAvailability(answer.vehicles.get(vehicle.id)!, answer.drivers.get(driver.id)!);
+    if (availability.refusal) throw await this.refusal(client, availability.refusal, vehicle.id);
+
+    const eligibility = await fleet.drivers.eligibility(client, driver.id, start, vehicle.id);
+    if (!eligibility.eligible) throw driverNotEligible(eligibility.reasons);
+
+    const driverClash = await trips.overlapping(client, 'driver_id', driver.id, start, end, row.id);
+    if (driverClash) throw driverOverlap(driverClash);
+    const vehicleClash = await trips.overlapping(client, 'vehicle_id', vehicle.id, start, end, row.id);
+    if (vehicleClash) throw vehicleOverlap(vehicleClash);
+
+    const warnings: AssignmentWarning[] = [
+      ...availability.warnings,
+      ...(await this.overruns(client, 'driver_id', driver.id, row.id, start)),
+      ...(await this.overruns(client, 'vehicle_id', vehicle.id, row.id, start)),
+    ];
+    return { driver, vehicle, start, end, warnings };
+  }
+
+  /** The checked driver and vehicle onto the trip, audited, and TripAssigned (naming the approved request, if any). */
+  private async applyAssignment(
+    client: PoolClient,
+    caller: Caller,
+    row: TripRow,
+    checked: { driver: { id: string }; vehicle: { id: string }; start: Date; end: Date },
+    exceptionId: string | null,
+  ): Promise<TripView> {
+    const { trips } = this.deps;
+    const fleet = this.deps.fleet();
+    const { driver, vehicle, start, end } = checked;
+    const changed = row.driverId !== driver.id || row.vehicleId !== vehicle.id || row.status !== 'assigned';
+    if (changed) await trips.update(mutationContext(caller), row.id, { driver_id: driver.id, vehicle_id: vehicle.id, status: 'assigned' }, client);
+    const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
+    if (changed) {
+      const previousDriver = row.driverId ? ((await fleet.drivers.publicIds(client, [row.driverId])).get(row.driverId) ?? null) : null;
+      const previousVehicle = row.vehicleId ? ((await fleet.vehicles.publicIds(client, [row.vehicleId])).get(row.vehicleId) ?? null) : null;
+      await this.deps.events.publish(client, [
+        tripEvent(caller, TRIP_EVENTS.assigned, {
+          trip_id: view.id,
+          driver_id: view.driver_id,
+          vehicle_id: view.vehicle_id,
+          previous_driver_id: previousDriver,
+          previous_vehicle_id: previousVehicle,
+          route_id: view.route_id,
+          depot_id: view.depot_id,
+          scheduled_start: start.toISOString(),
+          scheduled_end: end.toISOString(),
+          ...(exceptionId ? { exception_id: exceptionId } : {}),
+        }),
+      ]);
+    }
+    return view;
   }
 
   // -------------------------------------------------------------------------
@@ -738,6 +949,7 @@ export class TripService {
       if (!canMove(row.status, to)) throw invalidTripTransition(row.status, to);
       const { data, event, payload, warnings } = await step(client, row);
       await trips.update(mutationContext(caller), row.id, data, client);
+      if (to === 'cancelled') await this.withdrawPending(client, caller, row.id);
       const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
       await this.deps.events.publish(client, [tripEvent(caller, event, { trip_id: view.id, ...payload(view) })]);
       return { trip: view, warnings };
@@ -792,6 +1004,33 @@ export class TripService {
     return scope.kind === 'depot' ? { kind: 'depot', depotId: scope.depotId } : { kind: 'none' };
   }
 
+  /** Requests as the API returns them: public ids, and the names of who asked and who decided. */
+  private async exceptionViews(db: Queryable, rows: ExceptionRow[]): Promise<AssignmentExceptionView[]> {
+    if (rows.length === 0) return [];
+    const fleet = this.deps.fleet();
+    const drivers = await fleet.drivers.publicIds(db, [...new Set(rows.map((e) => e.driverId))]);
+    const vehicles = await fleet.vehicles.publicIds(db, [...new Set(rows.map((e) => e.vehicleId))]);
+    const userIds = [...new Set(rows.flatMap((e) => [e.requestedBy, e.decidedBy].filter((u): u is string => u !== null).map(String)))];
+    const users = new Map((await this.users.findByIds(db, userIds)).map((u) => [String(u.id), u]));
+    const who = (id: string | null) => (id === null ? undefined : users.get(String(id)));
+    return rows.map((e) => ({
+      id: e.publicId,
+      trip_id: e.tripPublicId,
+      status: e.status,
+      driver_id: drivers.get(e.driverId) ?? '',
+      vehicle_id: vehicles.get(e.vehicleId) ?? '',
+      warnings: e.warnings,
+      reason: e.reason,
+      requested_by: who(e.requestedBy)?.publicId ?? null,
+      requested_by_name: who(e.requestedBy)?.fullName ?? null,
+      requested_at: e.requestedAt,
+      decided_by: who(e.decidedBy)?.publicId ?? null,
+      decided_by_name: who(e.decidedBy)?.fullName ?? null,
+      decided_at: e.decidedAt,
+      decision_reason: e.decisionReason,
+    }));
+  }
+
   private async views(db: Queryable, rows: TripRow[]): Promise<TripView[]> {
     const fleet = this.deps.fleet();
     const ids = (pick: (r: TripRow) => string | null) => [...new Set(rows.flatMap((r) => (pick(r) ? [pick(r) as string] : [])))];
@@ -801,6 +1040,10 @@ export class TripService {
     const drivers = await fleet.drivers.publicIds(db, ids((r) => r.driverId));
     const stops = await this.deps.trips.stops(db, rows.map((r) => r.id));
     const etas = await this.deps.trips.etas(db, rows.filter((r) => r.status === 'en_route').map((r) => r.id));
+    // The newest request of each open trip, while it waits or once refused (FMS-151).
+    const open = rows.filter((r) => r.status === 'scheduled' || r.status === 'assigned').map((r) => r.id);
+    const latest = (await this.exceptions.latestByTrips(db, open)).filter((e) => e.status === 'pending' || e.status === 'refused');
+    const exceptions = new Map((await this.exceptionViews(db, latest)).map((v, i) => [String(latest[i].tripId), v]));
     return rows.map((r) => {
       const own = stops.filter((s) => s.tripId === r.id);
       const eta = r.status === 'en_route' ? etas.get(String(r.id)) : undefined;
@@ -834,6 +1077,7 @@ export class TripService {
             updated_at: eta.computedAt,
           }
         : null,
+      exception: exceptions.get(String(r.id)) ?? null,
       version: r.version,
       created_at: r.createdAt,
       updated_at: r.updatedAt,

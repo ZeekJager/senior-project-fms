@@ -24,7 +24,7 @@ For `settings:write`, a new permission held by admin only. Reading the values ne
 
 ### Driving rules: `tracking.rule_thresholds`
 
-The speeding and idling thresholds ([telemetry-rules.md](telemetry-rules.md)) and, since FMS-90, route deviation's ([geofences.md](geofences.md): *Off route beyond* metres, *Off route after* pings) kept their table: one fleet row and one per depot that differs. Since FMS-147 it also holds the trip delay alert's margins ([eta.md](eta.md#the-trip-delay-alert-fms-147): *Trip late after* and *Trip urgent after*, in minutes past the scheduled end; urgent must be later).
+The speeding and idling thresholds ([telemetry-rules.md](telemetry-rules.md)) and, since FMS-90, route deviation's ([geofences.md](geofences.md): *Off route beyond* metres, *Off route after* pings) kept their table: one fleet row and one per depot that differs. Since FMS-147 it also holds the trip delay alert's margins ([eta.md](eta.md#the-trip-delay-alert-fms-147): *Trip late after* and *Trip urgent after*, in minutes past the scheduled end; urgent must be later). Since FMS-151, the assignment exceptions too ([assignment-exceptions.md](assignment-exceptions.md): *Assigning through a warning*, whether *Driver marked absent* and *Previous trip running over* only warn or need a fleet manager's approval; `warn` by default).
 
 | Field | Default | Range |
 |---|---|---|
