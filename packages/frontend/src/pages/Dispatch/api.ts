@@ -3,7 +3,7 @@ import { useAuth } from '@/context/AuthContext'
 import { etaEventOf } from '@/features/trip-eta'
 import { useRealtimeEvent } from '@/lib/realtime/context'
 import type { Coordinates, Route } from '@/pages/Routes/api'
-import type { AssignmentException, AssignmentWarning, DispatchBoard, ShiftedTrip, Trip } from './types'
+import type { AssignmentException, AssignmentWarning, CargoKind, DispatchBoard, ShiftedTrip, Trip } from './types'
 
 // Server state for the dispatcher console (S-07). Socket events mark it stale
 // (RealtimeProvider, FMS-43: trip.updated, vehicle.status.changed); polling
@@ -89,7 +89,13 @@ export interface AdhocRoute {
   destination: Coordinates | null
 }
 
-export type NewTrip = { scheduled_start: string; scheduled_end?: string } & ({ route_id: string } | { route: AdhocRoute; depot_id: string })
+/** What a trip carries (FMS-153), on create or as a change. */
+export interface CargoChange {
+  cargo_weight_kg?: number | null
+  cargo_kind?: CargoKind
+}
+
+export type NewTrip = { scheduled_start: string; scheduled_end?: string } & CargoChange & ({ route_id: string } | { route: AdhocRoute; depot_id: string })
 
 /** POST /trips; a retry replays rather than creating a second trip. */
 export function useCreateTrip() {
@@ -118,6 +124,16 @@ export function useUpdateTripTimes() {
       const { data, meta } = await api.requestEnvelope<Trip>(`/trips/${trip.id}`, { method: 'PATCH', json: change, headers: { 'If-Match': `"${trip.version}"` } })
       return { trip: data, shifted: (meta.shifted as ShiftedTrip[] | undefined) ?? [] }
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['dispatch'] }),
+  })
+}
+
+/** PATCH /trips/{id} with the cargo (FMS-153) and the version on screen; before the trip starts. */
+export function useUpdateTripCargo() {
+  const { api } = useAuth()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ trip, change }: { trip: Trip; change: CargoChange }) => api.request<Trip>(`/trips/${trip.id}`, { method: 'PATCH', json: change, headers: { 'If-Match': `"${trip.version}"` } }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['dispatch'] }),
   })
 }

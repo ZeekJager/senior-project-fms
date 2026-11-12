@@ -3747,3 +3747,13 @@ INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM auth.roles r, auth.permissions p
  WHERE r.name IN ('admin', 'fleet_manager') AND p.code = 'assignment-exception:approve'
 ON CONFLICT DO NOTHING;
+-- ===== 071_trip_cargo.sql =====
+ALTER TABLE trip.trips
+    ADD COLUMN IF NOT EXISTS cargo_weight_kg NUMERIC(12,2),
+    ADD COLUMN IF NOT EXISTS cargo_kind VARCHAR(20) NOT NULL DEFAULT 'general';
+
+DO $$ BEGIN
+    ALTER TABLE trip.trips ADD CONSTRAINT chk_trip_cargo CHECK (
+        (cargo_weight_kg IS NULL OR cargo_weight_kg > 0)
+        AND cargo_kind IN ('general', 'fragile', 'hazardous', 'refrigerated', 'passengers'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

@@ -6,6 +6,7 @@ import { Repository } from '../../../shared/infrastructure/repository';
 import type { TripCursor, TripStatus } from '../domain/trip';
 import type { Coordinates, RouteStop } from '../domain/route';
 import type { DelayState } from '../domain/delay';
+import type { CargoKind } from '../domain/job-load';
 import { ETA_INTERVAL_SECONDS, type EtaResult, type EtaStop } from '../domain/eta';
 
 /**
@@ -36,6 +37,9 @@ export interface TripRow {
   actualDistanceKm: number | null;
   /** How the distance was measured (FMS-145); null with a distance entered before, or with none. */
   actualDistanceSource: 'odometer' | 'gps' | null;
+  /** FMS-153. */
+  cargoWeightKg: number | null;
+  cargoKind: CargoKind;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -118,6 +122,9 @@ export interface TripWrite {
   actual_distance_source?: 'odometer' | 'gps' | null;
   actual_distance_points?: number;
   actual_distance_measured_at?: Date;
+  /** FMS-153: set on create and by PATCH before the trip starts. */
+  cargo_weight_kg?: number | null;
+  cargo_kind?: CargoKind;
 }
 
 /** A completed trip whose distance may be measured (FMS-145). Internal ids. */
@@ -162,7 +169,9 @@ const ROW_SQL = `
          t.origin, t.destination, t.planned_distance_km::float8 AS "plannedDistanceKm",
          t.planned_duration_seconds AS "plannedDurationSeconds", t.scheduled_start AS "scheduledStart",
          t.scheduled_end AS "scheduledEnd", t.actual_start AS "actualStart", t.actual_end AS "actualEnd",
-         t.actual_distance_km::float8 AS "actualDistanceKm", t.actual_distance_source AS "actualDistanceSource", t.version, t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+         t.actual_distance_km::float8 AS "actualDistanceKm", t.actual_distance_source AS "actualDistanceSource",
+         t.cargo_weight_kg::float8 AS "cargoWeightKg", t.cargo_kind AS "cargoKind",
+         t.version, t.created_at AS "createdAt", t.updated_at AS "updatedAt",
          to_char(${AT} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
     FROM trip.trips t
     LEFT JOIN trip.routes r ON r.id = t.route_id`;

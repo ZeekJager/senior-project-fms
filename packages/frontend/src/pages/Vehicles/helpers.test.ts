@@ -89,6 +89,7 @@ describe('vehicle form', () => {
     efficiency: '32.5',
     depot_id: 'd-1',
     odometer_km: '1200.5',
+    payload_kg: '',
   }
 
   it('normalizes and converts litres per 100 km to whole ml/km without floats', () => {
@@ -146,5 +147,17 @@ describe('vehicle form', () => {
     expect(form.efficiency).toBe('32.5')
     const { input } = validateVehicleForm({ ...form, model: 'FVR', odometer_km: '1300' })
     expect(changedFields(input!, vehicle)).toEqual({ model: 'FVR', odometer_km: 1300 })
+  })
+
+  it('the payload (FMS-153) is optional kg with two decimals; blank clears one the vehicle had', () => {
+    expect(validateVehicleForm({ ...valid, payload_kg: '8,000.5' }).input).toMatchObject({ payload_capacity_kg: 8000.5 })
+    for (const bad of ['0', '-5', '12.345', '100000.01', 'heavy']) expect(validateVehicleForm({ ...valid, payload_kg: bad }).errors.payload_kg, bad).toMatch(/Kilograms/)
+
+    const vehicle = { ...validateVehicleForm(valid).input!, payload_capacity_kg: 8000, odometer_km: 1200.5 } as unknown as Vehicle
+    const form = formFromVehicle(vehicle)
+    expect(form.payload_kg).toBe('8000')
+    expect(changedFields(validateVehicleForm(form).input!, vehicle)).toEqual({})
+    expect(changedFields(validateVehicleForm({ ...form, payload_kg: '' }).input!, vehicle)).toEqual({ payload_capacity_kg: null })
+    expect(changedFields(validateVehicleForm({ ...form, payload_kg: '9000' }).input!, vehicle)).toEqual({ payload_capacity_kg: 9000 })
   })
 })

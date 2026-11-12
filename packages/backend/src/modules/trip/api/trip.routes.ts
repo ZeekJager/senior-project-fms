@@ -9,6 +9,7 @@ import type { Caller } from '../application/route.service';
 import type { TripService } from '../application/trip.service';
 import { COMMAND_STATUSES } from '../domain/lifecycle';
 import { exceptionNotFound } from '../domain/exception';
+import { CARGO_KINDS, MAX_CARGO_WEIGHT_KG } from '../domain/job-load';
 import { TRIP_STATUSES, stopNotFound, tripNotFound } from '../domain/trip';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -50,6 +51,13 @@ const adhocRoute = z.strictObject({
     .optional(),
 });
 
+/** What a trip carries (FMS-153), in kg: positive, at most two decimals (NUMERIC(12,2)). */
+const cargoWeight = z
+  .number()
+  .positive()
+  .max(MAX_CARGO_WEIGHT_KG)
+  .refine((n) => /^\d+(\.\d{1,2})?$/.test(String(n)), { message: 'At most two decimals.', params: { reason: 'too_many_decimals' } });
+
 /**
  * POST /trips: a route (`route_id`, or a one-off `route` in `depot_id`, FMS-139) and a time window; without an end,
  * the route's estimated time. Ends before or at the start are 400 VALIDATION_INVALID_DATE_RANGE (in the service).
@@ -61,6 +69,8 @@ const createBody = z
     depot_id: z.uuid().optional(),
     scheduled_start: instant,
     scheduled_end: instant.optional(),
+    cargo_weight_kg: cargoWeight.nullable().optional(),
+    cargo_kind: z.enum(CARGO_KINDS).optional(),
   })
   .refine((v) => (v.route_id === undefined) !== (v.route === undefined), {
     message: 'Give route_id, or a route for a one-off trip, not both.',
@@ -79,9 +89,12 @@ const updateBody = z
     status: z.literal('cancelled'),
     reason: z.string().trim().min(1).max(500),
     shift_following: z.boolean(),
+    /** FMS-153: before the trip starts; null clears the weight. */
+    cargo_weight_kg: cargoWeight.nullable(),
+    cargo_kind: z.enum(CARGO_KINDS),
   })
   .partial()
-  .refine((v) => v.scheduled_start !== undefined || v.scheduled_end !== undefined || v.status !== undefined, {
+  .refine((v) => v.scheduled_start !== undefined || v.scheduled_end !== undefined || v.status !== undefined || v.cargo_weight_kg !== undefined || v.cargo_kind !== undefined, {
     message: 'Send at least one field to change.',
     params: { reason: 'empty_update' },
   });

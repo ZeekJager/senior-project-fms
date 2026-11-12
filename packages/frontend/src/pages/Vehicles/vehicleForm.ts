@@ -16,6 +16,8 @@ export interface VehicleFormValues {
   efficiency: string
   depot_id: string
   odometer_km: string
+  /** What it can carry, kg, at most two decimals (FMS-153: a trip's cargo is never more). Blank: not recorded. */
+  payload_kg: string
 }
 
 export type FieldName = keyof VehicleFormValues
@@ -32,6 +34,7 @@ export const EMPTY_FORM: VehicleFormValues = {
   efficiency: '',
   depot_id: '',
   odometer_km: '',
+  payload_kg: '',
 }
 
 export function formFromVehicle(v: Vehicle): VehicleFormValues {
@@ -47,6 +50,7 @@ export function formFromVehicle(v: Vehicle): VehicleFormValues {
     efficiency: v.fuel_efficiency_ml_per_km === null ? '' : formatMinor(v.fuel_efficiency_ml_per_km, 1, 1, { group: false }),
     depot_id: v.depot_id,
     odometer_km: String(v.odometer_km),
+    payload_kg: v.payload_capacity_kg == null ? '' : String(v.payload_capacity_kg),
   }
 }
 
@@ -54,6 +58,8 @@ const PLATE = /^[\p{L}\p{N}][\p{L}\p{N} -]*$/u
 const VIN = /^[A-HJ-NPR-Z0-9]{17}$/
 const ODOMETER = /^\d{1,11}(\.\d)?$/
 const MAX_ML_PER_KM = 100_000
+const PAYLOAD = /^\d{1,6}(\.\d{1,2})?$/
+const MAX_PAYLOAD_KG = 100_000
 
 /**
  * Checks the form the way the API will (api-contract §6.2) and builds the
@@ -104,6 +110,11 @@ export function validateVehicleForm(values: VehicleFormValues, now: Date = new D
   const odometer = values.odometer_km.trim()
   if (odometer && !ODOMETER.test(odometer)) errors.odometer_km = 'Kilometres, with at most one decimal.'
 
+  const payload = values.payload_kg.trim().replaceAll(',', '')
+  if (payload && (!PAYLOAD.test(payload) || Number(payload) <= 0 || Number(payload) > MAX_PAYLOAD_KG)) {
+    errors.payload_kg = 'Kilograms above 0, at most 100,000, with at most two decimals.'
+  }
+
   if (Object.keys(errors).length > 0) return { errors, input: null }
   return {
     errors,
@@ -118,6 +129,7 @@ export function validateVehicleForm(values: VehicleFormValues, now: Date = new D
       fuel_efficiency_ml_per_km: mlPerKm,
       depot_id: values.depot_id,
       ...(odometer ? { odometer_km: Number(odometer) } : {}),
+      ...(payload ? { payload_capacity_kg: Number(payload) } : {}),
     },
   }
 }
@@ -136,10 +148,13 @@ export function changedFields(input: VehicleInput, original: Vehicle): Partial<V
     fuel_efficiency_ml_per_km: original.fuel_efficiency_ml_per_km,
     depot_id: original.depot_id,
     odometer_km: original.odometer_km,
+    payload_capacity_kg: original.payload_capacity_kg ?? null,
   }
   for (const key of Object.keys(input) as (keyof VehicleInput)[]) {
     if (input[key] !== before[key]) (patch as Record<string, unknown>)[key] = input[key]
   }
+  // A payload left blank is sent only to clear one the vehicle had.
+  if (input.payload_capacity_kg === undefined && before.payload_capacity_kg !== null) patch.payload_capacity_kg = null
   return patch
 }
 
@@ -155,4 +170,5 @@ export const API_FIELDS: Record<string, FieldName> = {
   fuel_efficiency_ml_per_km: 'efficiency',
   depot_id: 'depot_id',
   odometer_km: 'odometer_km',
+  payload_capacity_kg: 'payload_kg',
 }

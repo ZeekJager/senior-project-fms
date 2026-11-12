@@ -372,6 +372,7 @@ export const tripRefs = {
   vehicles: {
     idOf: async (db: Queryable, publicId: string) => (await vehicleRepository.findRef(db, { publicId }, { kind: 'all' }))?.id ?? null,
     forAssignment: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findForTrip(db, publicId, scope),
+    payloadCapacities: (db: Queryable, ids: readonly string[]) => vehicleRepository.payloadCapacities(db, ids),
     publicIds: async (db: Queryable, ids: readonly string[]) =>
       new Map([...(await vehicleRepository.refsByIds(db, ids))].map(([id, ref]) => [id, ref.publicId])),
   },

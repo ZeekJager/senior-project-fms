@@ -54,6 +54,14 @@ const tankCapacity = z
   .refine(Number.isInteger, { message: 'Whole millilitres.', params: { reason: FLOAT_IN_MONEY_PATH } })
   .refine((n) => n > 0 && n <= MAX_TANK_CAPACITY_ML, { message: `Between 1 and ${MAX_TANK_CAPACITY_ML}.`, params: { reason: 'out_of_range' } });
 
+// What it can carry, kg (FMS-153: a trip's cargo is checked against it). NUMERIC(12,2): two decimals at most.
+const MAX_PAYLOAD_CAPACITY_KG = 100_000;
+const payloadCapacity = z
+  .number()
+  .positive()
+  .max(MAX_PAYLOAD_CAPACITY_KG)
+  .refine((n) => /^\d+(\.\d{1,2})?$/.test(String(n)), { message: 'At most two decimals.', params: { reason: 'too_many_decimals' } });
+
 // A physical measurement: one decimal at most, as stored (NUMERIC(12,1)).
 const odometer = z
   .number()
@@ -76,6 +84,7 @@ const writable = {
   fuel_type: z.enum(FUEL_TYPES),
   fuel_efficiency_ml_per_km: fuelEfficiency.nullable().optional(),
   tank_capacity_ml: tankCapacity.nullable().optional(),
+  payload_capacity_kg: payloadCapacity.nullable().optional(),
   depot_id: z.uuid(),
   odometer_km: odometer.optional(),
 };

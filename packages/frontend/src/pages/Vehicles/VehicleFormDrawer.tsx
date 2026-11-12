@@ -255,16 +255,28 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
               trailing={<span className="text-xs">L/100 km</span>}
             />
           </div>
-          <TextField
-            label="Odometer"
-            optional={!vehicle}
-            inputMode="decimal"
-            value={values.odometer_km}
-            onChange={(e) => set('odometer_km', e.target.value)}
-            error={errors.odometer_km}
-            hint={vehicle ? 'Readings only go up.' : 'Current reading, if known.'}
-            trailing={<span className="text-xs">km</span>}
-          />
+          <div className="grid gap-x-4 sm:grid-cols-2">
+            <TextField
+              label="Odometer"
+              optional={!vehicle}
+              inputMode="decimal"
+              value={values.odometer_km}
+              onChange={(e) => set('odometer_km', e.target.value)}
+              error={errors.odometer_km}
+              hint={vehicle ? 'Readings only go up.' : 'Current reading, if known.'}
+              trailing={<span className="text-xs">km</span>}
+            />
+            <TextField
+              label="Payload"
+              optional
+              inputMode="decimal"
+              value={values.payload_kg}
+              onChange={(e) => set('payload_kg', e.target.value)}
+              error={errors.payload_kg}
+              hint="The most it carries: a trip’s cargo is never more."
+              trailing={<span className="text-xs">kg</span>}
+            />
+          </div>
         </Section>
       </form>
     </Drawer>

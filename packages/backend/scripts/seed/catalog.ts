@@ -65,29 +65,31 @@ export interface VehicleModel {
   fuel: 'diesel' | 'petrol' | 'electric' | 'hybrid';
   /** Typical consumption; null for electric. */
   mlPerKm: number | null;
+  /** What it carries, kg (FMS-153): a trip's cargo is never more. A bus's is its passengers. */
+  payloadKg: number;
 }
 
 export const VEHICLE_MODELS: readonly VehicleModel[] = [
-  { make: 'Isuzu', model: 'FSR', type: 'truck', fuel: 'diesel', mlPerKm: 320 },
-  { make: 'Isuzu', model: 'NPR', type: 'truck', fuel: 'diesel', mlPerKm: 180 },
-  { make: 'Sino', model: 'HOWO 371', type: 'truck', fuel: 'diesel', mlPerKm: 420 },
-  { make: 'Mitsubishi', model: 'Fuso Canter', type: 'truck', fuel: 'diesel', mlPerKm: 170 },
-  { make: 'Toyota', model: 'Hiace', type: 'van', fuel: 'diesel', mlPerKm: 110 },
-  { make: 'Hyundai', model: 'H-1', type: 'van', fuel: 'diesel', mlPerKm: 105 },
-  { make: 'Toyota', model: 'Land Cruiser 79', type: 'suv', fuel: 'diesel', mlPerKm: 130 },
-  { make: 'Toyota', model: 'Hilux', type: 'suv', fuel: 'diesel', mlPerKm: 95 },
-  { make: 'Toyota', model: 'Corolla', type: 'car', fuel: 'petrol', mlPerKm: 70 },
-  { make: 'Toyota', model: 'Corolla Cross Hybrid', type: 'car', fuel: 'hybrid', mlPerKm: 48 },
-  { make: 'Toyota', model: 'Coaster', type: 'bus', fuel: 'diesel', mlPerKm: 160 },
-  { make: 'Higer', model: 'KLQ6129', type: 'bus', fuel: 'diesel', mlPerKm: 280 },
+  { make: 'Isuzu', model: 'FSR', type: 'truck', fuel: 'diesel', mlPerKm: 320, payloadKg: 8000 },
+  { make: 'Isuzu', model: 'NPR', type: 'truck', fuel: 'diesel', mlPerKm: 180, payloadKg: 4500 },
+  { make: 'Sino', model: 'HOWO 371', type: 'truck', fuel: 'diesel', mlPerKm: 420, payloadKg: 25000 },
+  { make: 'Mitsubishi', model: 'Fuso Canter', type: 'truck', fuel: 'diesel', mlPerKm: 170, payloadKg: 3500 },
+  { make: 'Toyota', model: 'Hiace', type: 'van', fuel: 'diesel', mlPerKm: 110, payloadKg: 1000 },
+  { make: 'Hyundai', model: 'H-1', type: 'van', fuel: 'diesel', mlPerKm: 105, payloadKg: 800 },
+  { make: 'Toyota', model: 'Land Cruiser 79', type: 'suv', fuel: 'diesel', mlPerKm: 130, payloadKg: 1000 },
+  { make: 'Toyota', model: 'Hilux', type: 'suv', fuel: 'diesel', mlPerKm: 95, payloadKg: 1000 },
+  { make: 'Toyota', model: 'Corolla', type: 'car', fuel: 'petrol', mlPerKm: 70, payloadKg: 400 },
+  { make: 'Toyota', model: 'Corolla Cross Hybrid', type: 'car', fuel: 'hybrid', mlPerKm: 48, payloadKg: 450 },
+  { make: 'Toyota', model: 'Coaster', type: 'bus', fuel: 'diesel', mlPerKm: 160, payloadKg: 2000 },
+  { make: 'Higer', model: 'KLQ6129', type: 'bus', fuel: 'diesel', mlPerKm: 280, payloadKg: 4500 },
 ];
 
 /** Electric models: the fleet's EVs (no fuel efficiency, no fuel logs). */
 export const EV_MODELS: readonly VehicleModel[] = [
-  { make: 'BYD', model: 'e6', type: 'car', fuel: 'electric', mlPerKm: null },
-  { make: 'BYD', model: 'T3', type: 'van', fuel: 'electric', mlPerKm: null },
-  { make: 'Volkswagen', model: 'ID.4', type: 'suv', fuel: 'electric', mlPerKm: null },
-  { make: 'Yutong', model: 'E12', type: 'bus', fuel: 'electric', mlPerKm: null },
+  { make: 'BYD', model: 'e6', type: 'car', fuel: 'electric', mlPerKm: null, payloadKg: 450 },
+  { make: 'BYD', model: 'T3', type: 'van', fuel: 'electric', mlPerKm: null, payloadKg: 1000 },
+  { make: 'Volkswagen', model: 'ID.4', type: 'suv', fuel: 'electric', mlPerKm: null, payloadKg: 500 },
+  { make: 'Yutong', model: 'E12', type: 'bus', fuel: 'electric', mlPerKm: null, payloadKg: 5000 },
 ];
 
 /** The licence categories that cover each seeded vehicle type (LICENSE_CATEGORY_VEHICLE_TYPES). */

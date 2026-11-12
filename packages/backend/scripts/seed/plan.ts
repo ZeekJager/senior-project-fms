@@ -55,6 +55,9 @@ export const DEPOT_ROLES = ['dispatcher', 'depot_admin', 'technician', 'finance_
 
 export type TripStatus = 'draft' | 'scheduled' | 'assigned' | 'en_route' | 'completed' | 'cancelled';
 
+/** What a trip carries (FMS-153, trip.trips.cargo_kind). */
+export type CargoKind = 'general' | 'fragile' | 'hazardous' | 'refrigerated' | 'passengers';
+
 export interface PlannedDepot {
   name: string;
   code: string;
@@ -87,6 +90,8 @@ export interface PlannedVehicle {
   depot: number;
   /** The odometer now: the base reading plus every completed trip. */
   odometer_km: number;
+  /** What it carries, kg (FMS-153): the model's. */
+  payload_capacity_kg: number;
   /** When it joined the fleet: the vehicle's created_at, years back, never before its model year. */
   registered_at: string;
 }
@@ -175,6 +180,9 @@ export interface PlannedTrip {
   actual_distance_km: number | null;
   planned_duration_seconds: number;
   actual_duration_seconds: number | null;
+  /** What it carries (FMS-153): drawn after the trips, from a stream of its own, so the rest of the plan is unchanged. */
+  cargo_weight_kg: number | null;
+  cargo_kind: CargoKind;
 }
 
 export interface PlannedFuelLog {
@@ -245,6 +253,30 @@ function uniqueFrom(make: () => string): () => string {
   };
 }
 
+/**
+ * A trip's cargo (FMS-153), from its vehicle: a bus's passengers, a truck's or van's goods (a share of its payload,
+ * up to all of it), a car's rarely anything. A trip with no vehicle yet may carry goods of a typical van's weight.
+ */
+function plannedCargo(rng: Rng, vehicle: PlannedVehicle | null): { cargo_weight_kg: number | null; cargo_kind: CargoKind } {
+  const none = { cargo_weight_kg: null, cargo_kind: 'general' as const };
+  const share = (low: number, high: number, kg: number) => Math.round(kg * rng.between(low, high));
+  if (vehicle === null) return rng.chance(0.4) ? { cargo_weight_kg: rng.int(2, 8) * 100, cargo_kind: rng.weighted({ general: 80, fragile: 20 }) } : none;
+  switch (vehicle.vehicle_type) {
+    case 'bus':
+      return rng.chance(0.85) ? { cargo_weight_kg: share(0.3, 0.95, vehicle.payload_capacity_kg), cargo_kind: 'passengers' } : none;
+    case 'truck': {
+      if (rng.chance(0.15)) return none;
+      const kind = rng.weighted({ general: 65, refrigerated: 12, fragile: 13, hazardous: 10 });
+      // A third near or at the payload, the rest a lighter share.
+      return { cargo_weight_kg: rng.chance(0.33) ? share(0.9, 1, vehicle.payload_capacity_kg) : share(0.15, 0.85, vehicle.payload_capacity_kg), cargo_kind: kind };
+    }
+    case 'van':
+      return rng.chance(0.7) ? { cargo_weight_kg: share(0.1, 0.95, vehicle.payload_capacity_kg), cargo_kind: rng.weighted({ general: 70, fragile: 30 }) } : none;
+    default:
+      return rng.chance(0.15) ? { cargo_weight_kg: share(0.1, 0.5, vehicle.payload_capacity_kg), cargo_kind: 'general' } : none;
+  }
+}
+
 export function buildPlan(profileName: ProfileName, seed: number, anchor: string): SeedPlan {
   const profile = PROFILES[profileName];
   const rng = new Rng(seed);
@@ -301,6 +333,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       fuel_efficiency_ml_per_km: model.mlPerKm === null ? null : Math.round(model.mlPerKm * rng.between(0.92, 1.1)),
       depot: pickDepot(),
       odometer_km: rng.int(5, 40) * 1000 * (2026 - year + 1) / 4,
+      payload_capacity_kg: model.payloadKg,
       // Drawn with the service history, below.
       registered_at: '',
     });
@@ -438,8 +471,16 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       actual_distance_km: actualDistance,
       planned_duration_seconds: route.duration_seconds,
       actual_duration_seconds: actualStart !== null && actualEnd !== null ? Math.round((actualEnd - actualStart) / 1000) : null,
+      cargo_weight_kg: null,
+      cargo_kind: 'general',
     });
   }
+
+  // Cargo (FMS-153), so the driver fit (FMS-154) and the risk model (FMS-155) have jobs of every load: buses carry
+  // passengers, trucks and vans goods, some of them near their payload; cars mostly nothing. A separate generator:
+  // drawing here from `rng` would change every row planned after the trips.
+  const cargoRng = new Rng((seed ^ 0x153153) >>> 0);
+  for (const trip of trips) Object.assign(trip, plannedCargo(cargoRng, trip.vehicle === null ? null : vehicles[trip.vehicle]));
 
   // Fuel: one fill-up after every completed trip of a combustion vehicle,
   // in time order so each vehicle's odometer only goes up. About 3% are

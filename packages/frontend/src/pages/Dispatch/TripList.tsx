@@ -3,6 +3,7 @@ import { StatusBadge } from '@/components/shared'
 import { Badge, cn, Skeleton } from '@/components/ui'
 import { etaSummary } from '@/features/trip-eta'
 import { formatWindow, tripEnds, tripTitle } from './format'
+import { JobLoadBadge } from './JobLoad'
 import type { Trip } from './types'
 
 interface TripListProps {
@@ -70,10 +71,14 @@ export function TripList({ trips, isLoading, selectedId, onSelect, driverName, p
                   {ends.split(' → ')[1]}
                 </p>
               )}
-              <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink">
-                <CalendarClock className="h-3.5 w-3.5 text-ink-subtle" aria-hidden="true" />
-                {formatWindow(trip.scheduled_start, trip.scheduled_end)}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                  <CalendarClock className="h-3.5 w-3.5 text-ink-subtle" aria-hidden="true" />
+                  {formatWindow(trip.scheduled_start, trip.scheduled_end)}
+                </p>
+                {/* FMS-153: what the job asks of its driver. */}
+                {trip.job_load && <JobLoadBadge load={trip.job_load} />}
+              </div>
               {arrival && (
                 <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-brand-ink">
                   <Clock className="h-3.5 w-3.5" aria-hidden="true" />

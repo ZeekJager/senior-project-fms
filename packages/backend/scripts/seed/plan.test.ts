@@ -4,6 +4,7 @@ import { assertNotProduction } from './guard';
 import { sniffContentType } from '../../src/modules/fleet/domain/document';
 import { placeholderPdf } from './pdf';
 import { anchorMidnight, buildPlan } from './plan';
+import { jobLoad } from '../../src/modules/trip/domain/job-load';
 
 const ANCHOR = '2026-10-01';
 
@@ -29,6 +30,29 @@ describe('buildPlan', () => {
     expect(budget.routes.length).toBeGreaterThan(0);
     expect(budget.fuelLogs.length).toBeGreaterThan(400);
     expect(budget.maintenance.some((m) => m.status === 'completed')).toBe(true);
+  });
+
+  test('trips carry a cargo mix, never above their vehicle’s payload, with jobs of every load (FMS-153)', () => {
+    expect(new Set(budget.trips.map((t) => t.cargo_kind))).toEqual(new Set(['general', 'fragile', 'hazardous', 'refrigerated', 'passengers']));
+    expect(budget.trips.some((t) => t.cargo_weight_kg === null)).toBe(true);
+    for (const t of budget.trips.filter((x) => x.vehicle !== null && x.cargo_weight_kg !== null)) {
+      expect(t.cargo_weight_kg!).toBeLessThanOrEqual(budget.vehicles[t.vehicle!].payload_capacity_kg);
+    }
+    expect(budget.trips.filter((t) => t.cargo_kind === 'passengers').every((t) => budget.vehicles[t.vehicle!].vehicle_type === 'bus')).toBe(true);
+
+    const levels = budget.trips.map(
+      (t) =>
+        jobLoad({
+          plannedDistanceKm: t.planned_distance_km,
+          plannedDurationSeconds: t.planned_duration_seconds,
+          scheduledStart: t.scheduled_start ? new Date(t.scheduled_start) : null,
+          scheduledEnd: t.scheduled_end ? new Date(t.scheduled_end) : null,
+          stopCount: 0,
+          cargoWeightKg: t.cargo_weight_kg,
+          payloadCapacityKg: t.vehicle === null ? null : budget.vehicles[t.vehicle].payload_capacity_kg,
+        }).level,
+    );
+    for (const level of ['light', 'standard', 'heavy']) expect(levels.filter((l) => l === level).length, level).toBeGreaterThan(50);
   });
 
   test('corrective repairs under way or done say what failed, before they were finished (FMS-125)', () => {
