@@ -34,7 +34,7 @@ function trip(overrides: Partial<Trip> = {}): Trip {
 const free = { availability: 'available' as const, reasons: [] }
 
 function driver(overrides: Partial<BoardDriver> = {}): BoardDriver {
-  return { driver_id: 'd-1', full_name: 'Abebe Kebede', license_categories: ['C'], vehicle_types: ['truck', 'van'], state: 'idle', attendance: 'present', availability: free, current_trip: null, ...overrides }
+  return { driver_id: 'd-1', full_name: 'Abebe Kebede', license_categories: ['dry_cargo_2'], vehicle_types: ['truck', 'van'], state: 'idle', attendance: 'present', availability: free, current_trip: null, ...overrides }
 }
 
 function vehicle(overrides: Partial<BoardVehicle> = {}): BoardVehicle {

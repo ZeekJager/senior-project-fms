@@ -1,3 +1,4 @@
+import { licenceLabel } from '@/lib/licence'
 import { ArrowRight, FileText, MapPin, Paperclip, Pencil, RotateCcw, Siren } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
@@ -128,7 +129,7 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
       cell: (d) => (
         <div className="min-w-0">
           <p className="truncate font-medium tracking-wide text-ink">{d.license_number}</p>
-          <p className="truncate text-xs text-ink-subtle">{d.license_categories.length ? d.license_categories.join(' · ') : 'No categories recorded'}</p>
+          <p className="truncate text-xs text-ink-subtle">{d.license_categories.length ? d.license_categories.map(licenceLabel).join(' · ') : 'No licence class recorded'}</p>
         </div>
       ),
     },

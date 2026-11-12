@@ -90,6 +90,9 @@ describe('vehicle form', () => {
     depot_id: 'd-1',
     odometer_km: '1200.5',
     payload_kg: '',
+    body: '',
+    seats: '',
+    gross_weight_kg: '',
   }
 
   it('normalizes and converts litres per 100 km to whole ml/km without floats', () => {
@@ -159,5 +162,18 @@ describe('vehicle form', () => {
     expect(changedFields(validateVehicleForm(form).input!, vehicle)).toEqual({})
     expect(changedFields(validateVehicleForm({ ...form, payload_kg: '' }).input!, vehicle)).toEqual({ payload_capacity_kg: null })
     expect(changedFields(validateVehicleForm({ ...form, payload_kg: '9000' }).input!, vehicle)).toEqual({ payload_capacity_kg: 9000 })
+  })
+
+  it('the licence check’s details (SE-198) are optional: body, whole seats, whole kg; blank clears one the vehicle had', () => {
+    expect(validateVehicleForm({ ...valid, body: 'tanker', seats: '2', gross_weight_kg: '26,000' }).input).toMatchObject({ body: 'tanker', seats: 2, gross_weight_kg: 26000 })
+    expect(validateVehicleForm({ ...valid, seats: '2.5' }).errors.seats).toMatch(/Whole seats/)
+    expect(validateVehicleForm({ ...valid, seats: '121' }).errors.seats).toMatch(/Whole seats/)
+    expect(validateVehicleForm({ ...valid, gross_weight_kg: '0' }).errors.gross_weight_kg).toMatch(/Whole kilograms/)
+
+    const vehicle = { ...validateVehicleForm(valid).input!, body: 'dry_cargo', seats: 2, gross_weight_kg: 11000 } as unknown as Vehicle
+    const form = formFromVehicle(vehicle)
+    expect([form.body, form.seats, form.gross_weight_kg]).toEqual(['dry_cargo', '2', '11000'])
+    expect(changedFields(validateVehicleForm(form).input!, vehicle)).toEqual({})
+    expect(changedFields(validateVehicleForm({ ...form, body: '', gross_weight_kg: '' }).input!, vehicle)).toEqual({ body: null, gross_weight_kg: null })
   })
 })

@@ -48,17 +48,17 @@ describe('driverCreateBody', () => {
 });
 
 describe('license_categories', () => {
-  test('European categories, deduplicated and in licence order', () => {
-    expect(parseInput(driverCreateBody, { ...valid, license_categories: ['CE', 'B', 'C', 'B'] }).license_categories).toEqual(['B', 'C', 'CE']);
+  test('Ethiopian classes, deduplicated and in licence order', () => {
+    expect(parseInput(driverCreateBody, { ...valid, license_categories: ['dry_cargo_3', 'automobile', 'dry_cargo_2', 'automobile'] }).license_categories).toEqual(['automobile', 'dry_cargo_2', 'dry_cargo_3']);
     expect(parseInput(driverCreateBody, { ...valid, license_categories: [] }).license_categories).toEqual([]);
   });
 
   test('anything else is VALIDATION_INVALID_ENUM', () => {
-    expect(rejection(driverCreateBody, { ...valid, license_categories: ['B', 'automobile'] })).toMatchObject({
+    expect(rejection(driverCreateBody, { ...valid, license_categories: ['automobile', 'B'] })).toMatchObject({
       code: 'VALIDATION_INVALID_ENUM',
       details: [{ field: 'license_categories.1', reason: 'invalid_enum' }],
     });
-    expect(rejection(driverCreateBody, { ...valid, license_categories: 'B' }).code).toBe('VALIDATION_FAILED');
+    expect(rejection(driverCreateBody, { ...valid, license_categories: 'automobile' }).code).toBe('VALIDATION_FAILED');
   });
 });
 

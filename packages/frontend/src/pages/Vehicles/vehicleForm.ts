@@ -1,6 +1,7 @@
 import { formatMinor, parseDecimal } from '@/components/shared'
 import type { VehicleInput } from './api'
 import { normalizePlate } from './filters'
+import type { VehicleBody } from '@/lib/licence'
 import type { FuelType, Vehicle, VehicleType } from './types'
 
 /** The form's fields as typed: always text, so nothing is rounded or lost while editing. */
@@ -18,6 +19,12 @@ export interface VehicleFormValues {
   odometer_km: string
   /** What it can carry, kg, at most two decimals (FMS-153: a trip's cargo is never more). Blank: not recorded. */
   payload_kg: string
+  /** What the driver's licence class is checked against (docs/driving-licences.md); each optional. */
+  body: VehicleBody | ''
+  /** Passenger seats, the driver not counted. */
+  seats: string
+  /** Gross vehicle weight, whole kg. */
+  gross_weight_kg: string
 }
 
 export type FieldName = keyof VehicleFormValues
@@ -35,6 +42,9 @@ export const EMPTY_FORM: VehicleFormValues = {
   depot_id: '',
   odometer_km: '',
   payload_kg: '',
+  body: '',
+  seats: '',
+  gross_weight_kg: '',
 }
 
 export function formFromVehicle(v: Vehicle): VehicleFormValues {
@@ -51,6 +61,9 @@ export function formFromVehicle(v: Vehicle): VehicleFormValues {
     depot_id: v.depot_id,
     odometer_km: String(v.odometer_km),
     payload_kg: v.payload_capacity_kg == null ? '' : String(v.payload_capacity_kg),
+    body: v.body ?? '',
+    seats: v.seats == null ? '' : String(v.seats),
+    gross_weight_kg: v.gross_weight_kg == null ? '' : String(v.gross_weight_kg),
   }
 }
 
@@ -114,6 +127,10 @@ export function validateVehicleForm(values: VehicleFormValues, now: Date = new D
   if (payload && (!PAYLOAD.test(payload) || Number(payload) <= 0 || Number(payload) > MAX_PAYLOAD_KG)) {
     errors.payload_kg = 'Kilograms above 0, at most 100,000, with at most two decimals.'
   }
+  const seats = values.seats.trim()
+  if (seats && (!/^\d{1,3}$/.test(seats) || Number(seats) > 120)) errors.seats = 'Whole seats, 0 to 120, the driver not counted.'
+  const gross = values.gross_weight_kg.trim().replaceAll(',', '')
+  if (gross && (!/^\d{1,6}$/.test(gross) || Number(gross) < 1 || Number(gross) > 100_000)) errors.gross_weight_kg = 'Whole kilograms, 1 to 100,000.'
 
   if (Object.keys(errors).length > 0) return { errors, input: null }
   return {
@@ -130,6 +147,9 @@ export function validateVehicleForm(values: VehicleFormValues, now: Date = new D
       depot_id: values.depot_id,
       ...(odometer ? { odometer_km: Number(odometer) } : {}),
       ...(payload ? { payload_capacity_kg: Number(payload) } : {}),
+      ...(values.body ? { body: values.body } : {}),
+      ...(seats ? { seats: Number(seats) } : {}),
+      ...(gross ? { gross_weight_kg: Number(gross) } : {}),
     },
   }
 }
@@ -149,12 +169,19 @@ export function changedFields(input: VehicleInput, original: Vehicle): Partial<V
     depot_id: original.depot_id,
     odometer_km: original.odometer_km,
     payload_capacity_kg: original.payload_capacity_kg ?? null,
+    body: original.body ?? null,
+    seats: original.seats ?? null,
+    gross_weight_kg: original.gross_weight_kg ?? null,
   }
   for (const key of Object.keys(input) as (keyof VehicleInput)[]) {
     if (input[key] !== before[key]) (patch as Record<string, unknown>)[key] = input[key]
   }
   // A payload left blank is sent only to clear one the vehicle had.
   if (input.payload_capacity_kg === undefined && before.payload_capacity_kg !== null) patch.payload_capacity_kg = null
+  // A licence detail left blank is sent only to clear one the vehicle had.
+  for (const key of ['body', 'seats', 'gross_weight_kg'] as const) {
+    if (input[key] === undefined && before[key] !== null) (patch as Record<string, unknown>)[key] = null
+  }
   return patch
 }
 
@@ -171,4 +198,7 @@ export const API_FIELDS: Record<string, FieldName> = {
   depot_id: 'depot_id',
   odometer_km: 'odometer_km',
   payload_capacity_kg: 'payload_kg',
+  body: 'body',
+  seats: 'seats',
+  gross_weight_kg: 'gross_weight_kg',
 }

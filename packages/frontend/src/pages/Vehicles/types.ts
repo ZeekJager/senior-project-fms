@@ -1,3 +1,5 @@
+import type { VehicleBody } from '@/lib/licence'
+
 // Shapes of the API's vehicle, depot and document resources (api-contract
 // §6.1, §6.2, §8, §16.1). Public ids only.
 
@@ -31,6 +33,10 @@ export interface Vehicle {
   fuel_efficiency_ml_per_km: number | null
   /** What it can carry, kg (FMS-153); null while nobody has said. */
   payload_capacity_kg?: number | null
+  /** What the driver's licence class is checked against (docs/driving-licences.md); null while nobody has said. */
+  body?: VehicleBody | null
+  seats?: number | null
+  gross_weight_kg?: number | null
   status: VehicleStatus
   maintenance_flag: boolean
   health_score: number | null

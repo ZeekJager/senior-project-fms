@@ -9,7 +9,7 @@ const base = {
   email: 'Abebe@Fleet.Test',
   license_number: ' aa  12345 ',
   license_expiry: '2030-06-30',
-  license_categories: ['CE', 'B'] as Driver['license_categories'],
+  license_categories: ['dry_cargo_3', 'automobile'] as Driver['license_categories'],
   depot_id: 'd-1',
 }
 
@@ -20,7 +20,7 @@ describe('driver form', () => {
     expect(input).toMatchObject({
       account: { full_name: 'Abebe Kebede', email: 'abebe@fleet.test', phone: null },
       license_number: 'AA 12345',
-      license_categories: ['B', 'CE'],
+      license_categories: ['automobile', 'dry_cargo_3'],
     })
   })
 
@@ -54,16 +54,16 @@ describe('driver form', () => {
       email: 'abebe@fleet.test',
       phone: null,
       license_number: 'AA 12345',
-      license_categories: ['B', 'CE'],
+      license_categories: ['automobile', 'dry_cargo_3'],
       license_expiry: '2030-06-30',
       hire_date: null,
       emergency_phone: null,
       depot_id: 'd-1',
     } as unknown as Driver
-    const form = { ...formFromDriver(driver), full_name: '', email: '', license_categories: ['CE', 'B', 'D'] as Driver['license_categories'] }
+    const form = { ...formFromDriver(driver), full_name: '', email: '', license_categories: ['dry_cargo_3', 'automobile', 'public_2'] as Driver['license_categories'] }
     const { errors, input } = validateDriverForm(form, false)
     expect(errors).toEqual({})
-    expect(changedFields(input!, driver)).toEqual({ license_categories: ['B', 'CE', 'D'] })
+    expect(changedFields(input!, driver)).toEqual({ license_categories: ['automobile', 'public_2', 'dry_cargo_3'] })
   })
 })
 

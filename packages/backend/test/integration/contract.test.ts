@@ -150,7 +150,7 @@ describe('depots, vehicles and drivers', () => {
     const created = await api.post('/drivers', {
       account: { full_name: 'Contract Driver', email: `driver.${stamp}@fms.test`, phone: '+251 911 000111' },
       license_number: `LIC-${stamp}`,
-      license_categories: ['B', 'CE'],
+      license_categories: ['automobile', 'dry_cargo_3'],
       license_expiry: '2031-05-01',
       hire_date: '2024-02-01',
       emergency_phone: '+251 911 000222',

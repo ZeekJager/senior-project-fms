@@ -11,6 +11,7 @@ import {
   normalizeVin,
   requiresFuelEfficiency,
 } from '../domain/vehicle';
+import { VEHICLE_BODIES } from '../domain/licence';
 import { VEHICLE_SORT_COLUMNS, type VehicleSortKey } from '../infrastructure/vehicle.repository';
 
 const MAX_FUEL_EFFICIENCY_ML_PER_KM = 100_000;
@@ -85,6 +86,10 @@ const writable = {
   fuel_efficiency_ml_per_km: fuelEfficiency.nullable().optional(),
   tank_capacity_ml: tankCapacity.nullable().optional(),
   payload_capacity_kg: payloadCapacity.nullable().optional(),
+  // What the driver's licence class is checked against (docs/driving-licences.md); each optional.
+  body: z.enum(VEHICLE_BODIES).nullable().optional(),
+  seats: z.number().int().min(0).max(120).nullable().optional(),
+  gross_weight_kg: z.number().int().min(1).max(100_000).nullable().optional(),
   depot_id: z.uuid(),
   odometer_km: odometer.optional(),
 };

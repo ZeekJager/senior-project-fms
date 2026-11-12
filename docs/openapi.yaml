@@ -5792,7 +5792,7 @@ paths:
       description: >
         Needs driver:write. Bulk onboarding: all rows are registered or none. Send text/csv with a header row
         (email, license_number and license_expiry are required, plus depot_code or depot_id; optional
-        license_categories separated by spaces, commas, semicolons or bars, hire_date, emergency_phone). Up to 500
+        license_categories separated by commas, semicolons or bars, as API values or names, hire_date, emergency_phone). Up to 500
         rows. Each row registers the existing account with that email as a driver, by the rules of POST /drivers
         (the account must exist and hold the driver role). dry_run true checks everything and saves nothing. Every
         problem is reported at once, by spreadsheet row (the header is row 1).
@@ -8097,6 +8097,9 @@ components:
         depot_id: { type: string, format: uuid }
         odometer_km: { type: number, minimum: 0, description: At most one decimal. }
         payload_capacity_kg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 100000, description: 'What it carries, kg, two decimals (FMS-153): a trip''s cargo is never more.' }
+        body: { type: [string, 'null'], enum: [passenger, dry_cargo, tanker, special, null], description: 'What it carries, for the driver licence check (SE-198).' }
+        seats: { type: [integer, 'null'], minimum: 0, maximum: 120, description: Passenger seats, the driver not counted. }
+        gross_weight_kg: { type: [integer, 'null'], minimum: 1, maximum: 100000, description: Gross vehicle weight, kg. }
 
     VehicleTrip:
       type: object
@@ -8124,6 +8127,9 @@ components:
         fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other] }
         fuel_efficiency_ml_per_km: { type: [integer, 'null'] }
         payload_capacity_kg: { type: [number, 'null'], description: What it carries, kg (FMS-153); null while nobody has said. }
+        body: { type: [string, 'null'], enum: [passenger, dry_cargo, tanker, special, null] }
+        seats: { type: [integer, 'null'] }
+        gross_weight_kg: { type: [integer, 'null'] }
         status: { $ref: '#/components/schemas/VehicleStatusValue' }
         maintenance_flag: { type: boolean, description: Set while work on the vehicle is open; a flagged vehicle cannot be dispatched. }
         health_score: { type: [integer, 'null'], minimum: 0, maximum: 100 }
@@ -8145,8 +8151,8 @@ components:
         license_number: { type: string, minLength: 1, maxLength: 100, description: Stored normalised; unique. }
         license_categories:
           type: array
-          description: European categories held. Stored without duplicates in licence order; an empty array clears them. They decide which vehicle types the driver may drive.
-          items: { type: string, enum: [AM, A1, A2, A, B1, B, BE, C1, C1E, C, CE, D1, D1E, D, DE] }
+          description: Ethiopian licence classes held (SE-198, docs/driving-licences.md). Stored without duplicates in this order; an empty array clears them. A vehicle is allowed when a class covers its body, seats and gross weight.
+          items: { type: string, enum: [motorcycle, automobile, taxi_1, taxi_2, public_1, public_2, dry_cargo_1, dry_cargo_2, dry_cargo_3, liquid_cargo_1, liquid_cargo_2, special] }
         license_expiry: { type: string, format: date }
         hire_date: { type: [string, 'null'], format: date, description: Not in the future. }
         emergency_phone: { type: [string, 'null'], pattern: '^\+?[0-9][0-9 ()-]{5,29}$' }

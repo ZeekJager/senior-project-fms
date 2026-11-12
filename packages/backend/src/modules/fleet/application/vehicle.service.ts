@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { depotScope, ownDriverScope } from '../../../shared/authz/scope';
 import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
+import type { VehicleBody } from '../domain/licence';
 import type { Cache } from '../../../shared/cache/cache';
 import type { EventBus } from '../../../shared/events/event-bus';
 import { staleVersion } from '../../../shared/http/etag';
@@ -51,6 +52,10 @@ export interface VehicleCreate {
   tank_capacity_ml?: number | null;
   /** FMS-153: what it can carry, kg. */
   payload_capacity_kg?: number | null;
+  /** The licence check's details (docs/driving-licences.md). */
+  body?: VehicleBody | null;
+  seats?: number | null;
+  gross_weight_kg?: number | null;
   /** The depot's public id. */
   depot_id: string;
   odometer_km?: number;
@@ -465,6 +470,9 @@ function toColumns(input: VehicleUpdate): VehicleWrite {
   if (input.fuel_efficiency_ml_per_km !== undefined) data.fuel_efficiency_ml_per_km = input.fuel_efficiency_ml_per_km;
   if (input.tank_capacity_ml !== undefined) data.tank_capacity_ml = input.tank_capacity_ml;
   if (input.payload_capacity_kg !== undefined) data.payload_capacity_kg = input.payload_capacity_kg;
+  if (input.body !== undefined) data.body = input.body;
+  if (input.seats !== undefined) data.seats = input.seats;
+  if (input.gross_weight_kg !== undefined) data.gross_weight_kg = input.gross_weight_kg;
   if (input.odometer_km !== undefined) data.odometer_km = input.odometer_km;
   return data;
 }

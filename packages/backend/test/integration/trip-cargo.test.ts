@@ -43,7 +43,7 @@ const DAY = { scheduled_start: '2026-11-02T06:00:00Z', scheduled_end: '2026-11-0
 /** A truck that carries `kg`, and a truck driver of the depot. */
 async function crew(depot: Depot, kg: number | null) {
   const vehicle = (await createVehicle({ depot, payload_capacity_kg: kg })) as Row;
-  const driver = (await createDriver({ depot, license_categories: ['C'] })).driver as Row;
+  const driver = (await createDriver({ depot, license_categories: ['dry_cargo_2'] })).driver as Row;
   return { vehicle, driver };
 }
 

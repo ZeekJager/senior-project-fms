@@ -219,7 +219,7 @@ const attendanceRepository = new AttendanceRepository(pool);
 
 const driverService = new DriverService({
   drivers: driverRepository,
-  vehicles: { typeOf: (db, vehicleId) => vehicleRepository.typeOf(db, vehicleId) },
+  vehicles: { licensed: (db, vehicleId) => vehicleRepository.licensed(db, vehicleId) },
   users: userDirectory,
   accounts: driverAccounts,
   depots: { resolveInScope: resolveDepotInScope, publicIds: depotPublicIds, publicIdByCode: depotPublicIdByCode },

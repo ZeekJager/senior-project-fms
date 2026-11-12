@@ -73,7 +73,7 @@ function harness(options: HarnessOptions = {}) {
       licenceAt: async () =>
         options.licence === null
           ? null
-          : { userId: acct.id, isActive: true, licenseValid: true, licenseCategories: ['B', 'C'], ...options.licence },
+          : { userId: acct.id, isActive: true, licenseValid: true, licenseCategories: ['automobile', 'dry_cargo_2'], ...options.licence },
       insert: async () => (calls.push('insert'), { id: '7' }),
       update: async (_c, _i, data) => (calls.push(`update:${Object.keys(data).join(',')}`), { id: '7' }),
       retire: async (_c, id) => (calls.push(`retire:${id}`), { id }),
@@ -84,7 +84,7 @@ function harness(options: HarnessOptions = {}) {
       driverUserIds: async () => [acct.id],
       isDriver: async () => true,
     },
-    vehicles: { typeOf: async () => (options.vehicleType === undefined ? 'truck' : options.vehicleType) },
+    vehicles: { licensed: async () => (options.vehicleType === undefined ? { type: 'truck' as const, body: null, seats: null, grossWeightKg: null } : options.vehicleType === null ? null : { type: options.vehicleType, body: null, seats: null, grossWeightKg: null }) },
     users: {
       findByPublicId: async () => acct,
       findByIds: async () => [acct],
@@ -182,7 +182,7 @@ describe('checkEligibility', () => {
   });
 
   test.each([
-    [{ licence: { licenseCategories: ['B' as const] } }, 'license_category_not_valid_for_vehicle'],
+    [{ licence: { licenseCategories: ['automobile' as const] } }, 'license_category_not_valid_for_vehicle'],
     [{ licence: { licenseCategories: [] } }, 'license_category_missing'],
     [{ vehicleType: null }, 'vehicle_not_found'],
   ])('with a vehicle: %j -> %s', async (opts, reason) => {

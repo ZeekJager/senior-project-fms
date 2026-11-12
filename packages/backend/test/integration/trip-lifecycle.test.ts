@@ -25,7 +25,7 @@ async function signIn(roles: RoleName[], depot: Depot | null = null): Promise<st
 
 /** A driver of the depot who can sign in, licensed for trucks. */
 async function driverWithLogin(depot: Depot, extra: Record<string, unknown> = {}) {
-  const { user, driver } = await createDriver({ depot, license_categories: ['C'], ...extra });
+  const { user, driver } = await createDriver({ depot, license_categories: ['dry_cargo_2'], ...extra });
   await pool.query('UPDATE auth.users SET password_hash = $2 WHERE id = $1', [user.id, await hashPassword(PASSWORD)]);
   return { user, driver, cookie: () => login(user.email) };
 }

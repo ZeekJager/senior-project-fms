@@ -53,7 +53,7 @@ async function setup(policies: { attendance?: 'warn' | 'approve'; overrun?: 'war
   const dispatcher = await account(['dispatcher'], depot);
   const manager = await account(['fleet_manager'], depot);
   const vehicle = (await createVehicle({ depot })) as Row;
-  const driver = (await createDriver({ depot, license_categories: ['C'] })).driver as Row;
+  const driver = (await createDriver({ depot, license_categories: ['dry_cargo_2'] })).driver as Row;
   const clerk = await createUser({ roles: ['depot_admin'], depot });
   await pool.query("INSERT INTO fleet.driver_attendance (driver_id, attendance_date, status, logged_by) VALUES ($1, '2026-11-02', 'absent', $2)", [driver.id, clerk.id]);
   const trip = await scheduled(depot);

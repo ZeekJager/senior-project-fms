@@ -41,9 +41,9 @@ describe('vehicle state on the board (FMS-33)', () => {
 describe('drivable vehicle types', () => {
   test('from the licence categories, in vehicle-type order, without duplicates', () => {
     expect(drivableTypes([])).toEqual([]);
-    expect(drivableTypes(['B'])).toEqual(expect.arrayContaining(['car']));
-    expect(drivableTypes(['C'])).toContain('truck');
-    expect(drivableTypes(['B', 'B'])).toEqual(drivableTypes(['B']));
+    expect(drivableTypes(['automobile'])).toEqual(expect.arrayContaining(['car']));
+    expect(drivableTypes(['dry_cargo_2'])).toContain('truck');
+    expect(drivableTypes(['automobile', 'automobile'])).toEqual(drivableTypes(['automobile']));
     expect(drivableTypes(['nonsense'])).toEqual([]);
   });
 });

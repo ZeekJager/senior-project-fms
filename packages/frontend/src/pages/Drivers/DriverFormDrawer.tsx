@@ -8,6 +8,7 @@ import type { Depot } from '@/features/depots'
 import { ApiError } from '@/lib/api/errors'
 import { useCreateDriver, useUpdateDriver } from './api'
 import { API_FIELDS, EMPTY_FORM, changedFields, formFromDriver, validateDriverForm, type FieldErrors, type FieldName, type DriverFormValues } from './driverForm'
+import { LICENSE_CATEGORY_LABELS, LICENSE_CATEGORY_SCOPES } from '@/lib/licence'
 import { LICENSE_CATEGORY_GROUPS, type Driver, type LicenseCategory } from './types'
 
 interface DriverFormDrawerProps {
@@ -238,12 +239,12 @@ export function DriverFormDrawer({ open, onClose, driver, forUser, depots, defau
           </div>
           <fieldset>
             <legend className="mb-2 text-sm font-medium text-ink">
-              Categories <span className="font-normal text-ink-subtle">(optional)</span>
+              Licence classes <span className="font-normal text-ink-subtle">(optional)</span>
             </legend>
             <div className="space-y-2">
               {LICENSE_CATEGORY_GROUPS.map((group) => (
                 <div key={group.label} className="flex flex-wrap items-center gap-1.5">
-                  <span className="w-28 shrink-0 text-xs text-ink-subtle">{group.label}</span>
+                  <span className="w-full text-xs text-ink-subtle">{group.label}</span>
                   {group.categories.map((c) => {
                     const on = values.license_categories.includes(c)
                     return (
@@ -251,22 +252,24 @@ export function DriverFormDrawer({ open, onClose, driver, forUser, depots, defau
                         key={c}
                         type="button"
                         aria-pressed={on}
+                        title={LICENSE_CATEGORY_SCOPES[c]}
                         onClick={() => toggleCategory(c)}
                         className={cn(
-                          'focus-ring h-8 min-w-[44px] rounded-control border px-2.5 text-xs font-semibold transition-all duration-150 ease-smooth',
+                          'focus-ring min-h-8 min-w-[44px] rounded-control border px-2.5 py-1 text-left text-xs font-semibold transition-all duration-150 ease-smooth coarse:min-h-11',
                           on
                             ? 'border-brand/40 bg-brand-soft text-brand-ink shadow-soft'
                             : 'border-line-strong bg-surface text-ink-muted hover:border-ink-subtle/50 hover:text-ink',
                         )}
                       >
-                        {c}
+                        {LICENSE_CATEGORY_LABELS[c]}
+                        <span className="block text-[11px] font-normal text-ink-subtle">{LICENSE_CATEGORY_SCOPES[c]}</span>
                       </button>
                     )
                   })}
                 </div>
               ))}
             </div>
-            <p className="mt-2 text-xs text-ink-subtle">They decide which vehicle types the driver may be dispatched with.</p>
+            <p className="mt-2 text-xs text-ink-subtle">Each class covers vehicles by what they carry, their seats and their weight.</p>
           </fieldset>
         </Section>
 

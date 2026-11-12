@@ -269,15 +269,15 @@ describe('Users and roles', () => {
 
       await u.type(within(form).getByLabelText('Licence number'), 'ET 4471')
       await u.type(within(form).getByLabelText('Expires on'), '2030-06-30')
-      await u.click(within(form).getByRole('button', { name: 'CE' }))
-      await u.click(within(form).getByRole('button', { name: 'B' }))
+      await u.click(within(form).getByRole('button', { name: /^Dry cargo 3/ }))
+      await u.click(within(form).getByRole('button', { name: /^Automobile/ }))
       await u.click(within(form).getByRole('button', { name: 'Add driver' }))
 
       await waitFor(() =>
         expect(sent.profile()).toEqual({
           user_id: 'u-driver',
           license_number: 'ET 4471',
-          license_categories: ['B', 'CE'],
+          license_categories: ['automobile', 'dry_cargo_3'],
           license_expiry: '2030-06-30',
           hire_date: null,
           emergency_phone: null,

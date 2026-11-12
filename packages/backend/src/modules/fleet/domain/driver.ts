@@ -1,52 +1,10 @@
 import { AppError } from '../../../shared/errors/app-error';
 import type { AttendanceStatus } from './attendance';
-import type { VehicleTrip, VehicleType } from './vehicle';
+import type { VehicleTrip } from './vehicle';
 
-/**
- * European driving licence categories (EU Directive 2006/126/EC), in the
- * order a licence lists them, and which of our vehicle types each allows.
- * A driver holds several (fleet.drivers.license_categories, e.g. B and CE);
- * a vehicle is allowed if any of them allows it.
- *
- * vehicle_type is coarser than the categories: it does not tell a 7.5 t truck
- * (C1) from a 40 t one (C), or a minibus (D1) from a coach (D), so each of
- * those allows the whole type. `other` (special machinery) has no EU
- * category; B1 (quadricycles) is the closest. Change this one table if the
- * client's rules differ.
- */
-export const LICENSE_CATEGORY_VEHICLE_TYPES = {
-  AM: ['motorcycle'],
-  A1: ['motorcycle'],
-  A2: ['motorcycle'],
-  A: ['motorcycle'],
-  B1: ['other'],
-  B: ['car', 'suv', 'van'],
-  BE: ['car', 'suv', 'van'],
-  C1: ['truck'],
-  C1E: ['truck'],
-  C: ['truck'],
-  CE: ['truck'],
-  D1: ['bus'],
-  D1E: ['bus'],
-  D: ['bus'],
-  DE: ['bus'],
-} as const satisfies Record<string, readonly VehicleType[]>;
-
-export type LicenseCategory = keyof typeof LICENSE_CATEGORY_VEHICLE_TYPES;
-export const LICENSE_CATEGORIES = Object.keys(LICENSE_CATEGORY_VEHICLE_TYPES) as [LicenseCategory, ...LicenseCategory[]];
-
-/** Whether any of a driver's categories allows driving a vehicle type. */
-export function categoryAllows(categories: readonly string[], vehicleType: VehicleType): boolean {
-  return categories.some((c) => {
-    const allowed: readonly string[] | undefined = LICENSE_CATEGORY_VEHICLE_TYPES[c as LicenseCategory];
-    return allowed?.includes(vehicleType) ?? false;
-  });
-}
-
-/** Categories without duplicates, in the order a licence lists them (AM ... DE). */
-export function normalizeCategories(categories: readonly LicenseCategory[]): LicenseCategory[] {
-  return LICENSE_CATEGORIES.filter((c) => categories.includes(c));
-}
+// The licence classes and what each covers: Ethiopian (docs/driving-licences.md), in licence.ts.
+export { LICENSE_CATEGORIES, categoryAllows, normalizeCategories, type LicenseCategory } from './licence';
+import type { LicenseCategory } from './licence';
 
 /** A licence within this many days of expiry is `expiring_soon`. */
 export const EXPIRING_SOON_DAYS = 30;

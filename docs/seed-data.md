@@ -51,7 +51,7 @@ Counts that depend on the random draws are given for the default seed (20261007)
 | of which expire within 8–30 days of the anchor (amber) | 2 (2–10) | 28 (21–37) |
 | of which expire within 0–7 days of the anchor (red) | 3 (1–5) | 18 (9–18) |
 
-About 6% of licences are expired and 9% expire within 30 days, so the licence warnings have something to show. Drivers and vehicles are never double-booked, a driver only gets a vehicle their licence covers, and only while that licence is valid.
+About 6% of licences are expired and 9% expire within 30 days, so the licence warnings have something to show. Drivers and vehicles are never double-booked, a driver only gets a vehicle their licence covers, and only while that licence is valid. Licences are Ethiopian classes, and every vehicle records its model's body, seats and gross weight, so a 40 t truck goes to a dry cargo 3 holder ([driving-licences.md](driving-licences.md#seed)).
 
 The vehicle documents do the same for document expiry: about 12% expire within 30 days (at least one amber and one red in every profile), none has already expired, and the rest run for 45 days to a year. Each upload is checked for expiry straight away (see [jobs.md](jobs.md)), and that check uses the real date. With the default anchor (today) the amber and red documents therefore raise their `DocumentExpiring` warnings during the seed. With an older `--anchor` the expiry dates move back with it, so fewer of them fall in the window.
 

@@ -141,6 +141,9 @@ async function writeThroughApi(api: SeedApi, plan: SeedPlan, password: string, l
       depot_id: depots[v.depot],
       odometer_km: v.odometer_km,
       payload_capacity_kg: v.payload_capacity_kg,
+      body: v.body,
+      seats: v.seats,
+      gross_weight_kg: v.gross_weight_kg,
     });
     vehicles.push(data.id);
   }
