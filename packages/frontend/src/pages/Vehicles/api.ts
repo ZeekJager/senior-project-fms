@@ -1,3 +1,4 @@
+import type { VehicleBody } from '@/lib/licence'
 import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import type { PageMeta } from '@/lib/api/client'
@@ -92,6 +93,10 @@ export type VehicleInput = {
   odometer_km?: number
   /** FMS-153: kg; null clears it. */
   payload_capacity_kg?: number | null
+  /** The licence check's details (docs/driving-licences.md); null clears one. */
+  body?: VehicleBody | null
+  seats?: number | null
+  gross_weight_kg?: number | null
 }
 
 function useInvalidate() {

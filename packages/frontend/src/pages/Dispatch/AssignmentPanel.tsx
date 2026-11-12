@@ -1,3 +1,4 @@
+import { licenceText } from '@/lib/licence'
 import { AlertCircle, AlertTriangle, CalendarClock, CheckCircle2, Clock, Navigation, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button, Card, cn } from '@/components/ui'
@@ -60,7 +61,7 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
       <JobLoadDetails trip={trip} onChangeCargo={onChangeCargo} />
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <Slot icon={<UserRound />} label="Driver" value={driver?.full_name} hint={driver ? (driver.license_categories.length ? `Licence ${driver.license_categories.join(', ')}` : 'No licence class on file') : 'Choose from the list'} />
+        <Slot icon={<UserRound />} label="Driver" value={driver?.full_name} hint={driver ? (driver.license_categories.length ? `Licence ${licenceText(driver.license_categories)}` : 'No licence class on file') : 'Choose from the list'} />
         <Slot
           icon={<Truck />}
           label="Vehicle"
@@ -96,7 +97,7 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
         {error == null && vehicle?.service_due && <ServiceWarning registration={vehicle.registration_number} due={vehicle.service_due} />}
         {error == null && licenceGap && (
           <Note tone="warning" icon={<AlertTriangle />}>
-            {driver.full_name}’s licence ({driver.license_categories.join(', ') || 'none'}) does not cover a {(VEHICLE_TYPE_LABELS[vehicle.vehicle_type] ?? vehicle.vehicle_type).toLowerCase()}.
+            {driver.full_name}’s licence ({licenceText(driver.license_categories) || 'none'}) does not cover a {(VEHICLE_TYPE_LABELS[vehicle.vehicle_type] ?? vehicle.vehicle_type).toLowerCase()}.
           </Note>
         )}
         {error == null && driver?.state === 'absent' && (

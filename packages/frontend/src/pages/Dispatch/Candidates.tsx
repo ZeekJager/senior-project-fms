@@ -1,3 +1,4 @@
+import { licenceText } from '@/lib/licence'
 import { CalendarClock, Check, Clock, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Badge, cn, Skeleton } from '@/components/ui'
@@ -88,7 +89,7 @@ export function DriverList({ drivers, selectedId, onSelect }: { drivers: BoardDr
             label={`${d.full_name}, ${look.label}`}
             icon={<UserRound />}
             title={d.full_name}
-            subtitle={d.license_categories.length > 0 ? `Licence ${d.license_categories.join(', ')}` : 'No licence class on file'}
+            subtitle={d.license_categories.length > 0 ? `Licence ${licenceText(d.license_categories)}` : 'No licence class on file'}
             badge={<StateBadge {...look} />}
             detail={
               <>

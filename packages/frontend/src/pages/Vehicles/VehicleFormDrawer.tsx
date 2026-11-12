@@ -1,3 +1,4 @@
+import { VEHICLE_BODIES, VEHICLE_BODY_LABELS } from '@/lib/licence'
 import { AlertCircle, Archive, CheckCircle2, XCircle } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { PhotoUploader, VehiclePhoto } from '@/components/shared'
@@ -274,6 +275,39 @@ export function VehicleFormDrawer({ open, onClose, vehicle, depots, defaultDepot
               onChange={(e) => set('payload_kg', e.target.value)}
               error={errors.payload_kg}
               hint="The most it carries: a trip’s cargo is never more."
+              trailing={<span className="text-xs">kg</span>}
+            />
+          </div>
+        </Section>
+
+        <Section title="For the driver's licence">
+          <p className="mb-3 text-xs text-ink-subtle">Which Ethiopian licence class may drive it. Left blank, it is checked by its type alone.</p>
+          <SelectField
+            label="Built to carry"
+            optional
+            value={values.body}
+            onChange={(e) => set('body', e.target.value as VehicleFormValues['body'])}
+            error={errors.body}
+            options={[{ value: '', label: 'Not recorded' }, ...VEHICLE_BODIES.map((b) => ({ value: b, label: VEHICLE_BODY_LABELS[b] }))]}
+          />
+          <div className="grid gap-x-4 sm:grid-cols-2">
+            <TextField
+              label="Passenger seats"
+              optional
+              inputMode="numeric"
+              value={values.seats}
+              onChange={(e) => set('seats', e.target.value)}
+              error={errors.seats}
+              hint="The driver not counted."
+            />
+            <TextField
+              label="Gross weight"
+              optional
+              inputMode="numeric"
+              value={values.gross_weight_kg}
+              onChange={(e) => set('gross_weight_kg', e.target.value)}
+              error={errors.gross_weight_kg}
+              hint="Loaded, as registered."
               trailing={<span className="text-xs">kg</span>}
             />
           </div>

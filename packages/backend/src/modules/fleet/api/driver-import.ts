@@ -11,14 +11,23 @@ const REQUIRED = ['email', 'license_number', 'license_expiry'];
 
 const blankToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 
-/** One CSV row. Categories are one cell, separated by spaces, commas, semicolons or bars ("B CE", "B;CE"). */
+/**
+ * A licence class as written in a cell: its code or its name, any case ("dry_cargo_3", "Dry cargo 3", "Dry-Cargo 3").
+ * "Special equipment" is `special`.
+ */
+const classOf = (written: string) => {
+  const code = written.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  return code === 'special_equipment' ? 'special' : code;
+};
+
+/** One CSV row. Licence classes are one cell, separated by commas, semicolons or bars ("automobile, dry_cargo_2", "Automobile; Dry cargo 2"). */
 const rowSchema = z
   .object({
     email: z.preprocess(blankToUndefined, z.string().trim().toLowerCase().pipe(z.email().max(255))),
     license_number: z.preprocess(blankToUndefined, driverFields.license_number),
     license_expiry: z.preprocess(blankToUndefined, driverFields.license_expiry),
     license_categories: z.preprocess(
-      (v) => (typeof v === 'string' ? v.split(/[\s,;|]+/).filter(Boolean).map((c) => c.toUpperCase()) : v),
+      (v) => (typeof v === 'string' ? v.split(/[,;|]+/).map(classOf).filter(Boolean) : v),
       driverFields.license_categories,
     ),
     depot_code: z.preprocess(blankToUndefined, z.string().trim().min(1).max(50).optional()),

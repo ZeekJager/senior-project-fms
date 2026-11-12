@@ -1,14 +1,19 @@
 import { describe, expect, test } from 'vitest';
-import { CATEGORY_FOR, SERVICE_SCHEDULE } from './catalog';
+import { SERVICE_SCHEDULE, VEHICLE_MODELS } from './catalog';
 import { assertNotProduction } from './guard';
 import { sniffContentType } from '../../src/modules/fleet/domain/document';
 import { placeholderPdf } from './pdf';
-import { anchorMidnight, buildPlan } from './plan';
+import { anchorMidnight, buildPlan, licensed } from './plan';
+import { categoryAllows } from '../../src/modules/fleet/domain/licence';
 import { jobLoad } from '../../src/modules/trip/domain/job-load';
 
 const ANCHOR = '2026-10-01';
 
 describe('buildPlan', () => {
+  test('every model weighs more loaded than its payload: gross weight (SE-198) above payload (FMS-153)', () => {
+    for (const m of VEHICLE_MODELS) expect(m.grossKg, m.model).toBeGreaterThan(m.payloadKg);
+  });
+
   test('the same seed and anchor give the same plan; another seed gives another', () => {
     expect(buildPlan('small', 42, ANCHOR)).toEqual(buildPlan('small', 42, ANCHOR));
     expect(buildPlan('small', 43, ANCHOR).vehicles).not.toEqual(buildPlan('small', 42, ANCHOR).vehicles);
@@ -84,7 +89,8 @@ describe('buildPlan', () => {
       const driver = budget.drivers[t.driver!];
       const vehicle = budget.vehicles[t.vehicle!];
       expect(driver.depot).toBe(vehicle.depot);
-      expect(driver.license_categories).toContain(CATEGORY_FOR[vehicle.vehicle_type]);
+      // An Ethiopian class that covers the vehicle itself: its body, seats and gross weight (docs/driving-licences.md).
+      expect(categoryAllows(driver.license_categories, licensed(vehicle))).toBe(true);
       expect(anchorMidnight(driver.license_expiry)).toBeGreaterThan(Date.parse(t.scheduled_end!));
       const span: [number, number] = [Date.parse(t.scheduled_start!), Date.parse(t.scheduled_end!)];
       for (const key of [`d${t.driver}`, `v${t.vehicle}`]) {

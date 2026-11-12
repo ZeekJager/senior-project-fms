@@ -1,5 +1,4 @@
 import {
-  CATEGORY_FOR,
   CITIES,
   DEPOT_SITES,
   EV_MODELS,
@@ -19,6 +18,7 @@ import {
   type ServiceItem,
 } from './catalog';
 import { Rng } from './random';
+import { categoryAllows } from '../../src/modules/fleet/domain/licence';
 import { seedRoad } from './roads';
 
 // The whole dataset as plain data, from (profile, seed, anchor) alone: no
@@ -92,6 +92,10 @@ export interface PlannedVehicle {
   odometer_km: number;
   /** What it carries, kg (FMS-153): the model's. */
   payload_capacity_kg: number;
+  /** The model's, for the licence check (docs/driving-licences.md). */
+  body: 'passenger' | 'dry_cargo';
+  seats: number;
+  gross_weight_kg: number;
   /** When it joined the fleet: the vehicle's created_at, years back, never before its model year. */
   registered_at: string;
 }
@@ -277,6 +281,9 @@ function plannedCargo(rng: Rng, vehicle: PlannedVehicle | null): { cargo_weight_
   }
 }
 
+/** A planned vehicle as the licence check reads it. */
+export const licensed = (v: PlannedVehicle) => ({ type: v.vehicle_type, body: v.body, seats: v.seats, grossWeightKg: v.gross_weight_kg });
+
 export function buildPlan(profileName: ProfileName, seed: number, anchor: string): SeedPlan {
   const profile = PROFILES[profileName];
   const rng = new Rng(seed);
@@ -334,6 +341,9 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
       depot: pickDepot(),
       odometer_km: rng.int(5, 40) * 1000 * (2026 - year + 1) / 4,
       payload_capacity_kg: model.payloadKg,
+      body: model.body,
+      seats: model.seats,
+      gross_weight_kg: model.grossKg,
       // Drawn with the service history, below.
       registered_at: '',
     });
@@ -341,15 +351,17 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
   // Per depot: trips are crewed from their own depot only.
   const vehiclesIn = depots.map((_, d) => vehicles.map((v, i) => ({ v, i })).filter(({ v }) => v.depot === d));
 
-  // Drivers: every one holds B; most also C, some D. A fifth of the
-  // licences need attention: expired, or expiring within 30 days.
+  // Drivers (Ethiopian classes, docs/driving-licences.md): every one holds
+  // automobile; most also dry cargo 2 (trucks up to 18 t), a quarter of those
+  // dry cargo 3 (any truck), some public 2 (any bus). A fifth of the licences
+  // need attention: expired, or expiring within 30 days.
   const licence = uniqueFrom(() => `ET-${rng.int(1, 14).toString().padStart(2, '0')}-${rng.int(100000, 999999)}`);
   const drivers: PlannedDriver[] = [];
   for (let i = 0; i < profile.drivers; i++) {
-    const categories = ['B'];
-    if (rng.chance(0.65)) categories.push('C');
-    if (categories.includes('C') && rng.chance(0.25)) categories.push('CE');
-    if (rng.chance(0.2)) categories.push('D');
+    const categories = ['automobile'];
+    if (rng.chance(0.65)) categories.push('dry_cargo_2');
+    if (categories.includes('dry_cargo_2') && rng.chance(0.25)) categories.push('dry_cargo_3');
+    if (rng.chance(0.2)) categories.push('public_2');
     const expiryKind = rng.weighted({ expired: 6, soon: 9, valid: 85 });
     const expiry =
       expiryKind === 'expired' ? at(-rng.int(1, 120), 0) : expiryKind === 'soon' ? at(rng.int(1, 30), 0) : at(rng.int(60, 1800), 0);
@@ -433,7 +445,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
         const tripEnd = at(day + 1, 0);
         const candidate = rng.pick(driversIn[depot]);
         if (anchorMidnight(candidate.x.license_expiry) < tripEnd) continue;
-        const allowed = vehiclesIn[depot].filter(({ v }) => candidate.x.license_categories.includes(CATEGORY_FOR[v.vehicle_type]));
+        const allowed = vehiclesIn[depot].filter(({ v }) => categoryAllows(candidate.x.license_categories, licensed(v)));
         if (allowed.length === 0) continue;
         const choice = rng.pick(allowed);
         const slots = slotsOf(fullDay, slot);

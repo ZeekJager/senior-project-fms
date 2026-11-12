@@ -1,4 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
+import type { VehicleBody } from './licence';
 
 /** Enum values exactly as stored (shared.vehicle_type, shared.fuel_type, shared.vehicle_status). */
 export const VEHICLE_TYPES = ['car', 'suv', 'van', 'truck', 'bus', 'motorcycle', 'other'] as const;
@@ -34,6 +35,10 @@ export interface VehicleView {
   tank_capacity_ml: number | null;
   /** What it can carry, in kg: a trip's cargo is never more (FMS-153). Null while nobody has said. */
   payload_capacity_kg: number | null;
+  /** What it is built to carry, its passenger seats (the driver not counted) and gross weight, kg: the licence check's (docs/driving-licences.md). Null while nobody has said. */
+  body: VehicleBody | null;
+  seats: number | null;
+  gross_weight_kg: number | null;
   status: VehicleStatus;
   maintenance_flag: boolean;
   health_score: number | null;

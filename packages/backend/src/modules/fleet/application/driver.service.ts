@@ -25,7 +25,8 @@ import {
   type LicenseStatus,
 } from '../domain/driver';
 import { operatingToday, type AttendanceStatus } from '../domain/attendance';
-import type { VehicleTrip, VehicleType } from '../domain/vehicle';
+import type { VehicleTrip } from '../domain/vehicle';
+import type { LicensedVehicle } from '../domain/licence';
 import type { DriverListFilter, DriverRepository, DriverRow, DriverSortKey, DriverWrite } from '../infrastructure/driver.repository';
 import type { Caller } from './caller';
 
@@ -111,7 +112,8 @@ export interface DriverServiceDeps {
     isDriver(db: Queryable, userId: string): Promise<boolean>;
   };
   /** A vehicle's type, for licence-class checks. */
-  vehicles: { typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> };
+  /** A vehicle as the licence check reads it: its type, body, seats and gross weight (docs/driving-licences.md). */
+  vehicles: { licensed(db: Queryable, vehicleId: string): Promise<LicensedVehicle | null> };
   /** The auth module's user directory (through its index.ts). */
   users: {
     findByPublicId(db: Queryable, publicId: string): Promise<UserAccount | null>;
@@ -445,10 +447,10 @@ export class DriverService {
     if (!own.licenseValid) reasons.push('license_expired');
 
     if (vehicleId !== undefined) {
-      const vehicleType = await this.deps.vehicles.typeOf(db, vehicleId);
-      if (vehicleType === null) reasons.push('vehicle_not_found');
+      const vehicle = await this.deps.vehicles.licensed(db, vehicleId);
+      if (vehicle === null) reasons.push('vehicle_not_found');
       else if (own.licenseCategories.length === 0) reasons.push('license_category_missing');
-      else if (!categoryAllows(own.licenseCategories, vehicleType)) reasons.push('license_category_not_valid_for_vehicle');
+      else if (!categoryAllows(own.licenseCategories, vehicle)) reasons.push('license_category_not_valid_for_vehicle');
     }
     return { eligible: reasons.length === 0, reasons };
   }

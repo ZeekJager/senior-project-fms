@@ -3757,3 +3757,49 @@ DO $$ BEGIN
         (cargo_weight_kg IS NULL OR cargo_weight_kg > 0)
         AND cargo_kind IN ('general', 'fragile', 'hazardous', 'refrigerated', 'passengers'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- ===== 072_ethiopian_licence_classes.sql =====
+ALTER TABLE fleet.vehicles
+    ADD COLUMN IF NOT EXISTS body VARCHAR(12),
+    ADD COLUMN IF NOT EXISTS seats SMALLINT,
+    ADD COLUMN IF NOT EXISTS gross_weight_kg INTEGER;
+
+DO $$ BEGIN
+    ALTER TABLE fleet.vehicles ADD CONSTRAINT chk_vehicle_licence_details CHECK (
+        (body IS NULL OR body IN ('passenger', 'dry_cargo', 'tanker', 'special'))
+        AND (seats IS NULL OR seats BETWEEN 0 AND 120)
+        AND (gross_weight_kg IS NULL OR gross_weight_kg BETWEEN 1 AND 100000));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE fleet.drivers DROP CONSTRAINT IF EXISTS chk_driver_license_categories;
+
+-- European codes to Ethiopian classes, in class order, without duplicates. Ethiopian values are kept (a second run).
+UPDATE fleet.drivers d
+   SET license_categories = ARRAY(
+        SELECT DISTINCT m.cls
+          FROM unnest(d.license_categories) AS held(code)
+          JOIN (VALUES ('AM', 'motorcycle'), ('A1', 'motorcycle'), ('A2', 'motorcycle'), ('A', 'motorcycle'),
+                       ('B1', 'automobile'), ('B', 'automobile'), ('BE', 'automobile'),
+                       ('C1', 'dry_cargo_1'), ('C1E', 'dry_cargo_1'), ('C', 'dry_cargo_2'), ('CE', 'dry_cargo_3'),
+                       ('D1', 'public_1'), ('D1E', 'public_1'), ('D', 'public_2'), ('DE', 'public_2'),
+                       ('motorcycle', 'motorcycle'), ('automobile', 'automobile'), ('taxi_1', 'taxi_1'), ('taxi_2', 'taxi_2'),
+                       ('public_1', 'public_1'), ('public_2', 'public_2'), ('dry_cargo_1', 'dry_cargo_1'),
+                       ('dry_cargo_2', 'dry_cargo_2'), ('dry_cargo_3', 'dry_cargo_3'), ('liquid_cargo_1', 'liquid_cargo_1'),
+                       ('liquid_cargo_2', 'liquid_cargo_2'), ('special', 'special')) AS m(code, cls)
+            ON m.code = held.code
+         ORDER BY m.cls)
+ WHERE cardinality(d.license_categories) > 0;
+
+-- Licence order (LICENSE_CATEGORIES), not alphabetical.
+UPDATE fleet.drivers d
+   SET license_categories = ARRAY(
+        SELECT c FROM unnest(ARRAY['motorcycle', 'automobile', 'taxi_1', 'taxi_2', 'public_1', 'public_2', 'dry_cargo_1',
+                                   'dry_cargo_2', 'dry_cargo_3', 'liquid_cargo_1', 'liquid_cargo_2', 'special']) WITH ORDINALITY AS o(c, n)
+         WHERE c = ANY (d.license_categories) ORDER BY n)
+ WHERE cardinality(d.license_categories) > 0;
+
+ALTER TABLE fleet.drivers
+    ADD CONSTRAINT chk_driver_license_categories CHECK (
+        license_categories <@ ARRAY['motorcycle', 'automobile', 'taxi_1', 'taxi_2', 'public_1', 'public_2', 'dry_cargo_1',
+                                    'dry_cargo_2', 'dry_cargo_3', 'liquid_cargo_1', 'liquid_cargo_2', 'special']::TEXT[]
+    );

@@ -84,7 +84,7 @@ async function fixtures(drivers: number, vehicles: number, windows: [string, str
     const user = await one<{ id: string }>("INSERT INTO auth.users (email, password_hash, full_name, depot_id) VALUES ($1, 'x', 'Race Driver', $2) RETURNING id", [`driver-${i}-${tag}@race.test`, depot.id]);
     await real.query('INSERT INTO fleet.driver_accounts (user_id, full_name, email, depot_id, account_status) SELECT id, full_name, email, depot_id, status FROM auth.users WHERE id = $1', [user.id]);
     out.drivers.push(
-      ref(await one("INSERT INTO fleet.drivers (user_id, license_number, license_expiry, license_categories) VALUES ($1, $2, '2030-12-31', '{C}') RETURNING id, public_id", [user.id, `RACE-${i}-${tag}`])),
+      ref(await one("INSERT INTO fleet.drivers (user_id, license_number, license_expiry, license_categories) VALUES ($1, $2, '2030-12-31', '{dry_cargo_2}') RETURNING id, public_id", [user.id, `RACE-${i}-${tag}`])),
     );
   }
   for (let i = 0; i < vehicles; i++) {

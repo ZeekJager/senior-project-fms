@@ -54,7 +54,7 @@ describe('POST /drivers', () => {
 
     const res = await api.post(
       '/drivers',
-      driverBody(user, depot, { license_number: ' aa  12345 ', license_categories: ['CE', 'B'], hire_date: '2024-02-01', emergency_phone: '+251 911 234567' }),
+      driverBody(user, depot, { license_number: ' aa  12345 ', license_categories: ['dry_cargo_3', 'automobile'], hire_date: '2024-02-01', emergency_phone: '+251 911 234567' }),
       cookie,
     );
 
@@ -66,7 +66,7 @@ describe('POST /drivers', () => {
       email: user.email,
       depot_id: depot.public_id,
       license_number: 'AA 12345',
-      license_categories: ['B', 'CE'],
+      license_categories: ['automobile', 'dry_cargo_3'],
       license_expiry: '2030-06-30',
       hire_date: '2024-02-01',
       emergency_phone: '+251 911 234567',
@@ -253,11 +253,11 @@ describe('PATCH /drivers/{id}', () => {
     const retired = await createDriver({ depot: a, is_active: false });
     const cookie = await signIn(['depot_admin'], a);
 
-    expect((await api.patch(`/drivers/${db.driver.public_id}`, { license_categories: ['B'] }, cookie)).status).toBe(404);
+    expect((await api.patch(`/drivers/${db.driver.public_id}`, { license_categories: ['automobile'] }, cookie)).status).toBe(404);
     const move = await api.patch(`/drivers/${da.driver.public_id}`, { depot_id: b.public_id }, cookie);
     expect(move.status).toBe(400);
     expect(move.body.error.details).toEqual([{ field: 'depot_id', reason: 'references_missing_record' }]);
-    const old = await api.patch(`/drivers/${retired.driver.public_id}`, { license_categories: ['B'] }, cookie);
+    const old = await api.patch(`/drivers/${retired.driver.public_id}`, { license_categories: ['automobile'] }, cookie);
     expect(old.status).toBe(409);
     expect(old.body.error.code).toBe('CONFLICT_INVALID_STATE_TRANSITION');
     const fixed = await api.patch(`/drivers/${da.driver.public_id}`, { user_id: randomUUID() }, cookie);
@@ -399,7 +399,7 @@ describe('checkDriverEligibility (enhancement 1)', () => {
     const depot = await createDepot();
     const truck = await createVehicle({ depot, vehicle_type: 'truck' });
     const car = await createVehicle({ depot, vehicle_type: 'car' });
-    const { driver } = await createDriver({ depot, license_categories: ['B'] });
+    const { driver } = await createDriver({ depot, license_categories: ['automobile'] });
 
     expect(await checkDriverEligibility(driver.id, at, { vehicleId: car.id })).toEqual({ eligible: true, reasons: [] });
     expect(await checkDriverEligibility(driver.id, at, { vehicleId: truck.id })).toEqual({
@@ -456,7 +456,7 @@ describe('DriverUpdated and DriverTransferred (enhancement 5)', () => {
     const { driver, user } = await createDriver({ depot: a });
     const cookie = await signIn(['fleet_manager']);
     const received = () => publishedEvents('DriverUpdated', 'DriverTransferred');
-    await api.patch(`/drivers/${driver.public_id}`, { license_expiry: '2031-01-31', license_categories: ['B'], depot_id: b.public_id }, cookie);
+    await api.patch(`/drivers/${driver.public_id}`, { license_expiry: '2031-01-31', license_categories: ['automobile'], depot_id: b.public_id }, cookie);
     const both = await received();
     expect(both.map((e) => e.type)).toEqual(['DriverUpdated', 'DriverTransferred']);
     expect(both[0].payload).toEqual({
@@ -482,11 +482,11 @@ describe('If-Match on PATCH /drivers/{id} (enhancement 6)', () => {
     expect(read.headers.etag).toBe('"0"');
     expect(read.body.data.version).toBe(0);
 
-    const first = await api.patch(`/drivers/${driver.public_id}`, { license_categories: ['B'] }, cookie).set('If-Match', '"0"');
+    const first = await api.patch(`/drivers/${driver.public_id}`, { license_categories: ['automobile'] }, cookie).set('If-Match', '"0"');
     expect(first.status).toBe(200);
     expect(first.headers.etag).toBe('"1"');
 
-    const stale = await api.patch(`/drivers/${driver.public_id}`, { license_categories: ['C'] }, cookie).set('If-Match', '"0"');
+    const stale = await api.patch(`/drivers/${driver.public_id}`, { license_categories: ['dry_cargo_2'] }, cookie).set('If-Match', '"0"');
     expect(stale.status).toBe(409);
     expect(stale.body.error.code).toBe('CONFLICT_CONCURRENT_MODIFICATION');
 
@@ -607,15 +607,15 @@ describe('POST /drivers/import (enhancement 10)', () => {
     const [a, b] = [await createUser({ roles: ['driver'] }), await createUser({ roles: ['driver'], depot })];
     const body = [
       'email,license_number,license_expiry,license_categories,depot_code,emergency_phone',
-      `${String(a.email).toUpperCase()},imp-${randomUUID().slice(0, 6)},2030-01-31,"CE, B",${depot.code},+251 911 000000`,
-      `${b.email},IMP-${randomUUID().slice(0, 6)},2031-05-01,D1,${String(depot.code).toLowerCase()},`,
+      `${String(a.email).toUpperCase()},imp-${randomUUID().slice(0, 6)},2030-01-31,"Dry cargo 3, automobile",${depot.code},+251 911 000000`,
+      `${b.email},IMP-${randomUUID().slice(0, 6)},2031-05-01,public_1,${String(depot.code).toLowerCase()},`,
     ].join('\r\n');
 
     const res = await csv('/drivers/import', body, cookie);
     expect(res.status).toBe(201);
     expect(res.body.data.created.map((c: { row: number }) => c.row)).toEqual([2, 3]);
     const first = await api.get(`/drivers/${res.body.data.created[0].id}`, cookie);
-    expect(first.body.data).toMatchObject({ user_id: a.public_id, depot_id: depot.public_id, license_categories: ['B', 'CE'] });
+    expect(first.body.data).toMatchObject({ user_id: a.public_id, depot_id: depot.public_id, license_categories: ['automobile', 'dry_cargo_3'] });
     // Row 2's account had no depot: it is moved to the import's depot, audited.
     expect((await auditRows(res)).filter((r) => r.entity_type === 'fleet.drivers')).toHaveLength(2);
   });

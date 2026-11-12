@@ -35,7 +35,7 @@ function driver(overrides: Partial<Driver> = {}): Driver {
     phone: null,
     depot_id: DEPOT_A,
     license_number: `DL-${1000 + seq}`,
-    license_categories: ['B', 'CE'],
+    license_categories: ['automobile', 'dry_cargo_3'],
     license_expiry: plusDays(400),
     license_status: 'valid',
     hire_date: null,
@@ -147,8 +147,8 @@ describe('Driver Management (S-05)', () => {
       await user.type(field('Email'), 'Tigist@Fleet.test')
       await user.type(field('Licence number'), licence)
       await user.type(field('Expires on'), '2031-01-31')
-      await user.click(within(drawer).getByRole('button', { name: 'CE' }))
-      await user.click(within(drawer).getByRole('button', { name: 'B' }))
+      await user.click(within(drawer).getByRole('button', { name: /^Dry cargo 3/ }))
+      await user.click(within(drawer).getByRole('button', { name: /^Automobile/ }))
       await user.selectOptions(field('Home depot'), DEPOT_B)
       await user.click(within(drawer).getByRole('button', { name: 'Add driver' }))
       return drawer
@@ -194,7 +194,7 @@ describe('Driver Management (S-05)', () => {
       expect(body).toEqual({
         account: { full_name: 'Tigist Haile', email: 'tigist@fleet.test', phone: null },
         license_number: 'DL 77/2026',
-        license_categories: ['B', 'CE'],
+        license_categories: ['automobile', 'dry_cargo_3'],
         license_expiry: '2031-01-31',
         hire_date: null,
         emergency_phone: null,

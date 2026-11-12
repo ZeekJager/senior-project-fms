@@ -45,8 +45,8 @@ describe('GET /dispatch/availability', () => {
     // Ababa a window 3 hours ahead starts tomorrow, so the absence is recorded on that day, not on today.
     const windowDay = addisDate(0, new Date(from));
 
-    const idle = await createDriver({ depot, license_categories: ['C'] });
-    const absent = await createDriver({ depot, license_categories: ['B'] });
+    const idle = await createDriver({ depot, license_categories: ['dry_cargo_2'] });
+    const absent = await createDriver({ depot, license_categories: ['automobile'] });
     await pool.query("INSERT INTO fleet.driver_attendance (driver_id, attendance_date, status, logged_by) VALUES ($1, $2, 'absent', $3)", [absent.driver.id, windowDay, clerk.id]);
     const busy = await createDriver({ depot });
     const truck = await createVehicle({ depot, vehicle_type: 'truck' });

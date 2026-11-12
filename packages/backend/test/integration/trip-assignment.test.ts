@@ -30,7 +30,7 @@ const assign = (cookie: string, trip: Row, body: Record<string, unknown>) =>
 
 /** A truck driver (licence class C, valid) in the depot. */
 async function truckDriver(depot: Depot, extra: Record<string, unknown> = {}) {
-  return (await createDriver({ depot, license_categories: ['C'], ...extra })).driver;
+  return (await createDriver({ depot, license_categories: ['dry_cargo_2'], ...extra })).driver;
 }
 
 async function route(depot: Depot) {
@@ -138,7 +138,7 @@ describe('POST /trips/{id}/assign', () => {
 
   test('an ineligible driver is 409 CONFLICT_DRIVER_NOT_ELIGIBLE with every reason', async () => {
     const s = await setup();
-    const expired = await truckDriver(s.depot, { license_expiry: '2026-10-01', license_categories: ['B'] });
+    const expired = await truckDriver(s.depot, { license_expiry: '2026-10-01', license_categories: ['automobile'] });
     const res = await assign(s.cookie, s.trip, { driver_id: expired.public_id, vehicle_id: s.vehicle.public_id, version: 0 });
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('CONFLICT_DRIVER_NOT_ELIGIBLE');

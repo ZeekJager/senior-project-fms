@@ -1,7 +1,8 @@
 import type { AttendanceStatus } from './attendance';
 import type { AvailabilityResult } from './availability';
-import { LICENSE_CATEGORY_VEHICLE_TYPES, type LicenseCategory } from './driver';
-import { VEHICLE_TYPES, type VehicleStatus, type VehicleType } from './vehicle';
+import type { VehicleStatus, VehicleType } from './vehicle';
+
+export { drivableTypes } from './licence';
 
 /**
  * The dispatcher's board (FMS-33, S-07): each driver and vehicle of a depot
@@ -49,12 +50,6 @@ export function vehicleBoardState(f: { status: VehicleStatus; maintenanceFlag: b
   if (f.underWay) return 'en_route';
   if (f.availability.availability === 'unavailable') return 'unavailable';
   return 'idle';
-}
-
-/** The vehicle types a driver's licence categories cover, in VEHICLE_TYPES order: the console pairs drivers with vehicles they may drive. */
-export function drivableTypes(categories: readonly string[]): VehicleType[] {
-  const allowed = new Set(categories.flatMap((c) => (LICENSE_CATEGORY_VEHICLE_TYPES[c as LicenseCategory] as readonly VehicleType[] | undefined) ?? []));
-  return VEHICLE_TYPES.filter((t) => allowed.has(t));
 }
 
 /** The open maintenance work behind a flag, as much as dispatch needs to see (it holds no maintenance:read). */

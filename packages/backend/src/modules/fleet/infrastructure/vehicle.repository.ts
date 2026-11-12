@@ -3,7 +3,8 @@ import { scopeClause, type Scope } from '../../../shared/authz/scope';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import { HEALTH_BANDS, type FuelType, type HealthFilter, type VehicleStatus, type VehicleTrip, type VehicleType, type VehicleView } from '../domain/vehicle';
+import { HEALTH_BANDS, type FuelType, type HealthFilter, type VehicleStatus, type VehicleTrip, type VehicleView } from '../domain/vehicle';
+import type { LicensedVehicle } from '../domain/licence';
 import type { StatusChangeSource } from '../domain/availability';
 import { EXPIRY_WINDOW_DAYS } from '../domain/expiry';
 import { operatingToday } from '../domain/attendance';
@@ -68,6 +69,9 @@ export interface VehicleWrite {
   fuel_efficiency_ml_per_km?: number | null;
   tank_capacity_ml?: number | null;
   payload_capacity_kg?: number | null;
+  body?: string | null;
+  seats?: number | null;
+  gross_weight_kg?: number | null;
   odometer_km?: number;
 }
 
@@ -123,7 +127,7 @@ type VehicleRow = Omit<VehicleView, 'current_trip'> & { internal_id: string };
 const VIEW_SQL = `
   SELECT v.id AS internal_id, v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
          v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.tank_capacity_ml,
-         v.payload_capacity_kg::float8 AS payload_capacity_kg, v.status, v.maintenance_flag,
+         v.payload_capacity_kg::float8 AS payload_capacity_kg, v.body, v.seats, v.gross_weight_kg, v.status, v.maintenance_flag,
          v.health_score, v.health_score_updated_at, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
          v.version, v.created_at, v.updated_at,
          -- The photo's URL (docs/photos.md), versioned by when it changed, as photoUrl() builds it.
@@ -446,9 +450,13 @@ export class VehicleRepository extends Repository {
   }
 
   /** A vehicle's type by internal id, or null if there is no such vehicle (used by driver eligibility). */
-  async typeOf(db: Queryable, vehicleId: string): Promise<VehicleType | null> {
-    const res = await db.query<{ vehicle_type: VehicleType }>('SELECT vehicle_type FROM fleet.vehicles WHERE id = $1', [vehicleId]);
-    return res.rows[0]?.vehicle_type ?? null;
+  /** A vehicle as the driver's licence check reads it (docs/driving-licences.md); null when there is none. */
+  async licensed(db: Queryable, vehicleId: string): Promise<LicensedVehicle | null> {
+    const res = await db.query<LicensedVehicle>(
+      `SELECT vehicle_type AS type, body, seats, gross_weight_kg AS "grossWeightKg" FROM fleet.vehicles WHERE id = $1`,
+      [vehicleId],
+    );
+    return res.rows[0] ?? null;
   }
 
   /** True while a driver holds an active assignment to the vehicle (fleet.driver_vehicle_assignments). */

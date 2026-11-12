@@ -2,17 +2,9 @@
 // home depot come from the driver's user account; the licence from
 // fleet.drivers.
 
-/** European licence categories, in the order a licence lists them. */
-export const LICENSE_CATEGORIES = ['AM', 'A1', 'A2', 'A', 'B1', 'B', 'BE', 'C1', 'C1E', 'C', 'CE', 'D1', 'D1E', 'D', 'DE'] as const
-export type LicenseCategory = (typeof LICENSE_CATEGORIES)[number]
-
-/** Grouped as the form shows them. */
-export const LICENSE_CATEGORY_GROUPS: { label: string; categories: LicenseCategory[] }[] = [
-  { label: 'Motorcycles', categories: ['AM', 'A1', 'A2', 'A'] },
-  { label: 'Cars and vans', categories: ['B1', 'B', 'BE'] },
-  { label: 'Trucks', categories: ['C1', 'C1E', 'C', 'CE'] },
-  { label: 'Buses', categories: ['D1', 'D1E', 'D', 'DE'] },
-]
+// Ethiopian licence classes (docs/driving-licences.md): shared with the dispatch console.
+import type { LicenseCategory } from '@/lib/licence'
+export { LICENSE_CATEGORIES, LICENSE_CATEGORY_GROUPS, type LicenseCategory } from '@/lib/licence'
 
 /** Computed by the API from the expiry and today's date in Addis Ababa; expiring within 30 days. */
 export type LicenseStatus = 'valid' | 'expiring_soon' | 'expired'
