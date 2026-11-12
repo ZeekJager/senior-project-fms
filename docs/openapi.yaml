@@ -531,8 +531,9 @@ paths:
         (CONFLICT_DEPOT_MISMATCH), the vehicle is not retired or out of service
         (CONFLICT_INVALID_STATE_TRANSITION) and not flagged or in the workshop (BR-2,
         CONFLICT_VEHICLE_FLAGGED); the driver is eligible (CONFLICT_DRIVER_NOT_ELIGIBLE); BR-1 and
-        BR-3 overlaps, touching ends included (CONFLICT_DRIVER_OVERLAP, CONFLICT_VEHICLE_OVERLAP).
-        Publishes TripAssigned. Audited.
+        BR-3 overlaps, touching ends included (CONFLICT_DRIVER_OVERLAP, CONFLICT_VEHICLE_OVERLAP); FMS-156
+        the driver's daily and weekly load-weighted distance limits (CONFLICT_DRIVER_DISTANCE_LIMIT,
+        docs/driving-distance-limits.md). Publishes TripAssigned. Audited.
         FMS-151 (docs/assignment-exceptions.md): a warning the trip's depot sets to approve holds the
         assignment. Without exception_reason it is 409 CONFLICT_APPROVAL_REQUIRED naming each held warning;
         with one, 202 with the request (AssignmentExceptionRequested), and the trip unchanged until a fleet
@@ -603,7 +604,8 @@ paths:
             CONFLICT_CONCURRENT_MODIFICATION, CONFLICT_INVALID_STATE_TRANSITION, CONFLICT_DEPOT_MISMATCH,
             CONFLICT_VEHICLE_FLAGGED, CONFLICT_DRIVER_NOT_ELIGIBLE, CONFLICT_DRIVER_OVERLAP or
             CONFLICT_VEHICLE_OVERLAP. A detail's record_id names the conflicting trip or the open
-            maintenance record. CONFLICT_APPROVAL_REQUIRED (FMS-151): a held warning and no exception_reason;
+            maintenance record. CONFLICT_DRIVER_DISTANCE_LIMIT (FMS-156): the trip takes the driver past a
+            distance limit; the detail has period, limit_km, total_km and without_trip_km. CONFLICT_APPROVAL_REQUIRED (FMS-151): a held warning and no exception_reason;
             each detail names one (driver_absent, driver_on_leave, driver_sick, or previous_trip_overrun with the
             trip under way as record_id).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
@@ -7700,10 +7702,15 @@ components:
         trip_delay_urgent_minutes: { type: integer, minimum: 10, maximum: 720, default: 60, description: Minutes past its scheduled end before the late trip is urgent (email, SMS and push); above trip_delay_minutes. }
         driver_attendance_exception: { type: string, enum: [warn, approve], default: warn, description: 'FMS-151: a driver marked absent, on leave or sick that day only warns, or holds the assignment for a fleet manager.' }
         trip_overrun_exception: { type: string, enum: [warn, approve], default: warn, description: 'FMS-151: a trip of the driver or vehicle still under way running into this one only warns, or holds the assignment.' }
+        daily_distance_km: { type: integer, minimum: 50, maximum: 2000, default: 500, description: 'FMS-156: the load-weighted km a driver may be given in a calendar day in Addis Ababa.' }
+        weekly_distance_km: { type: integer, minimum: 100, maximum: 10000, default: 2500, description: 'FMS-156: the same, Monday to Sunday; at least daily_distance_km (400 below_daily).' }
+        distance_weight_light: { type: number, minimum: 0.5, maximum: 3, multipleOf: 0.01, default: 0.8, description: 'FMS-156: what a km of a light job counts for; at most the standard weight.' }
+        distance_weight_standard: { type: number, minimum: 0.5, maximum: 3, multipleOf: 0.01, default: 1 }
+        distance_weight_heavy: { type: number, minimum: 0.5, maximum: 3, multipleOf: 0.01, default: 1.5, description: 'FMS-156: at least the standard weight.' }
     RuleThresholdRow:
       type: object
       description: A row of thresholds as stored, the fleet's or a depot's (a depot's adds depot_id in the list), with who changed it last.
-      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, trip_delay_minutes, trip_delay_urgent_minutes, driver_attendance_exception, trip_overrun_exception, updated_by, updated_by_name, updated_at]
+      required: [speed_limit_kmh, speeding_pings, clear_pings, idle_minutes, route_deviation_m, route_deviation_pings, trip_delay_minutes, trip_delay_urgent_minutes, driver_attendance_exception, trip_overrun_exception, daily_distance_km, weekly_distance_km, distance_weight_light, distance_weight_standard, distance_weight_heavy, updated_by, updated_by_name, updated_at]
       properties:
         speed_limit_kmh: { type: integer, minimum: 20, maximum: 200 }
         speeding_pings: { type: integer, minimum: 1, maximum: 20 }
@@ -7715,6 +7722,11 @@ components:
         trip_delay_urgent_minutes: { type: integer, minimum: 10, maximum: 720 }
         driver_attendance_exception: { type: string, enum: [warn, approve] }
         trip_overrun_exception: { type: string, enum: [warn, approve] }
+        daily_distance_km: { type: integer, minimum: 50, maximum: 2000 }
+        weekly_distance_km: { type: integer, minimum: 100, maximum: 10000 }
+        distance_weight_light: { type: number, minimum: 0.5, maximum: 3 }
+        distance_weight_standard: { type: number, minimum: 0.5, maximum: 3 }
+        distance_weight_heavy: { type: number, minimum: 0.5, maximum: 3 }
         updated_by: { type: [string, 'null'], format: uuid }
         updated_by_name: { type: [string, 'null'] }
         updated_at: { type: [string, 'null'], format: date-time }
@@ -7842,6 +7854,13 @@ components:
                   shift_minutes:
                     type: integer
                     description: How many minutes later it would move, when shiftable.
+                  period:
+                    type: string
+                    enum: [day, week]
+                    description: For CONFLICT_DRIVER_DISTANCE_LIMIT (FMS-156), the period past its limit.
+                  limit_km: { type: number, description: 'FMS-156: the limit.' }
+                  total_km: { type: number, description: "FMS-156: the driver's load-weighted km in the period with the trip." }
+                  without_trip_km: { type: number, description: 'FMS-156: and without it.' }
                   allowed_transitions:
                     type: array
                     items: { type: string }
@@ -8763,9 +8782,14 @@ components:
                   - driver_absent
                   - driver_on_leave
                   - driver_sick
+                  - distance_limit
+                  - distance_limit_near
                   - assigned_to_overlapping_trip
               severity: { type: string, enum: [block, warning] }
               trip_id: { type: string, format: uuid }
+              period: { type: string, enum: [day, week], description: 'FMS-156, distance_limit and distance_limit_near: the period.' }
+              limit_km: { type: number, description: 'FMS-156: its limit.' }
+              total_km: { type: number, description: "FMS-156: the driver's load-weighted km in it with the trip." }
 
     Assignment:
       type: object
@@ -8857,7 +8881,7 @@ components:
           type: array
           items:
             type: object
-            required: [driver_id, full_name, license_categories, vehicle_types, state, attendance, availability, current_trip, trip_risk]
+            required: [driver_id, full_name, license_categories, vehicle_types, state, attendance, availability, current_trip, trip_risk, distance]
             properties:
               driver_id: { type: string, format: uuid }
               full_name: { type: string }
@@ -8875,6 +8899,11 @@ components:
                 oneOf:
                   - type: 'null'
                   - { $ref: '#/components/schemas/DriverTripRisk' }
+              distance:
+                description: With exclude_trip_id (FMS-156, docs/driving-distance-limits.md), the driver's load-weighted km in the trip's day and week with it; null otherwise.
+                oneOf:
+                  - type: 'null'
+                  - { $ref: '#/components/schemas/BoardDistance' }
         vehicles:
           type: array
           items:
@@ -10249,6 +10278,33 @@ components:
               confirmed_issue: { type: integer }
               precision: { type: [number, 'null'] }
 
+    BoardDistancePeriod:
+      type: object
+      required: [period, limit_km, without_km, with_km, left_km]
+      properties:
+        period: { type: string, enum: [day, week] }
+        limit_km: { type: number }
+        without_km: { type: number, description: Load-weighted km of the driver's other trips starting in the period. }
+        with_km: { type: number, description: With the trip being staffed. }
+        left_km: { type: number, description: Left of the limit with the trip; negative when over. }
+    BoardDistance:
+      type: object
+      description: Where a driver stands against the driving distance limits on the trip being staffed (FMS-156).
+      required: [trip_km, day, week, over, near]
+      properties:
+        trip_km: { type: number, description: "The trip's own load-weighted km." }
+        day: { $ref: '#/components/schemas/BoardDistancePeriod' }
+        week: { $ref: '#/components/schemas/BoardDistancePeriod' }
+        over:
+          description: The period the trip takes past its limit, the day first; the assignment is refused.
+          oneOf:
+            - type: 'null'
+            - { $ref: '#/components/schemas/BoardDistancePeriod' }
+        near:
+          description: Otherwise, a period at 80% of its limit or more; a warning.
+          oneOf:
+            - type: 'null'
+            - { $ref: '#/components/schemas/BoardDistancePeriod' }
     BoardTripRisk:
       type: object
       description: "Whether the board carries the trip risk model's chances (FMS-155). ok: the active model's (demonstration when trained on generated trips). not_enough_trips: no usable model and fewer than the minimum trips to train one. off: no usable model (reason). unavailable: the ML service failed."

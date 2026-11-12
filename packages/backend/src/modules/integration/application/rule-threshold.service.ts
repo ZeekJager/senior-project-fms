@@ -3,7 +3,7 @@ import type { Scope } from '../../../shared/authz/scope';
 import { notFound, validationFailed } from '../../../shared/errors/app-error';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
-import { DEFAULT_DELAY_MARGINS, DEFAULT_EXCEPTION_POLICIES, type ExceptionPolicy } from '../../trip';
+import { DEFAULT_DELAY_MARGINS, DEFAULT_DISTANCE_LIMITS, DEFAULT_EXCEPTION_POLICIES, distanceLimitsProblem, type ExceptionPolicy } from '../../trip';
 import { DEFAULT_LOCATION_THRESHOLDS } from '../domain/location-rules';
 import { DEFAULT_THRESHOLDS, type RuleThresholds } from '../domain/telemetry-rules';
 import type { RuleThresholdRepository, ThresholdRow } from '../infrastructure/rule-threshold.repository';
@@ -18,10 +18,27 @@ export interface ThresholdSet extends RuleThresholds {
   /** FMS-151: whether the driver's attendance, and a previous trip running over, only warn or hold an assignment for approval. */
   attendanceException: ExceptionPolicy;
   overrunException: ExceptionPolicy;
+  /** FMS-156: the load-weighted km a driver may be given in a day and a week, and what a km of each job load counts for. */
+  dailyDistanceKm: number;
+  weeklyDistanceKm: number;
+  distanceWeightLight: number;
+  distanceWeightStandard: number;
+  distanceWeightHeavy: number;
 }
 
 /** The thresholds a PUT may leave out: each keeps the row's value (or the starting one). */
-type LaterThresholds = 'routeDeviationM' | 'routeDeviationPings' | 'tripDelayMinutes' | 'tripDelayUrgentMinutes' | 'attendanceException' | 'overrunException';
+type LaterThresholds =
+  | 'routeDeviationM'
+  | 'routeDeviationPings'
+  | 'tripDelayMinutes'
+  | 'tripDelayUrgentMinutes'
+  | 'attendanceException'
+  | 'overrunException'
+  | 'dailyDistanceKm'
+  | 'weeklyDistanceKm'
+  | 'distanceWeightLight'
+  | 'distanceWeightStandard'
+  | 'distanceWeightHeavy';
 
 /** A PUT's thresholds: route deviation's and the delay margins left out keep the row's. */
 export type ThresholdInput = RuleThresholds & Partial<Pick<ThresholdSet, LaterThresholds>>;
@@ -34,6 +51,11 @@ export const DEFAULT_THRESHOLD_SET: ThresholdSet = {
   tripDelayUrgentMinutes: DEFAULT_DELAY_MARGINS.urgentMinutes,
   attendanceException: DEFAULT_EXCEPTION_POLICIES.attendance,
   overrunException: DEFAULT_EXCEPTION_POLICIES.overrun,
+  dailyDistanceKm: DEFAULT_DISTANCE_LIMITS.dailyKm,
+  weeklyDistanceKm: DEFAULT_DISTANCE_LIMITS.weeklyKm,
+  distanceWeightLight: DEFAULT_DISTANCE_LIMITS.weights.light,
+  distanceWeightStandard: DEFAULT_DISTANCE_LIMITS.weights.standard,
+  distanceWeightHeavy: DEFAULT_DISTANCE_LIMITS.weights.heavy,
 };
 
 /** The telemetry rules' thresholds as GET /settings/telemetry-rules returns them. */
@@ -48,6 +70,11 @@ export interface ThresholdsView {
   trip_delay_urgent_minutes: number;
   driver_attendance_exception: ExceptionPolicy;
   trip_overrun_exception: ExceptionPolicy;
+  daily_distance_km: number;
+  weekly_distance_km: number;
+  distance_weight_light: number;
+  distance_weight_standard: number;
+  distance_weight_heavy: number;
   updated_by: string | null;
   updated_by_name: string | null;
   updated_at: string | null;
@@ -107,6 +134,11 @@ export class RuleThresholdService {
         trip_delay_urgent_minutes: t.tripDelayUrgentMinutes,
         driver_attendance_exception: t.attendanceException,
         trip_overrun_exception: t.overrunException,
+        daily_distance_km: t.dailyDistanceKm,
+        weekly_distance_km: t.weeklyDistanceKm,
+        distance_weight_light: t.distanceWeightLight,
+        distance_weight_standard: t.distanceWeightStandard,
+        distance_weight_heavy: t.distanceWeightHeavy,
         updated_by: editor?.publicId ?? null,
         updated_by_name: editor?.fullName ?? null,
         updated_at: r?.updatedBy ? r.updatedAt.toISOString() : null,
@@ -134,6 +166,11 @@ export class RuleThresholdService {
         tripDelayUrgentMinutes: kept('tripDelayUrgentMinutes'),
         attendanceException: kept('attendanceException'),
         overrunException: kept('overrunException'),
+        dailyDistanceKm: kept('dailyDistanceKm'),
+        weeklyDistanceKm: kept('weeklyDistanceKm'),
+        distanceWeightLight: kept('distanceWeightLight'),
+        distanceWeightStandard: kept('distanceWeightStandard'),
+        distanceWeightHeavy: kept('distanceWeightHeavy'),
       };
       // Urgent is later than late (chk_rule_trip_delay_urgent).
       if (t.tripDelayUrgentMinutes <= t.tripDelayMinutes) {
@@ -142,6 +179,13 @@ export class RuleThresholdService {
           `A trip is urgent later than it is late: more than ${t.tripDelayMinutes} minutes.`,
         );
       }
+      // FMS-156: a week holds at least a day; a heavier job never counts for less (chk_rule_distance_limits, _weights).
+      const distance = distanceLimitsProblem({
+        dailyKm: t.dailyDistanceKm,
+        weeklyKm: t.weeklyDistanceKm,
+        weights: { light: t.distanceWeightLight, standard: t.distanceWeightStandard, heavy: t.distanceWeightHeavy },
+      });
+      if (distance) throw validationFailed([{ field: distance.field, reason: distance.reason }], distance.message);
       if (!current) await this.deps.thresholds.insert(client, ctx, depotId, t);
       else if (!same(current, t)) await this.deps.thresholds.update(client, ctx, current.id, t);
     });
@@ -173,6 +217,11 @@ function same(a: ThresholdSet, b: ThresholdSet): boolean {
     a.tripDelayMinutes === b.tripDelayMinutes &&
     a.tripDelayUrgentMinutes === b.tripDelayUrgentMinutes &&
     a.attendanceException === b.attendanceException &&
-    a.overrunException === b.overrunException
+    a.overrunException === b.overrunException &&
+    a.dailyDistanceKm === b.dailyDistanceKm &&
+    a.weeklyDistanceKm === b.weeklyDistanceKm &&
+    a.distanceWeightLight === b.distanceWeightLight &&
+    a.distanceWeightStandard === b.distanceWeightStandard &&
+    a.distanceWeightHeavy === b.distanceWeightHeavy
   );
 }

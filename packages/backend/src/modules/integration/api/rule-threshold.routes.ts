@@ -4,7 +4,7 @@ import { notFound } from '../../../shared/errors/app-error';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authenticated, authorize } from '../../auth';
-import { DELAY_MARGIN_LIMITS, EXCEPTION_POLICIES } from '../../trip';
+import { DELAY_MARGIN_LIMITS, DISTANCE_LIMIT_RANGES, EXCEPTION_POLICIES } from '../../trip';
 import type { Caller, RuleThresholdService, ThresholdInput } from '../application/rule-threshold.service';
 import { LOCATION_THRESHOLD_LIMITS } from '../domain/location-rules';
 import { THRESHOLD_LIMITS } from '../domain/telemetry-rules';
@@ -12,6 +12,13 @@ import { THRESHOLD_LIMITS } from '../domain/telemetry-rules';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const whole = (limits: { min: number; max: number }) => z.number().int().min(limits.min).max(limits.max);
+
+/** A job load's weight (FMS-156): two decimals at most, as the column keeps it. */
+const weight = z
+  .number()
+  .min(DISTANCE_LIMIT_RANGES.weight.min)
+  .max(DISTANCE_LIMIT_RANGES.weight.max)
+  .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-9, { message: 'At most two decimals.' });
 
 /**
  * The thresholds: a PUT replaces the row. The four of FMS-46 are required; route deviation's (FMS-90) and the trip
@@ -31,6 +38,12 @@ const thresholdsBody = z
     // FMS-151: warn (the assignment goes ahead) or approve (held for a fleet manager).
     driver_attendance_exception: z.enum(EXCEPTION_POLICIES).optional(),
     trip_overrun_exception: z.enum(EXCEPTION_POLICIES).optional(),
+    // FMS-156: the driving distance limits and the job loads' weights.
+    daily_distance_km: whole(DISTANCE_LIMIT_RANGES.dailyKm).optional(),
+    weekly_distance_km: whole(DISTANCE_LIMIT_RANGES.weeklyKm).optional(),
+    distance_weight_light: weight.optional(),
+    distance_weight_standard: weight.optional(),
+    distance_weight_heavy: weight.optional(),
   })
   .transform(
     (b): ThresholdInput => ({
@@ -44,6 +57,11 @@ const thresholdsBody = z
       tripDelayUrgentMinutes: b.trip_delay_urgent_minutes,
       attendanceException: b.driver_attendance_exception,
       overrunException: b.trip_overrun_exception,
+      dailyDistanceKm: b.daily_distance_km,
+      weeklyDistanceKm: b.weekly_distance_km,
+      distanceWeightLight: b.distance_weight_light,
+      distanceWeightStandard: b.distance_weight_standard,
+      distanceWeightHeavy: b.distance_weight_heavy,
     }),
   );
 

@@ -763,3 +763,63 @@ describe('Predicted trip risk (FMS-155)', () => {
     expect(within(drivers()).queryByTestId('trip-risk')).not.toBeInTheDocument()
   })
 })
+
+describe('Driving distance limits (FMS-156)', () => {
+  const period = (p: 'day' | 'week', limit: number, without: number, withTrip: number) => ({ period: p, limit_km: limit, without_km: without, with_km: withTrip, left_km: limit - withTrip })
+
+  it('a driver past a limit is not free for the trip and says by how much; others show what is left, at 80% as a warning', async () => {
+    serve([trip()], {
+      drivers: [
+        driver({
+          state: 'unavailable',
+          availability: { availability: 'unavailable', reasons: [{ code: 'distance_limit', severity: 'block', period: 'day', limit_km: 500, total_km: 560 }] },
+          distance: { trip_km: 99, day: period('day', 500, 461, 560), week: period('week', 2500, 900, 999), over: period('day', 500, 461, 560), near: null },
+        }),
+        driver({
+          driver_id: 'd-3',
+          full_name: 'Tigist Alemu',
+          availability: { availability: 'available_with_warning', reasons: [{ code: 'distance_limit_near', severity: 'warning', period: 'day', limit_km: 500, total_km: 420 }] },
+          distance: { trip_km: 99, day: period('day', 500, 321, 420), week: period('week', 2500, 1500, 1599), over: null, near: period('day', 500, 321, 420) },
+        }),
+        driver({ driver_id: 'd-4', full_name: 'Yonas Bekele', distance: { trip_km: 99, day: period('day', 500, 221, 320), week: period('week', 2500, 1501, 1600), over: null, near: null } }),
+      ],
+    })
+    const user = userEvent.setup()
+    await openConsole()
+    await chooseTrip(user)
+
+    const over = await within(drivers()).findByRole('button', { name: 'Abebe Kebede, Not free then' })
+    expect(within(over).getByTestId('distance')).toHaveTextContent('Would drive 560 of 500 km today')
+    expect(within(over).getByTestId('distance')).toHaveClass('text-danger')
+    // The reason has its own line with the numbers: not said twice.
+    expect(within(over).queryByText(/Past the driving distance limit/)).not.toBeInTheDocument()
+    const near = within(drivers()).getByRole('button', { name: /Tigist Alemu/ })
+    expect(within(near).getByTestId('distance')).toHaveTextContent('80 km left today · 901 this week')
+    expect(within(near).getByTestId('distance')).toHaveClass('text-warning')
+    const fresh = within(drivers()).getByRole('button', { name: /Yonas Bekele/ })
+    expect(within(fresh).getByTestId('distance')).toHaveTextContent('180 km left today · 900 this week')
+    expect(within(fresh).getByTestId('distance')).toHaveClass('text-ink-muted')
+  })
+
+  it('409 CONFLICT_DRIVER_DISTANCE_LIMIT says the period, the limit and both totals inline', async () => {
+    const t = trip()
+    serve([t])
+    server.use(
+      http.post(`/api/v1/trips/${t.id}/assign`, () =>
+        errorEnvelope(409, 'CONFLICT_DRIVER_DISTANCE_LIMIT', "Would drive 2512.5 of 2500 km this week: the driver's weekly distance limit.", [
+          { field: 'driver_id', reason: 'distance_limit', period: 'week', limit_km: 2500, total_km: 2512.5, without_trip_km: 2413.5 },
+        ]),
+      ),
+    )
+    const user = userEvent.setup()
+    await openConsole()
+    await chooseTrip(user)
+    await user.click(await within(drivers()).findByRole('button', { name: 'Abebe Kebede, Available' }))
+    await user.click(within(vehicles()).getByRole('button', { name: 'AA 3-10001, Available' }))
+    await user.click(screen.getByRole('button', { name: 'Assign' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('The trip would take the driver past their driving distance limit. Choose another driver.')
+    expect(alert).toHaveTextContent('Would drive 2,512.5 of 2,500 km this week (2,413.5 km without this trip)')
+  })
+})

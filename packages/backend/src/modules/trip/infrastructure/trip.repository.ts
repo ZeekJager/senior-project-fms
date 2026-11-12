@@ -127,6 +127,22 @@ export interface TripWrite {
   cargo_kind?: CargoKind;
 }
 
+/** A trip as the distance limits count it (FMS-156). Internal ids. */
+export interface CountedTripRow {
+  id: string;
+  publicId: string;
+  driverId: string;
+  vehicleId: string | null;
+  status: TripStatus;
+  scheduledStart: Date;
+  scheduledEnd: Date | null;
+  plannedDistanceKm: number | null;
+  plannedDurationSeconds: number | null;
+  actualDistanceKm: number | null;
+  cargoWeightKg: number | null;
+  stopCount: number;
+}
+
 /** A completed trip whose distance may be measured (FMS-145). Internal ids. */
 export interface DistanceCandidate {
   id: string;
@@ -441,6 +457,32 @@ export class TripRepository extends Repository {
       [driverId, vehicleId, start, end, exceptIds],
     );
     return res.rows.map((r) => ({ ...r, id: String(r.id), driverId: r.driverId === null ? null : String(r.driverId), vehicleId: r.vehicleId === null ? null : String(r.vehicleId) }));
+  }
+
+  /**
+   * The drivers' trips that count against the distance limits (FMS-156): assigned, under way or completed, starting in
+   * [from, to), other than `exceptTripId`; with what their job load needs (stops, cargo, vehicle). Internal ids.
+   */
+  async countedTrips(db: Queryable, driverIds: readonly string[], from: Date, to: Date, exceptTripId: string | null): Promise<CountedTripRow[]> {
+    if (driverIds.length === 0) return [];
+    const res = await db.query<CountedTripRow>(
+      `SELECT t.id::text AS id, t.public_id AS "publicId", t.driver_id::text AS "driverId", t.vehicle_id::text AS "vehicleId", t.status,
+              t.scheduled_start AS "scheduledStart", t.scheduled_end AS "scheduledEnd",
+              t.planned_distance_km::float8 AS "plannedDistanceKm", t.planned_duration_seconds AS "plannedDurationSeconds",
+              t.actual_distance_km::float8 AS "actualDistanceKm", t.cargo_weight_kg::float8 AS "cargoWeightKg",
+              (SELECT count(*)::int FROM trip.trip_stops s WHERE s.trip_id = t.id) AS "stopCount"
+         FROM trip.trips t
+        WHERE t.driver_id = ANY($1::bigint[]) AND t.status IN ('assigned', 'en_route', 'completed')
+          AND t.scheduled_start >= $2 AND t.scheduled_start < $3 AND ($4::bigint IS NULL OR t.id <> $4)
+        ORDER BY t.scheduled_start, t.id`,
+      [driverIds, from, to, exceptTripId],
+    );
+    return res.rows;
+  }
+
+  /** Serialises the distance limit's check of one driver (FMS-156): two trips assigned to them at once are checked one after the other. */
+  async lockDriverDistance(client: PoolClient, driverId: string): Promise<void> {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('trip.driver-distance:' || $1::text, 0))`, [driverId]);
   }
 
   /** En-route trips of this driver or vehicle other than `exceptTripId`, for the overrun warning. */

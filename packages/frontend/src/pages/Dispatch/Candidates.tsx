@@ -1,8 +1,9 @@
 import { licenceText } from '@/lib/licence'
-import { Activity, CalendarClock, Check, Clock, FlaskConical, Truck, UserRound, Wrench } from 'lucide-react'
+import { Activity, CalendarClock, Check, Clock, FlaskConical, Gauge, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Badge, cn, Skeleton } from '@/components/ui'
 import { driverLook, formatTime, reasonText, VEHICLE_TYPE_LABELS, vehicleLook } from './format'
+import { distanceLine } from './distance'
 import { lateLine, safetyLine, tripRiskNote } from './tripRisk'
 import type { AvailabilityResult, BoardDriver, BoardTripRisk, BoardVehicle, DriverState, VehicleState } from './types'
 
@@ -111,7 +112,9 @@ export function DriverList({
       <ul className="space-y-1" aria-label="Drivers">
         {sortDrivers(drivers).map((d) => {
           const look = driverLook(d)
-          const reasons = reasonsLine(d.availability, ['driver_absent', 'driver_on_leave', 'driver_sick'])
+          // The distance limit (FMS-156) has its own line, with the numbers.
+          const reasons = reasonsLine(d.availability, ['driver_absent', 'driver_on_leave', 'driver_sick', 'distance_limit', 'distance_limit_near'])
+          const distance = distanceLine(d.distance)
           return (
             <Row
               key={d.driver_id}
@@ -126,6 +129,18 @@ export function DriverList({
                 <>
                   {d.current_trip && <Detail icon={<Clock />}>On a trip until {formatTime(d.current_trip.end)}</Detail>}
                   {reasons && <Detail>{reasons}</Detail>}
+                  {distance && (
+                    <span
+                      data-testid="distance"
+                      className={cn(
+                        'mt-1 flex items-center gap-1 text-xs [&_svg]:h-3.5 [&_svg]:w-3.5',
+                        distance.tone === 'danger' ? 'font-medium text-danger' : distance.tone === 'warning' ? 'font-medium text-warning' : 'text-ink-muted',
+                      )}
+                    >
+                      <Gauge aria-hidden="true" />
+                      <span className="tabular">{distance.text}</span>
+                    </span>
+                  )}
                   {d.trip_risk && (
                     <span className="mt-1 block text-xs text-ink-muted" data-testid="trip-risk">
                       <span className="flex items-start gap-1 [&_svg]:mt-px [&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:shrink-0">

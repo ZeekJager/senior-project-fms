@@ -14,6 +14,7 @@ import { EtaService } from './application/eta.service';
 import type { DelayMargins } from './domain/delay';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
 import { TripService, type ExceptionPolicyLookup, type PositionLookup } from './application/trip.service';
+import { DistanceLimitService, type DistanceLimitLookup } from './application/distance-limit.service';
 import { AssignmentExceptionRepository } from './infrastructure/assignment-exception.repository';
 import { userDirectory } from '../auth';
 import { LOCATION_UPDATED } from './domain/eta';
@@ -90,6 +91,16 @@ export function provideExceptionPolicies(lookup: ExceptionPolicyLookup | null): 
   exceptionPolicies = lookup;
 }
 
+let distanceLimits: DistanceLimitLookup | null = null;
+
+/**
+ * Connects each depot's driving distance limits (FMS-156), kept with the telemetry rules' thresholds by the integration
+ * module, which imports trip. Called once by src/modules/index.ts. Not connected, the fleet defaults apply.
+ */
+export function provideDistanceLimits(lookup: DistanceLimitLookup | null): void {
+  distanceLimits = lookup;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -116,8 +127,15 @@ const distanceService = new TripDistanceService({
   track: () => trackLookup,
   warn: (fields, message) => logger.warn(fields, message),
 });
+// The driving distance limits (FMS-156, docs/driving-distance-limits.md).
+const distanceLimitService = new DistanceLimitService({
+  trips: tripRepository,
+  payloads: (db, ids) => fleet().vehicles.payloadCapacities(db, ids),
+  limits: () => distanceLimits,
+});
 const tripService = new TripService({
   distance: distanceService,
+  distanceLimits: distanceLimitService,
   trips: tripRepository,
   routes: routeRepository,
   exceptions: new AssignmentExceptionRepository(pool),
@@ -205,6 +223,24 @@ export { TRIP_EVENTS, type TripSummary } from './domain/trip';
 export { TRIP_ETA_UPDATED } from './domain/eta';
 export { DEFAULT_DELAY_MARGINS, DELAY_MARGIN_LIMITS, TRIP_DELAYED, type DelayMargins } from './domain/delay';
 export { DEFAULT_EXCEPTION_POLICIES, EXCEPTION_POLICIES, type ExceptionPolicies, type ExceptionPolicy } from './domain/exception';
+// The driving distance limits (FMS-156): their defaults and ranges for the settings, the console's words for a refusal.
+export {
+  DEFAULT_DISTANCE_LIMITS,
+  DISTANCE_LIMIT_RANGES,
+  DISTANCE_WARNING_SHARE,
+  distanceLimitsProblem,
+  type DistanceLimits,
+  type DistanceStanding,
+  type PeriodStanding,
+} from './domain/distance-limit';
+
+/**
+ * For the dispatch console (FMS-156): where each driver (internal ids) stands against the distance limits on the trip
+ * being staffed (public id). Null when the trip is missing or has no start.
+ */
+export const tripDistanceLimits = {
+  forBoard: (db: Queryable, tripPublicId: string, driverIds: readonly string[]) => tripService.distanceBoard(db, tripPublicId, driverIds),
+};
 // The job load (FMS-153), pure: the trip risk model (FMS-155) works out the load of each trip in a driver's record.
 export { JOB_LOAD_LEVELS, jobLoad, nightHours, type JobLoadInput, type JobLoadLevel } from './domain/job-load';
 

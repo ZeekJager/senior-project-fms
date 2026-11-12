@@ -30,6 +30,8 @@ Code: `integration/domain/telemetry-rules.ts` (the rules, pure), `integration/ap
 | `route_deviation_m`, `route_deviation_pings` | 500, 3 | 100-5000, 1-20: route deviation's, FMS-90 ([geofences.md](geofences.md)) |
 | `trip_delay_minutes`, `trip_delay_urgent_minutes` | 15, 60 | 5-240, 10-720, the second above the first: the trip delay alert's, FMS-147 ([eta.md](eta.md#the-trip-delay-alert-fms-147)) |
 | `driver_attendance_exception`, `trip_overrun_exception` | `warn`, `warn` | `warn` or `approve`: whether the assignment warnings hold an assignment for a fleet manager, FMS-151 ([assignment-exceptions.md](assignment-exceptions.md)) |
+| `daily_distance_km`, `weekly_distance_km` | 500, 2500 | 50-2000, 100-10000, the second at least the first: the driving distance limits, FMS-156 ([driving-distance-limits.md](driving-distance-limits.md)) |
+| `distance_weight_light`, `_standard`, `_heavy` | 0.80, 1.00, 1.50 | 0.50-3.00 each, light ≤ standard ≤ heavy: what a km of each job load counts for, FMS-156 |
 
 A depot's row replaces the whole fleet row for its vehicles. An administrator changes them on the Settings screen (S-27) or with `PUT /settings/telemetry-rules/fleet` and `/depots/{depot_id}` (FMS-80, [settings.md](settings.md)), audited. Each instance re-reads thresholds at most every 30 seconds per depot (`THRESHOLDS_TTL_MS`), and the instance that saved a change at once, so a change takes effect within a minute. By SQL, as the admin role, a change is not audited and waits for the cache:
 

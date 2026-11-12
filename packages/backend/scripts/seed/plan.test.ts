@@ -169,6 +169,16 @@ describe('buildPlan', () => {
     expect([left('WPR-BLD-24'), left('LMP-HDL-H4')]).toEqual([3, 0]);
   });
 
+  test('every completed trip, and its fill-up, is over before the anchor day: nothing is dated after the seed runs', () => {
+    for (const anchor of ['2026-11-13', '2026-03-02']) {
+      const plan = buildPlan('budget', 7, anchor);
+      const midnight = anchorMidnight(anchor);
+      const late = plan.trips.filter((t) => t.status === 'completed' && Date.parse(t.actual_end!) > midnight);
+      expect(late.map((t) => t.actual_end)).toEqual([]);
+      expect(plan.fuelLogs.filter((f) => Date.parse(f.recorded_at) > midnight).map((f) => f.recorded_at)).toEqual([]);
+    }
+  });
+
   test('nothing the API would refuse: hire dates and attendance not after the anchor', () => {
     expect(budget.drivers.every((d) => d.hire_date <= ANCHOR)).toBe(true);
     expect(budget.attendance.every((a) => a.date <= ANCHOR)).toBe(true);

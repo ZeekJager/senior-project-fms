@@ -39,6 +39,8 @@ import {
 import type { RequestUser } from '../../../types/express';
 import type { StopRow, TripRepository, TripRow, TripVisibility, TripWrite } from '../infrastructure/trip.repository';
 import { distanceWrite, type TripDistanceService } from './distance.service';
+import type { DistanceLimitService, DistanceTrip } from './distance-limit.service';
+import type { DistanceStanding } from '../domain/distance-limit';
 import { readAvailability, type AvailabilityRefusal } from '../domain/assignment';
 import {
   DEFAULT_EXCEPTION_POLICIES,
@@ -209,6 +211,8 @@ export interface TripServiceDeps {
   distance?: Pick<TripDistanceService, 'measure'>;
   /** One-off routes for unplanned trips (FMS-139). */
   routes: Pick<RouteRepository, 'insert'>;
+  /** The driving distance limits (FMS-156). Absent (unit tests): not checked. */
+  distanceLimits?: Pick<DistanceLimitService, 'enforce' | 'standings'>;
   /** Assignments held for approval (FMS-151). Absent (unit tests): none. */
   exceptions?: ExceptionStore;
   /** Each depot's exception policies (FMS-151), connected by src/modules/index.ts; not connected, every warning only warns. */
@@ -420,6 +424,10 @@ export class TripService {
         await trips.update(ctx, s.id, { scheduled_start: s.start, scheduled_end: s.end }, client);
       }
       if (Object.keys(data).length > 0) await trips.update(ctx, row.id, data, client);
+      // FMS-156: new times or a new load re-check the distance limits of each assigned trip that changed, as saved.
+      if (patch.status !== 'cancelled' && (rescheduled.length > 0 || recargoed.length > 0)) {
+        await this.recheckDistance(client, [row.id, ...shifted.map((s) => s.id)], row.publicId);
+      }
       // A cancelled trip's request waiting for approval (FMS-151) is withdrawn.
       if (patch.status === 'cancelled') await this.withdrawPending(client, caller, row.id);
       const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
@@ -518,7 +526,9 @@ export class TripService {
    * - the driver is in scope and eligible for this vehicle on the trip's start
    *   (409 CONFLICT_DRIVER_NOT_ELIGIBLE with every reason);
    * - BR-1 and BR-3: neither is on another assigned or en-route trip that
-   *   overlaps, touching ends included (409 naming that trip).
+   *   overlaps, touching ends included (409 naming that trip);
+   * - FMS-156: the trip does not take the driver past their daily or weekly
+   *   load-weighted distance limit (409 CONFLICT_DRIVER_DISTANCE_LIMIT).
    *
    * The trip row is locked first, so two assignments of one trip run one after
    * the other and the second sees the new version. Two trips claiming one
@@ -710,6 +720,11 @@ export class TripService {
     if (driverClash) throw driverOverlap(driverClash);
     const vehicleClash = await trips.overlapping(client, 'vehicle_id', vehicle.id, start, end, row.id);
     if (vehicleClash) throw vehicleOverlap(vehicleClash);
+
+    // FMS-156: the daily and weekly distance limits, with the vehicle being assigned. A safety rule: never held for approval.
+    if (this.deps.distanceLimits) {
+      await this.deps.distanceLimits.enforce(client, await this.distanceTrip(client, row, vehicle.payloadCapacityKg), driver.id);
+    }
 
     const warnings: AssignmentWarning[] = [
       ...availability.warnings,
@@ -984,6 +999,57 @@ export class TripService {
 
   private now(): Date {
     return (this.deps.now ?? (() => new Date()))();
+  }
+
+  /** The trip as the distance limits take it (FMS-156): its stops, and the payload of the vehicle it is driven with. */
+  private async distanceTrip(db: Queryable, row: TripRow, payloadCapacityKg?: number | null): Promise<DistanceTrip> {
+    const payload =
+      payloadCapacityKg !== undefined
+        ? payloadCapacityKg
+        : row.vehicleId
+          ? ((await this.deps.fleet().vehicles.payloadCapacities(db, [row.vehicleId])).get(row.vehicleId) ?? null)
+          : null;
+    return {
+      id: row.id,
+      publicId: row.publicId,
+      depotId: row.depotId,
+      status: row.status,
+      scheduledStart: row.scheduledStart!,
+      scheduledEnd: row.scheduledEnd,
+      plannedDistanceKm: row.plannedDistanceKm,
+      plannedDurationSeconds: row.plannedDurationSeconds,
+      actualDistanceKm: row.actualDistanceKm,
+      cargoWeightKg: row.cargoWeightKg,
+      stopCount: (await this.deps.trips.stops(db, [row.id])).length,
+      payloadCapacityKg: payload,
+    };
+  }
+
+  /**
+   * FMS-156 after a time or cargo change (FMS-139, FMS-153): each of `tripIds` still assigned (never one under way: the
+   * rule only decides assignments) is checked as saved, its driver's in order of their ids. `changed` is the trip the
+   * dispatcher changed: a moved trip that goes over is named in the 409.
+   */
+  private async recheckDistance(client: PoolClient, tripIds: readonly string[], changed: string): Promise<void> {
+    const limits = this.deps.distanceLimits;
+    if (!limits) return;
+    const rows: TripRow[] = [];
+    for (const id of tripIds) rows.push(await this.deps.trips.findById(client, id));
+    const assigned = rows.filter((r) => r.status === 'assigned' && r.driverId !== null && r.scheduledStart !== null);
+    assigned.sort((a, b) => (BigInt(a.driverId!) < BigInt(b.driverId!) ? -1 : BigInt(a.driverId!) > BigInt(b.driverId!) ? 1 : 0));
+    for (const r of assigned) await limits.enforce(client, await this.distanceTrip(client, r), r.driverId!, r.publicId === changed ? undefined : r.publicId);
+  }
+
+  /**
+   * For the dispatch console (FMS-156): where each driver (internal ids) stands on the trip being staffed, with its own
+   * vehicle's payload if it has one. Null when the trip is missing, unscheduled, or the rule is not connected.
+   */
+  async distanceBoard(db: Queryable, tripPublicId: string, driverIds: readonly string[]): Promise<Map<string, DistanceStanding> | null> {
+    const limits = this.deps.distanceLimits;
+    if (!limits || driverIds.length === 0) return null;
+    const row = await this.deps.trips.findVisible(db, tripPublicId, { kind: 'all' });
+    if (!row || !row.scheduledStart) return null;
+    return limits.standings(db, await this.distanceTrip(db, row), driverIds);
   }
 
   /** The error for an availability refusal; BR-2 names the open maintenance record behind the flag. */
