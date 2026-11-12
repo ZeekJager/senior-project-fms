@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api/errors'
 import { useTrip } from './api'
 import { formatDay, formatTime, formatWindow, reasonText, tripEnds, tripTitle, VEHICLE_TYPE_LABELS } from './format'
 import { AskApproval, AwaitingApproval, RefusedNote } from './ExceptionPanel'
+import { JobLoadDetails } from './JobLoad'
 import { TripArrival } from './TripArrival'
 import type { AssignmentWarning, BoardDriver, BoardVehicle, OpenWork, Trip } from './types'
 
@@ -22,6 +23,8 @@ interface AssignmentPanelProps {
   onAssign: (reason?: string) => void
   /** Given when the user may move the trip's times (trip:write, FMS-139). */
   onChangeTimes?: () => void
+  /** Given when the user may change what the trip carries (trip:write, FMS-153). */
+  onChangeCargo?: () => void
   /** FMS-151: the viewer may approve or refuse held assignments (assignment-exception:approve). */
   canApprove?: boolean
   /** The viewer's public id: nobody decides on their own request. */
@@ -36,7 +39,7 @@ interface AssignmentPanelProps {
  * API's answer. Refusals (BR-1, BR-2, BR-3, eligibility) stay here, inline,
  * with what they are about: never a toast that disappears (FMS-33).
  */
-export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, onAssign, onChangeTimes, canApprove = false, viewerId, driverName, plate }: AssignmentPanelProps) {
+export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, onAssign, onChangeTimes, onChangeCargo, canApprove = false, viewerId, driverName, plate }: AssignmentPanelProps) {
   const sameAsNow = trip.status === 'assigned' && driver?.driver_id === trip.driver_id && vehicle?.vehicle_id === trip.vehicle_id
   const licenceGap = driver && vehicle && !driver.vehicle_types.includes(vehicle.vehicle_type)
   // FMS-151: an assignment held for approval, or the last one refused.
@@ -54,6 +57,7 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
         </div>
         <TripWindow trip={trip} onChangeTimes={onChangeTimes} />
       </div>
+      <JobLoadDetails trip={trip} onChangeCargo={onChangeCargo} />
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         <Slot icon={<UserRound />} label="Driver" value={driver?.full_name} hint={driver ? (driver.license_categories.length ? `Licence ${driver.license_categories.join(', ')}` : 'No licence class on file') : 'Choose from the list'} />
@@ -161,6 +165,8 @@ export function UnderWayPanel({ trip, driverName, plate, onChangeTimes }: UnderW
         </div>
         <TripWindow trip={trip} onChangeTimes={onChangeTimes} label="Change end" />
       </div>
+      {/* Under way: the cargo is fixed (FMS-153). */}
+      <JobLoadDetails trip={trip} />
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         <Slot icon={<UserRound />} label="Driver" value={driverName} hint={trip.actual_start ? `Started ${formatDay(trip.actual_start)} at ${formatTime(trip.actual_start)}` : 'Started'} />
         <Slot icon={<Truck />} label="Vehicle" value={plate} hint="On this trip until it ends" />

@@ -616,3 +616,111 @@ describe('Arrival times (FMS-86)', () => {
     })
   })
 })
+
+describe('The load of a job on each trip (FMS-153)', () => {
+  const heavy = trip({
+    id: 'a0000000-0000-4000-8000-000000000009',
+    route_name: 'Addis Ababa - Dire Dawa',
+    cargo_weight_kg: 7600,
+    cargo_kind: 'refrigerated',
+    job_load: 'heavy',
+    job_load_reasons: ['long_haul', 'near_payload', 'night'],
+  })
+
+  it('each trip shows its job load; the panel says why, and what it carries', async () => {
+    serve([trip({ job_load: 'light', job_load_reasons: [], cargo_kind: 'general', cargo_weight_kg: null }), heavy])
+    const user = userEvent.setup()
+    await openConsole()
+
+    const list = await trips()
+    expect(within(list).getByRole('button', { name: /Addis Ababa - Adama/ })).toHaveTextContent('Light job')
+    expect(within(list).getByRole('button', { name: /Addis Ababa - Dire Dawa/ })).toHaveTextContent('Heavy job')
+
+    await chooseTrip(user, /Addis Ababa - Dire Dawa/)
+    const load = within(screen.getByRole('region', { name: 'Assignment panel' })).getByRole('group', { name: 'Job load' })
+    expect(load).toHaveTextContent('Heavy job')
+    expect(load).toHaveTextContent('Long haul, 300 km or more · Near the vehicle’s payload · Night driving')
+    expect(load).toHaveTextContent('Cargo: 7,600 kg · Refrigerated')
+
+    await chooseTrip(user)
+    expect(within(screen.getByRole('region', { name: 'Assignment panel' })).getByRole('group', { name: 'Job load' })).toHaveTextContent('No cargo recorded')
+  })
+
+  it('a new trip records its cargo; a weight that is not kg is caught before sending', async () => {
+    serve([trip()])
+    const sent: unknown[] = []
+    server.use(
+      http.get('/api/v1/routes', () =>
+        envelope([{ id: 'b0000000-0000-4000-8000-000000000001', name: 'Addis Ababa - Bishoftu', depot_id: DEPOT, origin_name: 'Addis Ababa', origin: null, destination_name: 'Bishoftu', destination: null, stops: [], distance_km: 47, estimated_duration_seconds: 5400, is_active: true, version: 0, updated_at: '2026-10-01T00:00:00Z' }]),
+      ),
+      http.post('/api/v1/trips', async ({ request }) => {
+        sent.push(await request.json())
+        return envelope(trip({ id: 'a0000000-0000-4000-8000-000000000005' }))
+      }),
+    )
+    const user = userEvent.setup()
+    await openConsole()
+    await user.click(await screen.findByRole('button', { name: 'New trip' }))
+    const drawer = await screen.findByRole('dialog', { name: 'New trip' })
+    await within(drawer).findByRole('option', { name: 'Addis Ababa - Bishoftu' })
+    await user.selectOptions(within(drawer).getByRole('combobox', { name: 'Route' }), 'b0000000-0000-4000-8000-000000000001')
+    fireEvent.change(within(drawer).getByLabelText('Leaves'), { target: { value: '2026-11-03T10:00' } })
+    await user.selectOptions(within(drawer).getByRole('combobox', { name: 'Cargo' }), 'fragile')
+    await user.type(within(drawer).getByLabelText('Weight (optional)'), 'two tonnes')
+    await user.click(within(drawer).getByRole('button', { name: 'Create trip' }))
+    expect(await within(drawer).findByText('A weight in kg, e.g. 1200 or 1200.5.')).toBeInTheDocument()
+    expect(sent).toEqual([])
+
+    await user.clear(within(drawer).getByLabelText('Weight (optional)'))
+    await user.type(within(drawer).getByLabelText('Weight (optional)'), '1,850.5')
+    await user.click(within(drawer).getByRole('button', { name: 'Create trip' }))
+    await waitFor(() =>
+      expect(sent).toEqual([{ route_id: 'b0000000-0000-4000-8000-000000000001', scheduled_start: '2026-11-03T07:00:00.000Z', cargo_kind: 'fragile', cargo_weight_kg: 1850.5 }]),
+    )
+  })
+
+  it('Change cargo sends only what changed with the version on screen; more than the vehicle carries is shown on the weight', async () => {
+    const assigned = trip({ ...heavy, status: 'assigned', driver_id: 'd-1', vehicle_id: 'v-1', version: 4 })
+    serve([assigned])
+    const patches: { body: unknown; ifMatch: string | null }[] = []
+    server.use(
+      http.patch(`/api/v1/trips/${assigned.id}`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push({ body, ifMatch: request.headers.get('If-Match') })
+        if (body.cargo_weight_kg === 9000) {
+          return errorEnvelope(400, 'VALIDATION_FAILED', 'The cargo is more than the trip’s vehicle carries (8000 kg).', [{ field: 'cargo_weight_kg', reason: 'over_payload' }])
+        }
+        return envelope({ ...assigned, ...body, version: 5 })
+      }),
+    )
+    const user = userEvent.setup()
+    await openConsole()
+    await user.click(await screen.findByRole('button', { name: /^Assigned/ }))
+    await chooseTrip(user, /Addis Ababa - Dire Dawa/)
+    await user.click(screen.getByRole('button', { name: 'Change cargo' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Change cargo' })
+    expect(within(drawer).getByLabelText('Weight (optional)')).toHaveValue('7600')
+
+    await user.clear(within(drawer).getByLabelText('Weight (optional)'))
+    await user.type(within(drawer).getByLabelText('Weight (optional)'), '9000')
+    await user.click(within(drawer).getByRole('button', { name: 'Save cargo' }))
+    expect(await within(drawer).findByText('The cargo is more than the trip’s vehicle carries (8000 kg).')).toBeInTheDocument()
+
+    await user.clear(within(drawer).getByLabelText('Weight (optional)'))
+    await user.type(within(drawer).getByLabelText('Weight (optional)'), '7000')
+    await user.selectOptions(within(drawer).getByRole('combobox', { name: 'Cargo' }), 'general')
+    await user.click(within(drawer).getByRole('button', { name: 'Save cargo' }))
+    await waitFor(() => expect(patches.at(-1)).toEqual({ body: { cargo_kind: 'general', cargo_weight_kg: 7000 }, ifMatch: '"4"' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Cargo changed')
+  })
+
+  it('a dispatcher without trip:write sees the load but cannot change the cargo', async () => {
+    serve([heavy])
+    signedInAs(currentUser(['dispatcher'], ['trip:assign', 'trip:read', 'depot:read']))
+    renderApp('/dispatch')
+    const user = userEvent.setup()
+    await chooseTrip(user, /Addis Ababa - Dire Dawa/)
+    expect(within(screen.getByRole('region', { name: 'Assignment panel' })).getByRole('group', { name: 'Job load' })).toHaveTextContent('Heavy job')
+    expect(screen.queryByRole('button', { name: 'Change cargo' })).not.toBeInTheDocument()
+  })
+})

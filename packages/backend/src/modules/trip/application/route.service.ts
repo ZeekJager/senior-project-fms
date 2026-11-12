@@ -83,7 +83,13 @@ export interface FleetRefs {
     idOf(db: Queryable, publicId: string): Promise<string | null>;
     publicIds(db: Queryable, ids: readonly string[]): Promise<Map<string, string>>;
     /** For assignment: a vehicle in the scope with its state, share-locked. */
-    forAssignment(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean } | null>;
+    forAssignment(
+      db: Queryable,
+      publicId: string,
+      scope: Scope,
+    ): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean; payloadCapacityKg: number | null } | null>;
+    /** Payload capacities in kg by internal id, for the job load (FMS-153); null where none is recorded. */
+    payloadCapacities(db: Queryable, ids: readonly string[]): Promise<Map<string, number | null>>;
   };
   drivers: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;

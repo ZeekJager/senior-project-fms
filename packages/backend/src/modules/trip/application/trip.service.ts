@@ -53,6 +53,7 @@ import {
   type ExceptionPolicies,
 } from '../domain/exception';
 import type { AssignmentExceptionRepository, ExceptionRow } from '../infrastructure/assignment-exception.repository';
+import { cargoFixed, jobLoad, overPayload, type CargoKind } from '../domain/job-load';
 import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleRequired, type CommandStatus } from '../domain/lifecycle';
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
 import type { Coordinates, RouteStop } from '../domain/route';
@@ -101,6 +102,9 @@ export interface TripCreate {
   scheduled_start: Date;
   /** Default: the start plus the route's estimated time; required when the route has none. */
   scheduled_end?: Date;
+  /** What it carries (FMS-153): optional; `general` when not given. */
+  cargo_weight_kg?: number | null;
+  cargo_kind?: CargoKind;
 }
 
 /** PATCH: reschedule, or cancel with status "cancelled". Driver and vehicle are set by assignment (FMS-31). */
@@ -112,6 +116,9 @@ export interface TripUpdate {
   reason?: string;
   /** Move the trips this change runs into later instead of refusing it (FMS-139). */
   shift_following?: boolean;
+  /** The cargo (FMS-153), before the trip starts; null clears the weight. Never above the assigned vehicle's payload. */
+  cargo_weight_kg?: number | null;
+  cargo_kind?: CargoKind;
 }
 
 /** A trip moved later because a change ran into it (FMS-139). */
@@ -339,6 +346,9 @@ export class TripService {
           planned_duration_seconds: route.estimatedDurationSeconds,
           scheduled_start: input.scheduled_start,
           scheduled_end: end,
+          // No vehicle yet: the payload is checked when one is assigned.
+          cargo_weight_kg: input.cargo_weight_kg ?? null,
+          cargo_kind: input.cargo_kind ?? 'general',
         },
         client,
       );
@@ -373,6 +383,9 @@ export class TripService {
       if (!row) throw tripNotFound();
       if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
       if (row.status === 'en_route' && patch.status === 'cancelled') throw cannotCancelEnRoute();
+      // The cargo (FMS-153) is set before the trip starts.
+      const recargo = patch.cargo_weight_kg !== undefined || patch.cargo_kind !== undefined;
+      if (recargo && !OPEN_STATUSES.includes(row.status)) throw cargoFixed(row.status);
       const retiming = patch.scheduled_start !== undefined || patch.scheduled_end !== undefined;
       if (!(retiming && patch.status === undefined ? RESCHEDULABLE_STATUSES : OPEN_STATUSES).includes(row.status)) throw tripClosed(row.status);
       if (row.status === 'en_route' && patch.scheduled_start && patch.scheduled_start.getTime() !== row.scheduledStart?.getTime()) throw startFixed();
@@ -389,6 +402,14 @@ export class TripService {
       const staffed = STAFFED_STATUSES.includes(row.status);
       const reason = patch.reason?.trim() || null;
       if (rescheduled.length > 0 && staffed && !reason) throw reasonRequired();
+      if (patch.cargo_kind !== undefined && patch.cargo_kind !== row.cargoKind) data.cargo_kind = patch.cargo_kind;
+      if (patch.cargo_weight_kg !== undefined && patch.cargo_weight_kg !== row.cargoWeightKg) data.cargo_weight_kg = patch.cargo_weight_kg;
+      const recargoed = (['cargo_kind', 'cargo_weight_kg'] as const).filter((f) => f in data);
+      // Never more than the assigned vehicle carries, when its payload is recorded.
+      if (data.cargo_weight_kg != null && row.vehicleId) {
+        const capacity = (await this.deps.fleet().vehicles.payloadCapacities(client, [row.vehicleId])).get(row.vehicleId) ?? null;
+        if (capacity !== null && data.cargo_weight_kg > capacity) throw overPayload('cargo_weight_kg', data.cargo_weight_kg, capacity);
+      }
       if (patch.status === 'cancelled') data.status = 'cancelled';
       else if (row.status === 'draft' && start && end) data.status = 'scheduled';
 
@@ -404,8 +425,9 @@ export class TripService {
       const view = (await this.views(client, [await trips.findById(client, row.id)]))[0];
 
       const events: DomainEvent[] = [];
-      if (rescheduled.length > 0) {
-        events.push(tripEvent(caller, TRIP_EVENTS.updated, { trip_id: view.id, changed_fields: rescheduled, status: view.status, ...(reason ? { reason } : {}) }));
+      if (rescheduled.length > 0 || recargoed.length > 0) {
+        const changed = [...rescheduled, ...recargoed].sort();
+        events.push(tripEvent(caller, TRIP_EVENTS.updated, { trip_id: view.id, changed_fields: changed, status: view.status, ...(reason ? { reason } : {}) }));
       }
       for (const s of shifted) {
         events.push(
@@ -661,6 +683,10 @@ export class TripService {
     // Share-locked: a maintenance flag, status change or retirement cannot land mid-assignment.
     const vehicle = await fleet.vehicles.forAssignment(client, vehiclePublicId, scope);
     if (!vehicle) throw assignmentRefNotFound('vehicle_id');
+    // FMS-153: never more cargo than the vehicle carries. A safety rule: never held for approval (FMS-151).
+    if (row.cargoWeightKg !== null && vehicle.payloadCapacityKg !== null && row.cargoWeightKg > vehicle.payloadCapacityKg) {
+      throw overPayload('vehicle_id', row.cargoWeightKg, vehicle.payloadCapacityKg);
+    }
     const driver = await fleet.drivers.forAssignment(client, driverPublicId, scope);
     if (!driver) throw assignmentRefNotFound('driver_id');
 
@@ -1044,10 +1070,21 @@ export class TripService {
     const open = rows.filter((r) => r.status === 'scheduled' || r.status === 'assigned').map((r) => r.id);
     const latest = (await this.exceptions.latestByTrips(db, open)).filter((e) => e.status === 'pending' || e.status === 'refused');
     const exceptions = new Map((await this.exceptionViews(db, latest)).map((v, i) => [String(latest[i].tripId), v]));
+    // The job load (FMS-153) needs the vehicles' payloads, only for trips that carry something.
+    const payloads = await fleet.vehicles.payloadCapacities(db, ids((r) => (r.cargoWeightKg !== null ? r.vehicleId : null)));
     return rows.map((r) => {
       const own = stops.filter((s) => s.tripId === r.id);
       const eta = r.status === 'en_route' ? etas.get(String(r.id)) : undefined;
       const next = own.find((s) => s.eta !== null);
+      const load = jobLoad({
+        plannedDistanceKm: r.plannedDistanceKm,
+        plannedDurationSeconds: r.plannedDurationSeconds,
+        scheduledStart: r.scheduledStart,
+        scheduledEnd: r.scheduledEnd,
+        stopCount: own.length,
+        cargoWeightKg: r.cargoWeightKg,
+        payloadCapacityKg: r.vehicleId ? (payloads.get(String(r.vehicleId)) ?? null) : null,
+      });
       return {
       id: r.publicId,
       route_id: r.routePublicId,
@@ -1066,6 +1103,10 @@ export class TripService {
       actual_end: r.actualEnd,
       actual_distance_km: r.actualDistanceKm,
       actual_distance_source: r.actualDistanceSource,
+      cargo_weight_kg: r.cargoWeightKg,
+      cargo_kind: r.cargoKind,
+      job_load: load.level,
+      job_load_reasons: load.reasons,
       stops: own.map((s) => stopView(s, !!eta)),
       eta: eta
         ? {

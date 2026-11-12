@@ -14,7 +14,7 @@ const QUERIES: Record<string, string> = {
                  array(SELECT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id WHERE ur.user_id = u.id ORDER BY r.name) AS roles
             FROM auth.users u LEFT JOIN fleet.depots d ON d.id = u.depot_id ORDER BY u.email`,
   vehicles: `SELECT v.registration_number, v.vin, v.make, v.model, v.model_year, v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km,
-                    v.odometer_km, v.status, v.maintenance_flag, v.created_at, d.code AS depot
+                    v.odometer_km, v.payload_capacity_kg, v.status, v.maintenance_flag, v.created_at, d.code AS depot
                FROM fleet.vehicles v JOIN fleet.depots d ON d.id = v.depot_id ORDER BY v.registration_number`,
   drivers: `SELECT privacy.decrypt_text(dr.license_number), dr.license_categories, dr.license_expiry::text, dr.hire_date::text, privacy.decrypt_text(dr.emergency_phone), u.email
               FROM fleet.drivers dr JOIN auth.users u ON u.id = dr.user_id ORDER BY privacy.decrypt_text(dr.license_number)`,
@@ -42,7 +42,8 @@ const QUERIES: Record<string, string> = {
   routes: `SELECT r.name, d.code AS depot, r.distance_km, r.estimated_duration_seconds, r.distance_source, r.measured_at, md5(r.geometry::text) AS road FROM trip.routes r
              JOIN fleet.depots d ON d.id = r.depot_id ORDER BY d.code, r.name`,
   trips: `SELECT r.name AS route, v.registration_number, privacy.decrypt_text(dr.license_number), t.status, t.scheduled_start, t.scheduled_end,
-                 t.actual_start, t.actual_end, t.planned_distance_km, t.actual_distance_km, t.actual_duration_seconds
+                 t.actual_start, t.actual_end, t.planned_distance_km, t.actual_distance_km, t.actual_duration_seconds,
+                 t.cargo_weight_kg, t.cargo_kind
             FROM trip.trips t JOIN trip.routes r ON r.id = t.route_id
             LEFT JOIN fleet.vehicles v ON v.id = t.vehicle_id LEFT JOIN fleet.drivers dr ON dr.id = t.driver_id
            ORDER BY t.scheduled_start NULLS LAST, r.name, t.status, v.registration_number NULLS LAST, privacy.decrypt_text(dr.license_number) NULLS LAST`,

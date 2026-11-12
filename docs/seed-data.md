@@ -40,7 +40,7 @@ Counts that depend on the random draws are given for the default seed (20261007)
 | Vehicles (12.5% / 8% electric), registered 4 to 6 years before the anchor (or new, when younger) | 24 | 200 |
 | Drivers (each with an account) | 30 | 300 |
 | Routes | 9 | 48 |
-| Trips: draft, scheduled, assigned, en route, completed, cancelled | 80 | 1,000 |
+| Trips: draft, scheduled, assigned, en route, completed, cancelled; with cargo (FMS-153, [job-load.md](job-load.md#seed)): buses passengers, trucks and vans goods, some near their payload, so every job load is there | 80 | 1,000 |
 | Fuel logs: one after each completed trip of a combustion vehicle, about 3% suspiciously high | 40 (27–43) | 526 (455–526) |
 | Maintenance records: mostly completed, some open or scheduled, with parts used | 20 | 150 |
 | GPS pings: a track for every completed trip, one every five minutes (below) | 6,184 | 70,800 |

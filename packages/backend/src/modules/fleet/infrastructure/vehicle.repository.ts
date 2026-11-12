@@ -67,6 +67,7 @@ export interface VehicleWrite {
   fuel_type?: string;
   fuel_efficiency_ml_per_km?: number | null;
   tank_capacity_ml?: number | null;
+  payload_capacity_kg?: number | null;
   odometer_km?: number;
 }
 
@@ -121,7 +122,8 @@ type VehicleRow = Omit<VehicleView, 'current_trip'> & { internal_id: string };
 
 const VIEW_SQL = `
   SELECT v.id AS internal_id, v.public_id AS id, v.registration_number, v.vin, v.make, v.model, v.model_year AS year,
-         v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.tank_capacity_ml, v.status, v.maintenance_flag,
+         v.vehicle_type, v.fuel_type, v.fuel_efficiency_ml_per_km, v.tank_capacity_ml,
+         v.payload_capacity_kg::float8 AS payload_capacity_kg, v.status, v.maintenance_flag,
          v.health_score, v.health_score_updated_at, d.public_id AS depot_id, v.odometer_km::float8 AS odometer_km,
          v.version, v.created_at, v.updated_at,
          -- The photo's URL (docs/photos.md), versioned by when it changed, as photoUrl() builds it.
@@ -357,14 +359,25 @@ export class VehicleRepository extends Repository {
     db: Queryable,
     publicId: string,
     scope: Scope,
-  ): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean } | null> {
+  ): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean; payloadCapacityKg: number | null } | null> {
     const clause = scopeClause(scope, 'v.depot_id', 2);
-    const res = await db.query<{ id: string; publicId: string; status: string; maintenanceFlag: boolean }>(
-      `SELECT v.id, v.public_id AS "publicId", v.status, v.maintenance_flag AS "maintenanceFlag"
+    const res = await db.query<{ id: string; publicId: string; status: string; maintenanceFlag: boolean; payloadCapacityKg: number | null }>(
+      `SELECT v.id, v.public_id AS "publicId", v.status, v.maintenance_flag AS "maintenanceFlag",
+              v.payload_capacity_kg::float8 AS "payloadCapacityKg"
          FROM fleet.vehicles v WHERE v.public_id = $1 AND ${clause.sql} FOR SHARE`,
       [publicId, ...clause.params],
     );
     return res.rows[0] ?? null;
+  }
+
+  /** Payload capacities in kg by internal id (FMS-153, the trip's job load); null where none is recorded. */
+  async payloadCapacities(db: Queryable, ids: readonly string[]): Promise<Map<string, number | null>> {
+    if (ids.length === 0) return new Map();
+    const res = await db.query<{ id: string; kg: number | null }>(
+      'SELECT id::text AS id, payload_capacity_kg::float8 AS kg FROM fleet.vehicles WHERE id = ANY($1::bigint[])',
+      [ids],
+    );
+    return new Map(res.rows.map((r) => [r.id, r.kg]));
   }
 
   /**

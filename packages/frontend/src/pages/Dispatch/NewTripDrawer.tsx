@@ -4,8 +4,10 @@ import { Button, cn, Drawer, SelectField, TextField, useToast } from '@/componen
 import { ApiError } from '@/lib/api/errors'
 import { parseCoordinates } from '@/pages/Routes/routeForm'
 import { useCreateTrip, useDepotRoutes, type NewTrip } from './api'
+import { parseCargoWeight } from './cargo'
+import { CargoFields } from './CargoDrawer'
 import { formatDuration, formatTime, fromAddisInput, nextQuarterHour, toAddisInput, tripTitle } from './format'
-import type { Trip } from './types'
+import type { CargoKind, Trip } from './types'
 
 type Mode = 'route' | 'adhoc'
 
@@ -18,9 +20,12 @@ interface Values {
   destination: string
   start: string
   end: string
+  /** What it carries (FMS-153): the kind, and the weight in kg as typed (blank: not recorded). */
+  cargo_kind: CargoKind
+  cargo_weight: string
 }
 
-type Field = Exclude<keyof Values, 'mode'>
+type Field = Exclude<keyof Values, 'mode' | 'cargo_kind'>
 type Errors = Partial<Record<Field, string>>
 
 interface NewTripDrawerProps {
@@ -43,6 +48,7 @@ function formField(field: string | undefined): Field | null {
   if (!field) return null
   if (field === 'scheduled_start') return 'start'
   if (field === 'scheduled_end') return 'end'
+  if (field === 'cargo_weight_kg') return 'cargo_weight'
   const name = field.replace(/^route\./, '').replace(/\.(latitude|longitude)$/, '')
   return (['route_id', 'origin_name', 'origin', 'destination_name', 'destination'] as const).find((f) => f === name) ?? null
 }
@@ -86,11 +92,18 @@ export function NewTripDrawer({ open, onClose, depot, onCreated }: NewTripDrawer
     if (values.end && !end) found.end = 'Give a date and a time.'
     else if (end && start && end <= start) found.end = 'The end must be after the start.'
     else if (!values.end && estimate === null) found.end = values.mode === 'adhoc' ? 'Give an end time: a one-off trip has no estimate.' : 'Give an end time: the route has no estimated time.'
+    const weight = parseCargoWeight(values.cargo_weight)
+    if (!weight.ok) found.cargo_weight = weight.error
+    // Only what was given: a trip with nothing recorded is general, with no weight.
+    const cargo = {
+      ...(values.cargo_kind !== 'general' ? { cargo_kind: values.cargo_kind } : {}),
+      ...(weight.ok && weight.value !== null ? { cargo_weight_kg: weight.value } : {}),
+    }
 
     let input: NewTrip | null = null
     if (values.mode === 'route') {
       if (!values.route_id) found.route_id = 'Choose a route.'
-      else if (start) input = { route_id: values.route_id, scheduled_start: start, ...(end ? { scheduled_end: end } : {}) }
+      else if (start) input = { route_id: values.route_id, scheduled_start: start, ...(end ? { scheduled_end: end } : {}), ...cargo }
     } else {
       if (!values.origin_name.trim()) found.origin_name = 'Where does it leave from?'
       if (!values.destination_name.trim()) found.destination_name = 'Where does it go?'
@@ -104,6 +117,7 @@ export function NewTripDrawer({ open, onClose, depot, onCreated }: NewTripDrawer
           depot_id: depot.id,
           scheduled_start: start,
           ...(end ? { scheduled_end: end } : {}),
+          ...cargo,
         }
       }
     }
@@ -229,6 +243,14 @@ export function NewTripDrawer({ open, onClose, depot, onCreated }: NewTripDrawer
             <TextField label="Back by" type="datetime-local" alwaysFloat optional={estimate !== null} value={values.end} onChange={(e) => set('end', e.target.value)} error={errors.end} hint={endHint} />
           </div>
         </fieldset>
+
+        <CargoFields
+          kind={values.cargo_kind}
+          weight={values.cargo_weight}
+          weightError={errors.cargo_weight}
+          onKind={(kind) => setValues((v) => ({ ...v, cargo_kind: kind }))}
+          onWeight={(weight) => set('cargo_weight', weight)}
+        />
       </form>
     </Drawer>
   )
@@ -241,5 +263,5 @@ export function withoutKey<K extends string>(errors: Partial<Record<K, string>>,
 }
 
 function blank(): Values {
-  return { mode: 'route', route_id: '', origin_name: '', origin: '', destination_name: '', destination: '', start: toAddisInput(nextQuarterHour()), end: '' }
+  return { mode: 'route', route_id: '', origin_name: '', origin: '', destination_name: '', destination: '', start: toAddisInput(nextQuarterHour()), end: '', cargo_kind: 'general', cargo_weight: '' }
 }

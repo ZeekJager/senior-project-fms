@@ -1,5 +1,6 @@
 import { AppError } from '../../../shared/errors/app-error';
 import type { AssignmentExceptionView } from './exception';
+import type { CargoKind, JobLoadLevel, JobLoadReason } from './job-load';
 
 export const TRIP_STATUSES = ['draft', 'scheduled', 'assigned', 'en_route', 'completed', 'cancelled'] as const;
 export type TripStatus = (typeof TRIP_STATUSES)[number];
@@ -81,6 +82,13 @@ export interface TripView {
    * with one entered before trips were measured (the seed, an import).
    */
   actual_distance_source: 'odometer' | 'gps' | null;
+  /** What the trip carries (FMS-153): optional, never above the assigned vehicle's payload when both are known. */
+  cargo_weight_kg: number | null;
+  cargo_kind: CargoKind;
+  /** What the job asks of its driver (FMS-153, docs/job-load.md): worked out on every read, never typed. */
+  job_load: JobLoadLevel;
+  /** Why, biggest first: e.g. `long_haul`, `night`, `near_payload`. Empty for a light job with nothing to count. */
+  job_load_reasons: JobLoadReason[];
   stops: TripStopView[];
   /** While under way (FMS-86); null otherwise or before the first estimate. */
   eta: TripEta | null;

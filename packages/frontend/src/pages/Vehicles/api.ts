@@ -90,6 +90,8 @@ export type VehicleInput = {
   fuel_efficiency_ml_per_km: number | null
   depot_id: string
   odometer_km?: number
+  /** FMS-153: kg; null clears it. */
+  payload_capacity_kg?: number | null
 }
 
 function useInvalidate() {

@@ -14,6 +14,7 @@ import { formatTime, tripTitle } from './format'
 import { NewTripDrawer } from './NewTripDrawer'
 import { TripList } from './TripList'
 import { TripTimesDrawer } from './TripTimesDrawer'
+import { CargoDrawer } from './CargoDrawer'
 import type { AssignmentWarning, Trip } from './types'
 
 type View = 'unassigned' | 'assigned' | 'under-way'
@@ -41,6 +42,7 @@ export function DispatchPage() {
   const canApprove = hasPermission('assignment-exception:approve')
   const [newTripOpen, setNewTripOpen] = useState(false)
   const [timesOpen, setTimesOpen] = useState(false)
+  const [cargoOpen, setCargoOpen] = useState(false)
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
@@ -242,6 +244,7 @@ export function DispatchPage() {
               warnings={warnings}
               onAssign={(reason) => void submit(reason)}
               onChangeTimes={canWrite ? () => setTimesOpen(true) : undefined}
+              onChangeCargo={canWrite ? () => setCargoOpen(true) : undefined}
               canApprove={canApprove}
               viewerId={session?.user.id}
               driverName={(id) => names.get(id)}
@@ -301,6 +304,7 @@ export function DispatchPage() {
         />
       )}
       {canWrite && <TripTimesDrawer open={timesOpen} onClose={() => setTimesOpen(false)} trip={trip} titleOf={titleOf} />}
+      {canWrite && <CargoDrawer open={cargoOpen} onClose={() => setCargoOpen(false)} trip={trip} />}
     </div>
   )
 }

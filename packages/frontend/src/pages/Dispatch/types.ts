@@ -27,8 +27,23 @@ export interface Trip {
   eta?: TripEta | null
   /** An assignment held for a fleet manager's approval (FMS-151) while it waits, or once refused; null otherwise. */
   exception?: AssignmentException | null
+  /** What it carries (FMS-153): optional, never above the assigned vehicle's payload. */
+  cargo_weight_kg?: number | null
+  cargo_kind?: CargoKind
+  /** What the job asks of its driver (FMS-153): worked out by the API, never typed. */
+  job_load?: JobLoad
+  /** Why, biggest first; empty for a light job with nothing to count. */
+  job_load_reasons?: JobLoadReason[]
   version: number
 }
+
+/** What a trip carries (FMS-153). */
+export type CargoKind = 'general' | 'fragile' | 'hazardous' | 'refrigerated' | 'passengers'
+
+/** The job's load (FMS-153, docs/job-load.md). */
+export type JobLoad = 'light' | 'standard' | 'heavy'
+
+export type JobLoadReason = 'long_haul' | 'regional' | 'long_day' | 'long_hours' | 'many_stops' | 'night' | 'near_payload' | 'loaded'
 
 /** An assignment held for approval (FMS-151): who and what was asked for, why, and what became of it. */
 export interface AssignmentException {

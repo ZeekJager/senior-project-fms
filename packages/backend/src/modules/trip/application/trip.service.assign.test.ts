@@ -61,6 +61,8 @@ function tripRow(overrides: Partial<TripRow> = {}): TripRow {
     actualEnd: null,
     actualDistanceKm: null,
     actualDistanceSource: null,
+    cargoWeightKg: null,
+    cargoKind: 'general',
     version: 3,
     createdAt: NOW,
     updatedAt: NOW,
@@ -99,8 +101,9 @@ function harness(options: Options = {}) {
       publicIds: async () => new Map([['7', VEHICLE]]),
       forAssignment: async () => {
         calls.push('vehicle');
-        return options.vehicle === null ? null : { id: '7', publicId: VEHICLE, status: 'active', maintenanceFlag: false, ...options.vehicle };
+        return options.vehicle === null ? null : { id: '7', publicId: VEHICLE, status: 'active', maintenanceFlag: false, payloadCapacityKg: null, ...options.vehicle };
       },
+      payloadCapacities: async () => new Map(),
     },
     drivers: {
       idOf: async () => '9',

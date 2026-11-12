@@ -84,7 +84,7 @@ describe('POST /vehicles', () => {
     expect(Object.keys(res.body.data).sort()).toEqual(
       [
         'created_at', 'current_trip', 'depot_id', 'fuel_efficiency_ml_per_km', 'fuel_type', 'health_score', 'health_score_updated_at', 'id', 'maintenance_flag',
-        'make', 'model', 'odometer_km', 'photo_url', 'registration_number', 'status', 'tank_capacity_ml', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
+        'make', 'model', 'odometer_km', 'payload_capacity_kg', 'photo_url', 'registration_number', 'status', 'tank_capacity_ml', 'updated_at', 'vehicle_type', 'version', 'vin', 'year',
       ].sort(),
     );
     // The odometer it is registered with is its first meter reading (FMS-126).
@@ -126,6 +126,21 @@ describe('POST /vehicles', () => {
     const cleared = await api.patch(`/vehicles/${created.body.data.id}`, { tank_capacity_ml: null }, cookie);
     expect(cleared.status).toBe(200);
     expect(cleared.body.data.tank_capacity_ml).toBeNull();
+  });
+
+  test('the payload capacity (FMS-153) is kg, above 0 and at most 100,000 with two decimals, set on create and changed on update', async () => {
+    const depot = await createDepot();
+    const cookie = await signIn(['depot_admin'], depot);
+    for (const bad of [0, -5, 100_000.01, 12.345]) {
+      const res = await api.post('/vehicles', vehicleBody(depot, { payload_capacity_kg: bad }), cookie);
+      expect(res.status, String(bad)).toBe(400);
+    }
+    const created = await api.post('/vehicles', vehicleBody(depot, { payload_capacity_kg: 5_000.5 }), cookie);
+    expect(created.status).toBe(201);
+    expect(created.body.data.payload_capacity_kg).toBe(5_000.5);
+    const cleared = await api.patch(`/vehicles/${created.body.data.id}`, { payload_capacity_kg: null }, cookie);
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.data.payload_capacity_kg).toBeNull();
   });
 
   test('a diesel vehicle without fuel efficiency returns 400 VALIDATION_FAILED; an electric one does not need it', async () => {

@@ -140,6 +140,7 @@ async function writeThroughApi(api: SeedApi, plan: SeedPlan, password: string, l
       fuel_efficiency_ml_per_km: v.fuel_efficiency_ml_per_km,
       depot_id: depots[v.depot],
       odometer_km: v.odometer_km,
+      payload_capacity_kg: v.payload_capacity_kg,
     });
     vehicles.push(data.id);
   }
@@ -298,6 +299,8 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
         actual_distance_km: t.actual_distance_km,
         planned_duration_seconds: t.planned_duration_seconds,
         actual_duration_seconds: t.actual_duration_seconds,
+        cargo_weight_kg: t.cargo_weight_kg,
+        cargo_kind: t.cargo_kind,
       });
       trips.push(String(row.id));
     }

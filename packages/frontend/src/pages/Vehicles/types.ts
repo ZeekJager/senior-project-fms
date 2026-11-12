@@ -29,6 +29,8 @@ export interface Vehicle {
   vehicle_type: VehicleType
   fuel_type: FuelType
   fuel_efficiency_ml_per_km: number | null
+  /** What it can carry, kg (FMS-153); null while nobody has said. */
+  payload_capacity_kg?: number | null
   status: VehicleStatus
   maintenance_flag: boolean
   health_score: number | null

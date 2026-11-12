@@ -145,6 +145,8 @@ paths:
                 depot_id: { type: string, format: uuid, description: The depot a one-off trip leaves from. }
                 scheduled_start: { type: string, format: date-time }
                 scheduled_end: { type: string, format: date-time, description: Default the route's estimated time after the start. }
+                cargo_weight_kg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 100000, description: 'What it carries, kg (FMS-153, docs/job-load.md): optional, two decimals.' }
+                cargo_kind: { $ref: '#/components/schemas/CargoKind' }
       responses:
         '201':
           description: Created.
@@ -220,6 +222,14 @@ paths:
                 shift_following:
                   type: boolean
                   description: Move the trips this change runs into later, instead of refusing.
+                cargo_weight_kg:
+                  type: [number, 'null']
+                  exclusiveMinimum: 0
+                  maximum: 100000
+                  description: >
+                    FMS-153, before the trip starts; null clears it. More than the assigned vehicle's payload_capacity_kg
+                    is 400 (over_payload).
+                cargo_kind: { $ref: '#/components/schemas/CargoKind' }
       responses:
         '200':
           description: Changed. meta.shifted lists the trips moved later to make room.
@@ -8086,6 +8096,7 @@ components:
         fuel_efficiency_ml_per_km: { type: [integer, 'null'], minimum: 1, maximum: 100000, description: Whole millilitres per km. Required unless the vehicle is electric. }
         depot_id: { type: string, format: uuid }
         odometer_km: { type: number, minimum: 0, description: At most one decimal. }
+        payload_capacity_kg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 100000, description: 'What it carries, kg, two decimals (FMS-153): a trip''s cargo is never more.' }
 
     VehicleTrip:
       type: object
@@ -8112,6 +8123,7 @@ components:
         vehicle_type: { type: string, enum: [car, suv, van, truck, bus, motorcycle, other] }
         fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other] }
         fuel_efficiency_ml_per_km: { type: [integer, 'null'] }
+        payload_capacity_kg: { type: [number, 'null'], description: What it carries, kg (FMS-153); null while nobody has said. }
         status: { $ref: '#/components/schemas/VehicleStatusValue' }
         maintenance_flag: { type: boolean, description: Set while work on the vehicle is open; a flagged vehicle cannot be dispatched. }
         health_score: { type: [integer, 'null'], minimum: 0, maximum: 100 }
@@ -8523,9 +8535,25 @@ components:
           oneOf:
             - type: 'null'
             - $ref: '#/components/schemas/AssignmentException'
+        cargo_weight_kg: { type: [number, 'null'], description: 'What it carries, kg (FMS-153); never above the assigned vehicle''s payload.' }
+        cargo_kind: { $ref: '#/components/schemas/CargoKind' }
+        job_load:
+          type: string
+          enum: [light, standard, heavy]
+          description: What the job asks of its driver (FMS-153, docs/job-load.md), worked out on every read, never typed.
+        job_load_reasons:
+          type: array
+          description: Why, biggest first; empty for a light job with nothing to count.
+          items: { type: string, enum: [long_haul, regional, long_day, long_hours, many_stops, night, near_payload, loaded] }
         version: { type: integer }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    CargoKind:
+      type: string
+      enum: [general, fragile, hazardous, refrigerated, passengers]
+      default: general
+      description: What a trip carries (FMS-153). A trip with no cargo recorded is general.
 
     TripStop:
       type: object
