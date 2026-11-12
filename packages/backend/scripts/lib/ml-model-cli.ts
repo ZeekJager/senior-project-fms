@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { pool } from '../../src/db';
-import { mlModelAdmin, tripRiskModels, type MlModelView } from '../../src/modules/maintenance';
+import { mlModelAdmin, TRIP_RISK_MODEL, tripRiskModels, type MlModelView } from '../../src/modules/maintenance';
 
 export const ML_MODEL_USAGE = [
   'Usage: npm run ml:model -- list [--status registered|active|retired]',
@@ -87,7 +87,8 @@ export async function mlModelCommand(argv: string[], out: (line: string) => void
     if (!found.rows[0]) throw new Error(`No registered model ${name} ${version}: list them with npm run ml:model -- list`);
     const userId = await administrator(values.by);
     const model = await mlModelAdmin.activate(found.rows[0].public_id, { userId, correlationId: randomUUID() });
-    out(`✔ ${model.name} ${model.version} is active: the nightly scoring scores with it while the ML service serves it.`);
+    const uses = model.name === TRIP_RISK_MODEL ? 'the dispatch console shows its trip risk' : 'the nightly scoring scores with it';
+    out(`✔ ${model.name} ${model.version} is active: ${uses} while the ML service serves it.`);
     return;
   }
 
