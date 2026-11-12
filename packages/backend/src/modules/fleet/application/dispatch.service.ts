@@ -9,7 +9,9 @@ import {
   driverBoardState,
   TRIP_RISK_PERMISSION,
   vehicleBoardState,
+  withDistance,
   type BoardTripRisk,
+  type DistanceProvider,
   type DispatchBoard,
   type DriverTripRisk,
   type OpenWorkSummary,
@@ -37,6 +39,8 @@ export interface DispatchServiceDeps {
   inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
   /** The trip risk model (FMS-155), connected by src/modules/index.ts; null when it is not. */
   tripRisk?: () => TripRiskProvider | null;
+  /** The driving distance limits (FMS-156): the trip module's. Absent (unit tests): not shown. */
+  distance?: DistanceProvider;
   log?: { warn(obj: object, msg: string): void };
   now?: () => Date;
 }
@@ -89,13 +93,16 @@ export class DispatchService {
       const openWork = flagged.length > 0 ? ((await this.deps.maintenance()?.openRecordSummaries(client, flagged)) ?? new Map()) : new Map<string, OpenWorkSummary>();
       const serviceDue = (await this.deps.maintenance()?.serviceDueSummaries(client, vehicles.map((v) => v.id))) ?? new Map<string, ServiceDueSummary>();
       const trip = (t: { tripId: string; end: Date } | undefined) => (t ? { trip_id: t.tripId, end: t.end } : null);
+      // FMS-156: with the trip being staffed, each driver's distance in its day and week, on this transaction.
+      const distances = query.excludeTripId && this.deps.distance ? await this.deps.distance(client, query.excludeTripId, drivers.map((d) => d.id)) : null;
 
       return {
         depot_id: (await this.deps.depots.publicIds(client, [depotId])).get(depotId)!,
         window: { start: window.start, end: window.end },
         trip_risk: null,
         drivers: drivers.map((d) => {
-          const result = answer.drivers.get(d.id)!;
+          const distance = distances?.get(d.id) ?? null;
+          const result = withDistance(answer.drivers.get(d.id)!, distance);
           const underWay = driversUnderWay.get(d.id) ?? null;
           const marked = attendance.get(d.id) ?? null;
           return {
@@ -108,6 +115,7 @@ export class DispatchService {
             availability: result,
             current_trip: trip(underWay ?? undefined),
             trip_risk: null,
+            distance,
           };
         }),
         vehicles: vehicles.map((v) => {

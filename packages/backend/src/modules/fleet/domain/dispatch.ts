@@ -1,5 +1,6 @@
 import type { AttendanceStatus } from './attendance';
-import type { AvailabilityResult } from './availability';
+import { result, type AvailabilityResult } from './availability';
+import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { VehicleStatus, VehicleType } from './vehicle';
 
 export { drivableTypes } from './licence';
@@ -99,6 +100,41 @@ export interface TripRiskProvider {
 /** Who sees the model's chances: as the driver score (FMS-146), behavioural data. */
 export const TRIP_RISK_PERMISSION = 'tracking:read';
 
+/** One period of a driver's load-weighted distance with the trip being staffed (FMS-156): the trip module's PeriodStanding. */
+export interface BoardDistancePeriod {
+  period: 'day' | 'week';
+  limit_km: number;
+  without_km: number;
+  with_km: number;
+  /** Left of the limit with the trip; negative when over. */
+  left_km: number;
+}
+
+/** Where a driver stands against the distance limits on the trip being staffed (FMS-156). */
+export interface BoardDistance {
+  /** The trip's own load-weighted km. */
+  trip_km: number;
+  day: BoardDistancePeriod;
+  week: BoardDistancePeriod;
+  over: BoardDistancePeriod | null;
+  near: BoardDistancePeriod | null;
+}
+
+/** The distance limits, as the board asks them: the trip module's tripDistanceLimits.forBoard (driver internal ids). */
+export type DistanceProvider = (db: Queryable, tripPublicId: string, driverIds: readonly string[]) => Promise<Map<string, BoardDistance> | null>;
+
+/**
+ * A driver's availability with the distance limits (FMS-156): past one, unavailable for the trip (a block, as the
+ * assignment refuses it); at 80% of one, a warning. Under way or not, the board shows it: the rule decides assignments.
+ */
+export function withDistance(availability: AvailabilityResult, distance: BoardDistance | null): AvailabilityResult {
+  if (!distance) return availability;
+  const p = distance.over ?? distance.near;
+  if (!p) return availability;
+  const reason = { code: distance.over ? ('distance_limit' as const) : ('distance_limit_near' as const), severity: distance.over ? ('block' as const) : ('warning' as const), period: p.period, limit_km: p.limit_km, total_km: p.with_km };
+  return result([...availability.reasons, reason]);
+}
+
 export interface BoardDriver {
   driver_id: string;
   full_name: string;
@@ -116,6 +152,8 @@ export interface BoardDriver {
    * model, and the driver free for the trip. Null otherwise.
    */
   trip_risk: DriverTripRisk | null;
+  /** With `exclude_trip_id` (FMS-156): the driver's load-weighted km in the trip's day and week with it, and what is left. Null otherwise. */
+  distance: BoardDistance | null;
 }
 
 export interface BoardVehicle {

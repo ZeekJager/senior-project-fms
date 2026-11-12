@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { AvailabilityResult } from './availability';
-import { NEAR_END_MINUTES, drivableTypes, driverBoardState, vehicleBoardState } from './dispatch';
+import { NEAR_END_MINUTES, drivableTypes, driverBoardState, vehicleBoardState, withDistance, type BoardDistance } from './dispatch';
 
 const now = new Date('2026-11-02T06:00:00Z');
 const free: AvailabilityResult = { availability: 'available', reasons: [] };
@@ -45,5 +45,37 @@ describe('drivable vehicle types', () => {
     expect(drivableTypes(['dry_cargo_2'])).toContain('truck');
     expect(drivableTypes(['automobile', 'automobile'])).toEqual(drivableTypes(['automobile']));
     expect(drivableTypes(['nonsense'])).toEqual([]);
+  });
+});
+
+describe('the driving distance limits on the board (FMS-156)', () => {
+  const p = (period: 'day' | 'week', limit: number, withTrip: number) => ({ period, limit_km: limit, without_km: withTrip - 100, with_km: withTrip, left_km: limit - withTrip });
+  const standing = (over: boolean, near: boolean): BoardDistance => ({
+    trip_km: 100,
+    day: p('day', 500, over ? 560 : near ? 420 : 300),
+    week: p('week', 2500, 900),
+    over: over ? p('day', 500, 560) : null,
+    near: near ? p('day', 500, 420) : null,
+  });
+
+  test('past a limit blocks, naming the period, the limit and the total; blocks come first', () => {
+    const withWarning: AvailabilityResult = { availability: 'available_with_warning', reasons: [{ code: 'driver_absent', severity: 'warning' }] };
+    expect(withDistance(withWarning, standing(true, false))).toEqual({
+      availability: 'unavailable',
+      reasons: [
+        { code: 'distance_limit', severity: 'block', period: 'day', limit_km: 500, total_km: 560 },
+        { code: 'driver_absent', severity: 'warning' },
+      ],
+    });
+    expect(driverBoardState({ underWay: null, attendance: null, availability: withDistance(free, standing(true, false)), now })).toBe('unavailable');
+  });
+
+  test('at 80% of one it only warns; below, or without a trip, nothing changes', () => {
+    expect(withDistance(free, standing(false, true))).toEqual({
+      availability: 'available_with_warning',
+      reasons: [{ code: 'distance_limit_near', severity: 'warning', period: 'day', limit_km: 500, total_km: 420 }],
+    });
+    expect(withDistance(free, standing(false, false))).toBe(free);
+    expect(withDistance(blocked, null)).toBe(blocked);
   });
 });

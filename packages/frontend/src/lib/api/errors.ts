@@ -9,6 +9,11 @@ export interface ApiErrorDetail {
   /** For a trip overlap: whether the other trip can move later to make room, and by how many minutes (FMS-139). */
   shiftable?: boolean
   shift_minutes?: number
+  /** For a driving distance limit (FMS-156): the period, its limit, and the driver's load-weighted km with the trip and without it. */
+  period?: 'day' | 'week'
+  limit_km?: number
+  total_km?: number
+  without_trip_km?: number
 }
 
 /** Thrown for every non-2xx response, shaped like the contract's error envelope. */

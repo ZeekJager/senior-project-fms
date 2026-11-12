@@ -24,6 +24,7 @@ export const ERROR_CODES = [
   'CONFLICT_VEHICLE_OVERLAP',
   'CONFLICT_VEHICLE_FLAGGED',
   'CONFLICT_DRIVER_NOT_ELIGIBLE',
+  'CONFLICT_DRIVER_DISTANCE_LIMIT',
   'CONFLICT_DEPOT_MISMATCH',
   'CONFLICT_ATTENDANCE_DUPLICATE',
   'CONFLICT_INVALID_STATE_TRANSITION',
@@ -50,6 +51,11 @@ export interface ErrorDetail {
   /** For a trip clash (FMS-139): whether `shift_following` can move the other trip, and by how many minutes. */
   shiftable?: boolean;
   shift_minutes?: number;
+  /** For a driving distance limit (FMS-156): the period, its limit, and the driver's load-weighted km with the trip and without it. */
+  period?: 'day' | 'week';
+  limit_km?: number;
+  total_km?: number;
+  without_trip_km?: number;
 }
 
 /** An error the API reports to the client as-is (status, code, message). */

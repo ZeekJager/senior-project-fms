@@ -101,6 +101,8 @@ export const REASONS: Record<string, string> = {
   driver_absent: 'Marked absent that day',
   driver_on_leave: 'On leave that day',
   driver_sick: 'Off sick that day',
+  distance_limit: 'Past the driving distance limit',
+  distance_limit_near: 'Near the driving distance limit',
   license_category_missing: 'No licence class on file',
   license_category_not_valid_for_vehicle: 'Licence class does not cover this vehicle',
 }

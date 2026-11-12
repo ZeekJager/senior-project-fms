@@ -5,6 +5,7 @@ import { Button, Card, cn } from '@/components/ui'
 import type { ServiceDueSummary } from '@/features/service-due'
 import { ApiError } from '@/lib/api/errors'
 import { useTrip } from './api'
+import { overText } from './distance'
 import { formatDay, formatTime, formatWindow, reasonText, tripEnds, tripTitle, VEHICLE_TYPE_LABELS } from './format'
 import { AskApproval, AwaitingApproval, RefusedNote } from './ExceptionPanel'
 import { JobLoadDetails } from './JobLoad'
@@ -261,6 +262,7 @@ const MESSAGES: Record<string, string> = {
   CONFLICT_VEHICLE_OVERLAP: 'The vehicle is already on another trip at that time.',
   CONFLICT_VEHICLE_FLAGGED: 'The vehicle is flagged for maintenance and cannot be dispatched.',
   CONFLICT_DRIVER_NOT_ELIGIBLE: 'The driver cannot drive this trip.',
+  CONFLICT_DRIVER_DISTANCE_LIMIT: 'The trip would take the driver past their driving distance limit. Choose another driver.',
   CONFLICT_DEPOT_MISMATCH: 'That driver or vehicle belongs to another depot.',
   CONFLICT_CONCURRENT_MODIFICATION: 'Someone changed this trip a moment ago. The list has been refreshed: check it and assign again.',
   CONFLICT_INVALID_STATE_TRANSITION: 'This trip can no longer be assigned: it may have started or been cancelled.',
@@ -284,6 +286,15 @@ function Refusal({ error, vehicle }: { error: unknown; vehicle: BoardVehicle | n
           {vehicle.open_work.description} <span className="text-xs">(work order <span className="font-mono">{vehicle.open_work.id.slice(0, 8)}</span>)</span>
         </p>
       )}
+      {error.code === 'CONFLICT_DRIVER_DISTANCE_LIMIT' &&
+        error.details
+          .filter((d) => d.period && d.limit_km !== undefined && d.total_km !== undefined)
+          .map((d, i) => (
+            <p key={i} className="mt-1 text-ink">
+              {overText({ period: d.period!, limit_km: d.limit_km!, total_km: d.total_km! })}
+              {d.without_trip_km !== undefined && <span className="text-xs"> ({d.without_trip_km.toLocaleString('en-US', { maximumFractionDigits: 1 })} km without this trip)</span>}
+            </p>
+          ))}
       {error.code === 'CONFLICT_DRIVER_NOT_ELIGIBLE' && (
         <ul className="mt-1 list-disc pl-4 text-ink">
           {error.details.map((d, i) => (

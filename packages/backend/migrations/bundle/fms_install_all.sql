@@ -3845,3 +3845,32 @@ LEFT JOIN fleet.drivers d ON d.id = t.driver_id
 LEFT JOIN trip.routes r ON r.id = t.route_id
 LEFT JOIN fleet.depots dp ON dp.id = r.depot_id
 LEFT JOIN fleet.vehicles v ON v.id = t.vehicle_id;
+
+-- ===== 074_driving_distance_limits.sql =====
+ALTER TABLE tracking.rule_thresholds
+    ADD COLUMN IF NOT EXISTS daily_distance_km SMALLINT NOT NULL DEFAULT 500,
+    ADD COLUMN IF NOT EXISTS weekly_distance_km SMALLINT NOT NULL DEFAULT 2500,
+    ADD COLUMN IF NOT EXISTS distance_weight_light NUMERIC(3, 2) NOT NULL DEFAULT 0.80,
+    ADD COLUMN IF NOT EXISTS distance_weight_standard NUMERIC(3, 2) NOT NULL DEFAULT 1.00,
+    ADD COLUMN IF NOT EXISTS distance_weight_heavy NUMERIC(3, 2) NOT NULL DEFAULT 1.50;
+
+-- A week holds at least a day's limit; a heavier job never counts for less.
+DO $$ BEGIN
+    ALTER TABLE tracking.rule_thresholds ADD CONSTRAINT chk_rule_distance_limits CHECK (
+        daily_distance_km BETWEEN 50 AND 2000
+        AND weekly_distance_km BETWEEN 100 AND 10000
+        AND weekly_distance_km >= daily_distance_km);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE tracking.rule_thresholds ADD CONSTRAINT chk_rule_distance_weights CHECK (
+        distance_weight_light BETWEEN 0.50 AND 3.00
+        AND distance_weight_standard BETWEEN 0.50 AND 3.00
+        AND distance_weight_heavy BETWEEN 0.50 AND 3.00
+        AND distance_weight_light <= distance_weight_standard
+        AND distance_weight_standard <= distance_weight_heavy);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_trip_trips_driver_start
+    ON trip.trips (driver_id, scheduled_start)
+    WHERE driver_id IS NOT NULL AND status IN ('assigned', 'en_route', 'completed');

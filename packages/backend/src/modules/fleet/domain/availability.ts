@@ -26,6 +26,9 @@ export type AvailabilityReasonCode =
   | 'driver_on_leave'
   | 'driver_sick'
   | 'driver_other_depot'
+  // FMS-156: the trip would take the driver past a distance limit (block), or to 80% of one (warning)
+  | 'distance_limit'
+  | 'distance_limit_near'
   // Both
   | 'assigned_to_overlapping_trip';
 
@@ -35,6 +38,10 @@ export interface AvailabilityReason {
   severity: 'block' | 'warning';
   /** The overlapping trip (public id), for assigned_to_overlapping_trip. */
   trip_id?: string;
+  /** For distance_limit and distance_limit_near (FMS-156): the period, its limit, and the driver's load-weighted km with the trip. */
+  period?: 'day' | 'week';
+  limit_km?: number;
+  total_km?: number;
 }
 
 export interface AvailabilityResult {
@@ -75,7 +82,7 @@ export interface DriverFacts {
 const block = (code: AvailabilityReasonCode, tripId?: string): AvailabilityReason => ({ code, severity: 'block', ...(tripId ? { trip_id: tripId } : {}) });
 const warn = (code: AvailabilityReasonCode): AvailabilityReason => ({ code, severity: 'warning' });
 
-function result(reasons: AvailabilityReason[]): AvailabilityResult {
+export function result(reasons: AvailabilityReason[]): AvailabilityResult {
   if (reasons.some((r) => r.severity === 'block')) return { availability: 'unavailable', reasons: [...reasons].sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'block' ? -1 : 1)) };
   return { availability: reasons.length > 0 ? 'available_with_warning' : 'available', reasons };
 }

@@ -89,6 +89,10 @@ export interface AvailabilityReason {
   code: string
   severity: 'block' | 'warning'
   trip_id?: string
+  /** distance_limit and distance_limit_near (FMS-156): the period, its limit, and the driver's load-weighted km with the trip. */
+  period?: 'day' | 'week'
+  limit_km?: number
+  total_km?: number
 }
 
 export interface AvailabilityResult {
@@ -112,6 +116,29 @@ export interface BoardDriver {
   current_trip: { trip_id: string; end: string } | null
   /** The trip risk model's chances on the chosen trip (FMS-155): tracking:read, an active model, a driver free for it. */
   trip_risk?: DriverTripRisk | null
+  /** With a chosen trip (FMS-156): the driver's load-weighted km in its day and week with it, and what is left. */
+  distance?: BoardDistance | null
+}
+
+/** One period of a driver's load-weighted distance with the chosen trip (FMS-156). */
+export interface BoardDistancePeriod {
+  period: 'day' | 'week'
+  limit_km: number
+  without_km: number
+  with_km: number
+  /** Negative when over. */
+  left_km: number
+}
+
+/** Where a driver stands against the distance limits on the chosen trip (FMS-156). */
+export interface BoardDistance {
+  trip_km: number
+  day: BoardDistancePeriod
+  week: BoardDistancePeriod
+  /** The period the trip takes past its limit: the assignment is refused. */
+  over: BoardDistancePeriod | null
+  /** Otherwise, one at 80% of its limit or more: a warning. */
+  near: BoardDistancePeriod | null
 }
 
 /** An input that raises a chance, with the value the model was given (docs/ml-trip-risk.md). */

@@ -18,6 +18,13 @@ export interface Thresholds {
   /** FMS-151: whether the driver's attendance, and a previous trip running over, only warn or hold an assignment for a fleet manager. */
   driver_attendance_exception: ExceptionPolicy
   trip_overrun_exception: ExceptionPolicy
+  /** FMS-156: the load-weighted km a driver may be given in a day and a week (Addis Ababa, Monday to Sunday). */
+  daily_distance_km: number
+  weekly_distance_km: number
+  /** What a km of each job load counts for (FMS-153); never lighter for a heavier load. */
+  distance_weight_light: number
+  distance_weight_standard: number
+  distance_weight_heavy: number
 }
 
 /** `warn`: the assignment goes ahead with the warning. `approve`: it waits for a fleet manager (FMS-151). */
@@ -38,10 +45,17 @@ export interface RuleThresholds {
   depots: (ThresholdsRow & { depot_id: string })[]
 }
 
-/** The thresholds that are numbers. */
-export type ThresholdKey = Exclude<keyof Thresholds, PolicyKey>
+/** The job loads' weights (FMS-156): decimals, unlike the other thresholds. */
+export const WEIGHT_KEYS = ['distance_weight_light', 'distance_weight_standard', 'distance_weight_heavy'] as const
+export type WeightKey = (typeof WEIGHT_KEYS)[number]
 
-/** Each threshold's range, as tracking.rule_thresholds checks it (migrations 035, 060 and 068). */
+/** The weights' range, as tracking.rule_thresholds checks it (migration 074): two decimals at most. */
+export const WEIGHT_LIMITS = { min: 0.5, max: 3 } as const
+
+/** The thresholds that are whole numbers. */
+export type ThresholdKey = Exclude<keyof Thresholds, PolicyKey | WeightKey>
+
+/** Each threshold's range, as tracking.rule_thresholds checks it (migrations 035, 060, 068 and 074). */
 export const THRESHOLD_LIMITS: Record<ThresholdKey, { min: number; max: number }> = {
   speed_limit_kmh: { min: 20, max: 200 },
   speeding_pings: { min: 1, max: 20 },
@@ -51,6 +65,8 @@ export const THRESHOLD_LIMITS: Record<ThresholdKey, { min: number; max: number }
   route_deviation_pings: { min: 1, max: 20 },
   trip_delay_minutes: { min: 5, max: 240 },
   trip_delay_urgent_minutes: { min: 10, max: 720 },
+  daily_distance_km: { min: 50, max: 2000 },
+  weekly_distance_km: { min: 100, max: 10000 },
 }
 
 /** The fleet's starting thresholds, before anyone changed them. */
@@ -65,6 +81,11 @@ export const DEFAULT_THRESHOLDS: Thresholds = {
   trip_delay_urgent_minutes: 60,
   driver_attendance_exception: 'warn',
   trip_overrun_exception: 'warn',
+  daily_distance_km: 500,
+  weekly_distance_km: 2500,
+  distance_weight_light: 0.8,
+  distance_weight_standard: 1,
+  distance_weight_heavy: 1.5,
 }
 
 const thresholdsKey = ['settings', 'telemetry-rules'] as const
@@ -108,8 +129,17 @@ export function useSaveSettings() {
 /** A whole number within [min, max] from what was typed, or the message to show. */
 export function parseWhole(text: string, min: number, max: number): { ok: true; value: number } | { ok: false; error: string } {
   const trimmed = text.trim()
-  if (!/^\d{1,4}$/.test(trimmed)) return { ok: false, error: `A whole number from ${min} to ${max}.` }
+  if (!/^\d{1,5}$/.test(trimmed)) return { ok: false, error: `A whole number from ${min} to ${max}.` }
   const value = Number(trimmed)
   if (value < min || value > max) return { ok: false, error: `From ${min} to ${max}.` }
+  return { ok: true, value }
+}
+
+/** A job load's weight (FMS-156): a number within WEIGHT_LIMITS, at most two decimals, or the message to show. */
+export function parseWeight(text: string): { ok: true; value: number } | { ok: false; error: string } {
+  const trimmed = text.trim().replace(',', '.')
+  if (!/^\d(\.\d{1,2})?$/.test(trimmed)) return { ok: false, error: `A number from ${WEIGHT_LIMITS.min} to ${WEIGHT_LIMITS.max}, like 1.25.` }
+  const value = Number(trimmed)
+  if (value < WEIGHT_LIMITS.min || value > WEIGHT_LIMITS.max) return { ok: false, error: `From ${WEIGHT_LIMITS.min} to ${WEIGHT_LIMITS.max}.` }
   return { ok: true, value }
 }

@@ -248,6 +248,8 @@ function DepotRow({ name, row, onEdit }: { name: string; row: ThresholdsRow; onE
           <span className="tabular">{row.clear_pings}</span> · idling after <span className="tabular">{row.idle_minutes} min</span> · off route beyond{' '}
           <span className="tabular">{row.route_deviation_m.toLocaleString('en-US')} m</span> for <span className="tabular">{row.route_deviation_pings}</span> · trips late
           after <span className="tabular">{row.trip_delay_minutes} min</span>, urgent after <span className="tabular">{row.trip_delay_urgent_minutes} min</span>
+          {' '}· driving at most <span className="tabular">{row.daily_distance_km.toLocaleString('en-US')} km</span> a day,{' '}
+          <span className="tabular">{row.weekly_distance_km.toLocaleString('en-US')} km</span> a week
           {approvals(row) && <> · {approvals(row)}</>}
         </p>
       </div>

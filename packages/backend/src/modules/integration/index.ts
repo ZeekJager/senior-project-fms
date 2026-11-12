@@ -297,6 +297,8 @@ export const trackingLookups = {
   tripDelayMargins,
   /** For assignment (FMS-151, trip): a depot's exception policies, read on the assignment's transaction, never cached. */
   exceptionPolicies: (db: Queryable, depotId: string | null) => thresholdRepository.exceptionPolicies(db, depotId),
+  /** For assignment and the dispatch console (FMS-156, trip): a depot's distance limits and load weights, never cached. */
+  distanceLimits: (db: Queryable, depotId: string | null) => thresholdRepository.distanceLimits(db, depotId),
 };
 
 export const gpsDevices = {

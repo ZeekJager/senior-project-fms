@@ -22,6 +22,7 @@ import {
   driverHasActiveTrip,
   TRIP_EVENTS,
   tripAssignment,
+  tripDistanceLimits,
   tripLookups,
   vehicleHasActiveTrip,
   vehicleOnActiveTripSql,
@@ -317,6 +318,7 @@ const dispatchService = new DispatchService({
   maintenance: () => maintenanceLookup,
   inTransaction: (fn) => vehicleRepository.inTransaction(fn),
   tripRisk: () => tripRiskProvider,
+  distance: tripDistanceLimits.forBoard,
   log: logger,
 });
 
