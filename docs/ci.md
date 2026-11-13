@@ -1,6 +1,6 @@
 # Continuous Integration
 
-Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`, every push to `master`, and manually from the Actions tab. Five jobs run in parallel:
+Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`, every push to `master`, and manually from the Actions tab. Ten jobs run in parallel:
 
 | Check name | What it does | Fails when |
 |---|---|---|
@@ -13,6 +13,7 @@ Workflow: `.github/workflows/ci.yml`. It runs on every pull request to `master`,
 | `production-images` | Builds the three production images tagged by commit (FMS-105, [production-images.md](production-images.md)), scans them with Trivy (fails on a critical finding that has a fix), then `scripts/ci/smoke-images.sh`: migrates with the backend image, starts the three images with `NODE_ENV=production`, checks health, that none runs as root, that the web app serves the SPA and reaches the API through nginx | An image does not build, a critical vulnerability with a fix, an image runs as root or fails its health check |
 | `dependency-audit` | `npm audit` over the lockfile (fails on a **critical** advisory; high and moderate are listed) and `pip-audit` over the AI service's pins (fails on any known vulnerability: it does not grade). No install, so it is quick (FMS-103, [security.md](security.md)) | A critical vulnerability in an npm dependency, or any in a Python pin; fix by updating it, or `npm audit fix` |
 | `secrets-scan` | gitleaks over the checked-out files, with the default rules plus `.gitleaks.toml` (weak hardcoded passwords, literal fallbacks in code, SQL role passwords) | Any secret is committed |
+| `docs-lint` | markdownlint (`markdownlint-cli2`, pinned) over `README.md`, `docs/USER_GUIDE.md` and `docs/DEFENCE_NOTES.md` with the rules in `.markdownlint-cli2.jsonc` (FMS-66); then checks every screenshot those two guides show is in `docs/user-guide/images/`. Locally: `npx markdownlint-cli2@0.24.0` | A lint finding in one of the three documents, or a screenshot they link to that is missing |
 
 CI needs no repository secrets. Its databases are throwaway PostgreSQL containers on the runner (`scripts/ci/start-postgres.sh`); every password and the JWT secret are generated per run and masked in logs.
 

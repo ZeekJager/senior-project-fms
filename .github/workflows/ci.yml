@@ -424,3 +424,25 @@ jobs:
       # plus the project rules in .gitleaks.toml (weak hardcoded passwords).
       - name: Scan for secrets
         run: $RUNNER_TEMP/gitleaks dir . --config .gitleaks.toml --redact --no-banner --exit-code 1
+
+  # FMS-66: the documents a reader starts from (README.md, docs/USER_GUIDE.md, docs/DEFENCE_NOTES.md) pass markdownlint
+  # with the repo's rules in .markdownlint-cli2.jsonc, and every screenshot they show exists.
+  docs-lint:
+    name: docs-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: markdownlint
+        run: npx --yes markdownlint-cli2@0.24.0
+      - name: The screenshots exist
+        run: |
+          set -euo pipefail
+          missing=0
+          for img in $(grep -oh '](user-guide/images/[^)]*)' docs/USER_GUIDE.md docs/DEFENCE_NOTES.md | sed 's/^](//; s/)$//' | sort -u); do
+            [ -f "docs/$img" ] || { echo "::error::missing docs/$img"; missing=1; }
+          done
+          exit $missing
