@@ -102,6 +102,9 @@ services:
       - ./packages/ai-service/feature_spec.json:/ai-service/feature_spec.json:ro
       # The trip risk model's (FMS-155), ML_TRIP_RISK_SPEC_PATH's default the same way.
       - ./packages/ai-service/trip_risk_spec.json:/ai-service/trip_risk_spec.json:ro
+      # The API's OpenAPI spec, for Swagger UI at /api-docs (FMS-65, docs/api-docs.md): the backend finds
+      # docs/openapi.yaml by walking up from its own folder, which in this container reaches /docs.
+      - ./docs/openapi.yaml:/docs/openapi.yaml:ro
     environment:
       NODE_ENV: development
       PORT: "3000"

@@ -1,0 +1,14 @@
+// markdownlint (markdownlint-cli2) for the documents a reader starts from: README.md, docs/USER_GUIDE.md and
+// docs/DEFENCE_NOTES.md (FMS-66). CI's docs-lint job runs it; see docs/ci.md.
+{
+  "config": {
+    "default": true,
+    // Prose wraps at 120 characters; tables, code and headings may run longer.
+    "MD013": { "line_length": 120, "tables": false, "code_blocks": false, "headings": false },
+    // The same heading under different parents (each role's "Other things you do") is fine.
+    "MD024": { "siblings_only": true },
+    // Table delimiter rows are written |---|---| here, as everywhere in docs/.
+    "MD060": false
+  },
+  "globs": ["README.md", "docs/USER_GUIDE.md", "docs/DEFENCE_NOTES.md"]
+}
