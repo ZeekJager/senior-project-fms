@@ -56,7 +56,7 @@ migrate:
 	docker exec fms_backend npm run migrate
 
 # Rebuild the database and fill it with demo data (docs/seed-data.md).
-# Deletes everything in the dev database first. SIZE=small|budget, SEED=<n>.
+# Deletes everything in the dev database first. SIZE=small|budget|fleet500, SEED=<n>.
 SIZE ?= small
 SEED ?= 20261007
 seed:

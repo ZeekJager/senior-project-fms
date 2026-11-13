@@ -1,0 +1,392 @@
+{
+  "card": "FMS-152",
+  "profile": "fleet500",
+  "passed": false,
+  "startedAt": "2026-11-12T23:24:42.569Z",
+  "finishedAt": "2026-11-12T23:47:37.859Z",
+  "commit": "3597a293be205a2d8a1882e1d030085909cff54f",
+  "machine": {
+    "node": "v25.1.0",
+    "platform": "win32 10.0.26300",
+    "cpu": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+    "cores": 8,
+    "memoryGb": 40
+  },
+  "server": {
+    "nodeEnv": "production",
+    "raisedLimits": {
+      "RATE_LIMIT_IP_CEILING_PER_MINUTE": "1000000",
+      "RATE_LIMIT_AUTH_PER_MINUTE": "10000",
+      "RATE_LIMIT_ANONYMOUS_PER_MINUTE": "100000"
+    }
+  },
+  "dataset": {
+    "vehicles": 500,
+    "drivers": 750,
+    "trips": 2500,
+    "fuelLogs": 1290,
+    "gpsPings": 181154,
+    "maintenanceRecords": 3615
+  },
+  "budgets": {
+    "gps": {
+      "droppedEvents": 0,
+      "deliveryP95Ms": 500,
+      "cpuP95Pct": 80
+    },
+    "api": {
+      "p95Ms": {
+        "GET /trips": 200,
+        "GET /vehicles": 500,
+        "POST /fuel-logs": 400
+      }
+    },
+    "dashboard": {
+      "pageP95Ms": 2000,
+      "analyticsP95Ms": 200
+    },
+    "errors": 0
+  },
+  "checks": [
+    {
+      "name": "GPS: socket events dropped",
+      "actual": 350075,
+      "op": "<=",
+      "limit": 0,
+      "unit": "events",
+      "passed": false
+    },
+    {
+      "name": "GPS: position delivered to dashboards, p95",
+      "actual": 28781.3,
+      "op": "<",
+      "limit": 500,
+      "unit": "ms",
+      "passed": false
+    },
+    {
+      "name": "GPS: API CPU, p95 of 5 s samples",
+      "actual": 43.1,
+      "op": "<",
+      "limit": 80,
+      "unit": "% of a core",
+      "passed": true
+    },
+    {
+      "name": "GPS: failed requests and dashboard disconnects",
+      "actual": 0,
+      "op": "<=",
+      "limit": 0,
+      "unit": "requests",
+      "passed": true
+    },
+    {
+      "name": "Dashboard: Analytics dashboard loaded, p95",
+      "actual": 53.7,
+      "op": "<",
+      "limit": 2000,
+      "unit": "ms",
+      "passed": true
+    },
+    {
+      "name": "Dashboard: Fleet Command Center loaded, p95",
+      "actual": 106.2,
+      "op": "<",
+      "limit": 2000,
+      "unit": "ms",
+      "passed": true
+    },
+    {
+      "name": "Dashboard: GET /analytics/fleet-summary, p95",
+      "actual": 40.6,
+      "op": "<",
+      "limit": 200,
+      "unit": "ms",
+      "passed": true
+    },
+    {
+      "name": "Dashboard: GET /analytics/maintenance-risk, p95",
+      "actual": 48.2,
+      "op": "<",
+      "limit": 200,
+      "unit": "ms",
+      "passed": true
+    },
+    {
+      "name": "Dashboard: GET /analytics/utilisation, p95",
+      "actual": 47.6,
+      "op": "<",
+      "limit": 200,
+      "unit": "ms",
+      "passed": true
+    },
+    {
+      "name": "Dashboard: failed requests",
+      "actual": 0,
+      "op": "<=",
+      "limit": 0,
+      "unit": "requests",
+      "passed": true
+    }
+  ],
+  "results": {
+    "gps": {
+      "workload": {
+        "vehicles": 500,
+        "intervalS": 10,
+        "durationS": 300,
+        "observers": 25
+      },
+      "seconds": 300,
+      "requests": {
+        "POST /tracking/gps-pings": {
+          "count": 14988,
+          "min": 17.7,
+          "mean": 34,
+          "p50": 31.1,
+          "p95": 54.3,
+          "p99": 76.2,
+          "max": 209.5,
+          "perSecond": 50
+        }
+      },
+      "errors": {},
+      "errorCount": 0,
+      "events": {
+        "announced": 14988,
+        "expected": 374700,
+        "received": 24625,
+        "dropped": 350075,
+        "observerDisconnects": 0,
+        "unmatched": 0,
+        "sample": {
+          "vehicle_id": "dcb25025-320c-45d0-b3ef-d5fe514399a4",
+          "lat": 13.5057,
+          "lng": 39.476409,
+          "speed": 59,
+          "heading": 90,
+          "recorded_at": "2026-11-12T23:41:37.536Z"
+        }
+      },
+      "deliveryMs": {
+        "count": 24625,
+        "min": 95.4,
+        "mean": 15860,
+        "p50": 15022.6,
+        "p95": 28781.3,
+        "p99": 29866.5,
+        "max": 30003.3
+      },
+      "server": {
+        "missed": 0,
+        "lastError": null,
+        "cpuPct": {
+          "count": 64,
+          "min": 15.3,
+          "mean": 33.2,
+          "p50": 33.1,
+          "p95": 43.1,
+          "p99": 48.7,
+          "max": 48.7
+        },
+        "eventLoopLagP99Ms": {
+          "count": 65,
+          "min": 11.3,
+          "mean": 13.6,
+          "p50": 13.3,
+          "p95": 15.9,
+          "p99": 18.1,
+          "max": 18.1
+        },
+        "samples": 64
+      }
+    },
+    "dashboard": {
+      "workload": {
+        "users": 20,
+        "durationS": 60,
+        "thinkMs": [
+          1000,
+          3000
+        ]
+      },
+      "seconds": 63,
+      "pages": {
+        "Analytics dashboard": {
+          "count": 297,
+          "min": 16.2,
+          "mean": 31.5,
+          "p50": 24.6,
+          "p95": 53.7,
+          "p99": 192.7,
+          "max": 202,
+          "perSecond": 4.7
+        },
+        "Fleet Command Center": {
+          "count": 300,
+          "min": 17.6,
+          "mean": 37.8,
+          "p50": 25.9,
+          "p95": 106.2,
+          "p99": 250.5,
+          "max": 260.1,
+          "perSecond": 4.8
+        }
+      },
+      "requests": {
+        "GET /analytics/fleet-summary": {
+          "count": 297,
+          "min": 9.6,
+          "mean": 24,
+          "p50": 18.2,
+          "p95": 40.6,
+          "p99": 179.6,
+          "max": 190.9,
+          "perSecond": 4.7
+        },
+        "GET /analytics/maintenance-risk": {
+          "count": 297,
+          "min": 13.4,
+          "mean": 28,
+          "p50": 21.6,
+          "p95": 48.2,
+          "p99": 183.2,
+          "max": 200.8,
+          "perSecond": 4.7
+        },
+        "GET /analytics/utilisation": {
+          "count": 297,
+          "min": 12.1,
+          "mean": 26.9,
+          "p50": 20.2,
+          "p95": 47.6,
+          "p99": 191.8,
+          "max": 198.2,
+          "perSecond": 4.7
+        },
+        "GET /command-center/overview": {
+          "count": 300,
+          "min": 9.1,
+          "mean": 29.6,
+          "p50": 20.6,
+          "p95": 91.8,
+          "p99": 233.9,
+          "max": 250.4,
+          "perSecond": 4.8
+        },
+        "GET /tracking/vehicles/current": {
+          "count": 300,
+          "min": 15,
+          "mean": 33.6,
+          "p50": 23.1,
+          "p95": 94,
+          "p99": 238.8,
+          "max": 258.3,
+          "perSecond": 4.8
+        }
+      },
+      "warmup": {
+        "pages": {
+          "Analytics dashboard": {
+            "count": 20,
+            "min": 1429.3,
+            "mean": 1506,
+            "p50": 1505.6,
+            "p95": 1551.8,
+            "p99": 1571,
+            "max": 1571,
+            "perSecond": 0.3
+          },
+          "Fleet Command Center": {
+            "count": 20,
+            "min": 892.2,
+            "mean": 1223,
+            "p50": 1251,
+            "p95": 1327.1,
+            "p99": 1330.1,
+            "max": 1330.1,
+            "perSecond": 0.3
+          }
+        },
+        "requests": {
+          "GET /analytics/fleet-summary": {
+            "count": 20,
+            "min": 1165.3,
+            "mean": 1431.8,
+            "p50": 1442.7,
+            "p95": 1490,
+            "p99": 1496.2,
+            "max": 1496.2,
+            "perSecond": 0.3
+          },
+          "GET /analytics/maintenance-risk": {
+            "count": 20,
+            "min": 1420.6,
+            "mean": 1504,
+            "p50": 1504.3,
+            "p95": 1550.3,
+            "p99": 1569.6,
+            "max": 1569.6,
+            "perSecond": 0.3
+          },
+          "GET /analytics/utilisation": {
+            "count": 20,
+            "min": 422.6,
+            "mean": 1238.4,
+            "p50": 1319.9,
+            "p95": 1384.8,
+            "p99": 1401.6,
+            "max": 1401.6,
+            "perSecond": 0.3
+          },
+          "GET /command-center/overview": {
+            "count": 20,
+            "min": 883.9,
+            "mean": 1209.5,
+            "p50": 1250.8,
+            "p95": 1326.9,
+            "p99": 1329.9,
+            "max": 1329.9,
+            "perSecond": 0.3
+          },
+          "GET /tracking/vehicles/current": {
+            "count": 20,
+            "min": 333.6,
+            "mean": 1024.2,
+            "p50": 1053.4,
+            "p95": 1171,
+            "p99": 1174.8,
+            "max": 1174.8,
+            "perSecond": 0.3
+          }
+        }
+      },
+      "errors": {},
+      "warmupErrors": {},
+      "errorCount": 0,
+      "server": {
+        "missed": 0,
+        "lastError": null,
+        "cpuPct": {
+          "count": 14,
+          "min": 20.9,
+          "mean": 28.1,
+          "p50": 27.8,
+          "p95": 44.7,
+          "p99": 44.7,
+          "max": 44.7
+        },
+        "eventLoopLagP99Ms": {
+          "count": 15,
+          "min": 12.2,
+          "mean": 17.2,
+          "p50": 15.9,
+          "p95": 40.2,
+          "p99": 40.2,
+          "max": 40.2
+        },
+        "samples": 14
+      }
+    }
+  }
+}

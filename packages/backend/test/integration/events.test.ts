@@ -11,7 +11,7 @@ import { createEvent, deterministicEventId, envelopeOf, type DomainEvent } from 
 import { eventBus, eventChannel } from '../../src/shared/events/event-bus';
 import { appendToOutbox, outboxStore } from '../../src/shared/events/outbox';
 import { outboxCleanupJob } from '../../src/shared/events/outbox-cleanup';
-import { OutboxRelay, RELAY_LOCK_KEY, type OutboxRelayOptions } from '../../src/shared/events/outbox-relay';
+import { BROADCAST_LOCK_KEY, OutboxRelay, RELAY_LOCK_KEY, type OutboxRelayOptions } from '../../src/shared/events/outbox-relay';
 import { SubscriberRegistry } from '../../src/shared/events/subscribers';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
 import { publishedEvents } from '../support/events';
@@ -193,6 +193,80 @@ describe('the relay delivers to consumers', () => {
     } finally {
       holder.release();
       await other.end();
+    }
+  });
+});
+
+describe('the relay at 500 vehicles (FMS-152)', () => {
+  // Against data committed by another connection: dispatch side by side needs connections of its own.
+  test('aggregates are dispatched side by side, each one still in order; a failure holds back only its own', async () => {
+    const instance = new Pool(config.db);
+    const type = `TestParallel${randomUUID().slice(0, 8)}`;
+    const handled: string[] = [];
+    let running = 0;
+    let most = 0;
+    let failOnce = true;
+    const consumers = new SubscriberRegistry();
+    consumers.subscribe(type, 'test.parallel', async (e) => {
+      running++;
+      most = Math.max(most, running);
+      await new Promise((r) => setTimeout(r, 20));
+      running--;
+      if (e.payload.key === 'c:1' && failOnce) {
+        failOnce = false;
+        throw new Error('c:1 fails once');
+      }
+      handled.push(String(e.payload.key));
+    });
+    const events = ['a', 'b', 'c', 'd'].flatMap((agg) => [1, 2, 3].map((n) => event(type, `vehicle:${agg}`, { key: `${agg}:${n}` })));
+    try {
+      await withTransaction(instance, (tx) => appendToOutbox(tx, events));
+      const relay = new OutboxRelay({ db: instance, subscribers: consumers, broadcaster: null, dispatchConcurrency: 4 });
+      expect(await relay.runOnce()).toMatchObject({ dispatched: 9, retrying: 1 });
+      expect(most).toBeGreaterThan(1);
+      for (const agg of ['a', 'b', 'd']) expect(handled.filter((k) => k.startsWith(agg))).toEqual([`${agg}:1`, `${agg}:2`, `${agg}:3`]);
+      // c:1 waits for its retry, and c:2 and c:3 behind it.
+      expect(handled.filter((k) => k.startsWith('c'))).toEqual([]);
+      await instance.query(`UPDATE events.outbox SET next_attempt_at = clock_timestamp() - interval '1 second' WHERE event_id = ANY($1::uuid[])`, [events.map((e) => e.id)]);
+      expect(await relay.runOnce()).toMatchObject({ dispatched: 3 });
+      expect(handled.filter((k) => k.startsWith('c'))).toEqual(['c:1', 'c:2', 'c:3']);
+    } finally {
+      await instance.query('DELETE FROM events.processed_events WHERE event_id = ANY($1::uuid[])', [events.map((e) => e.id)]);
+      await instance.query('DELETE FROM events.outbox WHERE event_id = ANY($1::uuid[])', [events.map((e) => e.id)]);
+      await instance.end();
+    }
+  });
+
+  test('a batch is broadcast at once; a failure part-way marks those before it, and the next pass starts again at it', async () => {
+    const sent: number[] = [];
+    let failAt: number | null = 3;
+    const broadcaster: EventBroadcaster = {
+      async publish(e) {
+        const n = Number(e.payload.n);
+        if (n === failAt) throw new Error('redis is not connected');
+        sent.push(n);
+      },
+    };
+    for (let n = 1; n <= 5; n++) await publish(event('VehicleUpdated', `vehicle:${n}`, { n }));
+    const relay = relayFor(new SubscriberRegistry(), { broadcaster });
+    expect(await relay.runOnce()).toMatchObject({ published: 2 });
+    expect((await outboxRows()).map((r) => r.published)).toEqual([true, true, false, false, false]);
+    failAt = null;
+    expect(await relay.runOnce()).toMatchObject({ published: 3 });
+    // 4 and 5 went out after the failure too, and go out again: at least once, in outbox order each time.
+    expect(sent).toEqual([1, 2, 4, 5, 3, 4, 5]);
+    expect((await outboxRows()).map((r) => r.published)).toEqual([true, true, true, true, true]);
+  });
+
+  test('broadcasting has a lock of its own: while another instance broadcasts, a pass does nothing', async () => {
+    const holder = new Pool({ ...config.db, max: 1 });
+    try {
+      await holder.query('SELECT pg_advisory_lock($1)', [BROADCAST_LOCK_KEY]);
+      const broadcaster: EventBroadcaster = { publish: async () => {} };
+      expect(await relayFor(new SubscriberRegistry(), { broadcaster }).runOnce()).toBeNull();
+      await holder.query('SELECT pg_advisory_unlock($1)', [BROADCAST_LOCK_KEY]);
+    } finally {
+      await holder.end();
     }
   });
 });

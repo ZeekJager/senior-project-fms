@@ -10,10 +10,10 @@ service, inside the change's transaction
   └─ eventBus.publish(client, [event])  ──►  events.outbox row
                                               (commits or rolls back with the change)
                          after commit
-outbox relay (one per instance; one active at a time)
-  1. broadcast  ──►  Redis PUBLISH fms:events:<EventType>  ──►  real-time gateway (Socket.IO, docs/realtime.md)
-  2. dispatch   ──►  in-process consumers, each in its own transaction
-                     with its events.processed_events row
+outbox relay (one per instance; one active at a time for each loop)
+  broadcast loop  ──►  Redis PUBLISH fms:events:<EventType>  ──►  real-time gateway (Socket.IO, docs/realtime.md)
+  dispatch loop   ──►  in-process consumers, each in its own transaction
+                       with its events.processed_events row (4 aggregates at a time)
 ```
 
 - **Rolled back means not published.** The event is a row written by the change's own transaction. A refused or failed change takes its event with it. A committed change cannot lose its event, even if the process dies straight after the commit.
@@ -32,11 +32,11 @@ outbox relay (one per instance; one active at a time)
 
 `OutboxRelay` (`outbox-relay.ts`), started by `src/server.ts` on every instance.
 
-- **One at a time.** Each pass takes a PostgreSQL session advisory lock (`pg_try_advisory_lock`) on one connection. An instance that does not get it skips the pass. The lock goes with its connection, so an instance that dies never keeps it.
-- **Polling.** When idle, a relay checks every 200 ms with one indexed query, so a committed event is on Redis well within a second. While there is a backlog it runs pass after pass. If the database is unreachable it backs off, up to 5 s.
-- **Each pass, in this order:**
-  1. **Broadcast.** Unpublished rows, oldest first, go onto Redis. The first failure stops this phase, and the next pass starts again at that row, so Redis sees events in outbox order. Broadcasting does not wait for consumers.
-  2. **Dispatch.** Due rows go to the consumers of their type (see ordering below). A row is done when every consumer has handled it.
+- **Two loops (FMS-152).** Broadcasting and dispatching run apart, so a position reaches the live map without waiting for the consumers of the events before it. Until 500 vehicles were measured they ran in turn in one pass. At 50 pings a second the consumers then held every broadcast back until positions were 30 s old and dropped ([load-testing.md](load-testing.md#500-vehicles-fms-152-nfr-3)).
+- **One at a time, per loop.** Each pass takes a PostgreSQL session advisory lock (`pg_try_advisory_lock`) on one connection: `RELAY_LOCK_KEY` to dispatch, `BROADCAST_LOCK_KEY` to broadcast. An instance that does not get it skips the pass. The lock goes with its connection, so an instance that dies never keeps it. `runOnce()` (tests, `deliverEvents`) takes both and runs both phases in turn.
+- **Polling.** When idle, each loop checks every 200 ms with one indexed query, so a committed event is on Redis well within a second. While there is a backlog it runs pass after pass. If the database is unreachable it backs off, up to 5 s.
+- **Broadcast.** Up to 100 unpublished rows, oldest first, are handed to Redis at once. One connection keeps their order. The rows published before the first failure are then marked in one statement, and the next pass starts again at the row that failed, so Redis sees events in outbox order. A row after the failure may have gone out too, and goes out again: at least once.
+- **Dispatch.** Due rows go to the consumers of their type (see ordering below). A row is done when every consumer has handled it. In the running app (`DISPATCH_CONCURRENCY`, 4), up to four aggregates are dispatched side by side, each on a connection of the pool. One aggregate's events still go one after another, in order. Tests dispatch one at a time, on their single connection.
 - **Without Redis** (no `REDIS_HOST`), broadcasting is skipped and a row is done once it is dispatched. **While Redis is down**, rows are dispatched as usual and wait for their broadcast. Consumers are never held up by Redis.
 
 ### Order per aggregate
@@ -82,7 +82,7 @@ eventBus.subscribe(USER_EVENTS.accountChanged, 'fleet.driver-accounts', async (e
 
 - **The consumer name** is `<module>.<purpose>`, unique per event type. Keep it once it is released: `processed_events` is keyed on it.
 - **`tx` is the transaction that records the event as handled.** Database work done on it commits with that record, so it happens exactly once. Work done elsewhere (a cache delete, a call to another service) may run again if the process dies before the commit, so it must be safe to repeat.
-- **Consumers run one after another**, in subscription order, on the instance that holds the relay lock. Keep them short. Slow work belongs in a job.
+- **Consumers run one after another** for an event, in subscription order, on the instance that holds the relay lock. Events of different aggregates may run at the same time (FMS-152): a consumer must not rely on the order of two aggregates' events. Keep consumers short. Slow work belongs in a job.
 
 Today's consumers:
 
@@ -137,6 +137,8 @@ The daily `event-outbox-cleanup` job (03:30, [jobs.md](jobs.md)) deletes events 
   - order is kept per aggregate;
   - dead letters;
   - resume after a restart;
-  - one relay at a time;
+  - one relay at a time, and one broadcaster;
+  - aggregates side by side, each in order (FMS-152);
+  - a batch broadcast at once, resumed at its first failure;
   - Redis outages;
   - a committed event reaches Redis within a second (with Redis: CI).

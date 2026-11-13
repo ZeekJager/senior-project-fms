@@ -41,11 +41,11 @@ export async function prepareDatabase(name: string): Promise<void> {
   }
 }
 
-/** Runs the seed generator at the budget size in its own process, as `npm run seed` does. */
-export function seedBudget(): Promise<void> {
+/** Runs the seed generator at `size` (budget: 200 vehicles; fleet500: 500) in its own process, as `npm run seed` does. */
+export function seedDataset(size: 'budget' | 'fleet500'): Promise<void> {
   return new Promise((resolve, reject) => {
     // tsx as a loader of this Node, so no shell or .cmd shim is involved on any platform.
-    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/seed.ts', '--size=budget'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/seed.ts', `--size=${size}`], {
       cwd: BACKEND,
       env: { ...process.env, FMS_SEED_PASSWORD: randomBytes(12).toString('base64url') },
       stdio: ['ignore', 'ignore', 'inherit'],

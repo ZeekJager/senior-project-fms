@@ -4,6 +4,7 @@
  *
  *   npm run seed -- --size=small                 # a laptop demo (empty database)
  *   npm run seed -- --size=budget --reset        # rebuild the schema, then 200 vehicles, 300 drivers, 1,000 trips
+ *   npm run seed -- --size=fleet500 --reset      # 500 vehicles, 750 drivers, 2,500 trips: the load suite's fleet500 (FMS-152)
  *   npm run seed -- --seed=7 --anchor=2026-10-01 # another dataset; the same seed and anchor give the same data
  *   npm run seed:reset                           # rebuild the schema only
  *
@@ -23,9 +24,9 @@ import { pool } from '../src/db';
 import { cache, closeRedis } from '../src/shared/cache';
 import { applyMigrations, revertMigrations } from './lib/migrations';
 import { runSeed } from './seed/apply';
-import type { ProfileName } from './seed/plan';
+import { PROFILES, type ProfileName } from './seed/plan';
 
-const USAGE = 'Usage: npm run seed -- [--size=small|budget] [--seed=<integer>] [--anchor=YYYY-MM-DD] [--reset | --reset-only]';
+const USAGE = 'Usage: npm run seed -- [--size=small|budget|fleet500] [--seed=<integer>] [--anchor=YYYY-MM-DD] [--reset | --reset-only]';
 const DEFAULT_SEED = 20261007;
 
 function generatePassword(): string {
@@ -47,7 +48,7 @@ function options() {
       'reset-only': { type: 'boolean', default: false },
     },
   });
-  if (values.size !== 'small' && values.size !== 'budget') throw new Error(`--size must be small or budget. ${USAGE}`);
+  if (!(values.size in PROFILES)) throw new Error(`--size must be ${Object.keys(PROFILES).join(', ')}. ${USAGE}`);
   if (!/^\d{1,9}$/.test(values.seed)) throw new Error(`--seed must be a whole number. ${USAGE}`);
   const anchor = values.anchor ?? today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(anchor) || Number.isNaN(Date.parse(anchor))) throw new Error(`--anchor must be a date, YYYY-MM-DD. ${USAGE}`);

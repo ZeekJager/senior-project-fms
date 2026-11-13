@@ -2,12 +2,29 @@ import { describe, expect, test } from 'vitest';
 import { assertLoadTarget } from './guard';
 import { renderHtml, standing, type LoadReport } from './html';
 import { cpuPercent, sampleValue } from './metrics';
-import { BUDGETS } from './profiles';
+import { BUDGETS, PROFILES } from './profiles';
 import { checksFor, formatChecks, type Results } from './report';
 import { pageRequests } from './scenarios/dashboard';
 import { serverEnv } from './server';
 import { setCookies } from './session';
 import { check, percentile, Recorder, summarize } from './stats';
+
+describe('the profiles', () => {
+  test("fleet500 is NFR-3's (FMS-152): 500 vehicles every 10 s for 5 minutes, 25 dashboards, and scenario 3's load, on 500 vehicles", () => {
+    const p = PROFILES.fleet500;
+    expect(p).toMatchObject({ card: 'FMS-152', dataset: 'fleet500', scenarios: ['gps', 'dashboard'] });
+    expect(p.gps).toEqual({ vehicles: 500, intervalS: 10, durationS: 300, observers: 25 });
+    expect(p.dashboard).toEqual(PROFILES.full.dashboard);
+    expect(PROFILES.full).toMatchObject({ card: 'FMS-61', dataset: 'budget', scenarios: ['gps', 'api', 'dashboard'] });
+    expect(PROFILES.smoke).toMatchObject({ card: 'FMS-61', dataset: 'budget' });
+  });
+
+  test('every profile is held to the same budgets, which 500 vehicles do not lower', () => {
+    expect(BUDGETS.gps).toEqual({ droppedEvents: 0, deliveryP95Ms: 500, cpuP95Pct: 80 });
+    expect(BUDGETS.dashboard).toEqual({ pageP95Ms: 2000, analyticsP95Ms: 200 });
+    expect(BUDGETS.errors).toBe(0);
+  });
+});
 
 describe('statistics', () => {
   test('nearest-rank percentiles', () => {
