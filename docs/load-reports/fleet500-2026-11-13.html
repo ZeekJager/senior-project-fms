@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Load Test Report</title>
+<style>
+:root{color-scheme:light;--canvas:246 247 251;--surface:255 255 255;--muted-surface:249 250 253;--sunken:240 242 248;--line:225 229 240;--line-strong:201 207 224;--ink:19 23 41;--ink-muted:65 72 98;--ink-subtle:96 103 130;--brand:67 56 202;--brand-soft:238 240 255;--success:6 118 71;--success-soft:236 253 243;--warning:181 71 8;--warning-soft:255 250 235;--danger:180 35 24;--danger-soft:254 243 242;--shadow:19 23 41}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--canvas:11 13 20;--surface:18 21 31;--muted-surface:23 27 39;--sunken:14 16 24;--line:37 42 59;--line-strong:54 60 82;--ink:238 240 248;--ink-muted:178 184 204;--ink-subtle:140 147 170;--brand:165 180 252;--brand-soft:28 30 66;--success:71 205 137;--success-soft:10 41 28;--warning:253 176 34;--warning-soft:46 31 6;--danger:249 112 102;--danger-soft:52 17 15;--shadow:0 0 0}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:rgb(var(--canvas));color:rgb(var(--ink));font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-feature-settings:"tnum" 1,"cv11" 1}
+main{max-width:1080px;margin:0 auto;padding:40px 24px 64px;min-width:0}
+.card,.tile{min-width:0}
+h1,h2,h3{margin:0;letter-spacing:-.01em}
+h1{font-size:28px;line-height:1.2;font-weight:650}
+h2{font-size:19px;font-weight:620}
+code{font:500 13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.muted{color:rgb(var(--ink-subtle))}
+.eyebrow{margin:0 0 4px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:rgb(var(--brand))}
+.top{display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.top p{margin:8px 0 0;color:rgb(var(--ink-muted))}
+.verdict{display:inline-flex;align-items:center;gap:10px;padding:10px 16px;border-radius:12px;font-weight:620;border:1px solid}
+.verdict svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.verdict.met{background:rgb(var(--success-soft));color:rgb(var(--success));border-color:rgb(var(--success)/.25)}
+.verdict.missed{background:rgb(var(--danger-soft));color:rgb(var(--danger));border-color:rgb(var(--danger)/.25)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:16px;margin-bottom:24px}
+.tile{background:rgb(var(--surface));border:1px solid rgb(var(--line));border-radius:16px;padding:16px 20px;box-shadow:0 1px 2px rgb(var(--shadow)/.04),0 4px 16px rgb(var(--shadow)/.04)}
+.tile dt{font-size:13px;color:rgb(var(--ink-subtle))}
+.tile dd{margin:4px 0 0;font-size:24px;font-weight:650;letter-spacing:-.01em}
+.tile dd small{display:block;margin-top:2px;font-size:13px;font-weight:500;color:rgb(var(--ink-muted));letter-spacing:0}
+.card{background:rgb(var(--surface));border:1px solid rgb(var(--line));border-radius:16px;padding:24px;margin-bottom:24px;box-shadow:0 1px 2px rgb(var(--shadow)/.04),0 4px 16px rgb(var(--shadow)/.04)}
+.card>header{margin-bottom:16px}
+.lede{margin:6px 0 0;color:rgb(var(--ink-muted));max-width:72ch}
+.table-wrap{overflow-x:auto;margin:16px 0;border:1px solid rgb(var(--line));border-radius:12px}
+table{width:100%;border-collapse:collapse}
+caption{caption-side:top;text-align:left;padding:12px 16px 8px;font-size:13px;font-weight:600;color:rgb(var(--ink-muted))}
+th,td{padding:10px 16px;text-align:left;vertical-align:middle;border-top:1px solid rgb(var(--line))}
+thead th{border-top:0;background:rgb(var(--muted-surface));font-size:12px;font-weight:600;color:rgb(var(--ink-subtle));white-space:nowrap}
+tbody th{font-weight:500}
+.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.strong{font-weight:620}
+td.muted{color:rgb(var(--ink-subtle))}
+.budgets .group th{background:rgb(var(--muted-surface));font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:rgb(var(--ink-subtle))}
+.budgets tr.missed th[scope=row]{color:rgb(var(--danger))}
+.meter-cell{width:28%;min-width:120px}
+.meter{display:block;height:8px;border-radius:4px;background:rgb(var(--sunken));overflow:hidden;box-shadow:inset 0 0 0 1px rgb(var(--line))}
+.meter .fill{display:block;height:100%;border-radius:4px}
+.fill.met{background:rgb(var(--success))}.fill.close{background:rgb(var(--warning))}.fill.missed{background:rgb(var(--danger))}
+.meter-none{display:block;height:8px}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px 2px 6px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.badge svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.badge.met{background:rgb(var(--success-soft));color:rgb(var(--success))}
+.badge.close{background:rgb(var(--warning-soft));color:rgb(var(--warning))}
+.badge.missed{background:rgb(var(--danger-soft));color:rgb(var(--danger))}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));gap:8px 24px;margin:16px 0}
+.facts dt{font-size:12px;color:rgb(var(--ink-subtle))}
+.facts dd{margin:2px 0 0;font-weight:600;font-variant-numeric:tabular-nums}
+.facts dd.bad{color:rgb(var(--danger))}
+.note{color:rgb(var(--ink-muted));font-size:14px}
+.callout{border-radius:12px;padding:12px 16px;margin:16px 0}
+.callout.missed{background:rgb(var(--danger-soft));color:rgb(var(--danger))}
+.callout ul{margin:6px 0 0;padding-left:20px}
+details{margin-top:16px;border-top:1px solid rgb(var(--line));padding-top:12px}
+summary{cursor:pointer;font-size:14px;font-weight:600;color:rgb(var(--ink-muted))}
+summary:focus-visible{outline:2px solid rgb(var(--brand));outline-offset:2px;border-radius:4px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0 16px 12px;list-style:none;font-size:13px;color:rgb(var(--ink-muted))}
+footer{margin-top:32px;font-size:13px;color:rgb(var(--ink-subtle))}
+footer dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px 24px;margin:12px 0 0}
+footer dt{font-weight:600;color:rgb(var(--ink-muted))}
+footer dd{margin:2px 0 0;overflow-wrap:anywhere}
+@media (max-width:640px){main{padding:24px 16px 48px}h1{font-size:23px}.card{padding:16px}th,td{padding:8px 12px}.meter-cell{min-width:72px}
+.budgets,.budgets tbody{display:block}.budgets thead{display:none}
+.budgets tr{display:grid;grid-template-columns:1fr auto;gap:8px 12px;padding:12px;border-top:1px solid rgb(var(--line))}
+.budgets tr.group{display:block;padding:8px 12px;background:rgb(var(--muted-surface))}
+.budgets tr.group th{display:block;padding:0;border:0}
+.budgets th,.budgets td{padding:0;border:0}
+.budgets .c-name{grid-area:1/1}.budgets .c-status{grid-area:1/2;text-align:right}
+.budgets .c-meter{grid-area:2/1/3/3;width:auto;min-width:0}
+.budgets .c-val{grid-area:3/1;text-align:left}.budgets .c-lim{grid-area:3/2}
+.budgets .meter-none{display:none}}
+@media print{body{background:#fff}.card,.tile{box-shadow:none;break-inside:avoid}details{display:none}}
+</style>
+</head>
+<body>
+<main>
+<div class="top">
+  <div>
+    <p class="eyebrow">Fleet Management System · FMS-152 · fleet500 profile</p>
+    <h1>Load test report</h1>
+    <p>13 November 2026 at 02:53 (Addis Ababa) · ran 20 min 31 s · commit <code>3597a293be20</code></p>
+  </div>
+  <div class="verdict met" role="status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>All budgets met</div>
+</div>
+
+<dl class="tiles">
+  <div class="tile"><dt>Budgets met</dt><dd>10 of 10<small>Every budget was met with room to spare.</small></dd></div>
+  <div class="tile"><dt>Tightest budget</dt><dd>69%<small>GPS: API CPU, p95 of 5 s samples: 55.2%, under 80% of a core</small></dd></div>
+  <div class="tile"><dt>Requests made</dt><dd>16,589<small>none failed</small></dd></div>
+  <div class="tile"><dt>Live-map deliveries</dt><dd>374,775<small>0 dropped</small></dd></div>
+</dl>
+
+<section class="card" aria-labelledby="s-budgets">
+<header><h2 id="s-budgets">Budgets</h2><p class="lede">Each target the run is held to. The bar shows how much of the limit was used; the run fails if any is missed. Percentiles are nearest-rank.</p></header>
+<div class="table-wrap"><table class="budgets">
+<thead><tr><th scope="col">Budget</th><th scope="col">Share of the limit</th><th scope="col" class="num">Measured</th><th scope="col" class="num">Limit</th><th scope="col">Status</th></tr></thead>
+<tbody><tr class="group"><th colspan="5" scope="colgroup">GPS</th></tr>
+<tr class="met">
+  <th scope="row" class="c-name">Socket events dropped</th>
+  <td class="meter-cell c-meter"><span class="meter-none" aria-hidden="true"></span></td>
+  <td class="num strong c-val">0 events</td>
+  <td class="num muted c-lim">at most 0 events</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">Position delivered to dashboards, p95</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="55% of the budget"><span class="fill met" style="width:54.6%"></span></span></td>
+  <td class="num strong c-val">273 ms</td>
+  <td class="num muted c-lim">under 500 ms</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">API CPU, p95 of 5 s samples</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="69% of the budget"><span class="fill met" style="width:69.0%"></span></span></td>
+  <td class="num strong c-val">55.2%</td>
+  <td class="num muted c-lim">under 80% of a core</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">Failed requests and dashboard disconnects</th>
+  <td class="meter-cell c-meter"><span class="meter-none" aria-hidden="true"></span></td>
+  <td class="num strong c-val">0 requests</td>
+  <td class="num muted c-lim">at most 0 requests</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="group"><th colspan="5" scope="colgroup">Dashboard</th></tr>
+<tr class="met">
+  <th scope="row" class="c-name">Analytics dashboard loaded, p95</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="2% of the budget"><span class="fill met" style="width:2.5%"></span></span></td>
+  <td class="num strong c-val">49 ms</td>
+  <td class="num muted c-lim">under 2 s</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">Fleet Command Center loaded, p95</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="4% of the budget"><span class="fill met" style="width:3.9%"></span></span></td>
+  <td class="num strong c-val">78 ms</td>
+  <td class="num muted c-lim">under 2 s</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">GET /analytics/fleet-summary, p95</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="19% of the budget"><span class="fill met" style="width:18.6%"></span></span></td>
+  <td class="num strong c-val">37 ms</td>
+  <td class="num muted c-lim">under 200 ms</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">GET /analytics/maintenance-risk, p95</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="23% of the budget"><span class="fill met" style="width:22.9%"></span></span></td>
+  <td class="num strong c-val">46 ms</td>
+  <td class="num muted c-lim">under 200 ms</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">GET /analytics/utilisation, p95</th>
+  <td class="meter-cell c-meter"><span class="meter" role="img" aria-label="23% of the budget"><span class="fill met" style="width:23.1%"></span></span></td>
+  <td class="num strong c-val">46 ms</td>
+  <td class="num muted c-lim">under 200 ms</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr>
+<tr class="met">
+  <th scope="row" class="c-name">Failed requests</th>
+  <td class="meter-cell c-meter"><span class="meter-none" aria-hidden="true"></span></td>
+  <td class="num strong c-val">0 requests</td>
+  <td class="num muted c-lim">at most 0 requests</td>
+  <td class="c-status"><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span></td>
+</tr></tbody>
+</table>
+<ul class="legend"><li><span class="badge met"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>Met</span> under 80% of the limit</li><li><span class="badge close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4v5" /><path d="M8 11.5v.5" /></svg>Close</span> met, 80% of the limit or more</li><li><span class="badge missed"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7" /><path d="M11.5 4.5l-7 7" /></svg>Missed</span> the run fails</li></ul>
+</div>
+</section>
+
+<section class="card" aria-labelledby="s-gps">
+<header><p class="eyebrow">Scenario 1</p><h2 id="s-gps">GPS and the live map</h2>
+<p class="lede">500 vehicles each post a position every 10 s for 300 s, while 25 signed-in dashboards hold a live socket. Every position must reach every dashboard.</p></header>
+<dl class="facts">
+  <div><dt>Positions accepted</dt><dd>14,991</dd></div>
+  <div><dt>Deliveries expected</dt><dd>374,775</dd></div>
+  <div><dt>Delivered</dt><dd>374,775</dd></div>
+  <div><dt>Dropped</dt><dd class="">0</dd></div>
+  <div><dt>Dashboard disconnects</dt><dd class="">0</dd></div>
+</dl>
+<div class="table-wrap"><table class="data">
+<caption>Latency: a position from the device to a dashboard, and the ping request itself</caption>
+<thead><tr><th scope="col">Request</th><th scope="col" class="num">Count</th><th scope="col" class="num">Per second</th><th scope="col" class="num">p50</th><th scope="col" class="num">p95</th><th scope="col" class="num">p99</th><th scope="col" class="num">Max</th></tr></thead>
+<tbody><tr><th scope="row">Ping to dashboard</th><td class="num">374,775</td><td class="num">—</td><td class="num">171 ms</td><td class="num strong">273 ms</td><td class="num">318 ms</td><td class="num">663 ms</td></tr>
+<tr><th scope="row"><code>POST /tracking/gps-pings</code></th><td class="num">14,991</td><td class="num">50</td><td class="num">34 ms</td><td class="num strong">67 ms</td><td class="num">114 ms</td><td class="num">365 ms</td></tr></tbody></table></div>
+<dl class="facts">
+  <div><dt>API CPU, p95</dt><dd>55.2% <span class="muted">of a core</span></dd></div>
+  <div><dt>API CPU, mean</dt><dd>49.2%</dd></div>
+  <div><dt>Event-loop lag, worst p99</dt><dd>39 ms</dd></div>
+  <div><dt>Samples</dt><dd>61 <span class="muted">every 5 s</span></dd></div>
+</dl>
+
+</section>
+<section class="card" aria-labelledby="s-dash">
+<header><p class="eyebrow">Scenario 3</p><h2 id="s-dash">Opening the dashboards</h2>
+<p class="lede">20 users for 63 s, each opening the Fleet Command Center and the analytics dashboard in turn. A page counts as loaded when the last of its requests answers.</p></header>
+<div class="table-wrap"><table class="data">
+<caption>Page load: all of a page&#39;s requests answered</caption>
+<thead><tr><th scope="col">Request</th><th scope="col" class="num">Count</th><th scope="col" class="num">Per second</th><th scope="col" class="num">p50</th><th scope="col" class="num">p95</th><th scope="col" class="num">p99</th><th scope="col" class="num">Max</th></tr></thead>
+<tbody><tr><th scope="row">Analytics dashboard</th><td class="num">300</td><td class="num">4.8</td><td class="num">21 ms</td><td class="num strong">49 ms</td><td class="num">156 ms</td><td class="num">163 ms</td></tr>
+<tr><th scope="row">Fleet Command Center</th><td class="num">299</td><td class="num">4.8</td><td class="num">22 ms</td><td class="num strong">78 ms</td><td class="num">230 ms</td><td class="num">243 ms</td></tr></tbody></table></div>
+<div class="table-wrap"><table class="data">
+<caption>Each request a page makes</caption>
+<thead><tr><th scope="col">Request</th><th scope="col" class="num">Count</th><th scope="col" class="num">Per second</th><th scope="col" class="num">p50</th><th scope="col" class="num">p95</th><th scope="col" class="num">p99</th><th scope="col" class="num">Max</th></tr></thead>
+<tbody><tr><th scope="row"><code>GET /analytics/fleet-summary</code></th><td class="num">300</td><td class="num">4.8</td><td class="num">17 ms</td><td class="num strong">37 ms</td><td class="num">132 ms</td><td class="num">162 ms</td></tr>
+<tr><th scope="row"><code>GET /analytics/maintenance-risk</code></th><td class="num">300</td><td class="num">4.8</td><td class="num">19 ms</td><td class="num strong">46 ms</td><td class="num">137 ms</td><td class="num">151 ms</td></tr>
+<tr><th scope="row"><code>GET /analytics/utilisation</code></th><td class="num">300</td><td class="num">4.8</td><td class="num">17 ms</td><td class="num strong">46 ms</td><td class="num">145 ms</td><td class="num">160 ms</td></tr>
+<tr><th scope="row"><code>GET /command-center/overview</code></th><td class="num">299</td><td class="num">4.8</td><td class="num">19 ms</td><td class="num strong">76 ms</td><td class="num">217 ms</td><td class="num">242 ms</td></tr>
+<tr><th scope="row"><code>GET /tracking/vehicles/current</code></th><td class="num">299</td><td class="num">4.8</td><td class="num">20 ms</td><td class="num strong">61 ms</td><td class="num">228 ms</td><td class="num">240 ms</td></tr></tbody></table></div>
+<dl class="facts">
+  <div><dt>API CPU, p95</dt><dd>32.6% <span class="muted">of a core</span></dd></div>
+  <div><dt>API CPU, mean</dt><dd>14.5%</dd></div>
+  <div><dt>Event-loop lag, worst p99</dt><dd>45 ms</dd></div>
+  <div><dt>Samples</dt><dd>13 <span class="muted">every 5 s</span></dd></div>
+</dl>
+
+<details><summary>Warm-up: each user's first actions on a server just started (reported, not held to the budgets)</summary><div class="table-wrap"><table class="data">
+<caption>Warm-up page loads</caption>
+<thead><tr><th scope="col">Request</th><th scope="col" class="num">Count</th><th scope="col" class="num">Per second</th><th scope="col" class="num">p50</th><th scope="col" class="num">p95</th><th scope="col" class="num">p99</th><th scope="col" class="num">Max</th></tr></thead>
+<tbody><tr><th scope="row">Analytics dashboard</th><td class="num">20</td><td class="num">0.3</td><td class="num">1.54 s</td><td class="num strong">1.59 s</td><td class="num">1.59 s</td><td class="num">1.59 s</td></tr>
+<tr><th scope="row">Fleet Command Center</th><td class="num">20</td><td class="num">0.3</td><td class="num">483 ms</td><td class="num strong">557 ms</td><td class="num">564 ms</td><td class="num">564 ms</td></tr></tbody></table></div><div class="table-wrap"><table class="data">
+<caption>Warm-up requests</caption>
+<thead><tr><th scope="col">Request</th><th scope="col" class="num">Count</th><th scope="col" class="num">Per second</th><th scope="col" class="num">p50</th><th scope="col" class="num">p95</th><th scope="col" class="num">p99</th><th scope="col" class="num">Max</th></tr></thead>
+<tbody><tr><th scope="row"><code>GET /analytics/fleet-summary</code></th><td class="num">20</td><td class="num">0.3</td><td class="num">1.51 s</td><td class="num strong">1.57 s</td><td class="num">1.57 s</td><td class="num">1.57 s</td></tr>
+<tr><th scope="row"><code>GET /analytics/maintenance-risk</code></th><td class="num">20</td><td class="num">0.3</td><td class="num">1.54 s</td><td class="num strong">1.59 s</td><td class="num">1.59 s</td><td class="num">1.59 s</td></tr>
+<tr><th scope="row"><code>GET /analytics/utilisation</code></th><td class="num">20</td><td class="num">0.3</td><td class="num">1.33 s</td><td class="num strong">1.42 s</td><td class="num">1.44 s</td><td class="num">1.44 s</td></tr>
+<tr><th scope="row"><code>GET /command-center/overview</code></th><td class="num">20</td><td class="num">0.3</td><td class="num">483 ms</td><td class="num strong">557 ms</td><td class="num">564 ms</td><td class="num">564 ms</td></tr>
+<tr><th scope="row"><code>GET /tracking/vehicles/current</code></th><td class="num">20</td><td class="num">0.3</td><td class="num">190 ms</td><td class="num strong">259 ms</td><td class="num">277 ms</td><td class="num">277 ms</td></tr></tbody></table></div></details>
+</section>
+
+<footer>
+<h2>About this run</h2>
+<dl>
+  <div><dt>Machine</dt><dd>Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz, 8 threads, 40 GB · win32 10.0.26300 · Node v25.1.0</dd></div>
+  <div><dt>Data</dt><dd>500 vehicles, 750 drivers, 2,500 trips, 1,290 fuel logs, 181,154 gps pings, 3,615 maintenance records: a seeded test database, never production</dd></div>
+  <div><dt>Server</dt><dd>The compiled API with NODE_ENV=production; per-address rate limits raised because every client runs on one machine (RATE_LIMIT_IP_CEILING_PER_MINUTE=1000000, RATE_LIMIT_AUTH_PER_MINUTE=10000, RATE_LIMIT_ANONYMOUS_PER_MINUTE=100000)</dd></div>
+  <div><dt>More</dt><dd>The same numbers in full: the JSON report beside this file. How the suite works: docs/load-testing.md</dd></div>
+</dl>
+</footer>
+</main>
+</body>
+</html>

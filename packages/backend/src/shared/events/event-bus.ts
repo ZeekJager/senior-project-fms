@@ -62,6 +62,9 @@ export class OutboxEventBus implements EventBus {
   }
 }
 
+/** Aggregates the relay dispatches side by side in the running app (FMS-152, docs/events.md). Tests run one at a time. */
+export const DISPATCH_CONCURRENCY = 4;
+
 /** The application's event bus. */
 export const eventBus = new OutboxEventBus();
 
@@ -80,6 +83,8 @@ export function createOutboxRelay(options: Partial<OutboxRelayOptions> = {}): Ou
     db: pool,
     subscribers: eventBus.subscribers,
     broadcaster: redis ? new RedisEventBroadcaster(redis, eventChannel) : null,
+    // FMS-152: four aggregates at once keep up with 500 vehicles' positions, within the pool's ten connections.
+    dispatchConcurrency: DISPATCH_CONCURRENCY,
     log: (level, message, fields) => logger[level](fields, message),
     ...options,
   });

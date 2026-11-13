@@ -1,7 +1,8 @@
 /**
  * The load suite's workloads (FMS-61, docs/load-testing.md). `full` is the card's: 200 vehicles every 10 s for 5 minutes,
  * 50 users for 2 minutes, 20 dashboard users. `smoke` runs the same code briefly, on every pull request, so the suite
- * itself never rots; its numbers are not the ones to quote.
+ * itself never rots; its numbers are not the ones to quote. `fleet500` (FMS-152) is NFR-3's: 500 vehicles every 10 s for
+ * 5 minutes with 25 dashboards on the live map, and scenario 3's dashboard load, on a 500-vehicle dataset. On demand only.
  */
 export interface GpsWorkload {
   /** Vehicles reporting, each through its own device token (POST /tracking/gps-pings). */
@@ -20,8 +21,16 @@ export interface UserWorkload {
   thinkMs: readonly [number, number];
 }
 
+export type ScenarioName = 'gps' | 'api' | 'dashboard';
+
 export interface Profile {
-  name: 'full' | 'smoke';
+  name: 'full' | 'smoke' | 'fleet500';
+  /** The card whose workload it is, for the report. */
+  card: 'FMS-61' | 'FMS-152';
+  /** The seed size it runs on (scripts/seed): `budget`, 200 vehicles; `fleet500`, 500. */
+  dataset: 'budget' | 'fleet500';
+  /** What it runs unless --only says otherwise. */
+  scenarios: readonly ScenarioName[];
   gps: GpsWorkload;
   api: UserWorkload;
   dashboard: UserWorkload;
@@ -30,15 +39,31 @@ export interface Profile {
 export const PROFILES: Record<Profile['name'], Profile> = {
   full: {
     name: 'full',
+    card: 'FMS-61',
+    dataset: 'budget',
+    scenarios: ['gps', 'api', 'dashboard'],
     gps: { vehicles: 200, intervalS: 10, durationS: 300, observers: 25 },
     api: { users: 50, durationS: 120, thinkMs: [500, 1500] },
     dashboard: { users: 20, durationS: 60, thinkMs: [1000, 3000] },
   },
   smoke: {
     name: 'smoke',
+    card: 'FMS-61',
+    dataset: 'budget',
+    scenarios: ['gps', 'api', 'dashboard'],
     gps: { vehicles: 50, intervalS: 10, durationS: 30, observers: 5 },
     api: { users: 10, durationS: 20, thinkMs: [500, 1500] },
     dashboard: { users: 5, durationS: 15, thinkMs: [1000, 3000] },
+  },
+  // FMS-152, NFR-3: the Fleet Command Center tracking 500 vehicles. The same budgets; scenario 2 is not part of it.
+  fleet500: {
+    name: 'fleet500',
+    card: 'FMS-152',
+    dataset: 'fleet500',
+    scenarios: ['gps', 'dashboard'],
+    gps: { vehicles: 500, intervalS: 10, durationS: 300, observers: 25 },
+    api: { users: 50, durationS: 120, thinkMs: [500, 1500] },
+    dashboard: { users: 20, durationS: 60, thinkMs: [1000, 3000] },
   },
 };
 

@@ -49,7 +49,8 @@ export async function publishedEvents(...types: string[]): Promise<DomainEvent[]
  * fails is left for its retry, which a test sees as an undispatched row.
  */
 export async function deliverEvents(options: Partial<OutboxRelayOptions> = {}): Promise<void> {
-  const relay = createOutboxRelay({ log: () => {}, ...options });
+  // One at a time: the test's single connection cannot hold two transactions at once.
+  const relay = createOutboxRelay({ log: () => {}, dispatchConcurrency: 1, ...options });
   for (let pass = 0; pass < 20; pass++) {
     const done = await relay.runOnce();
     if (!done || done.published + done.dispatched + done.deadLettered === 0) return;

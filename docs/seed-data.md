@@ -9,6 +9,7 @@ Demo and test data that can be repeated, at the scale the performance budgets as
 ```bash
 make seed                    # the small profile on the dev database, rebuilt first
 make seed SIZE=budget        # 200 vehicles, 300 drivers, 1,000 trips
+make seed SIZE=fleet500      # 500 vehicles, 750 drivers, 2,500 trips (NFR-3, the load suite's fleet500, FMS-152)
 
 # Or directly, inside the backend container:
 docker exec fms_backend npm run seed -- --size=small            # needs an empty database
@@ -19,7 +20,7 @@ docker exec fms_backend npm run seed:reset                      # rebuild the sc
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--size` | `small` | `small` (a laptop demo) or `budget` (the performance-budget scale) |
+| `--size` | `small` | `small` (a laptop demo), `budget` (the performance-budget scale) or `fleet500` (NFR-3's 500 vehicles, for the load suite's `fleet500` profile, FMS-152) |
 | `--seed` | `20261007` | Seed for the random generator. The same seed gives the same data. |
 | `--anchor` | today in Addis Ababa | The dataset's "today". Every date is relative to it: past trips, licence expiries, attendance. It cannot be in the future. |
 | `--reset` | off | Rebuilds the schema first: every migration's Down in reverse, then every Up. |
@@ -30,6 +31,8 @@ docker exec fms_backend npm run seed:reset                      # rebuild the sc
 The seed and the reset **refuse to run when `NODE_ENV=production`**. The check runs before the config loads or any connection opens.
 
 ## What it creates
+
+`fleet500` is `budget` scaled for NFR-3 (FMS-152): the same eight depots and staff, 500 vehicles, 750 drivers, 2,500 trips, 375 maintenance records, and stock for them (ten times the small opening stock). It follows the same rules, which `plan.test.ts` checks at both sizes. Its counts are not in the table below.
 
 Counts that depend on the random draws are given for the default seed (20261007), with the range over ten other seeds in brackets.
 

@@ -20,6 +20,12 @@ describe('buildPlan', () => {
   });
 
   const budget = buildPlan('budget', 20261007, ANCHOR);
+  // FMS-152: NFR-3's 500 vehicles, for the load suite's fleet500 profile; held to the same rules below.
+  const fleet500 = buildPlan('fleet500', 20261007, ANCHOR);
+  const plans = [
+    ['budget', budget],
+    ['fleet500', fleet500],
+  ] as const;
 
   test('the budget profile is 200 vehicles (some electric), 300 drivers and 1,000 trips', () => {
     expect(budget.vehicles).toHaveLength(200);
@@ -27,6 +33,15 @@ describe('buildPlan', () => {
     expect(budget.trips).toHaveLength(1000);
     expect(budget.vehicles.filter((v) => v.fuel_type === 'electric').length).toBeGreaterThan(0);
     expect(budget.vehicles.filter((v) => v.fuel_type === 'electric').every((v) => v.fuel_efficiency_ml_per_km === null)).toBe(true);
+  });
+
+  test('the fleet500 profile is 500 vehicles (some electric), 750 drivers and 2,500 trips, in the same eight depots', () => {
+    expect(fleet500.vehicles).toHaveLength(500);
+    expect(fleet500.drivers).toHaveLength(750);
+    expect(fleet500.trips).toHaveLength(2500);
+    expect(fleet500.depots).toHaveLength(budget.depots.length);
+    expect(fleet500.vehicles.filter((v) => v.fuel_type === 'electric').length).toBeGreaterThan(0);
+    expect(new Set(fleet500.trips.map((t) => t.status))).toEqual(new Set(['draft', 'scheduled', 'assigned', 'en_route', 'completed', 'cancelled']));
   });
 
   test('every role, every trip status, routes, fuel logs and maintenance history are there', () => {
@@ -71,23 +86,23 @@ describe('buildPlan', () => {
     expect(failures.some((f) => f.unplanned) && failures.some((f) => !f.unplanned)).toBe(true);
   });
 
-  test('unique keys are unique', () => {
+  test.each(plans)('unique keys are unique (%s)', (_name, plan) => {
     const unique = (values: string[]) => new Set(values).size === values.length;
-    expect(unique([...budget.staff, ...budget.drivers].map((p) => p.email))).toBe(true);
-    expect(unique(budget.vehicles.map((v) => v.registration_number))).toBe(true);
-    expect(unique(budget.vehicles.map((v) => v.vin))).toBe(true);
-    expect(unique(budget.drivers.map((d) => d.license_number))).toBe(true);
+    expect(unique([...plan.staff, ...plan.drivers].map((p) => p.email))).toBe(true);
+    expect(unique(plan.vehicles.map((v) => v.registration_number))).toBe(true);
+    expect(unique(plan.vehicles.map((v) => v.vin))).toBe(true);
+    expect(unique(plan.drivers.map((d) => d.license_number))).toBe(true);
   });
 
-  test('crewed trips respect the rules the database and API enforce', () => {
+  test.each(plans)('crewed trips respect the rules the database and API enforce (%s)', (_name, plan) => {
     const windows = new Map<string, [number, number][]>();
-    for (const t of budget.trips) {
+    for (const t of plan.trips) {
       const crewed = ['assigned', 'en_route', 'completed'].includes(t.status);
       if (!crewed) continue;
       expect(t.driver).not.toBeNull();
       expect(t.vehicle).not.toBeNull();
-      const driver = budget.drivers[t.driver!];
-      const vehicle = budget.vehicles[t.vehicle!];
+      const driver = plan.drivers[t.driver!];
+      const vehicle = plan.vehicles[t.vehicle!];
       expect(driver.depot).toBe(vehicle.depot);
       // An Ethiopian class that covers the vehicle itself: its body, seats and gross weight (docs/driving-licences.md).
       expect(categoryAllows(driver.license_categories, licensed(vehicle))).toBe(true);
@@ -100,12 +115,12 @@ describe('buildPlan', () => {
     }
   });
 
-  test('each vehicle’s fuel-log odometer only goes up and ends at the vehicle’s odometer', () => {
+  test.each(plans)('each vehicle’s fuel-log odometer only goes up and ends at the vehicle’s odometer (%s)', (_name, plan) => {
     const last = new Map<number, number>();
-    for (const f of [...budget.fuelLogs].sort((a, b) => a.recorded_at.localeCompare(b.recorded_at))) {
+    for (const f of [...plan.fuelLogs].sort((a, b) => a.recorded_at.localeCompare(b.recorded_at))) {
       expect(f.odometer_km).toBeGreaterThanOrEqual(last.get(f.vehicle) ?? 0);
       last.set(f.vehicle, f.odometer_km);
-      expect(f.odometer_km).toBeLessThanOrEqual(budget.vehicles[f.vehicle].odometer_km);
+      expect(f.odometer_km).toBeLessThanOrEqual(plan.vehicles[f.vehicle].odometer_km);
       expect(Number.isInteger(f.quantity_ml) && Number.isInteger(f.total_cost_cents)).toBe(true);
     }
   });

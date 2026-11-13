@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import type { Queryable } from '../infrastructure/queryable';
 import type { EventBroadcaster } from './broadcaster';
 import { outboxStore, type OutboxRow } from './outbox';
 import type { SubscriberRegistry } from './subscribers';
@@ -12,6 +13,11 @@ export interface OutboxRelayOptions {
   broadcaster: EventBroadcaster | null;
   /** Rows per pass and phase. Default 100. */
   batchSize?: number;
+  /**
+   * Aggregates dispatched at once (FMS-152): one aggregate's events stay in order, different ones run side by side, each
+   * consumer transaction on a connection of `db`. Default 1, one at a time, as on the single connection of a test.
+   */
+  dispatchConcurrency?: number;
   /** How often an idle relay looks for new rows. Default 200 ms, so a committed event is on Redis well within a second. */
   pollIntervalMs?: number;
   /** Dispatch attempts before an event is dead-lettered. Default 10 (about 8.5 minutes of retries). */
@@ -40,6 +46,12 @@ export interface RelayPass {
  */
 export const RELAY_LOCK_KEY = 73_0073;
 
+/**
+ * Broadcasting has a lock of its own (FMS-152): it runs in a loop of its own, so a position reaches the live map without
+ * waiting for the in-process consumers of the events before it.
+ */
+export const BROADCAST_LOCK_KEY = 73_0074;
+
 const defaultRetryDelay = (attempt: number) => Math.min(2 ** (attempt - 1), 300);
 
 /**
@@ -58,6 +70,11 @@ const defaultRetryDelay = (attempt: number) => Math.min(2 ** (attempt - 1), 300)
  * stops (deploy, crash) resumes at the first row it had not finished.
  * Consumers record what they have handled, so the row it was on when it
  * died is not handled twice.
+ *
+ * The loop (start) runs the two phases apart, each under its own lock, so the
+ * live map never waits for consumers (FMS-152, NFR-3: 500 vehicles). A batch is
+ * broadcast at once, then marked in one statement; dispatch runs
+ * `dispatchConcurrency` aggregates side by side. runOnce runs both, in turn.
  */
 export class OutboxRelay {
   private readonly batchSize: number;
@@ -67,14 +84,16 @@ export class OutboxRelay {
   private readonly lagReportIntervalMs: number;
   private readonly log: RelayLog;
 
-  private loop: Promise<void> | null = null;
+  private loops: Promise<void>[] = [];
+  private readonly dispatchConcurrency: number;
   private stopping = false;
-  private wake: (() => void) | null = null;
+  private readonly wakers = new Set<() => void>();
   private lastLagReport = 0;
   private broadcastDown = false;
 
   constructor(private readonly options: OutboxRelayOptions) {
     this.batchSize = options.batchSize ?? 100;
+    this.dispatchConcurrency = Math.max(1, options.dispatchConcurrency ?? 1);
     this.pollIntervalMs = options.pollIntervalMs ?? 200;
     this.maxAttempts = options.maxAttempts ?? 10;
     this.retryDelay = options.retryDelaySeconds ?? defaultRetryDelay;
@@ -87,112 +106,167 @@ export class OutboxRelay {
    * lock. Used by the loop, and by tests to deliver what they published.
    */
   async runOnce(): Promise<RelayPass | null> {
+    return this.locked(this.options.broadcaster ? [RELAY_LOCK_KEY, BROADCAST_LOCK_KEY] : [RELAY_LOCK_KEY], async (client) => {
+      const pass = emptyPass();
+      await this.broadcastPhase(client, pass);
+      await this.dispatchPhase(client, pass);
+      return pass;
+    });
+  }
+
+  /**
+   * Runs passes until stop(): straight on while there is a backlog, every pollIntervalMs when idle. Broadcasting and
+   * dispatching are two loops, each under its own lock (one instance at a time for each).
+   */
+  start(): void {
+    if (this.loops.length > 0) return;
+    this.stopping = false;
+    const { broadcaster, db } = this.options;
+    this.loops = [
+      this.run('dispatch', () => outboxStore.hasDispatchable(db), () => this.locked([RELAY_LOCK_KEY], (client) => this.dispatchPhase(client, emptyPass())), true),
+      ...(broadcaster ? [this.run('broadcast', () => outboxStore.hasUnpublished(db), () => this.locked([BROADCAST_LOCK_KEY], (client) => this.broadcastPhase(client, emptyPass())), false)] : []),
+    ];
+  }
+
+  /** Lets the current passes finish, then stops. */
+  async stop(): Promise<void> {
+    this.stopping = true;
+    for (const wake of [...this.wakers]) wake();
+    await Promise.all(this.loops);
+    this.loops = [];
+  }
+
+  /** `fn` on one connection while it holds every lock of `keys`; null when another instance holds one. */
+  private async locked<T>(keys: readonly number[], fn: (client: PoolClient) => Promise<T>): Promise<T | null> {
     const client = await this.options.db.connect();
     let keepsLock = false;
+    const held: number[] = [];
     try {
-      const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [RELAY_LOCK_KEY]);
-      if (!rows[0].locked) return null;
-      try {
-        return await this.pass(client);
-      } finally {
-        await client.query('SELECT pg_advisory_unlock($1)', [RELAY_LOCK_KEY]).catch(() => {
+      for (const key of keys) {
+        const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [key]);
+        if (!rows[0].locked) return null;
+        held.push(key);
+      }
+      return await fn(client);
+    } finally {
+      for (const key of held.reverse()) {
+        await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => {
           keepsLock = true;
         });
       }
-    } finally {
-      // A connection that may still hold the lock is closed, not pooled.
+      // A connection that may still hold a lock is closed, not pooled.
       client.release(keepsLock || undefined);
     }
   }
 
-  /** Runs passes until stop(): straight on while there is a backlog, every pollIntervalMs when idle. */
-  start(): void {
-    if (this.loop) return;
-    this.stopping = false;
-    this.loop = this.run();
-  }
-
-  /** Lets the current pass finish, then stops. */
-  async stop(): Promise<void> {
-    this.stopping = true;
-    this.wake?.();
-    await this.loop;
-    this.loop = null;
-  }
-
-  private async run(): Promise<void> {
+  private async run(name: string, hasWork: () => Promise<boolean>, once: () => Promise<RelayPass | null>, reportsLag: boolean): Promise<void> {
     let failures = 0;
     while (!this.stopping) {
       let more = false;
       try {
-        if (await outboxStore.hasWork(this.options.db)) more = (await this.runOnce())?.more ?? false;
-        await this.reportLag();
+        if (await hasWork()) more = (await once())?.more ?? false;
+        if (reportsLag) await this.reportLag();
         failures = 0;
       } catch (err) {
         // The database is unreachable: back off, up to 5 s, and keep trying.
         failures++;
-        if (failures === 1) this.log('error', 'outbox relay pass failed', { err: describe(err) });
+        if (failures === 1) this.log('error', `outbox relay ${name} pass failed`, { err: describe(err) });
       }
       if (!more && !this.stopping) await this.sleep(failures ? Math.min(this.pollIntervalMs * 2 ** failures, 5000) : this.pollIntervalMs);
     }
   }
 
   private sleep(ms: number): Promise<void> {
+    let wake: () => void = () => {};
     return new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, ms);
-      this.wake = () => {
+      wake = () => {
         clearTimeout(timer);
         resolve();
       };
+      this.wakers.add(wake);
     }).finally(() => {
-      this.wake = null;
+      this.wakers.delete(wake);
     });
   }
 
-  private async pass(client: PoolClient): Promise<RelayPass> {
-    const pass: RelayPass = { published: 0, dispatched: 0, retrying: 0, deadLettered: 0, more: false };
-    const { broadcaster, subscribers, db } = this.options;
-
-    // 1. Broadcast first: the real-time layer does not wait for consumers.
-    if (broadcaster) {
-      const rows = await outboxStore.unpublished(client, this.batchSize);
-      for (const row of rows) {
-        try {
-          await broadcaster.publish(row.event);
-        } catch (err) {
-          // One line per outage; the next pass starts again at this row.
-          if (!this.broadcastDown) this.log('warn', 'outbox relay cannot publish to redis; events wait in the outbox', { eventId: row.event.id, err: describe(err) });
-          this.broadcastDown = true;
-          break;
-        }
-        if (this.broadcastDown) this.log('info', 'outbox relay publishing to redis again', {});
-        this.broadcastDown = false;
-        await outboxStore.markPublished(client, [row.seq]);
-        pass.published++;
-      }
-      pass.more ||= rows.length === this.batchSize && pass.published === rows.length;
+  /**
+   * 1. Broadcast: the next unpublished rows onto Redis, oldest first. The batch is handed over at once (one connection
+   * keeps its order) and the rows published before the first failure are marked in one statement; the next pass starts
+   * again at the first that failed. A row after it may have gone out too, and goes out again: at least once.
+   */
+  private async broadcastPhase(client: PoolClient, pass: RelayPass): Promise<RelayPass> {
+    const { broadcaster } = this.options;
+    if (!broadcaster) return pass;
+    const rows = await outboxStore.unpublished(client, this.batchSize);
+    if (rows.length === 0) return pass;
+    const outcomes = await Promise.allSettled(rows.map((row) => broadcaster.publish(row.event)));
+    const failedAt = outcomes.findIndex((o) => o.status === 'rejected');
+    const sent = failedAt === -1 ? rows : rows.slice(0, failedAt);
+    await outboxStore.markPublished(client, sent.map((r) => r.seq));
+    pass.published += sent.length;
+    if (failedAt !== -1) {
+      // One line per outage; the next pass starts again at this row.
+      const reason = (outcomes[failedAt] as PromiseRejectedResult).reason;
+      if (!this.broadcastDown) this.log('warn', 'outbox relay cannot publish to redis; events wait in the outbox', { eventId: rows[failedAt].event.id, err: describe(reason) });
+      this.broadcastDown = true;
+    } else {
+      if (this.broadcastDown) this.log('info', 'outbox relay publishing to redis again', {});
+      this.broadcastDown = false;
     }
+    pass.more ||= rows.length === this.batchSize && failedAt === -1;
+    return pass;
+  }
 
-    // 2. Dispatch to in-process consumers.
+  /**
+   * 2. Dispatch: due rows to the in-process consumers, one aggregate's in order; a failure holds back the rest of its
+   * aggregate. With `dispatchConcurrency` above 1, aggregates run side by side and their progress is written on
+   * connections of the pool.
+   */
+  private async dispatchPhase(client: PoolClient, pass: RelayPass): Promise<RelayPass> {
+    const { broadcaster, subscribers, db } = this.options;
     const rows = await outboxStore.dispatchable(client, this.batchSize);
-    const held = new Set<string>();
     const nothingToBroadcast: string[] = [];
-    for (const row of rows) {
-      const aggregate = row.event.aggregate;
-      if (aggregate && held.has(aggregate)) continue;
+    const parallel = this.dispatchConcurrency > 1;
+    const progress: Queryable = parallel ? db : client;
+    /** One aggregate's rows, in order: false when one waits for a retry, which holds back the rest. */
+    const deliver = async (row: OutboxRow): Promise<boolean> => {
       try {
         await subscribers.dispatch(db, row.event);
-        await outboxStore.markDispatched(client, row.seq);
+        await outboxStore.markDispatched(progress, row.seq);
         if (!broadcaster) nothingToBroadcast.push(row.seq);
         pass.dispatched++;
+        return true;
       } catch (err) {
-        if (await this.failed(client, row, err)) {
+        if (await this.failed(progress, row, err)) {
           pass.deadLettered++;
-        } else {
-          pass.retrying++;
-          if (aggregate) held.add(aggregate);
+          return true;
         }
+        pass.retrying++;
+        return false;
       }
+    };
+    if (!parallel) {
+      const held = new Set<string>();
+      for (const row of rows) {
+        const aggregate = row.event.aggregate;
+        if (aggregate && held.has(aggregate)) continue;
+        if (!(await deliver(row)) && aggregate) held.add(aggregate);
+      }
+    } else {
+      // Events without an aggregate are independent: each is a group of its own.
+      const groups = new Map<string, OutboxRow[]>();
+      for (const row of rows) {
+        const key = row.event.aggregate ?? `seq:${row.seq}`;
+        groups.set(key, [...(groups.get(key) ?? []), row]);
+      }
+      const queue = [...groups.values()];
+      const worker = async () => {
+        for (let group = queue.shift(); group; group = queue.shift()) {
+          for (const row of group) if (!(await deliver(row))) break;
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(this.dispatchConcurrency, queue.length) }, worker));
     }
     await outboxStore.markPublished(client, nothingToBroadcast);
     pass.more ||= rows.length === this.batchSize;
@@ -200,7 +274,7 @@ export class OutboxRelay {
   }
 
   /** Records a failed dispatch; true when it was the last attempt. */
-  private async failed(client: PoolClient, row: OutboxRow, err: unknown): Promise<boolean> {
+  private async failed(client: Queryable, row: OutboxRow, err: unknown): Promise<boolean> {
     const attempt = row.attempts + 1;
     const fields = { eventId: row.event.id, eventType: row.event.type, attempt, err: describe(err) };
     const dead = await outboxStore.markFailed(client, row.seq, describe(err), this.retryDelay(attempt), this.maxAttempts);
@@ -217,6 +291,8 @@ export class OutboxRelay {
     else if (lag.undispatched > 0 || lag.unpublished > 0) this.log('info', 'outbox lag', { ...lag });
   }
 }
+
+const emptyPass = (): RelayPass => ({ published: 0, dispatched: 0, retrying: 0, deadLettered: 0, more: false });
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

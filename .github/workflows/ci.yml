@@ -9,6 +9,14 @@ on:
   pull_request:
     branches: [ "master" ]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: >-
+          The load test's profile: full (200 vehicles, the default), smoke, or fleet500 (NFR-3: 500 vehicles on the
+          live map, FMS-152, about 25 minutes; on demand only, never on a push).
+        type: choice
+        options: [full, smoke, fleet500]
+        default: full
 
 permissions:
   contents: read
@@ -96,7 +104,8 @@ jobs:
   load-test:
     name: load-test
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # fleet500 seeds 500 vehicles before its 5 minutes of load.
+    timeout-minutes: ${{ inputs.profile == 'fleet500' && 60 || 30 }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -123,7 +132,8 @@ jobs:
       - name: Load test
         run: DB_PASSWORD="$DB_APP_PASSWORD" npm run load-test -w fms-backend -- --profile "$PROFILE"
         env:
-          PROFILE: ${{ github.event_name == 'pull_request' && 'smoke' || 'full' }}
+          # Pull requests: smoke. Pushes to master: full. By hand: the profile chosen (FMS-152: fleet500 only this way).
+          PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || (github.event_name == 'pull_request' && 'smoke' || 'full') }}
           DB_USER: fms_app
           REDIS_HOST: localhost
       - name: Upload load report

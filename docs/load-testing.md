@@ -1,6 +1,6 @@
 # Load testing suite (FMS-61)
 
-Card: FMS-61 (SE-97). Code: `packages/backend/scripts/load/`. CI job: `load-test` ([ci.md](ci.md)).
+Cards: FMS-61 (SE-97), and FMS-152 (SE-196) for 500 vehicles. Code: `packages/backend/scripts/load/`. CI job: `load-test` ([ci.md](ci.md)).
 
 The suite proves the system holds the load of a live demo and of the fleet the budgets assume, before the defence: 200 vehicles
 reporting while people watch the live map, 50 people working the API, 20 opening the dashboards at once. Every run builds its own
@@ -10,6 +10,7 @@ database, starts the API as production runs it, measures, writes a JSON report a
 npm run build -w fms-backend
 npm run load-test -w fms-backend                                  # the card's workload, about 12 minutes
 npm run load-test -w fms-backend -- --profile smoke               # the same scenarios briefly, about 6 minutes
+npm run load-test -w fms-backend -- --profile fleet500            # NFR-3: 500 vehicles on the live map (FMS-152), about 25 minutes
 npm run load-test -w fms-backend -- --only gps,dashboard          # some scenarios
 npm run load-test -w fms-backend -- --reuse-db --profile smoke    # development: keep the last run's database, skip the seed
 ```
@@ -50,11 +51,14 @@ REDIS_HOST=localhost REDIS_PORT=6391 npm run load-test -w fms-backend
 
 ## The scenarios
 
-| | Workload (`full`) | `smoke` |
-|---|---|---|
-| 1. GPS and live map | 200 vehicles post a ping every 10 s for 5 minutes, each with its own device token (`POST /tracking/gps-pings`), spread over the interval as real devices are; 25 signed-in dashboards hold a socket | 50 vehicles, 30 s, 5 dashboards |
-| 2. API | 50 users for 2 minutes, each: list trips (40%), list vehicles (40%) or log a fill-up for their own vehicle (20%), then pause 0.5 to 1.5 s | 10 users, 20 s |
-| 3. Dashboards | 20 users for a minute, each opening the Fleet Command Center (S-16) and the analytics dashboard (S-18) in turn, then pausing 1 to 3 s | 5 users, 15 s |
+| | Workload (`full`) | `smoke` | `fleet500` (FMS-152) |
+|---|---|---|---|
+| Dataset | `budget`: 200 vehicles | `budget` | `fleet500`: 500 vehicles, 750 drivers, 2,500 trips ([seed-data.md](seed-data.md)) |
+| 1. GPS and live map | 200 vehicles post a ping every 10 s for 5 minutes, each with its own device token (`POST /tracking/gps-pings`), spread over the interval as real devices are; 25 signed-in dashboards hold a socket | 50 vehicles, 30 s, 5 dashboards | **500 vehicles**, every 10 s for 5 minutes, 25 dashboards |
+| 2. API | 50 users for 2 minutes, each: list trips (40%), list vehicles (40%) or log a fill-up for their own vehicle (20%), then pause 0.5 to 1.5 s | 10 users, 20 s | not run (`--only` adds it) |
+| 3. Dashboards | 20 users for a minute, each opening the Fleet Command Center (S-16) and the analytics dashboard (S-18) in turn, then pausing 1 to 3 s | 5 users, 15 s | as `full` |
+
+`fleet500` runs on demand only: locally, or in CI with *Run workflow* and `profile: fleet500` ([ci.md](ci.md)), never on a push. It is held to the same budgets.
 
 - **Scenario 1, what is measured.** Every ping accepted becomes the vehicle's position and is announced as `vehicle.location.updated`
   ([gps-ingestion.md](gps-ingestion.md)). Every dashboard socket must receive every one: a missing one is a dropped event. Delivery
@@ -110,6 +114,11 @@ Docker on the same machine), 11 November 2026, the budget dataset freshly seeded
 
 No request failed in any scenario, warm-up included. The event loop's lag stayed under 26 ms (p99, every sample).
 
+**Again after FMS-152's relay change, 13 November 2026, the same machine:** every budget met.
+- **Live map:** delivery p95 **244 ms** (461 before), 0 dropped, API CPU p95 33%.
+- **API:** `GET /trips` p95 44 ms, `GET /vehicles` 46 ms, `POST /fuel-logs` 74 ms. These are slightly higher than before, as the parallel dispatch now shares the pool's connections with the API, and still far inside their budgets.
+- **Dashboards:** pages p95 46 to 65 ms.
+
 - **The tightest margin is delivery to the live map**, 461 ms against 500. It is not the API's capacity: ingestion answers in 28 ms
   and the CPU stays under a quarter of a core. It is the outbox ([events.md](events.md)): the relay publishes to Redis once a pass,
   then runs the in-process consumers for the same events, then sleeps 200 ms. A ping committed just after a pass has published
@@ -119,6 +128,48 @@ No request failed in any scenario, warm-up included. The event loop's lag stayed
   60 to 490 ms (p95: trips 305 ms, vehicles 313 ms, a fill-up 488 ms; a page 290 to 670 ms): connections being opened and caches
   filled. That would miss the trips, fuel-log and analytics budgets, which are about steady load; it is why the warm-up is reported
   but not scored. A demo's first page after a restart is that case, and still well under the 2 s a page is allowed.
+
+## 500 vehicles (FMS-152, NFR-3)
+
+NFR-3 asks that the Fleet Command Center track at least 500 vehicles at once without visible lag. At 200 the live map's delivery p95 was 461 ms against 500, so 500 was measured, not assumed.
+
+Every run below used the same development laptop as above: Intel i5-10300H, 8 threads, 40 GB; Windows 11, Node 25.1; PostgreSQL 16 and Redis 7.4 in Docker on the same machine. Each ran the `fleet500` profile on a freshly seeded 500-vehicle dataset, generating its own load on the same machine.
+
+**First run, 12 November 2026: missed.**
+- **Dropped:** 350,075 of 374,700 deliveries; 14,988 pings were announced.
+- **Delivery p95:** 28.8 s, against a 500 ms budget.
+- **API CPU p95:** 43% of a core.
+
+The API was not the limit. The outbox relay was: one pass broadcast up to 100 events to Redis one at a time, each with its own update, and then ran the in-process consumers of 100 events. Those are the trip ETA, the telemetry rules and the location rules, each in a transaction of its own. Only after that did the next broadcast start.
+
+That handled about 21 events a second against the 50 that 500 vehicles send. Both backlogs grew by about 1,750 events a minute. Each position waited behind the backlog until it was 30 s old, and the gateway dropped it by design ([realtime.md](realtime.md)).
+
+The poll interval, the card's first lever, would not have helped: the relay was never idle.
+
+**The fix ([events.md](events.md#the-relay)):**
+- **Separate loops.** Broadcasting runs in a loop of its own, under its own lock, so a position never waits for consumers.
+- **Batched broadcast.** A batch goes to Redis at once and is marked in one statement.
+- **Parallel dispatch.** Dispatch runs four aggregates side by side; each aggregate's events stay in order.
+- **Guarantees kept:** delivery is still at least once, and still in order within an aggregate.
+
+**After the fix, 13 November 2026: every budget met.** Report: [fleet500-2026-11-13.html](load-reports/fleet500-2026-11-13.html) ([JSON](load-reports/fleet500-2026-11-13.json)). The first run's report is kept beside it: [before the fix](load-reports/fleet500-2026-11-12-before-fix.html) ([JSON](load-reports/fleet500-2026-11-12-before-fix.json)). Both reports name the commit they started from, `3597a29`; the second ran with this card's changes on top.
+
+| Scenario | Measured | p50 | p95 | p99 | Budget |
+|---|---|---|---|---|---|
+| 1. GPS, 500 vehicles | 14,991 pings, 374,775 deliveries (× 25 dashboards), **0 dropped**, 0 disconnects | | | | 0 dropped |
+| | Ping to dashboard | 171 ms | **273 ms** | 318 ms | < 500 ms |
+| | `POST /tracking/gps-pings` (50 a second) | 34 ms | 67 ms | 114 ms | |
+| | API CPU (61 samples) | 49% | **55%** | 65% | < 80% |
+| 3. Dashboards | Fleet Command Center (299 openings) | 22 ms | **78 ms** | 230 ms | < 2 s |
+| | Analytics dashboard (300) | 21 ms | **49 ms** | 156 ms | < 2 s |
+| | Slowest analytics report (`utilisation`) | 17 ms | **46 ms** | | < 200 ms |
+
+No request failed. The event loop's lag stayed under 39 ms (p99). Delivery is faster at 500 vehicles after the fix than it was at 200 before it (p95 461 ms).
+
+**Where the next limit is:**
+- **The API process:** at 500 vehicles it uses about half a core, where 200 used a quarter. The budget is 80%, so the margin is about 1.5 times this fleet on this machine.
+- **The pool:** the relay's four parallel dispatches share the pool's ten connections with the API's requests.
+- **Not tested here:** whether a CI runner (2 cores) can generate this load without becoming the bottleneck itself. Run it there with *Run workflow* to find out; the run above is the one recorded against NFR-3.
 
 ## The report
 

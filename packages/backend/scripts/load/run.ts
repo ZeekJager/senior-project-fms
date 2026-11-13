@@ -5,6 +5,7 @@
  *
  *   npm run load-test -w fms-backend                              # the card's workload (about 10 minutes)
  *   npm run load-test -w fms-backend -- --profile smoke           # the same, briefly (pull requests)
+ *   npm run load-test -w fms-backend -- --profile fleet500        # NFR-3: 500 vehicles on the live map (FMS-152, about 25 minutes)
  *   npm run load-test -w fms-backend -- --only gps,dashboard --report /tmp/load.json
  *
  * Needs PostgreSQL and Redis as the integration tests do; never production, never a database not named *_test.
@@ -18,9 +19,9 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { pool } from '../../src/db';
 import { closeRedis } from '../../src/shared/cache';
-import { createUsers, datasetSize, fuelVehicles, outboxBacklog, prepareDatabase, registerDevices, seedBudget } from './fixtures';
+import { createUsers, datasetSize, fuelVehicles, outboxBacklog, prepareDatabase, registerDevices, seedDataset } from './fixtures';
 import { ServerSampler, type ServerLoad } from './metrics';
-import { BUDGETS, PROFILES, type Profile } from './profiles';
+import { BUDGETS, PROFILES, type Profile, type ScenarioName } from './profiles';
 import { renderHtml, type LoadReport } from './html';
 import { checksFor, formatChecks, type Results } from './report';
 import { runApi } from './scenarios/api';
@@ -29,8 +30,8 @@ import { runGps } from './scenarios/gps';
 import { startServer, LOAD_LIMITS } from './server';
 import { Session } from './session';
 
-const SCENARIOS = ['gps', 'api', 'dashboard'] as const;
-type Scenario = (typeof SCENARIOS)[number];
+const SCENARIOS = ['gps', 'api', 'dashboard'] as const satisfies readonly ScenarioName[];
+type Scenario = ScenarioName;
 
 function options() {
   const { values } = parseArgs({
@@ -45,9 +46,10 @@ function options() {
     },
   });
   if (!(values.profile! in PROFILES)) throw new Error(`--profile must be one of ${Object.keys(PROFILES).join(', ')}.`);
-  const only = values.only ? values.only.split(',').map((s) => s.trim()) : [...SCENARIOS];
-  for (const s of only) if (!SCENARIOS.includes(s as Scenario)) throw new Error(`--only takes ${SCENARIOS.join(', ')}; got "${s}".`);
   const profile = PROFILES[values.profile as Profile['name']];
+  // A profile's own scenarios unless --only names others (fleet500 runs the live map and the dashboards).
+  const only = values.only ? values.only.split(',').map((s) => s.trim()) : [...profile.scenarios];
+  for (const s of only) if (!SCENARIOS.includes(s as Scenario)) throw new Error(`--only takes ${SCENARIOS.join(', ')}; got "${s}".`);
   const report = values.report ?? path.resolve(__dirname, '../../load-report', `${profile.name}.json`);
   return { profile, only: only as Scenario[], report, port: Number(values.port), metricsPort: Number(values['metrics-port']), reuseDb: values['reuse-db']! };
 }
@@ -94,14 +96,18 @@ async function main(): Promise<void> {
   mkdirSync(reportDir, { recursive: true });
   const log = (line: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${line}`);
 
-  log(`Load suite (FMS-61), profile ${profile.name}: ${opts.only.join(', ')}. Database ${LOAD_DB_NAME}${opts.reuseDb ? ', as the last run left it' : ', recreated'}.`);
+  log(`Load suite (${profile.card}), profile ${profile.name}: ${opts.only.join(', ')}. Database ${LOAD_DB_NAME}${opts.reuseDb ? ', as the last run left it' : ', recreated'}.`);
   if (!opts.reuseDb) {
     await prepareDatabase(LOAD_DB_NAME);
-    log('Seeding the budget dataset (200 vehicles, 300 drivers, 1,000 trips)...');
-    await seedBudget();
+    log(`Seeding the ${profile.dataset} dataset (${profile.dataset === 'fleet500' ? '500 vehicles, 750 drivers, 2,500 trips' : '200 vehicles, 300 drivers, 1,000 trips'})...`);
+    await seedDataset(profile.dataset);
   }
   const dataset = await datasetSize();
-  const userCount = Math.max(profile.api.users, profile.dashboard.users, profile.gps.observers);
+  const userCount = Math.max(
+    opts.only.includes('api') ? profile.api.users : 0,
+    opts.only.includes('dashboard') ? profile.dashboard.users : 0,
+    opts.only.includes('gps') ? profile.gps.observers : 0,
+  );
   const users = await createUsers(userCount);
   const devices = opts.only.includes('gps') ? await registerDevices(profile.gps.vehicles) : [];
   const vehicles = opts.only.includes('api') ? await fuelVehicles(profile.api.users) : [];
@@ -139,7 +145,7 @@ async function main(): Promise<void> {
   const checks = checksFor(results);
   const passed = checks.every((c) => c.passed);
   const report: LoadReport & { budgets: typeof BUDGETS } = {
-    card: 'FMS-61',
+    card: profile.card,
     profile: profile.name,
     passed,
     startedAt: startedAt.toISOString(),

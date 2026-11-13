@@ -153,6 +153,22 @@ export const outboxStore = {
     return res.rowCount === 1;
   },
 
+  /** Whether there is anything to broadcast: the broadcast loop's idle poll (FMS-152). */
+  async hasUnpublished(db: Queryable): Promise<boolean> {
+    const res = await db.query<{ work: boolean }>(`SELECT EXISTS (SELECT 1 FROM events.outbox WHERE published_at IS NULL) AS work`);
+    return res.rows[0].work;
+  },
+
+  /** Whether there is anything due for the consumers: the dispatch loop's idle poll (FMS-152). */
+  async hasDispatchable(db: Queryable): Promise<boolean> {
+    const res = await db.query<{ work: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM events.outbox
+                       WHERE dispatched_at IS NULL AND dead_lettered_at IS NULL
+                         AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())) AS work`,
+    );
+    return res.rows[0].work;
+  },
+
   /** Whether the relay has anything to do now: one cheap query for an idle poll. */
   async hasWork(db: Queryable): Promise<boolean> {
     const res = await db.query<{ work: boolean }>(
