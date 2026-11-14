@@ -3,6 +3,7 @@
  * scale the performance budgets assume. Local and CI databases only.
  *
  *   npm run seed -- --size=small                 # a laptop demo (empty database)
+ *   npm run seed -- --size=demo --reset          # 50 vehicles, 60 drivers, 160 trips in 3 depots: the presentation's fleet
  *   npm run seed -- --size=budget --reset        # rebuild the schema, then 200 vehicles, 300 drivers, 1,000 trips
  *   npm run seed -- --size=fleet500 --reset      # 500 vehicles, 750 drivers, 2,500 trips: the load suite's fleet500 (FMS-152)
  *   npm run seed -- --seed=7 --anchor=2026-10-01 # another dataset; the same seed and anchor give the same data
@@ -26,7 +27,7 @@ import { applyMigrations, revertMigrations } from './lib/migrations';
 import { runSeed } from './seed/apply';
 import { PROFILES, type ProfileName } from './seed/plan';
 
-const USAGE = 'Usage: npm run seed -- [--size=small|budget|fleet500] [--seed=<integer>] [--anchor=YYYY-MM-DD] [--reset | --reset-only]';
+const USAGE = 'Usage: npm run seed -- [--size=small|demo|budget|fleet500] [--seed=<integer>] [--anchor=YYYY-MM-DD] [--reset | --reset-only]';
 const DEFAULT_SEED = 20261007;
 
 function generatePassword(): string {

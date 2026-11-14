@@ -1,5 +1,5 @@
-import { AlertCircle, ChevronDown } from 'lucide-react'
-import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { AlertCircle, ChevronDown, Eye, EyeOff } from 'lucide-react'
+import { forwardRef, useId, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { cn } from './cn'
 
 // Floating-label fields. The label sits inside the control like a placeholder
@@ -92,6 +92,38 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function T
       </div>
       <Message id={messageId} error={error} hint={hint} />
     </div>
+  )
+})
+
+export type PasswordFieldProps = Omit<TextFieldProps, 'type' | 'trailing'>
+
+/**
+ * A password field with an eye button at its right end that shows or hides what was typed (a long passphrase is easier to get right
+ * when you can see it, and people sharing a screen can see it is hidden by default). It starts hidden. The button is a real button in
+ * the tab order, says what it will do ("Show password"), and reports its state with aria-pressed; the typed value and the cursor stay.
+ */
+export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(function PasswordField({ label, ...rest }, ref) {
+  const [visible, setVisible] = useState(false)
+  const Icon = visible ? EyeOff : Eye
+  return (
+    <TextField
+      ref={ref}
+      label={label}
+      type={visible ? 'text' : 'password'}
+      trailing={
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={visible ? 'Hide password' : 'Show password'}
+          aria-pressed={visible}
+          title={visible ? 'Hide password' : 'Show password'}
+          className="-mr-2 flex h-9 w-9 items-center justify-center rounded-control text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand/15"
+        >
+          <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+        </button>
+      }
+      {...rest}
+    />
   )
 })
 

@@ -2,7 +2,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { BarChart3, Clock3, ShieldCheck, Truck } from 'lucide-react'
 import { useRef, useState, type FormEvent } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
-import { Button, TextField } from '@/components/ui'
+import { Button, PasswordField, TextField } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { ApiError } from '@/lib/api/errors'
 import { homePathFor, safeRedirect } from '@/router/redirect'
@@ -137,10 +137,9 @@ export function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               error={fieldErrors.email}
             />
-            <TextField
+            <PasswordField
               id="login-password"
               label="Password"
-              type="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

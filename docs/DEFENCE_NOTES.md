@@ -319,8 +319,8 @@ can be added; the next limits are written down in [load-testing.md](load-testing
 
 ### If there is time: "What would you do next?"
 
-- Run the FMS-63 Golden Path as an **automated end-to-end test**. Today it is rehearsed by hand and covered by
-  integration tests step by step.
+- Drive the Golden Path through the **browser** as an end-to-end test. The API-level test
+  (`test/integration/golden-path.test.ts`) already runs it; the screens are rehearsed by hand.
 - Retrain the models on the fleet's **own** failures and trips as they accumulate.
 - Add the "vehicle available again" notification (step 6) and a post-trip fuel prompt (step 10).
 - Run the 500-vehicle load test on production-like hardware, not a laptop.
@@ -382,8 +382,9 @@ Say these before someone else does.
 
 - **The models train on generated data.** They are honest about it: the registry records it, and the trip risk model
   shows a notice until real data suffices. The pipeline is built for real data to replace it.
-- **The Golden Path is not yet an automated end-to-end test** (FMS-63). Each step is covered by integration tests, and
-  the path was rehearsed by hand through the real UI on 13 November 2026.
+- **The Golden Path is automated at the API, not in the browser** (FMS-63). `test/integration/golden-path.test.ts` runs
+  the ten steps as each role, with the real rules, and the path was rehearsed by hand through the real UI on
+  13 November 2026.
 - **Two notifications from the FMS-63 workflow aren't sent:** "vehicle available" after a repair, and a fuel prompt
   after a trip. See steps 6 and 10.
 - **Long routes and the default driving limits.** With the default daily limit (500 km) and the weight for heavy jobs

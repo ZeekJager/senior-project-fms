@@ -2,7 +2,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { Check, CheckCircle2, KeyRound, Truck, XCircle } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Button, cn, TextField } from '@/components/ui'
+import { Button, cn, PasswordField } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
 import { useSetPassword } from './Users/api'
 
@@ -106,20 +106,18 @@ export function SetPasswordPage() {
             <p className="mt-1.5 text-sm text-ink-muted">This link works once. Pick something long that you do not use anywhere else; a short sentence works well.</p>
 
             <form onSubmit={onSubmit} noValidate className="mt-8">
-              <TextField
+              <PasswordField
                 id="new-password"
                 label="New password"
-                type="password"
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPasswordValue(e.target.value)}
                 error={errors.password}
                 disabled={!token}
               />
-              <TextField
+              <PasswordField
                 id="confirm-password"
                 label="Repeat the password"
-                type="password"
                 autoComplete="new-password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}

@@ -1,4 +1,4 @@
-.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing
+.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing demo demo-sim demo-sim-stop demo-web
 
 # Create .env from .env.example with generated secrets. An existing .env keeps
 # its values and gains any key added to .env.example since (e.g. REDIS_PASSWORD).
@@ -61,6 +61,27 @@ SIZE ?= small
 SEED ?= 20261007
 seed:
 	docker exec -e FMS_SEED_PASSWORD fms_backend npm run seed -- --reset --size=$(SIZE) --seed=$(SEED)
+
+# The presentation (docs/DEMO.md): rebuild the dev database with the demo fleet (50 vehicles, 60 drivers, 160 trips, 3 depots) where
+# every account signs in with the password below, then drive all 50 vehicles with a ping every 2 s. Deletes everything in the dev
+# database first. DEMO_PASSWORD is for demos only: the seed refuses to run when NODE_ENV=production.
+DEMO_PASSWORD ?= password1234
+demo:
+	docker exec -e FMS_SEED_PASSWORD=$(DEMO_PASSWORD) fms_backend npm run seed -- --reset --size=demo
+
+# Start the 50 vehicles (in the background, inside the backend container) and stop them again.
+demo-sim:
+	docker exec -d fms_backend npm run simulate:gps -- --vehicles 50 --interval 2 --duration 0
+
+demo-sim-stop:
+	-docker exec fms_backend pkill -f simulate-gps
+
+# The web app as production serves it (built and served by nginx), on http://localhost:8081: the page loads in milliseconds, where
+# the development server on :5173 takes seconds. Rebuilds the image each time, so it carries the current code.
+demo-web:
+	docker build -f packages/frontend/Dockerfile -t fms-frontend:demo .
+	-docker rm -f fms_frontend_prod
+	docker run -d --name fms_frontend_prod --network senior-project-fms_default -p 8081:8080 -e API_UPSTREAM=http://backend:3000 fms-frontend:demo
 
 # Road routing (FMS-84, docs/routing.md): download Ethiopia's OpenStreetMap
 # extract and build OSRM's road graph once (kept in the fms_osrm_data volume),

@@ -25,7 +25,7 @@ import { seedRoad } from './roads';
 // clock, no database. The same inputs always give the same plan, which is
 // what makes a seed run reproducible (FMS-113). apply.ts writes it.
 
-export type ProfileName = 'small' | 'budget' | 'fleet500';
+export type ProfileName = 'small' | 'demo' | 'budget' | 'fleet500';
 
 export interface Profile {
   depots: number;
@@ -45,11 +45,13 @@ export interface Profile {
 }
 
 /**
- * small: a laptop demo. budget: the scale CFG-3's performance budgets assume (200 vehicles, 300 drivers, 1,000 trips).
+ * small: a laptop demo. demo: a presentation (50 vehicles in 3 depots, staff in every depot, for the GPS simulator to drive at a 2 s ping).
+ * budget: the scale CFG-3's performance budgets assume (200 vehicles, 300 drivers, 1,000 trips).
  * fleet500: NFR-3's fleet for the load suite's fleet500 profile (FMS-152): the budget fleet two and a half times over.
  */
 export const PROFILES: Readonly<Record<ProfileName, Profile>> = {
   small: { depots: 3, vehicles: 24, evShare: 0.125, drivers: 30, routesPerDepot: 3, trips: 80, maintenance: 20, attendanceDays: 3, staffInEveryDepot: false, stockFactor: 1 },
+  demo: { depots: 3, vehicles: 50, evShare: 0.1, drivers: 60, routesPerDepot: 4, trips: 160, maintenance: 40, attendanceDays: 3, staffInEveryDepot: true, stockFactor: 2 },
   budget: { depots: 8, vehicles: 200, evShare: 0.08, drivers: 300, routesPerDepot: 6, trips: 1000, maintenance: 150, attendanceDays: 1, staffInEveryDepot: true, stockFactor: 4 },
   fleet500: { depots: 8, vehicles: 500, evShare: 0.08, drivers: 750, routesPerDepot: 6, trips: 2500, maintenance: 375, attendanceDays: 1, staffInEveryDepot: true, stockFactor: 10 },
 };

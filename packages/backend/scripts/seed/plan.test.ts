@@ -19,13 +19,28 @@ describe('buildPlan', () => {
     expect(buildPlan('small', 43, ANCHOR).vehicles).not.toEqual(buildPlan('small', 42, ANCHOR).vehicles);
   });
 
+  // The presentation's fleet: 50 vehicles in the three depots, for the GPS simulator to drive.
+  const demo = buildPlan('demo', 20261007, ANCHOR);
   const budget = buildPlan('budget', 20261007, ANCHOR);
   // FMS-152: NFR-3's 500 vehicles, for the load suite's fleet500 profile; held to the same rules below.
   const fleet500 = buildPlan('fleet500', 20261007, ANCHOR);
   const plans = [
+    ['demo', demo],
     ['budget', budget],
     ['fleet500', fleet500],
   ] as const;
+
+  test('the demo profile is 50 vehicles (some electric) in 3 depots, 60 drivers, every trip status and a route for every depot', () => {
+    expect(demo.vehicles).toHaveLength(50);
+    expect(demo.depots).toHaveLength(3);
+    expect(demo.drivers).toHaveLength(60);
+    expect(demo.trips).toHaveLength(160);
+    expect(demo.vehicles.filter((v) => v.fuel_type === 'electric').length).toBeGreaterThan(0);
+    expect(new Set(demo.trips.map((t) => t.status))).toEqual(new Set(['draft', 'scheduled', 'assigned', 'en_route', 'completed', 'cancelled']));
+    expect(new Set([...demo.staff.map((s) => s.role), 'driver']).size).toBe(9);
+    // The simulator drives a vehicle along its depot's routes: every depot has some.
+    demo.depots.forEach((_, index) => expect(demo.routes.filter((r) => r.depot === index).length).toBeGreaterThan(0));
+  });
 
   test('the budget profile is 200 vehicles (some electric), 300 drivers and 1,000 trips', () => {
     expect(budget.vehicles).toHaveLength(200);

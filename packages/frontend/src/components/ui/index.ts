@@ -2,7 +2,7 @@
 export { Button, IconButton, iconButtonClass, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
 export { cn } from './cn'
 export { Combobox, type ComboboxOption } from './Combobox'
-export { SelectField, TextAreaField, TextField, type SelectFieldProps, type TextAreaFieldProps, type TextFieldProps } from './Field'
+export { PasswordField, SelectField, TextAreaField, TextField, type PasswordFieldProps, type SelectFieldProps, type TextAreaFieldProps, type TextFieldProps } from './Field'
 export { FilterSelect, type FilterOption } from './FilterSelect'
 export { Dialog, Drawer, type DialogProps, type DrawerProps } from './Modal'
 export { Spinner } from './Spinner'

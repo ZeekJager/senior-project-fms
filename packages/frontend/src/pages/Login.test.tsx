@@ -224,6 +224,17 @@ describe('Login screen', () => {
       expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
     })
 
+    it('has an eye on the password that shows and hides what was typed', async () => {
+      const user = await openLogin()
+      await user.type(screen.getByLabelText('Password'), 'password1234')
+      expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+      await user.click(screen.getByRole('button', { name: 'Show password' }))
+      expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
+      expect(screen.getByLabelText('Password')).toHaveValue('password1234')
+      await user.click(screen.getByRole('button', { name: 'Hide password' }))
+      expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+    })
+
     it('announces errors through live regions that exist before the error does', async () => {
       const user = await openLogin()
       const emailRegion = document.getElementById('login-email-message')
