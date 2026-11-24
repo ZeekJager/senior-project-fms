@@ -8,6 +8,7 @@ import { attachRealtime } from './modules/realtime';
 import { setMetricReaders } from './shared/metrics/domain-metrics';
 import { startMetricsServer } from './shared/metrics/metrics-server';
 import { metricsRegistry } from './shared/metrics/registry';
+import { startSettingsSync } from './modules/settings';
 import { systemHealth } from './modules/system';
 import { redis, redisKey } from './shared/cache';
 import { createOutboxRelay } from './shared/events/event-bus';
@@ -56,3 +57,6 @@ systemHealth.start();
 // Every instance runs one; an advisory lock lets one relay at a time. With no
 // Redis (one instance) it hands events to this instance's sockets directly.
 createOutboxRelay(redis ? {} : { broadcaster: realtime.localBroadcaster }).start();
+
+// A settings parameter changed on any instance: this one forgets its copy at once (FMS-157), over the same Redis events.
+startSettingsSync(redis);

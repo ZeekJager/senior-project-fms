@@ -131,6 +131,8 @@ A detail may carry `record_id`: the public id of the record the problem is about
 | `CONFLICT_APPROVAL_REQUIRED` | 409 | The assignment raises a warning the depot holds for a fleet manager's approval: send it again with `exception_reason` (FMS-151); or, at approval, a held warning the request did not ask about | API |
 | `CONFLICT_IDEMPOTENCY_KEY_REUSED` | 409 | Same `Idempotency-Key` with a different body | `api.idempotency_keys` |
 | `CONFLICT_IDEMPOTENCY_IN_PROGRESS` | 409 | Same key still being processed | `api.idempotency_keys` |
+| `CONFLICT_SYSTEM_PARAMETER` | 409 | A system settings parameter deleted, or its definition edited (FMS-157) | `settings.definitions` |
+| `PRECONDITION_FAILED` | 412 | `If-Match` names an older version of a settings parameter (FMS-157) | `settings.definitions.version` |
 | `RATE_LIMITED` | 429 | Rate limit exceeded | API |
 | `INTERNAL_SERVER_ERROR` | 500 | Unexpected error (catch-all; no internals in the message) | API |
 | `UPSTREAM_UNAVAILABLE` | 502/503/504 | External provider or ML service failed; or the database is unavailable for a moment (`503`, detail reason `database_unavailable`, `Retry-After: 5`: a failover, FMS-162), when a client sends again | API |
@@ -431,7 +433,13 @@ DVIR rules (FMS-36):
 | Method + path | Purpose | Auth / permission | Request / response |
 |---|---|---|---|
 | `GET /settings` | Every setting's value, default and range | Authenticated | `Setting[]` |
-| `PATCH /settings` | Change settings | `settings:write` | `{ "<key>": integer or null }` -> `Setting[]` |
+| `PATCH /settings` | Change parameters' values | `settings:write` | `{ "<key>": value or null }` -> `Setting[]` |
+| `GET /settings/definitions` | Every parameter of the registry (FMS-157); `category`, `q`, `changed`, `enabled` | Authenticated | `SettingParameter[]`, `meta.categories` |
+| `POST /settings/definitions` | Add a custom parameter | `settings:define` | `NewSettingParameter` -> `201` `SettingParameter`, `ETag` |
+| `GET /settings/definitions/{key}` | One parameter | Authenticated | `SettingParameter`, `ETag` |
+| `PATCH /settings/definitions/{key}` | Its value, enabled, a custom one's definition; `If-Match` | `settings:write` (value), `settings:define` (the rest) | `SettingParameterPatch` -> `SettingParameter`, `ETag`; `412` stale |
+| `DELETE /settings/definitions/{key}` | Delete a custom parameter (soft); `If-Match` | `settings:define` | `204`; `409` for a system one |
+| `GET /settings/definitions/{key}/history` | Who changed what, when and why | `settings:write` or `settings:define` | `SettingParameterHistoryEntry[]`, newest first |
 | `GET /settings/telemetry-rules` | Speeding, idling and route deviation thresholds | Authenticated | `{ fleet, depots[] }` |
 | `PUT /settings/telemetry-rules/fleet` | Set the fleet's | `settings:write` | `RuleThresholds` -> `{ fleet, depots[] }` |
 | `PUT /settings/telemetry-rules/depots/{depot_id}` | Set a depot's own | `settings:write` | `RuleThresholds` -> `{ fleet, depots[] }` |
@@ -441,9 +449,10 @@ Settings rules (FMS-80, [settings.md](settings.md)):
 
 - **Who:** anyone signed in reads them (screens draw their lines from them). `settings:write`, admin only, changes them. Every change is audited.
 - **`Setting`:** `key`, `value`, `default_value`, `is_default`, `unit` (`percent`, `score`, `days`, `weight`), `min`, `max`, `updated_by`, `updated_by_name`, `updated_at` (null while never changed). The keys: `fuel_variance_threshold_pct` (1-100, default `FUEL_VARIANCE_THRESHOLD_PCT`, 20), `health_alert_below` (50-84, default 75), `expiry_warning_days` (8-180, default 30), and the driver score's weights (FMS-146) `driver_score_weight_punctuality` (0-100, default 35), `driver_score_weight_safety` (35), `driver_score_weight_incidents` (20) and `driver_score_weight_dvir` (10), which cannot all be 0 (`all_zero`).
-- **`PATCH /settings`:** one or more keys, each a whole number or `null` (back to the default; sending the default does the same). Every value is checked before any is written: out of range is `400` with `reason: "out_of_range"` per field; an unknown key, a fraction or an empty body is `400`.
+- **`PATCH /settings`:** one or more keys of the registry (these settings, the driving rules' thresholds below, custom parameters), each a value of its type or `null` (back to the default; sending the default does the same). Every value is checked before any is written, with one `reason` per field: `wrong_type`, `out_of_range`, `not_an_option`, `invalid_format`, `unknown_parameter`; an empty body is `400`. Nothing in a refused save is written.
+- **The registry (FMS-157):** each parameter has a `type` (`text`, `number`, `integer`, `boolean`, `dropdown`, `multi_select`, `duration` in whole seconds, `email`, `url`, `json` checked against a JSON Schema), `rules`, a `default_value` and `value` (what it answers with now: its default while disabled). The 7 settings and the 15 thresholds are system parameters (`is_system`): never deleted (`409 CONFLICT_SYSTEM_PARAMETER`), their definition is the code's, and a change of their value needs a `reason`. A parameter can name a `required_permission` needed besides `settings:write`. A secret's value and default are never returned (`null`, with `has_value`), and are masked in its history and the audit log. `version` is the ETag: a `PATCH` or `DELETE` with an older `If-Match` is `412 PRECONDITION_FAILED` (the drivers' and vehicles' stale write is `409`, §19; a settings parameter follows the card and RFC 9110). Events: `SettingDefined`, `SettingChanged` (`value_changed`, `fields`), `SettingEnabled`, `SettingDisabled`, `SettingDeleted`, each with `key`, `is_system` and `storage`, never the value.
 - **`RuleThresholds`:** `speed_limit_kmh` (20-200), `speeding_pings` (1-20), `clear_pings` (1-20), `idle_minutes` (1-120), all four required; route deviation's (FMS-90) `route_deviation_m` (100-5000, default 500) and `route_deviation_pings` (1-20, default 3), and the trip delay alert's (FMS-147) `trip_delay_minutes` (5-240, default 15) and `trip_delay_urgent_minutes` (10-720, default 60, above `trip_delay_minutes`, else `400` with `not_above_late`), the assignment exceptions' (FMS-151) `driver_attendance_exception` and `trip_overrun_exception` (`warn`, the default, or `approve`), and the driving distance limits' (FMS-156) `daily_distance_km` (50-2000, default 500), `weekly_distance_km` (100-10000, default 2500, at least the daily, else `400` with `below_daily`) and the job loads' weights `distance_weight_light` (0.80), `distance_weight_standard` (1.00) and `distance_weight_heavy` (1.50), each 0.50-3.00 with at most two decimals, light at most standard (`above_standard`) and heavy at least standard (`below_standard`), optional: one left out keeps the row's value. Every row in the answer has all fifteen. Each row in the answer adds `updated_by`, `updated_by_name` and `updated_at`; a depot's adds `depot_id`. An unknown or deactivated depot is `404`.
-- **Taking effect:** within a minute on every instance (each caches for 30 s), at once on the one that saved it.
+- **Taking effect:** at once on the instance that saved it, and on every other within seconds: each forgets its copy when the change's event reaches it over Redis. Without Redis, within 30 s (each caches for 30 s).
 
 ## 7. Trips and Routes API
 

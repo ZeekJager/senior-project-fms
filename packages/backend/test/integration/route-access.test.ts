@@ -49,6 +49,9 @@ const REVIEWED_AUTHENTICATED = [
   'GET /api/v1/drivers/me',
   'GET /api/v1/settings/telemetry-rules',
   'GET /api/v1/settings',
+  // The settings registry (FMS-157): every parameter's value, as GET /settings; a secret's never in clear.
+  'GET /api/v1/settings/definitions',
+  'GET /api/v1/settings/definitions/:key',
   // The web app reports how fast a page was (FMS-75): histograms by metric and page template, nothing about the user.
   'POST /api/v1/telemetry/web-vitals',
   // The caller's own data as a download (FMS-104): no id to give, so nobody else's.

@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
-import { settingsKey, type Setting, type SettingKey } from '@/features/settings'
 
 // The settings screen (S-27, FMS-80, api-contract §6.5): settings:write, admin only.
 
@@ -113,16 +112,6 @@ export function useRemoveDepotThresholds() {
   return useMutation({
     mutationFn: (depotId: string) => api.request<void>(`/settings/telemetry-rules/depots/${depotId}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: thresholdsKey }),
-  })
-}
-
-/** PATCH /settings: the values to change; null goes back to the default. Answers with every setting. */
-export function useSaveSettings() {
-  const { api } = useAuth()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (changes: Partial<Record<SettingKey, number | null>>) => api.request<Setting[]>('/settings', { method: 'PATCH', json: changes }),
-    onSuccess: (data) => queryClient.setQueryData(settingsKey, data),
   })
 }
 

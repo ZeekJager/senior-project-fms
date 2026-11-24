@@ -24,9 +24,10 @@ const DEPOT_ROLES: RoleName[] = ['dispatcher', 'technician', 'depot_admin', 'fin
  * Path parameters naming a record no depot owns: the same for every caller, by design. Depots are a directory: every
  * signed-in user may read any depot's name and address (api-contract §6.1); `in_scope=true` narrows the list. A recall
  * (FMS-133) is a manufacturer's campaign for the whole fleet; the vehicles it lists are scoped (and named by no
- * public id of their own), and a vehicle's recalls are swept under its vehicleId.
+ * public id of their own), and a vehicle's recalls are swept under its vehicleId. A settings parameter (FMS-157, its
+ * key) is the fleet's, not a depot's.
  */
-const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId']);
+const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key']);
 
 /**
  * Path parameters naming a kind of answer, not a record: each value is swept as a list route of its own, with `query`.

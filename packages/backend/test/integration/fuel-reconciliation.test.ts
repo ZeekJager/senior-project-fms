@@ -177,7 +177,7 @@ describe('the monthly reconciliation', () => {
   });
 
   test('the threshold is the fuel_variance_threshold_pct setting (FMS-80)', async () => {
-    await pool.query(`INSERT INTO settings.settings (key, value) VALUES ('fuel_variance_threshold_pct', 10)`);
+    await pool.query(`INSERT INTO settings.settings (key, value) VALUES ('fuel_variance_threshold_pct', '10')`);
     settings.forget();
     const depot = await createDepot();
     const { driver } = await createDriver({ depot });

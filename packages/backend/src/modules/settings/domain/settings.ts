@@ -1,6 +1,10 @@
+import type { SystemParameter } from './registry';
+
 // Settings an administrator tunes without a code change (FMS-80, CFG-3, docs/settings.md). Each is a whole
 // number with a default in code and a range; settings.settings holds only the ones changed (NULL: the default
 // again). The telemetry rules' thresholds are not here: they have a row per depot in tracking.rule_thresholds.
+// Since FMS-157 they are system parameters of the registry (registry.ts) like any other, and these keep the
+// typed reads (settings.value) the modules applying them use.
 
 export const SETTING_KEYS = [
   'fuel_variance_threshold_pct',
@@ -52,6 +56,60 @@ export const DRIVER_SCORE_WEIGHT_KEYS: readonly SettingKey[] = [
   'driver_score_weight_incidents',
   'driver_score_weight_dvir',
 ];
+
+const COPY: Record<SettingKey, { label: string; category: string; description: string; unit: string }> = {
+  fuel_variance_threshold_pct: {
+    label: 'Fuel variance',
+    category: 'Alerts and anomalies',
+    description: "A vehicle's month of fuel this far above or below what its trips needed is an anomaly.",
+    unit: '%',
+  },
+  health_alert_below: {
+    label: 'Health score alert line',
+    category: 'Alerts and anomalies',
+    description: 'Below this a technician is alerted and the vehicle shows At risk. Healthy starts at 85.',
+    unit: 'score',
+  },
+  expiry_warning_days: {
+    label: 'Expiry warning',
+    category: 'Alerts and anomalies',
+    description: 'The first warning for a document or driving licence; the red one stays at 7 days.',
+    unit: 'days',
+  },
+  driver_score_weight_punctuality: {
+    label: 'Punctuality',
+    category: 'Driver score',
+    description: 'How much trips ended within 15 minutes of their scheduled end count in the driver score.',
+    unit: 'weight',
+  },
+  driver_score_weight_safety: {
+    label: 'Safety',
+    category: 'Driver score',
+    description: 'How much speeding and idling per 100 km count in the driver score.',
+    unit: 'weight',
+  },
+  driver_score_weight_incidents: {
+    label: 'Incidents',
+    category: 'Driver score',
+    description: 'How much accidents per 100 km count in the driver score.',
+    unit: 'weight',
+  },
+  driver_score_weight_dvir: {
+    label: 'Inspections',
+    category: 'Driver score',
+    description: "How much completed trips with the driver's pre-trip inspection count in the driver score.",
+    unit: 'weight',
+  },
+};
+
+/** The settings as system parameters of the registry (FMS-157): whole numbers in settings.settings. */
+export function settingParameters(definitions: Record<SettingKey, SettingDefinition>): SystemParameter[] {
+  return SETTING_KEYS.map((key) => {
+    const d = definitions[key];
+    const { unit, ...copy } = COPY[key];
+    return { key, ...copy, type: 'integer', default_value: d.default, rules: { min: d.min, max: d.max, unit }, storage: 'settings' };
+  });
+}
 
 /** Every setting's value: the stored one, else the default. */
 export type SettingValues = Record<SettingKey, number>;

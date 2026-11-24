@@ -1,11 +1,12 @@
-# Depots and settings (FMS-80)
+# Depots and settings (FMS-80, FMS-157)
 
-Card: FMS-80 (SE-124). Code:
+Cards: FMS-80 (SE-124), and FMS-157 (SE-201) for the registry of typed parameters. Code:
 
-- backend: `packages/backend/src/modules/settings/` (the settings, `GET` and `PATCH /settings`), `modules/integration/` (`RuleThresholdService`, `api/rule-threshold.routes.ts`: the telemetry rules' thresholds);
+- backend: `packages/backend/src/modules/settings/` (the registry, `GET` and `PATCH /settings`, `/settings/definitions`), `modules/integration/` (`RuleThresholdService`, `api/rule-threshold.routes.ts`: the telemetry rules' thresholds; `application/threshold-parameters.ts`: the same as system parameters of the registry);
+- shared: `modules/settings/domain/parameter-types.ts`, the types' validator, copied byte for byte to the frontend's `lib/parameterTypes.ts` (a test fails when they differ);
 - frontend: `pages/Depots/` (S-26), `pages/Settings/` (S-27), `features/settings.ts` (the values every screen reads).
 
-Migration 052.
+Migrations 052 and 077. Decided in [ADR-09](adr/ADR-09-settings-registry.md).
 
 Before this card, depots had an API and no screen (FMS-20 left it to "a Settings screen"), and tuning a rule meant a code change, an environment variable or SQL. Now an administrator does both from the Administration menu, and every change is audited.
 
@@ -21,6 +22,40 @@ For `depot:write`: admin and fleet owner. It uses the depot API as it was (api-c
 ## Settings (S-27, `/settings`)
 
 For `settings:write`, a new permission held by admin only. Reading the values needs only a sign-in: screens draw their lines from them.
+
+### The registry (FMS-157): `settings.definitions`
+
+Every parameter has a row: `key`, `label`, `category`, `description`, `type`, a typed `default_value` and `rules` (jsonb), and whether it `is_enabled`, `is_system` and `is_secret`, with an optional `required_permission`.
+
+| Type | Value | Rules |
+|---|---|---|
+| `text` | a string (at most 10,000 characters) | `min_length`, `max_length`, `pattern` (the whole value) |
+| `number` | a finite number | `min`, `max`, `decimals`, `unit` |
+| `integer` | a whole number | `min`, `max`, `unit` |
+| `boolean` | `true` or `false` | |
+| `dropdown` | one option's value | `options` (2 or more: `value`, `label`) |
+| `multi_select` | a list of options' values, each at most once | `options`, `min_items`, `max_items` |
+| `duration` | whole seconds (the screen takes `90` minutes, `1h 30m`, `45s`) | `min`, `max` |
+| `email` | an email address | |
+| `url` | an `https://` or `http://` address | |
+| `json` | any JSON value (at most 16 KB) | `schema`: a JSON Schema |
+
+- **One validator:** `checkValue` and `checkDefinition` in `parameter-types.ts`. The API runs them on save, the screen as each value is typed; the reasons are `wrong_type`, `out_of_range`, `not_an_option` and `invalid_format`. A rule a type does not take is refused (`invalid_rules`), and so is a schema with a keyword the json type does not check (`unsupported_schema_keyword`; it checks `type`, `enum`, `const`, the numeric bounds and `multipleOf`, the string lengths and `pattern`, `items`, `minItems`, `maxItems`, `uniqueItems`, `properties`, `required`, `additionalProperties`), so no part of a schema is silently ignored.
+- **System parameters** are the 7 settings below and the 15 driving rules' thresholds. The module whose rule each tunes declares it in code, and the API brings its row in step on start (label, category, description, type, rules, default; never whether it is enabled). Migration 077 inserted them, and a test checks the two agree. They are never deleted (`409 CONFLICT_SYSTEM_PARAMETER`), their definition is never edited, and a change of their value needs a reason.
+- **Custom parameters** are added on the screen (`POST /settings/definitions`, `settings:define`) and deleted softly (`is_active`); the key can be used again, starting from its default. Code reads any parameter, with no deployment:
+
+  ```ts
+  import { settings } from '../settings';
+  const detail = (await settings.get<string>('report_detail')) ?? 'standard';
+  ```
+
+  `get` answers the stored value, or the default while the parameter is disabled or was never changed, and `undefined` for a key with no live definition.
+- **Disabled** parameters answer with their default, for code (`settings.get`, `settings.value`) and for the driving rules (the fleet and every depot), until enabled again. Their own value is kept.
+- **Values** stay where they were: `settings.settings.value`, now jsonb (`NULL`: the default), for this module's and custom parameters, with `reason`; a secret's in `secret_value`, which the audit trail never copies (`[REDACTED]`). The driving rules' stay in the fleet's row of `tracking.rule_thresholds` (with `change_reason`), written through the integration module's store, which also keeps the rules between them (`not_above_late`, the distance limits'); each depot's own row still overrides them.
+- **Access:** `settings:define` (admin) adds, deletes, enables and disables parameters, and edits a custom one's definition; `settings:write` changes values, plus the definition's `required_permission` if it names one. A secret's value and default are never returned (`null`, `has_value`) and never exported.
+- **Concurrency:** `version` is bumped by every change of the definition or the value (a driving rules `PUT` included), and is the ETag. A `PATCH` or `DELETE` with an older `If-Match` is `412 PRECONDITION_FAILED`; the screen always sends it, and offers to reload.
+- **History:** `GET /settings/definitions/{key}/history`: each value change (old and new, a secret's `[SECRET]`), definition edit, enable, disable and deletion, with who, when and why, from the audit trail. The screen restores a value from it (sent again as a change, with its own reason) and exports it as CSV.
+- **Events:** `SettingDefined`, `SettingChanged` (`value_changed`, `fields`), `SettingEnabled`, `SettingDisabled` and `SettingDeleted`, with `key`, `is_system` and `storage`, never the value. These are the card's `setting.defined` and the rest, named as CONVENTIONS.md has events.
 
 ### Driving rules: `tracking.rule_thresholds`
 
@@ -66,22 +101,28 @@ The defaults are the card's and still need the advisor's agreement.
 
 - The expiry setting moves the warnings only. The lists' *expiring soon* marks (licence status, the vehicle list's document filter, the documents panel) stay at 30 days.
 
-## Taking effect within a minute
+## Taking effect within seconds
 
-The acceptance criterion: a changed speeding threshold applies within a minute.
+The acceptance criteria: a changed speeding threshold applies within a minute (FMS-80), and any change reaches every instance within 60 s (FMS-157).
 
 - The telemetry rules cache each depot's thresholds for 30 seconds (`THRESHOLDS_TTL_MS`), and the settings service caches the values for 30 seconds (`SETTINGS_TTL_MS`), per instance.
-- The instance that saves a change drops its copy at once, so the next ping or reading there uses it. The other instances follow when their copy expires, within 30 seconds.
+- The instance that saves a change drops its copy at once (and the thresholds' with it), so the next ping or reading there uses it.
+- Every change publishes a `Setting*` event through the outbox, which the relay puts on Redis (`<prefix>:events:SettingChanged` and so on). Each instance listens (`startSettingsSync` in `server.ts`) and drops its copies when one arrives, in about a second, the relay's pace. A driving rules `PUT` publishes `SettingChanged` too.
+- Without Redis (one instance), or while it is down, the other instances follow when their copy expires, within 30 seconds.
 - Screens re-read `GET /settings` at most every minute; the settings screen updates its copy on save.
 
 The command center's overview is cached for 5 seconds and follows on its next read.
 
 ## Audit
 
-Every change is one audited write: `settings.settings` `INSERT` or `UPDATE` (with the old and new value), `tracking.rule_thresholds` `INSERT`, `UPDATE` or `DELETE`. The row records `updated_by`. The audit log (S-10) shows them with the rest.
+Every change is one audited write: `settings.settings` `INSERT` or `UPDATE` (with the old and new value and the reason), `tracking.rule_thresholds` `INSERT`, `UPDATE` or `DELETE` (with `change_reason`), and `settings.definitions` `INSERT`, `UPDATE` (edit, enable, disable) or a soft `DELETE`. The row records `updated_by`. The audit log (S-10) shows them with the rest. Two writes are not audited: a definition's `version` moving on when its value changes (the value's own row records the change), and the start-up sync of the system parameters' code-declared fields.
 
 ## Not covered
 
+- Whether a production change to a system parameter should need a second administrator's approval (the card's open question): not built. A reason is required, and every change is in the history.
+- A custom parameter's rules and default are changed through the API (`PATCH /settings/definitions/{key}`). The screen changes values, enables, disables and deletes, and adds parameters with their rules.
+- Secrets are masked in every answer, export and audit row, but stored in clear in `settings.settings.secret_value` (the backups are encrypted, ADR-07). A secret store for them is later work.
+- `analytics.trip_risk_facts` (migration 073) reads `trip_delay_minutes` from `tracking.rule_thresholds` in SQL, so a disabled one does not move the training facts' `late`.
 - Other CFG-3 defaults are not settings yet: the session's inactivity logout (30 minutes) and the offline queue's size (50).
 - The 7-day red expiry warning, the health bands' 85 and 25-hour staleness, and the *expiring soon* marks stay in code.
 - There is no end-to-end browser test suite in the repository. The card's E2E requirement is covered by API integration tests (`test/integration/settings.test.ts`: a speeding threshold changed through the API raises a flag on the very next pings) and by component tests of both screens against a mocked API.
