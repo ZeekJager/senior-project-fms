@@ -49,7 +49,8 @@ fi
 # A standby copied before the stable endpoint streams from the primary by name: point it at the endpoint, so it
 # follows whichever server is the primary.
 AUTO="$PGDATA/postgresql.auto.conf"
-if [ -f "$AUTO" ] && grep -q "^primary_conninfo" "$AUTO" && ! grep -q "^primary_conninfo.*host=$PRIMARY_HOST[ ']" "$AUTO"; then
-  sed -i "/^primary_conninfo/s/host=[^ ']*/host=$PRIMARY_HOST/" "$AUTO"
+if [ -f "$AUTO" ] && grep -q "^primary_conninfo" "$AUTO" && ! grep -Eq "^primary_conninfo.*host=('')?$PRIMARY_HOST('')?[ ']" "$AUTO"; then
+  # pg_basebackup -R quotes each value inside the setting's quotes (host=''postgres''); older copies may not.
+  sed -Ei "/^primary_conninfo/s/host=('')?[^ ']*('')?/host=''$PRIMARY_HOST''/" "$AUTO"
   echo "standby: now streams through $PRIMARY_HOST"
 fi
