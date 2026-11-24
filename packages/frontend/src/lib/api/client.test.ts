@@ -48,6 +48,29 @@ describe('api client', () => {
     expect(seen).toEqual([true, false])
   })
 
+  it('says it is reconnecting while the database is unavailable (503 with Retry-After), until an answer that is not (FMS-162)', async () => {
+    const api = testApi()
+    const seen: boolean[] = []
+    api.onReconnectingChange((r) => seen.push(r))
+    const unavailable = () =>
+      HttpResponse.json(
+        { error: { code: 'UPSTREAM_UNAVAILABLE', message: 'The database is unavailable for a moment.', details: [{ reason: 'database_unavailable' }] }, meta: { request_id: 'r' } },
+        { status: 503, headers: { 'Retry-After': '5' } },
+      )
+    server.use(http.get('/api/v1/ping', unavailable))
+    await expect(api.request('/ping')).rejects.toBeInstanceOf(ApiError)
+    expect(api.reconnecting()).toBe(true)
+    // Another 503 without Retry-After (backups not set up) is not the database failing over: no change until a real answer.
+    await expect(api.request('/ping')).rejects.toBeInstanceOf(ApiError)
+    server.use(http.get('/api/v1/ping', ok))
+    await api.request('/ping')
+    expect(api.reconnecting()).toBe(false)
+    server.use(http.get('/api/v1/ping', () => errorEnvelope(503, 'UPSTREAM_UNAVAILABLE', 'Backups are not set up.')))
+    await expect(api.request('/ping')).rejects.toBeInstanceOf(ApiError)
+    expect(api.reconnecting()).toBe(false)
+    expect(seen).toEqual([true, false])
+  })
+
   describe('idempotencyKey', () => {
     it('sends no key by default, a fresh UUID for `true`, and a given string as is', async () => {
       const keys: (string | null)[] = []

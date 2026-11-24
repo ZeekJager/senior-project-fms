@@ -13,6 +13,8 @@ packages/backend/storage/
 docker/postgres/offsite.env
 # scripts/backup/pitr-restore.sh's passphrases while it runs (removed on exit).
 .pitr-restore-env.*
+# scripts/dr/rejoin.sh's settings while it runs (removed on exit).
+.rejoin-env.*
 
 # Python
 __pycache__/

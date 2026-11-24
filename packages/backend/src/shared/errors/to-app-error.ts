@@ -69,9 +69,37 @@ interface BodyParserError {
   type?: string;
 }
 
+/** How long a client waits before trying again while the database is unavailable (a failover takes seconds to minutes). */
+export const DATABASE_RETRY_AFTER_SECONDS = 5;
+
+/**
+ * SQLSTATEs of a database that is going away, starting, failing over, or is a standby being promoted (FMS-162):
+ * class 08 (connection exceptions), 57P01-57P03 (shut down by an administrator, crashed, cannot connect now), and
+ * 25006 (a write that reached a read-only standby in the moment the endpoint moves).
+ */
+const UNAVAILABLE_SQLSTATES = new Set(['57P01', '57P02', '57P03', '25006']);
+/** Node and pg errors of a database that cannot be reached at all. */
+const UNAVAILABLE_ERRNOS = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EHOSTUNREACH', 'EPIPE']);
+const UNAVAILABLE_MESSAGES = [/^Connection terminated/i, /timeout exceeded when trying to connect/i, /Client has encountered a connection error/i];
+
+/** Whether an error means the database is unavailable for now, rather than that the request was wrong. */
+export function isDatabaseUnavailable(err: unknown): boolean {
+  if (err instanceof DatabaseError) return err.code !== undefined && (err.code.startsWith('08') || UNAVAILABLE_SQLSTATES.has(err.code));
+  const e = err as { code?: unknown; message?: unknown } | null;
+  if (typeof e?.code === 'string' && UNAVAILABLE_ERRNOS.has(e.code)) return true;
+  return typeof e?.message === 'string' && UNAVAILABLE_MESSAGES.some((m) => m.test(e.message as string));
+}
+
+/** 503 with Retry-After: the phone's queue, devices and webhooks retry, so nothing sent meanwhile is lost (FMS-162). */
+export const databaseUnavailable = () =>
+  new AppError(503, 'UPSTREAM_UNAVAILABLE', 'The database is unavailable for a moment. Try again shortly; nothing was saved.', [{ reason: 'database_unavailable' }], {
+    'Retry-After': String(DATABASE_RETRY_AFTER_SECONDS),
+  });
+
 /** Normalises anything thrown in a request into an AppError. */
 export function toAppError(err: unknown): AppError {
   if (err instanceof AppError) return err;
+  if (isDatabaseUnavailable(err)) return databaseUnavailable();
   if (err instanceof DatabaseError) {
     return fromDatabaseError(err) ?? new AppError(500, 'INTERNAL_SERVER_ERROR', INTERNAL_MESSAGE);
   }
