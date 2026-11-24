@@ -14,9 +14,16 @@ NETWORK=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}
 # OFFSITE_WORK: a folder docker can mount (on Windows, a C:/ path); by default a new temporary one.
 WORK="${OFFSITE_WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
+# mktemp -d is the owner's only: SeaweedFS reads its certificate and config from here as another user.
+chmod 755 "$WORK"
 ENV_FILE=docker/postgres/offsite.env
 
 cleanup() {
+  status=$?
+  if [ "$status" != 0 ]; then
+    echo "--- SeaweedFS's log:" >&2; docker logs --tail 40 "$S3" >&2 2>&1 || true
+    echo "--- pgBackRest's log:" >&2; docker compose exec -T postgres sh -c 'tail -n 30 /var/log/pgbackrest/*.log' >&2 || true
+  fi
   docker rm -f "$S3" >/dev/null 2>&1 || true
   rm -rf "$WORK" "$ENV_FILE"
 }
@@ -47,7 +54,8 @@ docker run -d --name "$S3" --network "$NETWORK" -v "$WORK:/conf:ro" "$IMAGE" \
   server -dir=/data -s3 -s3.port=9000 -s3.config=/conf/s3.json -s3.cert.file=/conf/public.crt -s3.key.file=/conf/private.key >/dev/null
 wait_for 60 "SeaweedFS's S3 API" sh -c "docker logs $S3 2>&1 | grep -q 'S3 API Server'"
 sleep 5
-until echo "s3.bucket.create -name fms-offsite" | docker exec -i "$S3" weed shell 2>&1 | grep -q "created bucket"; do sleep 3; done
+bucket() { echo "s3.bucket.create -name fms-offsite" | docker exec -i "$S3" weed shell 2>&1 | grep -q "created bucket"; }
+wait_for 90 "the bucket to be created" bucket
 
 echo "== repo2 configured: the database recreated with it"
 umask 077
