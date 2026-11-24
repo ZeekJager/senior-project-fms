@@ -7995,8 +7995,8 @@ components:
         is_default: { type: boolean, description: No value of its own. }
         is_enabled: { type: boolean }
         is_system: { type: boolean, description: Declared in code; never deleted, its definition never edited. }
-        is_secret: { type: boolean }
-        has_value: { type: boolean, description: 'For a secret: whether a value is set. Always true otherwise.' }
+        is_secret: { description: 'A key or password: its value is never returned or exported.', type: boolean }
+        has_value: { type: boolean, description: 'Whether a secret parameter has a value. Always true otherwise.' }
         required_permission: { type: [string, 'null'], description: Needed besides settings:write to change the value. }
         storage: { type: string, enum: [settings, rule_thresholds], description: 'rule_thresholds: the fleet''s row of the driving rules (a depot''s own still overrides it).' }
         version: { type: integer, description: 'The ETag: bumped by every change of the definition or the value.' }

@@ -13,7 +13,7 @@ import {
   notAllowed,
   parameterNotFound,
   precondition,
-  SECRET_MASK,
+  MASKED_VALUE,
   SETTING_EVENTS,
   systemParameter,
   type Definition,
@@ -475,7 +475,7 @@ export class SettingsService {
     if (!d) throw parameterNotFound();
     const { db, settings, trail } = this.deps;
     const entries: (Omit<HistoryEntry, 'at' | 'by' | 'by_name'> & { id: string; at: Date; userId: string | null })[] = [];
-    const mask = (v: unknown) => (v === null || v === undefined ? null : d.isSecret ? SECRET_MASK : v);
+    const mask = (v: unknown) => (v === null || v === undefined ? null : d.isSecret ? MASKED_VALUE : v);
 
     const store = this.stores.get(d.storage);
     if (store) {

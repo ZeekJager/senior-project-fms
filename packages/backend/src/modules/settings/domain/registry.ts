@@ -115,7 +115,7 @@ export const SETTING_EVENTS = {
 } as const;
 
 /** A secret's value in the history and the audit trail. */
-export const SECRET_MASK = '[SECRET]';
+export const MASKED_VALUE = '[SECRET]';
 
 /** The definition fields a PATCH may change on a custom parameter. A system parameter's come from the code. */
 export const EDITABLE_FIELDS = ['label', 'category', 'description', 'default_value', 'rules', 'required_permission'] as const;
