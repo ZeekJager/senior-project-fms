@@ -199,17 +199,67 @@ export const outboxStore = {
    * consumers' records as old whose event is gone. Dead letters, and their
    * records, stay until someone has dealt with them: a requeued one skips
    * the consumers that handled it.
+   *
+   * In batches (SE-206): each statement deletes at most `batch` rows, oldest
+   * first, and is its own transaction when `db` is the pool, so a backlog
+   * after downtime (13 million rows once, 16 GB of WAL in one transaction)
+   * reaches the archive and the replica a batch at a time and never holds
+   * its locks for long. Never pass a transaction client: the batches would
+   * share it. A run stops at `budgetMs`; what is left goes the next day
+   * (`complete` false).
    */
-  async purge(db: Queryable, before: Date): Promise<{ events: number; processed: number }> {
-    const events = await db.query(
-      `DELETE FROM events.outbox WHERE created_at < $1 AND dispatched_at IS NOT NULL AND published_at IS NOT NULL`,
-      [before],
+  async purge(db: Queryable, before: Date, options: PurgeOptions = {}): Promise<PurgeResult> {
+    const batch = options.batch ?? OUTBOX_PURGE_BATCH;
+    const budgetMs = options.budgetMs ?? OUTBOX_PURGE_BUDGET_MS;
+    const clock = options.clock ?? Date.now;
+    const started = clock();
+    const result: PurgeResult = { events: 0, processed: 0, batches: 0, complete: false };
+    const drain = async (sql: string, key: 'events' | 'processed'): Promise<boolean> => {
+      for (;;) {
+        const res = await db.query(sql, [before, batch]);
+        const n = res.rowCount ?? 0;
+        result[key] += n;
+        result.batches += 1;
+        if (n < batch) return true;
+        if (clock() - started >= budgetMs) return false;
+      }
+    };
+    const eventsDone = await drain(
+      `DELETE FROM events.outbox WHERE id IN (
+         SELECT id FROM events.outbox
+          WHERE created_at < $1 AND dispatched_at IS NOT NULL AND published_at IS NOT NULL
+          ORDER BY created_at LIMIT $2)`,
+      'events',
     );
-    const processed = await db.query(
-      `DELETE FROM events.processed_events p
-        WHERE p.processed_at < $1 AND NOT EXISTS (SELECT 1 FROM events.outbox o WHERE o.event_id = p.event_id)`,
-      [before],
+    if (!eventsDone) return result;
+    result.complete = await drain(
+      `DELETE FROM events.processed_events WHERE (consumer, event_id) IN (
+         SELECT p.consumer, p.event_id FROM events.processed_events p
+          WHERE p.processed_at < $1 AND NOT EXISTS (SELECT 1 FROM events.outbox o WHERE o.event_id = p.event_id)
+          ORDER BY p.processed_at LIMIT $2)`,
+      'processed',
     );
-    return { events: events.rowCount ?? 0, processed: processed.rowCount ?? 0 };
+    return result;
   },
 };
+
+/** Rows one purge statement deletes (SE-206). */
+export const OUTBOX_PURGE_BATCH = 10_000;
+/** How long one purge run may go on deleting batches; the rest waits for the next day's run. */
+export const OUTBOX_PURGE_BUDGET_MS = 5 * 60_000;
+
+export interface PurgeOptions {
+  batch?: number;
+  budgetMs?: number;
+  /** For tests. */
+  clock?: () => number;
+}
+
+export interface PurgeResult {
+  events: number;
+  processed: number;
+  /** DELETE statements run, each at most one batch. */
+  batches: number;
+  /** False when the time budget ran out with rows still to delete. */
+  complete: boolean;
+}
