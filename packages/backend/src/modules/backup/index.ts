@@ -1,11 +1,13 @@
 import { config } from '../../config';
 import { pool } from '../../db';
+import { eventBus } from '../../shared/events/event-bus';
 import { logger } from '../../shared/logging/logger';
 import type { AppModule } from '../../shared/module';
 import { createDocumentStorage } from '../../shared/storage/document-storage';
 import { userDirectory } from '../auth';
 import { backupRouter } from './api/backup.routes';
 import { BackupService } from './application/backup.service';
+import { PitrService } from './application/pitr.service';
 import type { RestoreDeps } from './application/restore';
 import { BackupLinkSigner } from './domain/backup-link';
 import { BackupRepository } from './infrastructure/backup.repository';
@@ -27,12 +29,22 @@ export const backupService = new BackupService({
   autoStart: config.nodeEnv !== 'test',
 });
 
+/** Point-in-time recovery (FMS-108): what the database container records, read for the screen, health and alerts. */
+export const pitrService = new PitrService({ db: pool, backups: new BackupRepository(pool), events: eventBus });
+
 export const backupModule: AppModule = {
   name: 'backup',
-  router: backupRouter(backupService),
+  router: backupRouter(backupService, pitrService),
   jobs: [
     {
-      // Nightly, before the day's work (FMS-108 adds the off-site copy and WAL archiving).
+      // FMS-108: an alert for administrators when recovery is at risk (archiving failing, a repository unreachable or
+      // behind, no base backup in 26 h, a drill failed or overdue): once per risk, not every minute.
+      name: 'backup-monitor',
+      every: 1,
+      run: (context) => pitrService.monitor(context.correlationId),
+    },
+    {
+      // Nightly, before the day's work. Point-in-time recovery (FMS-108) is the database container's: base backups, WAL.
       name: 'database-backup',
       at: '02:40',
       leaseMs: 2 * 60 * 60 * 1000,

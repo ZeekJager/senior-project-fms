@@ -1,7 +1,8 @@
 #!/bin/sh
 # Point-in-time restore of the FMS database (FMS-108, docs/backups.md#point-in-time-restore-runbook).
 #
-#   sh scripts/backup/pitr-restore.sh --to "2026-11-24 10:15:00+03" [--name <name>] [--stack <container>]
+#   npm run backup:pitr -- --to "2026-11-24 10:15:00+03" [--name <name>] [--repo 2] [--stack <container>]
+#   (the same as sh scripts/backup/pitr-restore.sh ...)
 #
 # Restores the latest base backup taken before --to, replays the archived WAL up to that second, and
 # starts the result as a separate database container, fms_pitr_<name>, on the stack's network and
@@ -10,6 +11,8 @@
 #   docker rm -f fms_pitr_<name> && docker volume rm fms_pitr_<name>_data
 #
 # --to takes any timestamp PostgreSQL reads; give the time zone. --name defaults to the time of the run.
+# --repo 2 restores from the off-site repository (when this site's repository is lost); by default pgBackRest
+# takes the first repository that has a backup before --to.
 # Needs the docker CLI and the running primary container (default fms_postgres), whose image, backup
 # repository volume and passphrase it reuses.
 set -eu
@@ -17,24 +20,36 @@ set -eu
 TO=""
 NAME="$(date -u +%Y%m%d%H%M%S)"
 STACK="fms_postgres"
+REPO=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --to) TO="$2"; shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
     --stack) STACK="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 [ -n "$TO" ] || { echo "usage: pitr-restore.sh --to \"<timestamp with time zone>\" [--name <name>]" >&2; exit 2; }
 case "$NAME" in *[!a-z0-9_-]*) echo "--name: lower-case letters, digits, - and _ only" >&2; exit 2 ;; esac
+case "$REPO" in ""|[1-4]) ;; *) echo "--repo: 1 to 4" >&2; exit 2 ;; esac
 
 CONTAINER="fms_pitr_${NAME}"
 VOLUME="${CONTAINER}_data"
 IMAGE=$(docker inspect -f '{{.Image}}' "$STACK")
-REPO=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/pgbackrest"}}{{.Name}}{{end}}{{end}}' "$STACK")
+REPO_VOLUME=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/pgbackrest"}}{{.Name}}{{end}}{{end}}' "$STACK")
 NETWORK=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$STACK")
-CIPHER=$(docker exec "$STACK" printenv PGBACKREST_REPO1_CIPHER_PASS)
-[ -n "$REPO" ] || { echo "$STACK has no backup repository volume at /var/lib/pgbackrest" >&2; exit 1; }
+[ -n "$REPO_VOLUME" ] || { echo "$STACK has no backup repository volume at /var/lib/pgbackrest" >&2; exit 1; }
+# Every repository's settings and passphrase (PGBACKREST_REPO1_*, and PGBACKREST_REPO2_* from offsite.env), in a file
+# only this user can read, given to the containers below with --env-file: never on a command line. In the current
+# folder, not /tmp, so docker.exe on Windows (Git Bash) can open it too; removed on exit, and git-ignored.
+ENV_FILE=$(mktemp ./.pitr-restore-env.XXXXXX)
+trap 'rm -f "$ENV_FILE"' EXIT
+chmod 600 "$ENV_FILE"
+docker exec "$STACK" printenv | grep '^PGBACKREST_REPO' > "$ENV_FILE" || true
+grep -q '^PGBACKREST_REPO1_CIPHER_PASS=' "$ENV_FILE" || { echo "$STACK has no PGBACKREST_REPO1_CIPHER_PASS" >&2; exit 1; }
+REPO_OPTION=""
+[ -n "$REPO" ] && REPO_OPTION="--repo=$REPO"
 if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
   echo "$VOLUME already exists: choose another --name, or remove it first" >&2; exit 1
 fi
@@ -42,23 +57,26 @@ fi
 echo "== Restoring to $TO into $VOLUME"
 docker volume create "$VOLUME" >/dev/null
 # --type=time stops replay at the target; target-action=promote opens the restored database for writes.
-# The repository is mounted read-only: a restore never changes it.
-docker run --rm --entrypoint sh \
-  -e PGBACKREST_REPO1_CIPHER_PASS="$CIPHER" \
-  -v "$REPO":/var/lib/pgbackrest:ro \
+# The repository is mounted read-only: a restore never changes it. On the stack's network, for an off-site
+# repository reached there. A failed restore removes its volume, so the same --name can be tried again.
+if ! docker run --rm --entrypoint sh --network "$NETWORK" --env-file "$ENV_FILE" \
+  -v "$REPO_VOLUME":/var/lib/pgbackrest:ro \
   -v "$VOLUME":/var/lib/postgresql/data \
   "$IMAGE" -c "chown postgres:postgres /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data && \
     gosu postgres pgbackrest --stanza=fms --log-path=/tmp --lock-path=/tmp --spool-path=/tmp \
-      --type=time --target=\"$TO\" --target-action=promote restore"
+      $REPO_OPTION --type=time --target=\"$TO\" --target-action=promote restore"; then
+  docker volume rm "$VOLUME" >/dev/null
+  echo "The restore failed; nothing was started. Is there a base backup before $TO?" >&2
+  exit 1
+fi
 
 echo "== Starting $CONTAINER (on $NETWORK, not published)"
 # The image's plain entry point: no archiving and no backup schedule, so the copy never writes to the
 # live repository. Archiving starts only on the database that is switched to, as the runbook says.
 # Recovery fetches the WAL it replays from the repository (the restore_command pgBackRest wrote), so
 # the repository is mounted here too, read-only, with its passphrase.
-docker run -d --name "$CONTAINER" --network "$NETWORK" --entrypoint docker-entrypoint.sh \
-  -e PGBACKREST_REPO1_CIPHER_PASS="$CIPHER" \
-  -v "$REPO":/var/lib/pgbackrest:ro \
+docker run -d --name "$CONTAINER" --network "$NETWORK" --entrypoint docker-entrypoint.sh --env-file "$ENV_FILE" \
+  -v "$REPO_VOLUME":/var/lib/pgbackrest:ro \
   -v "$VOLUME":/var/lib/postgresql/data "$IMAGE" postgres -c archive_mode=off >/dev/null
 
 i=0

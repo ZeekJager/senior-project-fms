@@ -1,39 +1,17 @@
 import { AlertTriangle, CalendarClock, DatabaseBackup, Download, FlaskConical, HardDriveDownload, ShieldCheck } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { ConfirmDialog, DataTable, EmptyState, type Column } from '@/components/shared'
 import { Badge, Button, Spinner, useToast, type BadgeTone } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { errorDetails } from '@/components/shared'
+import { Fact, ago, at, formatBytes } from './parts'
+import { PointInTime } from './PointInTime'
 import { BACKUPS_PAGE_SIZE, startDownload, useBackups, useDownloadLink, useStartBackup, type Backup, type BackupStatus, type RestoreDrill } from './api'
 
-// S-30 Backups (FMS-144, docs/backups.md): every database backup, Back up now, and a download. Admin only.
+// S-30 Backups (FMS-144, docs/backups.md): point-in-time recovery (FMS-108), then every nightly copy, Back up now,
+// and a download. Admin only.
 
-const TZ = 'Africa/Addis_Ababa'
-const when = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-const at = (iso: string) => when.format(new Date(iso))
-
-/** 1.4 MB, 312 KB: a dump's size the way a person reads it. */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
-  }
-  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
-}
-
-/** "3 min ago", "2 h ago", "4 days ago": how fresh the last backup is. */
-export function ago(iso: string, now = Date.now()): string {
-  const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000))
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 48) return `${hours} h ago`
-  return `${Math.round(hours / 24)} days ago`
-}
+export { ago, formatBytes } from './parts'
 
 const STATUS: Record<BackupStatus, { label: string; tone: BadgeTone }> = {
   queued: { label: 'Queued', tone: 'info' },
@@ -41,20 +19,6 @@ const STATUS: Record<BackupStatus, { label: string; tone: BadgeTone }> = {
   succeeded: { label: 'Succeeded', tone: 'success' },
   failed: { label: 'Failed', tone: 'danger' },
   expired: { label: 'Expired', tone: 'neutral' },
-}
-
-function Fact({ icon, label, children, tone = 'neutral' }: { icon: ReactNode; label: string; children: ReactNode; tone?: 'neutral' | 'warning' | 'danger' }) {
-  return (
-    <div className="min-w-0 rounded-card border border-line bg-surface p-4 shadow-soft">
-      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-ink-muted [&_svg]:h-4 [&_svg]:w-4">
-        <span aria-hidden="true" className={tone === 'danger' ? 'text-danger' : tone === 'warning' ? 'text-warning' : 'text-ink-subtle'}>
-          {icon}
-        </span>
-        {label}
-      </p>
-      <div className="mt-2 text-sm text-ink">{children}</div>
-    </div>
-  )
 }
 
 function DrillFact({ drill }: { drill: RestoreDrill | null }) {
@@ -191,8 +155,8 @@ export function BackupsPage() {
         <div className="min-w-0 basis-72 flex-1">
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Backups</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            Copies of the whole database, taken every night and whenever you need one, kept for {meta?.retention_days ?? 30} days. Take one before a risky change. Times are Addis
-            Ababa time.
+            The database can be restored to any second of the last 14 days or more, and a full copy is taken every night and whenever you need one. Take one before a risky
+            change. Times are Addis Ababa time.
           </p>
         </div>
         {canWrite && (
@@ -202,6 +166,15 @@ export function BackupsPage() {
           </Button>
         )}
       </header>
+
+      <PointInTime pitr={meta?.pitr} />
+
+      <div className="border-t border-line pt-6">
+        <h2 className="text-base font-semibold text-ink">Nightly copies</h2>
+        <p className="mt-1 max-w-2xl text-sm text-ink-muted">
+          A pg_dump of the whole database, restorable on any server, kept {meta?.retention_days ?? 30} days. Download one to keep a copy of your own.
+        </p>
+      </div>
 
       {unavailable && (
         <div role="alert" className="flex gap-3 rounded-card border border-warning/40 bg-warning-soft p-4 text-sm text-ink">

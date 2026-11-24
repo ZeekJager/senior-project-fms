@@ -70,7 +70,7 @@ A backup is only proven once it restores. A drill restores one into a scratch da
 npm run backup:restore -- --backup latest --database fms_drill --drill --by "Sara (monthly drill)"
 ```
 
-The Backups screen shows the last drill (when, how many tables, or why it failed), and warns when there has been none. FMS-108 runs them on a schedule.
+The Backups screen shows the last drill (when, how many tables, or why it failed), and warns when there has been none. The monthly drill of point-in-time recovery is the database container's ([below](#restore-drills-monthly)).
 
 ## Continuous archiving and point-in-time recovery
 
@@ -83,8 +83,8 @@ FMS-108 (SE-152), decided in [ADR-07](adr/ADR-07-backup-pitr-pgbackrest.md). The
 | Differential base backup | Every other day at the same time: what changed since the last full one | Until their full one expires |
 | Nightly `pg_dump` (above) | 02:40 | 30 days |
 
-- **Where.** The repository is its own volume, `pgbackrest_repo`, so losing the database volume does not lose the backups. In production, `repo1` is an S3 bucket and a second repository in another region or provider is added the same way (`repo2-type=s3`). That off-site copy is still to do (below).
-- **Recorded.** Each base backup is a row in `backup.base_backups` (migration 075): full or differential, what started it, its status, its size in the database and in the repository, the WAL range it needs, and pgBackRest's error when it failed. A backup pgBackRest expired is kept as `expired`. The database container's `backup.sh` writes the rows; the API only reads them.
+- **Where.** The repository is its own volume, `pgbackrest_repo`, so losing the database volume does not lose the backups. A second repository off site, in another region or provider, takes every segment and base backup too ([below](#off-site-repository)). In production `repo1` is an S3 bucket as well.
+- **Recorded.** Each base backup is a row in `backup.base_backups` (migrations 075, 076): full or differential, what started it, the repository it went to (pgBackRest backs up to one at a time, so `backup.sh` takes one per repository), its status, its size in the database and in the repository, the WAL range it needs, and pgBackRest's error when it failed. A backup pgBackRest expired is kept as `expired`. Once a minute the container's `status.sh` records each repository in `backup.pitr_repositories`: reachable or not and since when, the WAL range it holds and when its newest segment arrived, and its base backups. The container's scripts write these rows; the API only reads them.
 - **Asynchronous.** `archive-push` hands a segment to a background process and returns, so a slow repository never slows writes. Until a segment is shipped it waits in the spool and in `pg_wal`.
 
 ### Targets
@@ -93,7 +93,9 @@ FMS-108 (SE-152), decided in [ADR-07](adr/ADR-07-backup-pitr-pgbackrest.md). The
 |---|---|---|---|
 | Data deleted or damaged by mistake, or a bad migration | None: restore to the second before | 2 h | Point-in-time restore (below) |
 | Database disk or volume lost | Under 1 minute (`archive_timeout`) | 2 h | Point-in-time restore to the latest archived WAL |
-| The whole server or site lost | Under 1 minute, once the off-site repository exists | 4 h | The same, from the off-site repository on a new server |
+| The whole server or site lost | Under 1 minute: the off-site copy is alerted on at 15 minutes behind | 4 h | The same, from the off-site repository on a new server (`--repo 2`) |
+
+Measured on the development stack (10 GB database): a restore to a chosen second opened in about 1 minute from the repository beside it, and in 48 s from the off-site one; the monthly drill opened in 67 to 80 s.
 
 The replica (FMS-94) is seconds behind and can be promoted faster still; that runbook is FMS-162 (SE-205).
 
@@ -121,9 +123,9 @@ Like the dump restore, it never writes over the live database.
 1. **Pick the moment.** The second before the mistake, with its time zone: `2026-11-24 10:14:59+03`. The audit log (S-10) usually tells when it happened.
 2. **Restore into a copy.**
    ```sh
-   sh scripts/backup/pitr-restore.sh --to "2026-11-24 10:14:59+03" --name before-mistake
+   npm run backup:pitr -- --to "2026-11-24 10:14:59+03" --name before-mistake
    ```
-   It restores the latest base backup taken before that moment into a new volume (`fms_pitr_before-mistake_data`), replays the archived WAL up to it, and starts the result as `fms_pitr_before-mistake`, on the stack's network and published nowhere. It prints the last transaction replayed. The repository is mounted read-only, and the copy runs without archiving, so it changes nothing that exists.
+   (the same as `sh scripts/backup/pitr-restore.sh ...`; add `--repo 2` to restore from the off-site repository when this site's is lost.) It restores the latest base backup taken before that moment into a new volume (`fms_pitr_before-mistake_data`), replays the archived WAL up to it, and starts the result as `fms_pitr_before-mistake`, on the stack's network and published nowhere. It prints the last transaction replayed. The repository is mounted read-only, and the copy runs without archiving, so it changes nothing that exists.
 3. **Check it.** `docker exec -it fms_pitr_before-mistake psql -U fms_admin -d fms_db`: the rows you came back for are there, and the mistake is not.
 4. **Switch over** (a planned outage):
     1. Stop the API, and the old database: `docker compose stop backend postgres`.
@@ -134,15 +136,70 @@ Like the dump restore, it never writes over the live database.
 
 To copy only some rows back instead of switching, read them from the copy and insert them into the live database.
 
+### Off-site repository
+
+A second pgBackRest repository, `repo2`, in another region or with another provider, so losing the site does not lose the backups. It is configured with pgBackRest's own settings in `docker/postgres/offsite.env`, which git ignores (start from [`offsite.env.example`](../docker/postgres/offsite.env.example)); Compose reads it when it exists. Then recreate the database container (`docker compose up -d postgres`):
+
+- Every WAL segment goes to both repositories as it is archived. If one is unreachable, the other still gets every segment, but archiving reports a failure and PostgreSQL keeps the segment until both have it; once the network is back, the waiting segments go out together (measured: 13 segments within 14 s).
+- On its first start with the new repository, the container takes a full base backup to it (measured: the 10 GB database became 2 GB in 2 min 3 s); after that, every night's backup goes to both.
+- **The bucket** has S3 Object Lock in compliance mode, 30 days by default, so nothing written can be deleted or changed for 30 days, not even with these credentials. Its **access key may read, list and write, never delete**: retention there (35 days of full backups, `PGBACKREST_REPO2_RETENTION_FULL`) only stops pgBackRest listing old files, and the bucket's lifecycle rule deletes them after the lock.
+- **Its passphrase** (`PGBACKREST_REPO2_CIPHER_PASS`) is its own, not repo1's.
+- Restore from it with `npm run backup:pitr -- --to "<time>" --repo 2`.
+
+CI adds a stand-in (SeaweedFS's S3 API) to the stack, checks that a segment reaches both repositories within 60 s, cuts the network to it, and checks that archiving fails while repo1 keeps every segment and catches up once the network is back (`scripts/ci/check-offsite.sh`).
+
+### On the Backups screen
+
+The *Point-in-time recovery* section of the Backups screen (S-30) answers whether the database can be restored, and how far back:
+
+- **Recoverable to any second** from the oldest base backup's end to the last segment archived (to the second, Addis Ababa time), across both repositories; per repository too.
+- A verdict: *Protected*, *Needs attention*, *At risk* (a critical finding), or *Not set up* (a database that does not archive).
+- **What puts recovery at risk**, critical first, each with since when and how administrators are told.
+- **Archiving** (last segment archived, or failing since when), **Copies** (each repository, reachable or not, its base backups, whether encrypted; a warning when there is no off-site copy), and the **last restore drill** (when, how long the restore took, how many key tables matched).
+- **Base backups**, newest first: when, weekly full or nightly differential, the repository, the status, the database's size and what it added to the repository.
+
+The API: `GET /system/backups` returns this in `meta.pitr`, and `GET /system/base-backups` lists the base backups (backup:read, admin).
+
+### Monitoring and alerts
+
+The API's `backup-monitor` job checks every minute, and System health's **Backups** component is down while any of these holds (it shows the most severe):
+
+| Condition | When | Alert |
+|---|---|---|
+| Archiving failing | Every attempt has failed for more than 5 minutes, since the last success | Critical |
+| Repository unreachable | pgBackRest cannot read a repository for more than 3 minutes (a cut network to the off-site one is alerted on within about 4) | Critical |
+| Off-site copy behind | The off-site repository lacks the last segment archived, and its newest one is more than 15 minutes old | Critical |
+| Status not reported | The container has not recorded the repositories for 10 minutes (its status loop is not running) | High |
+| No recent base backup | None has succeeded for 26 hours (a night's backup missed) | High |
+| Restore drill failed | The last drill failed | High |
+| Restore drill overdue | None has passed for 35 days (counted from the oldest base backup while none has) | High |
+
+Each raises one `BackupAtRisk` event, so one alert for administrators ([alerts.md](alerts.md)): critical ones by email, SMS and push, high ones by push. A risk that goes on is not raised again; one that clears and comes back is a new alert. Nothing is raised on a database that does not archive (the thresholds are in `src/modules/backup/domain/pitr.ts`, and become settings with FMS-157).
+
+### Restore drills (monthly)
+
+After the night's base backup, when no point-in-time drill has passed in 30 days, the container runs `drill.sh` (`DRILL_SCHEDULE=off` turns it off). Run one by hand with `npm run backup:drill`.
+
+1. On the live database, in one snapshot: a named restore point, and the rows and a checksum of each key table (`DRILL_TABLES`: users, roles, depots, vehicles, drivers, trips, fuel logs, maintenance records). The WAL is switched so the restore point reaches the repository.
+2. The latest base backup is restored into a scratch directory in the container, and a second PostgreSQL there replays the archived WAL up to the restore point. It listens only on its own socket, without archiving, and writes nothing to the live database's files or to the repository.
+3. Once it opens, every key table must have the same rows and checksum as the live one had at the restore point. The time from the start of the restore to the database opening is the drill's RTO, held to 2 hours.
+4. The scratch instance is removed, and the drill recorded in `backup.restore_drills` (`method` `pitr`, migration 076): the base backup, the restore point, the RTO, and each table's rows and whether it matched. A failed drill is an alert and is tried again the next night.
+
+It needs as much free disk as the database takes. Measured on the development stack: the 10 GB database opened after 80 s, all key tables identical. CI runs a drill on every push (`scripts/ci/check-pitr.sh`).
+
+### Who holds the keys
+
+The two passphrases (`BACKUP_REPO_CIPHER_PASS`, and repo2's) are each held by two named people, outside the servers, in the client's password manager; who they are is recorded with the client at handover (FMS-161). The off-site access key cannot delete. pgBackRest connects to the database as `fms_admin`, the schema owner, over the container's own socket (never the network).
+
 ### Not covered yet
 
-The rest of SE-152's scope, still to do:
-
-- **The off-site repository** (`repo2` in another region or provider, object lock for 30 days), on the environments of FMS-107 (SE-151).
-- **The Backups screen** listing base backups beside the dumps, with *Recoverable from … to …*.
-- **System health and alerts**: a *Backups* component and alerts when no base backup has succeeded in 26 hours, archiving has failed for 5 minutes, or the off-site copy is 15 minutes old.
-- **The monthly restore drill** of a base backup with WAL replay, which records the measured RTO.
+- The production buckets, their Object Lock and lifecycle rule, and the environments they belong to: FMS-107 (SE-151).
+- Keeping one nightly dump a month for 12 months (dumps are kept 30 days).
+- A database role for pgBackRest with only what a backup needs (`pg_read_all_settings`, the backup and WAL functions) instead of `fms_admin`.
+- The thresholds as settings parameters: FMS-157.
 
 ## Tests
+
+Point-in-time recovery: `src/modules/backup/domain/pitr.test.ts` (each alert condition and its threshold, the recoverable range), `test/integration/pitr.test.ts` (the API's `meta.pitr` and base backups, one alert per risk, System health's Backups component), the Backups screen's tests, and in CI `scripts/ci/check-pitr.sh` (a restore to a noted second, and a drill) and `scripts/ci/check-offsite.sh` (the off-site repository).
 
 `packages/backend/test/integration/database-backups.test.ts` takes a real backup through the API, downloads it and checks its SHA-256, restores it into an empty database as a drill, records a failed dump with pg_dump's error, expires one past retention, and checks that only admins get in. It needs pg_dump and pg_restore 16+ on the machine (CI's Ubuntu runner has them), or `BACKUP_PG_CONTAINER=fms-test-postgres` locally. Unit tests: `src/modules/backup/domain/backup.test.ts`. Screen: `src/pages/Backups/BackupsPage.test.tsx`.

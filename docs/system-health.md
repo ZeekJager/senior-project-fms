@@ -18,6 +18,7 @@ error in our words, or `disabled` (not configured on this server), with the chec
 | `replica` | The read router's lag check (FMS-94) | Unreachable, or more than `READ_REPLICA_MAX_LAG_SECONDS` behind. `disabled` without `DB_READ_HOST` |
 | `redis` | `PING` | It fails. `disabled` without `REDIS_HOST` |
 | `ai_service` | The AI service's `GET /health` | It fails or answers other than 2xx. `disabled` without `ML_SERVICE_URL` |
+| `backups` | Point-in-time recovery as the database container records it (FMS-108, [backups.md](backups.md#monitoring-and-alerts)) | Any backup alert's condition holds: archiving failing over 5 min, a repository unreachable over 3 min, the off-site copy 15 min behind, no base backup in 26 h, the last drill failed or none passed in 35 days. Its error is the most severe one's sentence. `disabled` when the database does not archive its WAL |
 | `provider:<code>` | Each active provider's circuit breaker on the instance (FMS-85) | The circuit is open, or half-open (it opened and no call has got through since). Its latency is the mean of the calls in the breaker's window |
 
 The sampler is not a scheduled job: those take their lock in the database, and the sampler must still sample

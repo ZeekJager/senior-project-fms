@@ -27,6 +27,8 @@ export interface ProbeSources {
   /** The AI service's base URL; null when ML_SERVICE_URL is not set. */
   aiServiceUrl: string | null;
   circuits: () => Promise<ProviderCircuit[]>;
+  /** Point-in-time recovery's risks now (FMS-108); disabled while the database does not archive its WAL. */
+  backups: () => Promise<{ enabled: boolean; findings: { message: string }[] }>;
   fetch?: typeof fetch;
 }
 
@@ -64,7 +66,8 @@ function optional(component: 'replica' | 'redis', dep: OptionalCheck): Probe {
 
 /**
  * The checks the sampler runs each minute (FMS-143): the API answering HTTP, the database, the read replica
- * (down when unreachable or too far behind), Redis, the AI service's `/health`, and each active provider's
+ * (down when unreachable or too far behind), Redis, the AI service's `/health`, backups (down while recovery is
+ * at risk: archiving failing, a repository unreachable or behind, no recent base backup or drill), and each active provider's
  * circuit, down while it is open or half-open (opened, and no call has got through since).
  */
 export function standardProbes(src: ProbeSources): () => Promise<Probe[]> {
@@ -94,6 +97,17 @@ export function standardProbes(src: ProbeSources): () => Promise<Probe[]> {
       async check() {
         if (!src.aiServiceUrl) return { disabled: true };
         await get(fetcher, `${src.aiServiceUrl}/health`, 'The AI service');
+        return {};
+      },
+    },
+    {
+      // Down with the most severe risk's sentence while any holds: the same thresholds as the backup alerts.
+      component: 'backups',
+      label: label('backups'),
+      async check() {
+        const { enabled, findings } = await src.backups();
+        if (!enabled) return { disabled: true };
+        if (findings.length > 0) throw new Error(findings[0].message);
         return {};
       },
     },

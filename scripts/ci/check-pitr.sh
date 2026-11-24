@@ -5,7 +5,9 @@
 #   2. a row is written, the time noted, a second row written after it, and the WAL switched so both
 #      are archived;
 #   3. scripts/backup/pitr-restore.sh restores to the noted time into a new container;
-#   4. the copy has the first row and not the second, and the live database was not touched.
+#   4. the copy has the first row and not the second, and the live database was not touched;
+#   5. the restore drill (drill.sh) restores into a scratch instance, replays to its restore point, and finds
+#      the same rows and checksum as the live table had there.
 set -eu
 
 live() { docker compose exec -T postgres psql -X -At -U fms_admin -d fms_db -v ON_ERROR_STOP=1 -c "$1"; }
@@ -51,3 +53,11 @@ trap cleanup EXIT
 [ "$(live "select count(*) from public.pitr_check")" = 2 ] || { echo "The live database changed" >&2; exit 1; }
 live "drop table public.pitr_check" >/dev/null
 echo "Point-in-time restore passed: the copy stops at $TARGET."
+
+echo "== The restore drill: the WAL replayed to a restore point, the same rows and checksum"
+# This job applies no migrations: the drill compares a table of its own and only prints its result.
+live "create table public.drill_check (id int primary key, v text)" >/dev/null
+live "insert into public.drill_check select g, md5(g::text) from generate_series(1, 5000) g" >/dev/null
+docker compose exec -T -u postgres -e DRILL_TABLES=public.drill_check postgres /usr/local/bin/fms-pgbackrest/drill.sh manual
+live "drop table public.drill_check" >/dev/null
+docker compose exec -T postgres sh -c '[ ! -e /var/lib/postgresql/drill ]' || { echo "The drill left its scratch directory behind" >&2; exit 1; }

@@ -6,6 +6,7 @@ import { pageMeta, pageQuery } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { BackupService, Caller } from '../application/backup.service';
+import type { PitrService } from '../application/pitr.service';
 import { backupNotFound } from '../domain/backup';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,8 +24,11 @@ function backupId(req: Request): string {
   return id;
 }
 
-/** Database backups (api-contract §5.3, FMS-144): admin only (backup:read, backup:write). */
-export function backupRouter(service: BackupService): Router {
+/**
+ * Database backups (api-contract §5.3, FMS-144): admin only (backup:read, backup:write). Point-in-time recovery
+ * (FMS-108): meta.pitr on the list, and the base backups the database container takes.
+ */
+export function backupRouter(service: BackupService, pitr: PitrService): Router {
   const router = Router();
 
   router.get(
@@ -34,7 +38,18 @@ export function backupRouter(service: BackupService): Router {
       const page = parseInput(listQuery, req.query);
       const { items, total } = await service.list(page.page, page.page_size);
       const overview = await service.overview();
-      res.json({ data: items, meta: { ...pageMeta(page, total), ...overview, request_id: req.correlationId } });
+      res.json({ data: items, meta: { ...pageMeta(page, total), ...overview, pitr: await pitr.overview(), request_id: req.correlationId } });
+    }),
+  );
+
+  // The base backups of point-in-time recovery, newest first. Taken by the database container, never from here.
+  router.get(
+    '/system/base-backups',
+    authorize('backup:read'),
+    asyncHandler(async (req, res) => {
+      const page = parseInput(listQuery, req.query);
+      const { items, total } = await pitr.baseBackups(page.page, page.page_size);
+      res.json({ data: items, meta: { ...pageMeta(page, total), request_id: req.correlationId } });
     }),
   );
 
