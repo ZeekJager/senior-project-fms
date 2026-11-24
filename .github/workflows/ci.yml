@@ -324,6 +324,10 @@ jobs:
       # 60 s, failures while the network to it is cut, and archiving caught up once it is back.
       - name: Off-site backup repository
         run: sh scripts/ci/check-offsite.sh
+      # FMS-162: 1,000 rows written through the stable endpoint across a failover (promote.sh) are all stored once; the
+      # fenced old primary refuses to start, rejoins as the standby (rejoin.sh), and the stack fails back.
+      - name: Failover
+        run: sh scripts/ci/check-failover.sh
       # FMS-75: the database preloads pg_stat_statements (the Compose command) and collects with it, and the API's metrics port
       # answers inside its container. This job applies no migrations, so the extension (migration 064) is created here.
       - name: Query statistics and metrics are on

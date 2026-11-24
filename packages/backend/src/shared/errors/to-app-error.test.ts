@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { DatabaseError } from 'pg';
 import { AppError } from './app-error';
-import { errorBody, toAppError } from './to-app-error';
+import { DATABASE_RETRY_AFTER_SECONDS, errorBody, isDatabaseUnavailable, toAppError } from './to-app-error';
 
 function pgError(code: string, fields: Partial<DatabaseError> = {}, message = 'db error'): DatabaseError {
   const err = new DatabaseError(message, 0, 'error');
@@ -65,4 +65,32 @@ test('errorBody follows the contract envelope', () => {
   assert.equal(body.meta.request_id, 'req-1');
   assert.ok(!Number.isNaN(Date.parse(body.meta.timestamp)));
   assert.equal(errorBody(new AppError(500, 'INTERNAL_SERVER_ERROR', 'x'), 'r', 'stack here').error.stack, 'stack here');
+});
+
+// FMS-162: while the primary fails over, every request answers 503 with Retry-After, so the phone, devices and
+// webhooks send again instead of losing what they sent.
+test('a database that is down, shutting down, starting or read-only answers 503 database_unavailable with Retry-After', () => {
+  const cases: unknown[] = [
+    pgError('57P01', {}, 'terminating connection due to administrator command'),
+    pgError('57P03', {}, 'the database system is starting up'),
+    pgError('08006', {}, 'connection failure'),
+    pgError('25006', {}, 'cannot execute INSERT in a read-only transaction'),
+    Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' }),
+    Object.assign(new Error('getaddrinfo ENOTFOUND db-proxy'), { code: 'ENOTFOUND' }),
+    new Error('Connection terminated unexpectedly'),
+    new Error('timeout exceeded when trying to connect'),
+  ];
+  for (const err of cases) {
+    assert.ok(isDatabaseUnavailable(err), String((err as Error).message));
+    const app = toAppError(err);
+    assert.equal(app.status, 503);
+    assert.equal(app.code, 'UPSTREAM_UNAVAILABLE');
+    assert.deepEqual(app.details, [{ reason: 'database_unavailable' }]);
+    assert.deepEqual(app.headers, { 'Retry-After': String(DATABASE_RETRY_AFTER_SECONDS) });
+  }
+});
+
+test('other database errors are not taken for an outage', () => {
+  for (const err of [pgError('23505'), pgError('42P01'), pgError('40001'), new Error('boom')]) assert.equal(isDatabaseUnavailable(err), false);
+  assert.equal(toAppError(pgError('42P01')).status, 500);
 });

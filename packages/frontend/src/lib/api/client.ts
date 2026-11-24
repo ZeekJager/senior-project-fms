@@ -66,6 +66,13 @@ export interface ApiClient {
   servedOffline(): boolean
   /** Called when that changes. Returns an unsubscribe function. */
   onServedOfflineChange(handler: (offline: boolean) => void): () => void
+  /**
+   * Whether the server's database is unavailable for a moment (FMS-162): its latest answer was 503 with Retry-After,
+   * as while the primary fails over. Cleared by the next answer that is not.
+   */
+  reconnecting(): boolean
+  /** Called when that changes. Returns an unsubscribe function. */
+  onReconnectingChange(handler: (reconnecting: boolean) => void): () => void
 }
 
 /**
@@ -88,6 +95,17 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
   const offlineHandlers = new Set<(offline: boolean) => void>()
   let inflightRefresh: Promise<unknown> | undefined
   let offline = false
+  const reconnectingHandlers = new Set<(reconnecting: boolean) => void>()
+  let reconnecting = false
+
+  /** 503 with Retry-After is the server's own "the database is unavailable, try again shortly" (FMS-162). */
+  function noteDatabase(res: Response) {
+    if (res.headers?.get('X-FMS-Offline') === 'true') return
+    const down = res.status === 503 && Boolean(res.headers?.get('Retry-After'))
+    if (down === reconnecting) return
+    reconnecting = down
+    reconnectingHandlers.forEach((handler) => handler(reconnecting))
+  }
 
   /** Every answer says where it came from: the server, or the worker's saved copy. */
   function noteSource(res: Response) {
@@ -117,6 +135,7 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
       body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
     })
     noteSource(res)
+    noteDatabase(res)
     if (!res.ok) throw await toApiError(res)
     if (res.status === 204) return { data: undefined as T, meta: {} }
     const body = (await res.json()) as Partial<Envelope<T>>
@@ -188,6 +207,11 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     onServedOfflineChange(handler) {
       offlineHandlers.add(handler)
       return () => offlineHandlers.delete(handler)
+    },
+    reconnecting: () => reconnecting,
+    onReconnectingChange(handler) {
+      reconnectingHandlers.add(handler)
+      return () => reconnectingHandlers.delete(handler)
     },
   }
 }

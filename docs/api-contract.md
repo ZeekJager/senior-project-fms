@@ -133,7 +133,7 @@ A detail may carry `record_id`: the public id of the record the problem is about
 | `CONFLICT_IDEMPOTENCY_IN_PROGRESS` | 409 | Same key still being processed | `api.idempotency_keys` |
 | `RATE_LIMITED` | 429 | Rate limit exceeded | API |
 | `INTERNAL_SERVER_ERROR` | 500 | Unexpected error (catch-all; no internals in the message) | API |
-| `UPSTREAM_UNAVAILABLE` | 502/503/504 | External provider or ML service failed | API |
+| `UPSTREAM_UNAVAILABLE` | 502/503/504 | External provider or ML service failed; or the database is unavailable for a moment (`503`, detail reason `database_unavailable`, `Retry-After: 5`: a failover, FMS-162), when a client sends again | API |
 
 ### 3.7 Health checks
 

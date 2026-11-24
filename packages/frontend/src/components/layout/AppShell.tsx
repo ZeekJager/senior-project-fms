@@ -14,6 +14,7 @@ import { CALENDAR_KEY, usePreference, type CalendarSystem } from '@/lib/preferen
 import { isDriverPortalUser, navSections, portalOf, type NavSection } from '@/router/navigation'
 import type { AppRoute } from '@/router/routes'
 import { HelpDialog } from './HelpDialog'
+import { ReconnectingBanner } from './ReconnectingBanner'
 import { Brand, NavItems, Sections, Sidebar, useSidebarCollapsed, UserCard } from './Sidebar'
 import { ThemeToggle } from './ThemeToggle'
 import { useHelpShortcut, useSearchShortcut } from './useSearchShortcut'
@@ -90,6 +91,8 @@ function StaffShell({ sections }: { sections: NavSection[] }) {
             <NotificationInbox />
           </div>
         </header>
+        {/* The database failing over (FMS-162): every screen says so for that minute. */}
+        <ReconnectingBanner variant="staff" />
         <Content className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8" />
       </div>
 
@@ -136,6 +139,8 @@ function DriverShell({ routes }: { routes: AppRoute[] }) {
         </div>
       </header>
 
+      {/* The database failing over (FMS-162): what the driver does is kept on the phone meanwhile. */}
+      <ReconnectingBanner variant="driver" />
       {/* Installable and offline-capable (FMS-34): the driver portal only. */}
       <DriverAppBanners />
       {/* The phone as the vehicle's GPS during a trip (FMS-57): says when it cannot. */}

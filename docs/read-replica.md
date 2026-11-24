@@ -15,7 +15,9 @@ Heavy reporting reads go to a copy of the database, so they cannot slow the prim
 
 `postgres-replica` is a streaming hot standby of `postgres` (PostgreSQL 16). It is not published to the host.
 
-**Every time it starts, its entrypoint first connects to the primary as `fms_admin`.** It makes sure of two things:
+**Since FMS-162 ([disaster-recovery.md](disaster-recovery.md)):** both servers run the same image (`fms-postgres:16`) and settings, and either can be the primary. Everything connects through `db-proxy` (HAProxy): `db-proxy:5432` is whichever server is the primary, `db-proxy:5433` the standby. The standby streams through the endpoint too, so it follows a failover. What each server is comes from its data directory (`standby.signal`), not the service name; the standby's start-up below is `docker/postgres/pgbackrest/standby.sh`, run by the shared entrypoint.
+
+**Every time a standby starts, it first connects to the primary (through `db-proxy`) as `fms_admin`.** It makes sure of two things:
 - **the role:** the replication role `fms_replicator` exists, with `DB_REPLICATION_PASSWORD` from `.env`;
 - **the slot:** the physical slot `fms_replica` exists, so the primary keeps the WAL the replica still needs.
 
@@ -52,7 +54,7 @@ The primary restarts with the new client rules and the replica copies it. The da
 
 ## The backend
 
-**Connecting.** `DB_READ_HOST` and `DB_READ_PORT` (Compose sets `postgres-replica:5432`) point the backend at the replica, with the same database, user and password as the primary.
+**Connecting.** `DB_READ_HOST` and `DB_READ_PORT` (Compose sets `db-proxy:5433`, whichever server is the standby) point the backend at the replica, with the same database, user and password as the primary. `DB_HOST` is `db-proxy:5432`, the primary.
 - Without `DB_READ_HOST` (local runs, the tests) there is no replica, and every read is the primary's.
 - The replica's pool gives up connecting after 2 s. A replica error is logged; a primary error ends the process.
 

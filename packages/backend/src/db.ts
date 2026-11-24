@@ -4,14 +4,22 @@ import { useDataKey } from './shared/infrastructure/data-key';
 import { ReadRouter } from './shared/infrastructure/read-router';
 import { logger } from './shared/logging/logger';
 
+/** How long connecting to the primary may take before the query fails (and the request answers 503). */
+export const PRIMARY_CONNECT_TIMEOUT_MS = 5_000;
+
 // Runtime app credentials (fms_app), not the admin ones: fms_app is a
 // non-owner role whose privileges are narrowed by migration 013.
-export const pool = new Pool(config.db);
+// Through one stable endpoint (FMS-162, docs/disaster-recovery.md): after a failover the same host is the new
+// primary, and new connections reach it. A connection attempt gives up after 5 s, so while the database is
+// unavailable a request answers 503 at once instead of hanging.
+export const pool = new Pool({ ...config.db, connectionTimeoutMillis: PRIMARY_CONNECT_TIMEOUT_MS });
 useDataKey(pool, config.dataEncryptionKey, (err) => logger.error({ err }, 'could not give a database connection the data encryption key'));
 
+// An idle client failing (the primary restarted, failed over, or the network dropped) is logged and dropped: pg
+// removes it from the pool, and the next query connects again. The API keeps answering, 503 until the database is
+// back, rather than exiting and taking every in-flight request with it.
 pool.on('error', (err) => {
-  logger.fatal({ err }, 'unexpected error on an idle database client');
-  process.exit(-1);
+  logger.error({ err }, 'database: an idle client failed; the next query reconnects');
 });
 
 /**

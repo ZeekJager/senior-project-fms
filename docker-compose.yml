@@ -3,10 +3,13 @@
 # A missing value stops `docker compose up` and says how to create .env.
 
 services:
-  # 1. PostgreSQL Database (Persisted)
-  # fms_admin owns the schema and runs migrations. The backend connects as
-  # fms_app (created by docker/postgres/init), a non-owner role, so table
-  # level REVOKEs like audit_logs INSERT-only actually apply to it.
+  # 1. PostgreSQL: two servers, the primary and its streaming standby (FMS-94), on the same image, settings and
+  # backup repository (FMS-108, FMS-162). Either can be the primary: scripts/dr/promote.sh promotes the standby when
+  # the primary is lost, and scripts/dr/rejoin.sh makes the old primary the standby (docs/disaster-recovery.md). Each
+  # data directory says what its server is, not the service name: after a failover, postgres-replica is the primary.
+  # Nothing connects to them by name: db-proxy (below) is the one stable endpoint.
+  # fms_admin owns the schema and runs migrations. The backend connects as fms_app (created by docker/postgres/init),
+  # a non-owner role, so table-level REVOKEs like audit_logs INSERT-only actually apply to it.
   postgres:
     # PostgreSQL 16 with pgBackRest (FMS-108, ADR-07, docs/backups.md): every WAL segment is archived,
     # compressed and encrypted, within archive_timeout (60 s), and a full base backup is taken weekly and
@@ -14,29 +17,36 @@ services:
     build: ./docker/postgres
     image: fms-postgres:16
     container_name: fms_postgres
-    environment:
+    environment: &db-environment
       POSTGRES_USER: fms_admin
       POSTGRES_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
       POSTGRES_DB: fms_db
       # Read by docker/postgres/init/01_app_role.sh on first boot only.
       DB_APP_PASSWORD: "${DB_APP_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      # A standby connects to the primary as fms_admin (role and slot) and streams as fms_replicator (standby.sh).
+      DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
+      DB_REPLICATION_PASSWORD: "${DB_REPLICATION_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to add it to .env}"
+      PRIMARY_HOST: db-proxy
       # Encrypts the backup repository (aes-256-cbc). Losing it makes every backup unreadable: keep a copy
       # outside this machine (docs/backups.md).
       PGBACKREST_REPO1_CIPHER_PASS: "${BACKUP_REPO_CIPHER_PASS:?is not set - run node scripts/init-env.mjs to add it to .env}"
       BACKUP_BASE_HOUR_UTC: "${BACKUP_BASE_HOUR_UTC:-22}"
+      # What a new, empty volume becomes: the primary (an empty database), or a copy of it.
+      FMS_ROLE: primary
     # The off-site repository (repo2), when configured: pgBackRest's own PGBACKREST_REPO2_* settings in
     # docker/postgres/offsite.env, git-ignored (offsite.env.example, docs/backups.md#off-site-repository).
     # Every WAL segment and base backup then goes to both repositories.
-    env_file:
+    env_file: &db-env-file
       - path: ./docker/postgres/offsite.env
         required: false
-    # Client rules with the replica's replication login (FMS-94), applied to an
-    # existing volume too. The slot keeps at most 1 GB of WAL for a replica that
-    # is down, so a stopped replica cannot fill the disk.
+    # Client rules with the replica's replication login (FMS-94). The slot keeps at most 1 GB of WAL for a standby
+    # that is down, so a stopped standby cannot fill the disk.
     # pg_stat_statements (FMS-75, docs/metrics.md): preloaded, so the slowest and most frequent SQL can be read.
     # Archiving (FMS-108): archive_timeout closes a segment at least every 60 s, so at most a minute of
     # writes is ever only on this disk; wal_compression shrinks the WAL written (measured in ADR-07).
-    command:
+    # A standby archives nothing until it is promoted. wal_log_hints lets pg_rewind turn an old primary into the
+    # standby after a failover (FMS-162); hot_standby and its feedback apply only while the server is a standby.
+    command: &db-command
       - postgres
       - -c
       - hba_file=/etc/fms/pg_hba.conf
@@ -54,47 +64,64 @@ services:
       - archive_timeout=60
       - -c
       - wal_compression=lz4
+      - -c
+      - wal_log_hints=on
+      - -c
+      - hot_standby=on
+      - -c
+      - hot_standby_feedback=on
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # The backup repository. In production, repo1 is an S3 bucket and repo2 a second one off site.
+      # The backup repository, shared by both servers: only the primary writes to it. In production, repo1 is an S3
+      # bucket and repo2 a second one off site.
       - pgbackrest_repo:/var/lib/pgbackrest
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
       - ./docker/postgres/pg_hba.conf:/etc/fms/pg_hba.conf:ro
-    healthcheck:
-      # -h localhost forces TCP, which only answers once init scripts finish
+    healthcheck: &db-healthcheck
+      # -h localhost forces TCP, which only answers once init scripts finish. Up as primary or standby: which one it
+      # is, db-proxy asks its role agent.
       test: ["CMD-SHELL", "pg_isready -h localhost -U fms_admin -d fms_db"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
-  # 1b. Read replica (FMS-94, docs/read-replica.md): a streaming hot standby of
-  # postgres for reporting reads (fuel reconciliation, the audit log). Not
-  # published to the host. The backend falls back to the primary when it is
-  # down or too far behind. Its entrypoint creates the replication role and
-  # slot on the primary, then copies it on first start.
+  # 1b. The standby (FMS-94, docs/read-replica.md): a streaming hot standby of the primary, for reporting reads, and
+  # the server promoted when the primary is lost (FMS-162). A new volume is copied from the primary through db-proxy;
+  # it streams through db-proxy too, so it follows whichever server is the primary. Not published to the host.
   postgres-replica:
-    image: postgres:16
+    image: fms-postgres:16
     container_name: fms_postgres_replica
-    entrypoint: ["sh", "/replica/entrypoint.sh"]
     environment:
-      PRIMARY_HOST: postgres
-      DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
-      DB_REPLICATION_PASSWORD: "${DB_REPLICATION_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to add it to .env}"
+      <<: *db-environment
+      FMS_ROLE: standby
+    env_file: *db-env-file
+    command: *db-command
     volumes:
       - postgres_replica_data:/var/lib/postgresql/data
-      - ./docker/postgres/replica:/replica:ro
+      - pgbackrest_repo:/var/lib/pgbackrest
       - ./docker/postgres/pg_hba.conf:/etc/fms/pg_hba.conf:ro
-    healthcheck:
-      # Answers once it accepts connections, as a standby.
-      test: ["CMD-SHELL", "pg_isready -h localhost -U fms_admin -d fms_db && psql -h localhost -U fms_admin -d fms_db -Atc 'select pg_is_in_recovery()' | grep -q t"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+    healthcheck: *db-healthcheck
     depends_on:
       postgres:
         condition: service_healthy
+      db-proxy:
+        condition: service_started
+
+  # 1c. The stable database endpoint (FMS-162, docs/disaster-recovery.md): HAProxy, routing :5432 to whichever server
+  # is the primary and :5433 to the standby, as each server's role agent says, once a second. A failover moves it in
+  # seconds; the API needs no redeploy or configuration change. Not published to the host.
+  db-proxy:
+    image: haproxy:3.0.29-alpine
+    container_name: fms_db_proxy
+    volumes:
+      - ./docker/db-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # 2. Redis (FMS-72): cache, login throttle, job locks. Password-protected
   # and not published to the host: only containers on this network reach it.
@@ -143,14 +170,15 @@ services:
     environment:
       NODE_ENV: development
       PORT: "3000"
-      DB_HOST: postgres
+      # The stable endpoint (FMS-162): whichever server is the primary.
+      DB_HOST: db-proxy
       DB_PORT: "5432"
       DB_NAME: fms_db
       DB_USER: fms_app
       DB_PASSWORD: "${DB_APP_PASSWORD:?is not set - run make env or node scripts/init-env.mjs to create .env}"
-      # Reporting reads (FMS-94): the replica, as the same fms_app role.
-      DB_READ_HOST: postgres-replica
-      DB_READ_PORT: "5432"
+      # Reporting reads (FMS-94): the standby, as the same fms_app role, through the same endpoint.
+      DB_READ_HOST: db-proxy
+      DB_READ_PORT: "5433"
       # Used by `make migrate`, which runs inside this container, and by database backups (FMS-144,
       # docs/backups.md): pg_dump connects as this role, as fms_app may not read every table.
       DB_ADMIN_USER: fms_admin
@@ -190,6 +218,8 @@ services:
       start_period: 20s
     depends_on:
       postgres:
+        condition: service_healthy
+      db-proxy:
         condition: service_healthy
       # Started, not healthy: the API runs without Redis (direct reads).
       redis:
