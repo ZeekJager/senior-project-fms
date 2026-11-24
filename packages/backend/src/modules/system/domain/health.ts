@@ -10,9 +10,11 @@ export const CORE_COMPONENTS = [
   { component: 'replica', label: 'Read replica' },
   { component: 'redis', label: 'Redis' },
   { component: 'ai_service', label: 'AI service' },
+  // Point-in-time recovery (FMS-108): down while a backup alert's condition holds (docs/backups.md).
+  { component: 'backups', label: 'Backups' },
 ] as const;
 
-export type ComponentKind = 'api' | 'database' | 'replica' | 'redis' | 'ai_service' | 'provider';
+export type ComponentKind = 'api' | 'database' | 'replica' | 'redis' | 'ai_service' | 'backups' | 'provider';
 
 export const providerComponent = (code: string) => `provider:${code}`;
 export const kindOf = (component: string): ComponentKind =>

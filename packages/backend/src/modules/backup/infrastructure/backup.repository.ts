@@ -2,6 +2,22 @@ import type { Pool, PoolClient } from 'pg';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { withTransaction } from '../../../shared/infrastructure/transaction';
 import type { BackupKind, BackupStatus } from '../domain/backup';
+import type { BaseBackupView, PitrDrillState, PitrState, RepositoryState } from '../domain/pitr';
+
+/** A backup.base_backups row (FMS-108). */
+export interface BaseBackupRow {
+  publicId: string;
+  label: string | null;
+  type: BaseBackupView['type'];
+  triggeredBy: BaseBackupView['triggered_by'];
+  repoKey: number;
+  status: BaseBackupView['status'];
+  startedAt: Date;
+  finishedAt: Date | null;
+  sizeBytes: number | null;
+  repoSizeBytes: number | null;
+  error: string | null;
+}
 
 /** A backup.backups row (internal ids; size as a number: a dump is far below 2^53 bytes). */
 export interface BackupRow {
@@ -133,14 +149,80 @@ export class BackupRepository {
     return res.rows[0].at;
   }
 
+  /** The last drill of a dump file (FMS-144); point-in-time drills are pitrState's. */
   async lastDrill(db: Queryable): Promise<RestoreDrillRow | null> {
     const res = await db.query<RestoreDrillRow>(
       `SELECT d.public_id AS "publicId", b.public_id AS "backupPublicId", d.target_database AS "targetDatabase", d.status,
               d.started_at AS "startedAt", d.finished_at AS "finishedAt", d.tables_restored AS "tablesRestored", d.error, d.run_by AS "runBy"
          FROM backup.restore_drills d JOIN backup.backups b ON b.id = d.backup_id
+        WHERE d.method = 'dump'
         ORDER BY d.finished_at DESC, d.id DESC LIMIT 1`,
     );
     return res.rows[0] ?? null;
+  }
+
+  /**
+   * Point-in-time recovery as the database container recorded it (FMS-108): the archiver, each repository, the
+   * base backups and the last drill. pg_stat_archiver is readable by any role; the tables are granted to fms_app.
+   */
+  async pitrState(db: Queryable): Promise<PitrState> {
+    const archiver = await db.query<{
+      enabled: boolean;
+      lastArchivedWal: string | null;
+      lastArchivedAt: Date | null;
+      lastFailedWal: string | null;
+      lastFailedAt: Date | null;
+    }>(
+      `SELECT current_setting('archive_mode') IN ('on', 'always') AS enabled,
+              last_archived_wal AS "lastArchivedWal", last_archived_time AS "lastArchivedAt",
+              last_failed_wal AS "lastFailedWal", last_failed_time AS "lastFailedAt"
+         FROM pg_stat_archiver`,
+    );
+    const repos = await db.query<RepositoryState>(
+      `SELECT repo_key AS "repoKey", cipher, status_code AS "statusCode", status_message AS "statusMessage", status_since AS "statusSince",
+              archive_min AS "archiveMin", archive_max AS "archiveMax", archive_max_seen_at AS "archiveMaxSeenAt", backups,
+              oldest_backup_at AS "oldestBackupAt", newest_backup_at AS "newestBackupAt", checked_at AS "checkedAt"
+         FROM backup.pitr_repositories ORDER BY repo_key`,
+    );
+    const base = await db.query<{ last: Date | null; first: Date | null }>(
+      `SELECT max(finished_at) FILTER (WHERE status IN ('succeeded', 'expired')) AS last, min(started_at) AS first FROM backup.base_backups`,
+    );
+    const drill = await db.query<PitrDrillState>(
+      `SELECT public_id AS "publicId", base_backup_label AS "baseBackupLabel", recovery_target AS "recoveryTarget", status,
+              started_at AS "startedAt", finished_at AS "finishedAt", tables_restored AS "tablesRestored", rto_seconds AS "rtoSeconds",
+              checks, error, run_by AS "runBy"
+         FROM backup.restore_drills WHERE method = 'pitr' ORDER BY finished_at DESC, id DESC LIMIT 1`,
+    );
+    const passed = await db.query<{ at: Date | null }>(
+      `SELECT max(finished_at) AS at FROM backup.restore_drills WHERE method = 'pitr' AND status = 'succeeded'`,
+    );
+    return {
+      archiver: archiver.rows[0],
+      repositories: repos.rows,
+      lastBaseBackupAt: base.rows[0].last,
+      firstBaseBackupStartedAt: base.rows[0].first,
+      lastDrill: drill.rows[0] ?? null,
+      lastPassedDrillAt: passed.rows[0].at,
+    };
+  }
+
+  /** backup.base_backups, newest first (the database container writes them; FMS-108). */
+  async listBaseBackups(db: Queryable, page: number, pageSize: number): Promise<{ rows: BaseBackupRow[]; total: number }> {
+    const res = await db.query<Omit<BaseBackupRow, 'sizeBytes' | 'repoSizeBytes'> & { sizeBytes: string | null; repoSizeBytes: string | null }>(
+      `SELECT public_id AS "publicId", label, backup_type AS type, triggered_by AS "triggeredBy", repo_key AS "repoKey", status, started_at AS "startedAt",
+              finished_at AS "finishedAt", size_bytes::text AS "sizeBytes", repo_size_bytes::text AS "repoSizeBytes", error
+         FROM backup.base_backups ORDER BY started_at DESC, id DESC LIMIT $1 OFFSET $2`,
+      [pageSize, (page - 1) * pageSize],
+    );
+    const count = await db.query<{ n: string }>(`SELECT count(*)::text AS n FROM backup.base_backups`);
+    return {
+      rows: res.rows.map((r) => ({
+        ...r,
+        sizeBytes: r.sizeBytes === null ? null : Number(r.sizeBytes),
+        repoSizeBytes: r.repoSizeBytes === null ? null : Number(r.repoSizeBytes),
+      })),
+      total: Number(count.rows[0].n),
+    };
   }
 
   async recordDrill(

@@ -10,7 +10,8 @@ RUN apt-get update \
  && install -d -o postgres -g postgres -m 750 /var/lib/pgbackrest /var/spool/pgbackrest /var/log/pgbackrest
 
 COPY pgbackrest/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
-COPY --chmod=0755 pgbackrest/entrypoint.sh pgbackrest/backup.sh pgbackrest/scheduler.sh /usr/local/bin/fms-pgbackrest/
+COPY --chmod=0755 pgbackrest/entrypoint.sh pgbackrest/backup.sh pgbackrest/scheduler.sh \
+     pgbackrest/status.sh pgbackrest/drill.sh /usr/local/bin/fms-pgbackrest/
 
 ENTRYPOINT ["/usr/local/bin/fms-pgbackrest/entrypoint.sh"]
 CMD ["postgres"]

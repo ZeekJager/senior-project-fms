@@ -4787,7 +4787,7 @@ paths:
       description: >
         Every backup the app's runner took, nightly or by Back up now, with its status, size, SHA-256 and who
         started it. meta says whether this server can take one (available), the retention, the last good backup
-        and the last restore drill. Needs backup:read (admin).
+        and the last restore drill, and meta.pitr point-in-time recovery (FMS-108). Needs backup:read (admin).
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
@@ -4830,6 +4830,31 @@ paths:
         '503':
           description: UPSTREAM_UNAVAILABLE, the server has no database credentials for pg_dump.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /system/base-backups:
+    get:
+      tags: [Backups]
+      operationId: listBaseBackups
+      summary: Base backups of point-in-time recovery, newest first (FMS-108)
+      description: >
+        The weekly full and daily differential base backups the database container takes with pgBackRest, with their
+        sizes and how they ended. Restoring to a point in time starts from one (docs/backups.md). Needs backup:read (admin).
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: A page of base backups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/BaseBackup' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /system/backups/{backup_id}:
     get:
@@ -7629,7 +7654,7 @@ components:
         downloadable: { type: boolean }
     BackupsMeta:
       type: object
-      required: [page, page_size, total_items, total_pages, available, retention_days, last_succeeded_at, last_restore_drill, request_id]
+      required: [page, page_size, total_items, total_pages, available, retention_days, last_succeeded_at, last_restore_drill, pitr, request_id]
       properties:
         page: { type: integer }
         page_size: { type: integer }
@@ -7651,7 +7676,97 @@ components:
             tables_restored: { type: integer, nullable: true }
             error: { type: string, nullable: true }
             run_by: { type: string }
+        pitr: { $ref: '#/components/schemas/PitrOverview' }
         request_id: { type: string, format: uuid }
+    PitrOverview:
+      type: object
+      description: >
+        Point-in-time recovery (FMS-108, docs/backups.md), as the database container records it once a minute: how far
+        back and how recently the database can be restored, WAL archiving, each repository (1 beside the database, 2
+        off site), the last base backup and drill, and what puts recovery at risk now (the backup alerts' conditions).
+      required: [enabled, recoverable_from, recoverable_to, archiving, repositories, last_base_backup_at, last_drill, findings]
+      properties:
+        enabled: { type: boolean, description: Whether the database archives its WAL. }
+        recoverable_from: { type: string, format: date-time, nullable: true }
+        recoverable_to: { type: string, format: date-time, nullable: true }
+        archiving:
+          type: object
+          required: [last_archived_at, last_failed_at, failing_since]
+          properties:
+            last_archived_at: { type: string, format: date-time, nullable: true }
+            last_failed_at: { type: string, format: date-time, nullable: true }
+            failing_since: { type: string, format: date-time, nullable: true, description: 'The last success, while every attempt since has failed.' }
+        repositories:
+          type: array
+          items:
+            type: object
+            required: [repo, location, status, message, encrypted, base_backups, recoverable_from, recoverable_to, checked_at]
+            properties:
+              repo: { type: integer }
+              location: { type: string, enum: [local, offsite] }
+              status: { type: string, enum: [ok, error] }
+              message: { type: string, nullable: true }
+              encrypted: { type: boolean }
+              base_backups: { type: integer }
+              recoverable_from: { type: string, format: date-time, nullable: true }
+              recoverable_to: { type: string, format: date-time, nullable: true }
+              checked_at: { type: string, format: date-time }
+        last_base_backup_at: { type: string, format: date-time, nullable: true }
+        last_drill:
+          type: object
+          nullable: true
+          required: [id, base_backup_label, recovery_target, status, started_at, finished_at, tables_restored, rto_seconds, checks, error, run_by]
+          properties:
+            id: { type: string, format: uuid }
+            base_backup_label: { type: string }
+            recovery_target: { type: string, nullable: true }
+            status: { type: string, enum: [succeeded, failed] }
+            started_at: { type: string, format: date-time }
+            finished_at: { type: string, format: date-time }
+            tables_restored: { type: integer, nullable: true }
+            rto_seconds: { type: integer, nullable: true, description: From the start of the restore to the database opening. }
+            checks:
+              type: array
+              nullable: true
+              items:
+                type: object
+                properties:
+                  table: { type: string }
+                  live_rows: { type: integer }
+                  restored_rows: { type: integer, nullable: true }
+                  match: { type: boolean }
+            error: { type: string, nullable: true }
+            run_by: { type: string }
+        findings:
+          type: array
+          items:
+            type: object
+            required: [condition, severity, repo, since, message]
+            properties:
+              condition:
+                type: string
+                enum: [archiving_failing, repository_unreachable, offsite_behind, status_stale, base_backup_missing, drill_failed, drill_overdue]
+              severity: { type: string, enum: [critical, high] }
+              repo: { type: integer, nullable: true }
+              since: { type: string, format: date-time }
+              message: { type: string }
+    BaseBackup:
+      type: object
+      description: A pgBackRest base backup the database container took (FMS-108).
+      required: [id, label, type, triggered_by, repo, location, status, started_at, finished_at, size_bytes, repo_size_bytes, error]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string, nullable: true }
+        type: { type: string, enum: [full, diff, incr] }
+        triggered_by: { type: string, enum: [schedule, first-start, manual] }
+        repo: { type: integer, description: 'The repository it went to: 1 beside the database, 2 off site.' }
+        location: { type: string, enum: [local, offsite] }
+        status: { type: string, enum: [running, succeeded, failed, expired] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        size_bytes: { type: integer, nullable: true, description: The database's size when it was taken. }
+        repo_size_bytes: { type: integer, nullable: true, description: What it added to the repository, compressed. }
+        error: { type: string, nullable: true }
     PhotoUrl:
       type: object
       required: [photo_url]

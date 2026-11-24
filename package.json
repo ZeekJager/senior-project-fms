@@ -12,6 +12,8 @@
     "dev:clean": "docker-compose down -v --remove-orphans",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "backup:pitr": "sh scripts/backup/pitr-restore.sh",
+    "backup:drill": "docker compose exec -u postgres postgres /usr/local/bin/fms-pgbackrest/drill.sh manual",
     "prepare": "husky"
   },
   "devDependencies": {

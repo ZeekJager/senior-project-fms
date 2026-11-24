@@ -9,6 +9,10 @@ packages/backend/storage/
 .env
 .env.*
 !.env.example
+# The off-site backup repository's credentials (docker/postgres/offsite.env.example).
+docker/postgres/offsite.env
+# scripts/backup/pitr-restore.sh's passphrases while it runs (removed on exit).
+.pitr-restore-env.*
 
 # Python
 __pycache__/

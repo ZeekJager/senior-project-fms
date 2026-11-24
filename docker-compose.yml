@@ -24,6 +24,12 @@ services:
       # outside this machine (docs/backups.md).
       PGBACKREST_REPO1_CIPHER_PASS: "${BACKUP_REPO_CIPHER_PASS:?is not set - run node scripts/init-env.mjs to add it to .env}"
       BACKUP_BASE_HOUR_UTC: "${BACKUP_BASE_HOUR_UTC:-22}"
+    # The off-site repository (repo2), when configured: pgBackRest's own PGBACKREST_REPO2_* settings in
+    # docker/postgres/offsite.env, git-ignored (offsite.env.example, docs/backups.md#off-site-repository).
+    # Every WAL segment and base backup then goes to both repositories.
+    env_file:
+      - path: ./docker/postgres/offsite.env
+        required: false
     # Client rules with the replica's replication login (FMS-94), applied to an
     # existing volume too. The slot keeps at most 1 GB of WAL for a replica that
     # is down, so a stopped replica cannot fill the disk.

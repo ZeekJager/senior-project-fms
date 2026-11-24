@@ -92,6 +92,16 @@ const FILL_UP_TITLES: Record<string, string> = {
 };
 const HOUR = 60;
 const DAY = 24 * HOUR;
+/** What a BackupAtRisk (FMS-108) is called, by its condition. */
+const BACKUP_RISK_TITLES: Record<string, string> = {
+  archiving_failing: 'WAL archiving is failing',
+  repository_unreachable: 'Backup repository unreachable',
+  offsite_behind: 'Off-site backup copy behind',
+  status_stale: 'Backup status not reported',
+  base_backup_missing: 'No recent base backup',
+  drill_failed: 'Restore drill failed',
+  drill_overdue: 'Restore drill overdue',
+};
 /** Flag types alerted from events of their own (FMS-90), not from TelemetryFlagRaised. */
 const LOCATION_FLAG_TYPES = ['geofence_violation', 'route_deviation'];
 
@@ -468,6 +478,27 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
           return `Model ${version} was trained on other inputs than the core computes. No vehicle is scored until a matching model is served.`;
       }
     },
+    audience: ['admin'],
+  },
+
+  // Backups (FMS-108, docs/backups.md): recovery at risk, from the backup-monitor job. `condition` (archiving_failing,
+  // repository_unreachable, offsite_behind, status_stale, base_backup_missing, drill_failed, drill_overdue), `severity`
+  // (critical: email, SMS and push; high: push), `repo`, `since`, `message`. Published once per risk; for administrators.
+  BackupAtRisk: {
+    type: () => 'backup_at_risk',
+    module: 'backup',
+    facts: (p) => ({
+      severity: severityOr(p, 'severity', 'high'),
+      vehicleId: null,
+      driverId: null,
+      tripId: null,
+      depotId: null,
+      entity: null,
+      dedupKey: `backup_at_risk:${str(p, 'condition')}:${num(p, 'repo') ?? 'all'}`,
+    }),
+    windowMinutes: DAY,
+    title: (p) => BACKUP_RISK_TITLES[str(p, 'condition') ?? ''] ?? 'Backups at risk',
+    message: (p) => str(p, 'message') ?? 'Point-in-time recovery is at risk. See the Backups screen.',
     audience: ['admin'],
   },
 

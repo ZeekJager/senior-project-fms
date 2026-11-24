@@ -4,6 +4,7 @@ import { pool, reads } from '../../db';
 import { cache } from '../../shared/cache';
 import { logger } from '../../shared/logging/logger';
 import type { AppModule } from '../../shared/module';
+import { pitrService } from '../backup';
 import { integrationGateway } from '../integration';
 import { requestRollup as rollupMiddleware, systemHealthRouter } from './api/system-health.routes';
 import { webVitalsRouter } from './api/web-vitals.routes';
@@ -27,6 +28,7 @@ const sources: ProbeSources = {
   apiUrl: `http://127.0.0.1:${config.port}/health/live`,
   aiServiceUrl: config.ml.service?.url ?? null,
   circuits: () => integrationGateway.circuits(),
+  backups: () => pitrService.findings(),
 };
 
 const sampler = new HealthSampler({
@@ -66,8 +68,12 @@ export const systemHealth = {
   requests,
   /** For tests: a sampler with these checks, writing like the server's, with its own request counts (the middleware's by default). */
   samplerWith: (probes: () => Promise<Probe[]>, counts: RequestRecorder = requests): HealthSampler => new HealthSampler({ db: pool, repo, probes, requests: counts }),
-  /** The server's checks, without the HTTP request to itself, with any source replaced (tests). */
-  probes: (overrides: Partial<ProbeSources> = {}) => standardProbes({ ...sources, apiUrl: null, ...overrides }),
+  /**
+   * The server's checks, without the HTTP request to itself, with any source replaced (tests). Backups is disabled
+   * unless given: its queries would run beside the database check's on a test's single connection.
+   */
+  probes: (overrides: Partial<ProbeSources> = {}) =>
+    standardProbes({ ...sources, apiUrl: null, backups: async () => ({ enabled: false, findings: [] }), ...overrides }),
   /** The daily retention, for tests. */
   retention: (now: Date) => service.purge(now),
 };
