@@ -74,7 +74,12 @@ const cut = (text: string, max: number) => (text.length <= max ? text : `${text.
 export function alertPath(entityType: string | null, entityId: string | null, notificationType?: string): string {
   // A driver's own notice (FMS-149) opens their own screen: the alert's is not theirs to act on.
   if (notificationType === 'alert_personal') return '/driver';
+  // A driver's appeal step (FMS-159): their appeal in the driver app.
+  if (notificationType === APPEAL_NOTICE_TYPE) return entityId ? `/driver/appeals/${encodeURIComponent(entityId)}` : '/driver/appeals';
   switch (entityType) {
+    case 'appeal':
+      // An appeal past its review deadline (FMS-159): the reviewers' queue opens it.
+      return entityId ? `/appeals?appeal=${encodeURIComponent(entityId)}` : '/appeals';
     case 'dvir_report':
     case 'maintenance_prediction':
       return '/maintenance';
@@ -99,6 +104,9 @@ export function alertPath(entityType: string | null, entityId: string | null, no
   }
 }
 
+/** A driver's notice of a step on their appeal (FMS-159): no alert behind it, the appeal its subject. */
+export const APPEAL_NOTICE_TYPE = 'appeal_update';
+
 export interface MessageFacts {
   severity: AlertSeverity;
   /** The notification's title and message, as in the inbox. */
@@ -108,7 +116,8 @@ export interface MessageFacts {
   /** Where it opens in the app (alertPath), and the app's public URL for an email's link (null: no link). */
   path: string;
   appUrl: string | null;
-  alertId: string;
+  /** Null for a notice that is no alert (an appeal's step). */
+  alertId: string | null;
 }
 
 /** An email: the severity in the subject, the message, when, and a link when the app's URL is known. Plain text. */
@@ -131,7 +140,7 @@ export function pushContent(f: MessageFacts): { subject: string; text: string; d
   return {
     subject: cut(f.title, 120),
     text: cut(f.message, 240),
-    data: { url: f.path, alert_id: f.alertId, tag: `alert-${f.alertId}`, severity: f.severity },
+    data: { url: f.path, alert_id: f.alertId, tag: f.alertId ? `alert-${f.alertId}` : `notice-${f.path}`, severity: f.severity },
   };
 }
 

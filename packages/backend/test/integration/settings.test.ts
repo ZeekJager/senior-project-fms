@@ -68,6 +68,9 @@ describe('GET and PATCH /settings', () => {
       driver_score_weight_safety: 35,
       driver_score_weight_incidents: 20,
       driver_score_weight_dvir: 10,
+      // The score appeals' window and review deadline (FMS-159).
+      appeal_window_days: 30,
+      appeal_review_working_days: 5,
     });
 
     // Back to the default: stored as NULL, so it follows the code's default.

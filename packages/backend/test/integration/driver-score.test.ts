@@ -231,6 +231,8 @@ describe('GET /analytics/my-performance (FMS-146)', () => {
         incidents: { score: 50, weight: 20, accidents: 1 },
         dvir: { score: 75, weight: 10, trips_inspected: 3 },
       },
+      // No appeal corrected the month (FMS-159).
+      corrections: [],
       generated_at: expect.any(String),
     });
     expect(JSON.stringify(res.body)).not.toContain('Abebe');

@@ -241,6 +241,8 @@ export interface MyPerformance {
     incidents: { score: number | null; weight: number; accidents: number }
     dvir: { score: number | null; weight: number; trips_inspected: number }
   }
+  /** Approved appeals that corrected the month (FMS-159), oldest first: "Corrected after appeal". */
+  corrections?: { appeal_id: string; correction: string | null; score_before: number | null; score_after: number | null; decided_at: string | null }[]
 }
 
 /** The driver's own score for a month (YYYY-MM). Never another driver's, never a rank. */

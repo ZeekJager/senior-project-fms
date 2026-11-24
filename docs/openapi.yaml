@@ -49,6 +49,7 @@ tags:
   - name: Maintenance
   - name: Notifications
   - name: Analytics
+  - name: Appeals
   - name: Settings
   - name: System
 
@@ -2322,6 +2323,350 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /appeals:
+    post:
+      tags: [Appeals]
+      operationId: submitAppeal
+      summary: Appeal or complain about one's own flag, incident or month's score (FMS-159)
+      description: >
+        A driver's own speeding or idling flag (target_id), incident (target_id) or a month that has ended (month),
+        within the appeal window (the appeal_window_days setting, 30) after it. As multipart/form-data with up to 5
+        `files` parts (JPEG, PNG, WebP or PDF, checked by their first bytes, 5 MB each), or as JSON without files.
+        One open appeal per target. The review deadline is appeal_review_working_days (5) working days on. Needs
+        appeal:submit (drivers). docs/score-appeals.md.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/AppealSubmission' }
+          application/json:
+            schema: { $ref: '#/components/schemas/AppealSubmission' }
+      responses:
+        '201':
+          description: The appeal, submitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/AppealDetail' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an explanation under 20 characters, more than 5 files, a month that has not ended).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_APPEAL_OPEN (an open appeal against it already), CONFLICT_APPEAL_WINDOW_CLOSED (past the window).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '413':
+          description: PAYLOAD_TOO_LARGE (a file over 5 MB).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '415':
+          description: UNSUPPORTED_MEDIA_TYPE (a file that is not a photo or a PDF).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    get:
+      tags: [Appeals]
+      operationId: listAppeals
+      summary: The reviewers' queue of score appeals (FMS-159)
+      description: >
+        The appeals of the caller's depots, oldest first; open ones (submitted, under review) unless status says
+        otherwise. overdue=true keeps those past their review deadline. Needs appeal:read (admin, fleet manager, depot
+        admin, compliance officer).
+      parameters:
+        - { name: status, in: query, description: 'One or several, comma-separated.', schema: { type: string } }
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: overdue, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of appeals.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppealPage' }
+        '400':
+          description: VALIDATION_FAILED (an unknown status).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /appeals/mine:
+    get:
+      tags: [Appeals]
+      operationId: listMyAppeals
+      summary: The signed-in driver's own appeals, newest first (FMS-159)
+      description: Needs appeal:submit. Anyone who is not a driver has none (404).
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of the driver's appeals.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppealPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /appeals/appealable:
+    get:
+      tags: [Appeals]
+      operationId: listAppealable
+      summary: What the signed-in driver may still appeal (FMS-159)
+      description: Their flags and incidents within the window, newest first (with any open appeal), and the months that have ended within it. Needs appeal:submit.
+      responses:
+        '200':
+          description: What may be appealed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [items, months, window_days]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          required: [target_type, id, kind, at, trip_id, open_appeal_id, excluded]
+                          properties:
+                            target_type: { type: string, enum: [flag, incident] }
+                            id: { type: string, format: uuid }
+                            kind: { type: string, description: The flag type (speeding, idling) or the incident type. }
+                            at: { type: string, format: date-time }
+                            trip_id: { type: [string, 'null'], format: uuid }
+                            open_appeal_id: { type: [string, 'null'], format: uuid }
+                            excluded: { type: boolean }
+                      months: { type: array, items: { type: string, pattern: '^\d{4}-\d{2}$' } }
+                      window_days: { type: integer }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /appeals/kpis:
+    get:
+      tags: [Appeals]
+      operationId: getAppealKpis
+      summary: Appeals opened, the share approved and the median days to a decision (FMS-159, for FMS-160)
+      description: In the caller's depots, appeals opened and decided in [from, to). Needs appeal:read.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The figures.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [opened, decided, approved, approved_share, median_days_to_decision]
+                    properties:
+                      opened: { type: integer }
+                      decided: { type: integer }
+                      approved: { type: integer }
+                      approved_share: { type: [number, 'null'], description: 'Approved over decided, 0 to 1; null when none was decided.' }
+                      median_days_to_decision: { type: [number, 'null'] }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (to before from).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /appeals/{appeal_id}:
+    get:
+      tags: [Appeals]
+      operationId: getAppeal
+      summary: One appeal, its timeline and, for reviewers, its evidence (FMS-159)
+      description: >
+        The driver's own (appeal:submit), or one of the caller's depots (appeal:read); anything else is 404. Reviewers
+        also get the evidence: the GPS track's vehicle and time range, the trip's flags, the month's score and the
+        corrections an approval may make. A driver's timeline leaves out who opened the files.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/AppealDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /appeals/{appeal_id}/claim:
+    post:
+      tags: [Appeals]
+      operationId: claimAppeal
+      summary: Claim a submitted appeal for review (FMS-159)
+      description: Submitted to under review, recording who and when. Needs appeal:review (admin, fleet manager, depot admin) and the appeal in the caller's depots.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/AppealDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppealTransition' }
+
+  /appeals/{appeal_id}/comments:
+    post:
+      tags: [Appeals]
+      operationId: commentOnAppeal
+      summary: Write in an appeal's thread (FMS-159)
+      description: The driver, or a reviewer of the depot, while it is open. A reviewer's question reaches the driver in the app and by push.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '201': { $ref: '#/components/responses/AppealDetail' }
+        '400':
+          description: VALIDATION_FAILED (an empty message).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppealTransition' }
+
+  /appeals/{appeal_id}/decision:
+    post:
+      tags: [Appeals]
+      operationId: decideAppeal
+      summary: Approve or reject an appeal under review, with a note (FMS-159)
+      description: >
+        A note is required. An approved appeal names its correction (exclude_flag, exclude_incident or exclude_trip;
+        for a month's score, with item_id the flag, incident or trip of that month): it no longer counts in the score,
+        the original data is kept, and the score before and after are recorded. The driver is told in the app and by
+        push. A reviewer who reported the incident or reviewed the flag may not decide it (409 CONFLICT_OWN_REPORT).
+        Needs appeal:review.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome, note]
+              properties:
+                outcome: { type: string, enum: [approved, rejected] }
+                note: { type: string, minLength: 1, maxLength: 2000 }
+                correction: { type: string, enum: [exclude_flag, exclude_incident, exclude_trip] }
+                item_id: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/AppealDetail' }
+        '400':
+          description: VALIDATION_FAILED (no note; an approval without a fitting correction).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (not under review), CONFLICT_OWN_REPORT.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /appeals/{appeal_id}/withdraw:
+    post:
+      tags: [Appeals]
+      operationId: withdrawAppeal
+      summary: The driver takes back their appeal before a decision (FMS-159)
+      description: Closed, as withdrawn. Needs appeal:submit and the appeal the caller's own.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/AppealDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppealTransition' }
+
+  /appeals/{appeal_id}/acknowledge:
+    post:
+      tags: [Appeals]
+      operationId: acknowledgeAppeal
+      summary: The driver has read the decision; it closes (FMS-159)
+      description: An undisturbed decision closes itself after 7 days. Needs appeal:submit and the appeal the caller's own.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/AppealDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AppealTransition' }
+
+  /appeals/{appeal_id}/attachments/{attachment_id}/link:
+    get:
+      tags: [Appeals]
+      operationId: getAppealAttachmentLink
+      summary: A signed, 15-minute link to one of an appeal's files (FMS-159)
+      description: For the driver who appealed and the appeal's reviewers (appeal:read); each link is recorded on the appeal's timeline.
+      parameters:
+        - { name: appeal_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: attachment_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The link.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [url, expires_at]
+                    properties:
+                      url: { type: string }
+                      expires_at: { type: string, format: date-time }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /appeal-attachments/{attachment_id}/content:
+    get:
+      tags: [Appeals]
+      operationId: getAppealAttachmentContent
+      summary: An appeal file's bytes, by its signed link (FMS-159)
+      description: Public; the signature is the permission. Served with nosniff.
+      security: []
+      parameters:
+        - { name: attachment_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: expires, in: query, schema: { type: string } }
+        - { name: signature, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: The file.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            application/pdf: { schema: { type: string, format: binary } }
+        '401':
+          description: AUTH_TOKEN_EXPIRED (the link has expired), AUTH_TOKEN_INVALID (a link that is not one).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /fuel-anomalies:
     get:
@@ -7677,6 +8022,19 @@ components:
     Unauthenticated:
       description: AUTH_TOKEN_INVALID (no session, or a bad token) or AUTH_TOKEN_EXPIRED.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    AppealDetail:
+      description: The appeal, as it now is.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/AppealDetail' }
+              meta: { $ref: '#/components/schemas/Meta' }
+    AppealTransition:
+      description: CONFLICT_INVALID_STATE_TRANSITION (a step the status flow does not have from where it is).
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Forbidden:
       description: FORBIDDEN_INSUFFICIENT_ROLE (the role lacks the permission), or on a write made with the session cookie, FORBIDDEN_CSRF (not from this site, or no valid X-CSRF-Token).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
@@ -8212,6 +8570,127 @@ components:
         latitude: { type: number, minimum: -90, maximum: 90 }
         longitude: { type: number, minimum: -180, maximum: 180 }
 
+    AppealSubmission:
+      type: object
+      required: [target_type, reason, explanation]
+      properties:
+        kind: { type: string, enum: [appeal, complaint], default: appeal }
+        target_type: { type: string, enum: [flag, incident, score] }
+        target_id: { type: string, format: uuid, description: The flag or incident; required unless target_type is score. }
+        month: { type: string, pattern: '^\d{4}-\d{2}$', description: The month of the score; required when target_type is score. }
+        reason: { type: string, enum: [wrong_data, not_my_trip, road_conditions, vehicle_fault, other] }
+        explanation: { type: string, minLength: 20, maxLength: 2000 }
+        files: { type: array, maxItems: 5, items: { type: string, format: binary }, description: Multipart only. }
+    AppealPerson:
+      type: [object, 'null']
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    Appeal:
+      type: object
+      required: [id, kind, status, outcome, target, reason, explanation, driver, depot, submitted_at, due_at, overdue, escalated_at, claimed_by, claimed_at, decided_by, decided_at, decision_note, correction, score_before, score_after, acknowledged_at, closed_at, attachments, version]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [appeal, complaint] }
+        status: { type: string, enum: [submitted, under_review, approved, rejected, closed] }
+        outcome: { type: [string, 'null'], enum: [approved, rejected, withdrawn, null] }
+        target:
+          type: object
+          required: [type, id, month, trip_id, event_at]
+          properties:
+            type: { type: string, enum: [flag, incident, score] }
+            id: { type: [string, 'null'], format: uuid }
+            month: { type: [string, 'null'] }
+            trip_id: { type: [string, 'null'], format: uuid }
+            event_at: { type: string, format: date-time }
+        reason: { type: string, enum: [wrong_data, not_my_trip, road_conditions, vehicle_fault, other] }
+        explanation: { type: string }
+        driver: { $ref: '#/components/schemas/AppealPerson' }
+        depot: { $ref: '#/components/schemas/AppealPerson' }
+        submitted_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time, description: The review deadline, in working days. }
+        overdue: { type: boolean }
+        escalated_at: { type: [string, 'null'], format: date-time }
+        claimed_by: { $ref: '#/components/schemas/AppealPerson' }
+        claimed_at: { type: [string, 'null'], format: date-time }
+        decided_by: { $ref: '#/components/schemas/AppealPerson' }
+        decided_at: { type: [string, 'null'], format: date-time }
+        decision_note: { type: [string, 'null'] }
+        correction: { type: [string, 'null'], enum: [exclude_flag, exclude_incident, exclude_trip, null] }
+        score_before: { type: [integer, 'null'] }
+        score_after: { type: [integer, 'null'] }
+        acknowledged_at: { type: [string, 'null'], format: date-time }
+        closed_at: { type: [string, 'null'], format: date-time }
+        attachments:
+          type: array
+          items:
+            type: object
+            required: [id, content_type, size_bytes, filename]
+            properties:
+              id: { type: string, format: uuid }
+              content_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+              size_bytes: { type: integer }
+              filename: { type: [string, 'null'] }
+        version: { type: integer }
+    AppealDetail:
+      allOf:
+        - { $ref: '#/components/schemas/Appeal' }
+        - type: object
+          required: [timeline, evidence, can]
+          properties:
+            timeline:
+              type: array
+              items:
+                type: object
+                required: [id, type, actor, body, at]
+                properties:
+                  id: { type: string, format: uuid }
+                  type: { type: string, enum: [submitted, claimed, commented, approved, rejected, withdrawn, escalated, acknowledged, closed, attachment_opened] }
+                  actor: { $ref: '#/components/schemas/AppealPerson' }
+                  body: { type: [string, 'null'] }
+                  at: { type: string, format: date-time }
+            evidence:
+              type: [object, 'null']
+              description: For reviewers only.
+              properties:
+                track:
+                  type: [object, 'null']
+                  properties:
+                    vehicle_id: { type: string, format: uuid }
+                    registration_number: { type: string }
+                    from: { type: string, format: date-time }
+                    to: { type: string, format: date-time }
+                flag: { type: [object, 'null'] }
+                incident: { type: [object, 'null'] }
+                trip_flags: { type: array, items: { type: object } }
+                score: { type: object }
+                corrections: { type: array, items: { type: string, enum: [exclude_flag, exclude_incident, exclude_trip] } }
+            can:
+              type: object
+              required: [claim, comment, decide, withdraw, acknowledge]
+              properties:
+                claim: { type: boolean }
+                comment: { type: boolean }
+                decide: { type: boolean }
+                withdraw: { type: boolean }
+                acknowledge: { type: boolean }
+    AppealPage:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Appeal' }
+        meta:
+          type: object
+          required: [request_id, page, page_size, total_items, total_pages]
+          properties:
+            request_id: { type: string, format: uuid }
+            page: { type: integer }
+            page_size: { type: integer }
+            total_items: { type: integer }
+            total_pages: { type: integer }
     Meta:
       type: object
       required: [request_id]

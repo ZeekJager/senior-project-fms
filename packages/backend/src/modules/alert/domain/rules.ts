@@ -552,6 +552,28 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     renotifyWhenRaised: true,
   },
 
+  // Score appeals (FMS-159, docs/score-appeals.md): `appeal_id`, `driver_id`, `depot_id` (the driver's when they
+  // appealed), `due_at`, `status`. An appeal undecided past its review deadline goes to its depot's admins, once.
+  AppealOverdue: {
+    type: () => 'appeal_overdue',
+    module: 'analytics',
+    facts: (p) => ({
+      severity: 'medium',
+      vehicleId: null,
+      // Not the driver: the alert is the reviewers' to act on, and its message never names them.
+      driverId: null,
+      tripId: null,
+      depotId: str(p, 'depot_id'),
+      entity: str(p, 'appeal_id') ? { type: 'appeal', id: str(p, 'appeal_id')! } : null,
+      dedupKey: `appeal_overdue:${str(p, 'appeal_id')}`,
+    }),
+    windowMinutes: 31 * DAY,
+    title: () => 'Score appeal overdue',
+    message: (p) =>
+      `A driver's score appeal has waited past its review deadline${str(p, 'due_at') ? ` (${addisDate(str(p, 'due_at')!)} ${addisClock(str(p, 'due_at')!)})` : ''}. Claim it in Appeals and decide it.`,
+    audience: ['depot_admin'],
+  },
+
   // Assignment exceptions (FMS-151, docs/assignment-exceptions.md): `exception_id`, `trip_id`, `depot_id` (the
   // route's), `proposed_driver_id`, `proposed_vehicle_id`, `warnings`, `reason`, `route_name`, `scheduled_start`.
   // An assignment held for approval: the depot's fleet managers decide.

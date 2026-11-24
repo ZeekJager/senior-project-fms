@@ -111,6 +111,29 @@ export class DeliveryService {
     return repo.queue(tx, ctx, alert.id, messages, content);
   }
 
+  /**
+   * Queues a notice that is no alert (a step on a driver's appeal, FMS-159) by push to its recipients' devices, when
+   * push is on. `entity` is what it opens. How many.
+   */
+  async queueNotice(
+    tx: PoolClient,
+    ctx: MutationContext,
+    recipients: readonly string[],
+    content: { type: string; title: string; message: string },
+    entity: { type: string; id: string },
+  ): Promise<number> {
+    const { repo, gateway, users } = this.deps;
+    if (recipients.length === 0) return 0;
+    const on = await gateway.channels(tx);
+    if (!on.has('push')) return 0;
+    const accounts = await users.accounts(tx, recipients);
+    const devices = await repo.subscriptionsOf(tx, recipients);
+    const messages: QueuedMessage[] = devices
+      .filter((d) => accounts.get(d.userId)?.active)
+      .map((d) => ({ recipientId: d.userId, channel: 'push', pushSubscriptionId: d.id }));
+    return repo.queue(tx, ctx, null, messages, content, entity);
+  }
+
   /** Sends every message due by `now`, a batch at a time, until none is left. */
   async drain(run: { now: Date; correlationId: string }): Promise<DrainResult> {
     const { repo } = this.deps;
@@ -135,7 +158,7 @@ export class DeliveryService {
       await repo.markCancelled(db, m.id, reason);
       return 'cancelled' as const;
     };
-    if (m.alert.status === 'resolved' || m.alert.status === 'dismissed') return cancel(CANCEL_REASONS.alertClosed);
+    if (m.alert && (m.alert.status === 'resolved' || m.alert.status === 'dismissed')) return cancel(CANCEL_REASONS.alertClosed);
     if (!account?.active) return cancel(CANCEL_REASONS.recipientInactive);
 
     const to: Outbound['to'] = {};
@@ -150,14 +173,16 @@ export class DeliveryService {
       to.push = { endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth };
     }
 
+    // A notice that is no alert (an appeal's step, FMS-159) goes as a medium one would.
+    const severity = m.alert?.severity ?? 'medium';
     const facts: MessageFacts = {
-      severity: m.alert.severity,
+      severity,
       title: m.title,
       message: m.message,
-      raisedAt: m.alert.createdAt,
-      path: alertPath(m.alert.entityType, m.alert.entityId, m.type),
+      raisedAt: m.alert?.createdAt ?? m.queuedAt,
+      path: alertPath(m.alert?.entityType ?? m.entity.type, m.alert?.entityId ?? m.entity.id, m.type),
       appUrl: this.deps.appUrl,
-      alertId: m.alert.publicId,
+      alertId: m.alert?.publicId ?? null,
     };
     const content = m.channel === 'email' ? emailContent(facts) : m.channel === 'sms' ? { subject: m.title, text: smsText(facts) } : pushContent(facts);
     const outcome = await gateway.send(
@@ -166,8 +191,8 @@ export class DeliveryService {
         reference: m.publicId,
         to,
         ...content,
-        urgency: m.alert.severity === 'critical' ? 'high' : 'normal',
-        ttlSeconds: PUSH_TTL_SECONDS[m.alert.severity],
+        urgency: severity === 'critical' ? 'high' : 'normal',
+        ttlSeconds: PUSH_TTL_SECONDS[severity],
       },
       run.correlationId,
     );

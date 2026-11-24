@@ -13,6 +13,9 @@ export type SettingKey =
   | 'driver_score_weight_safety'
   | 'driver_score_weight_incidents'
   | 'driver_score_weight_dvir'
+  // Score appeals (FMS-159): the appeal window and the review deadline in working days.
+  | 'appeal_window_days'
+  | 'appeal_review_working_days'
 
 /** A setting as GET /settings returns it. */
 export interface Setting {
@@ -37,6 +40,8 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   driver_score_weight_safety: 35,
   driver_score_weight_incidents: 20,
   driver_score_weight_dvir: 10,
+  appeal_window_days: 30,
+  appeal_review_working_days: 5,
 }
 
 export const settingsKey = ['settings'] as const

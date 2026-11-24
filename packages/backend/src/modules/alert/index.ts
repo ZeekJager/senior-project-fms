@@ -15,6 +15,7 @@ import { AlertService } from './application/alert.service';
 import { DeliveryService } from './application/delivery.service';
 import { IncidentService } from './application/incident.service';
 import { InboxService } from './application/inbox.service';
+import { APPEAL_NOTICE_EVENTS, NoticeService } from './application/notice.service';
 import type { IncidentType } from './domain/incident';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
@@ -87,6 +88,19 @@ const incidentService = new IncidentService({
   },
   events: eventBus,
 });
+
+// A driver's own appeal steps (FMS-159): notices that are no alert, in their inbox and by push.
+const notices = new NoticeService({
+  notifications: new NotificationRepository(pool),
+  inbox,
+  delivery,
+  drivers: { subject: alertRefs.drivers.subject, activeAccounts: alertRefs.drivers.activeAccounts },
+});
+for (const type of APPEAL_NOTICE_EVENTS) {
+  eventBus.subscribe(type, 'alert.appeal-notices', async (event, tx) => {
+    await notices.appealStep(tx, event);
+  });
+}
 
 // Every event with a rule, on the consumer's transaction: the alert and its notifications commit with
 // the record that the event was handled, so a redelivery is skipped, never a second alert.

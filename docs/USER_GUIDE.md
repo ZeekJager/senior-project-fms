@@ -277,6 +277,21 @@ Only you and your managers see it.
 
 ![My score](user-guide/images/driver-12-score.png)
 
+### Appeal a flag, an incident or your score
+
+If a speeding or idling alert, an incident or your month's score looks wrong, appeal it within 30 days. Open
+**My appeals** on *My day*, or **Appeal this score** on *My score*.
+
+1. Choose **Appeal** (it is wrong: correct my score) or **Complaint** (something was unfair).
+2. Choose what it is about and why, and say what happened.
+3. Add up to 5 photos or PDF files: **Take a photo** opens the camera.
+4. **Send**. You need signal: the photos go with it.
+
+A reviewer at your depot decides within 5 working days. You are told in the app and by push when they ask you
+something (answer under the appeal) and when they decide. If it is approved, what was wrong no longer counts and your
+score is worked out again: *My score* shows *Corrected after appeal* with the old and new score. Until it is decided
+you can **Withdraw** it. Tap **I have read the decision** when you have.
+
 ## Dispatcher
 
 You staff your depot's trips: you create them, give each one a driver and a vehicle who are free and allowed to do it,
@@ -541,6 +556,19 @@ comes to you as a notification. Open the trip on **Dispatch**: the panel shows t
 - **Refuse** sends it back with your reason, which the dispatcher sees as *Approval refused*.
 
 Nobody decides on their own request.
+
+### Drivers' score appeals
+
+**Score appeals** lists drivers' appeals and complaints in your depots, oldest first. Decide each within 5 working
+days: past that it is *Overdue* and goes to the depot admin. Depot admins review their depot's appeals the same way.
+
+1. Open an appeal: the driver's explanation and photos, the GPS track of the trip, its flags and the month's score sit
+   beside it.
+2. **Claim for review**, so the others know you have it. **Ask the driver** if you need more; they are told by push.
+3. Choose **Approve** or **Reject** and write a note: the driver reads it. An approval takes the flag, the incident or
+   the whole trip out of the score; the original record stays.
+
+You cannot decide an appeal against an incident you reported or a flag you reviewed: another reviewer must.
 
 ### Reports and availability
 

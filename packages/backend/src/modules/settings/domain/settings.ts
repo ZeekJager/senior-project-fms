@@ -14,6 +14,8 @@ export const SETTING_KEYS = [
   'driver_score_weight_safety',
   'driver_score_weight_incidents',
   'driver_score_weight_dvir',
+  'appeal_window_days',
+  'appeal_review_working_days',
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
@@ -46,6 +48,10 @@ export function settingDefinitions(defaults: { fuelVarianceThresholdPct: number 
     driver_score_weight_safety: { key: 'driver_score_weight_safety', unit: 'weight', min: 0, max: 100, default: 35 },
     driver_score_weight_incidents: { key: 'driver_score_weight_incidents', unit: 'weight', min: 0, max: 100, default: 20 },
     driver_score_weight_dvir: { key: 'driver_score_weight_dvir', unit: 'weight', min: 0, max: 100, default: 10 },
+    // Score appeals (FMS-159, docs/score-appeals.md): how long after a flag, an incident or the end of a month a driver
+    // may appeal it, and how many working days (Monday to Friday) a reviewer has to decide before it is overdue.
+    appeal_window_days: { key: 'appeal_window_days', unit: 'days', min: 1, max: 365, default: 30 },
+    appeal_review_working_days: { key: 'appeal_review_working_days', unit: 'days', min: 1, max: 30, default: 5 },
   };
 }
 
@@ -99,6 +105,18 @@ const COPY: Record<SettingKey, { label: string; category: string; description: s
     category: 'Driver score',
     description: "How much completed trips with the driver's pre-trip inspection count in the driver score.",
     unit: 'weight',
+  },
+  appeal_window_days: {
+    label: 'Appeal window',
+    category: 'Score appeals',
+    description: 'Days after a flag, an incident or the end of a month in which a driver may appeal it.',
+    unit: 'days',
+  },
+  appeal_review_working_days: {
+    label: 'Review deadline',
+    category: 'Score appeals',
+    description: 'Working days, Monday to Friday, to decide an appeal before it is overdue and goes to the depot admin.',
+    unit: 'working days',
   },
 };
 
