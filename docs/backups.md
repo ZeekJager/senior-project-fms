@@ -13,7 +13,7 @@ Code: `packages/backend/src/modules/backup/` (migration `056_database_backups.sq
 - Kept **30 days**. The `backup-retention` job (03:55) removes older files; the row stays as `expired`, so the history is complete.
 - Audited: `backup.requested`, `backup.succeeded`, `backup.failed` (result `failed`), `backup.downloaded` (by the admin who downloaded it), `backup.expired`.
 
-FMS-108 (SE-152) builds on this runner: the off-site copy, WAL archiving for point-in-time recovery, and scheduled restore drills.
+A nightly dump alone can lose up to a day of GPS points, trips and fuel logs. Since FMS-108 (SE-152) the database also archives every change continuously and can be restored to any second: [Continuous archiving and point-in-time recovery](#continuous-archiving-and-point-in-time-recovery). The dumps stay: one restores into any PostgreSQL, and it can be downloaded.
 
 ## Who
 
@@ -71,6 +71,77 @@ npm run backup:restore -- --backup latest --database fms_drill --drill --by "Sar
 ```
 
 The Backups screen shows the last drill (when, how many tables, or why it failed), and warns when there has been none. FMS-108 runs them on a schedule.
+
+## Continuous archiving and point-in-time recovery
+
+FMS-108 (SE-152), decided in [ADR-07](adr/ADR-07-backup-pitr-pgbackrest.md). The database container runs [pgBackRest](https://pgbackrest.org) 2.60 beside PostgreSQL (`docker/postgres/`), so at most a minute of changes is ever only on the database's disk, and the database can be restored to any second it still has backups for.
+
+| What | When | Kept |
+|---|---|---|
+| WAL (every change) | Continuously, compressed (zstd) and encrypted (AES-256). PostgreSQL closes a segment at least every 60 s (`archive_timeout`), so a quiet database still ships its last changes within a minute | With the base backups it belongs to |
+| Full base backup | On the first start of a database with none, then Sundays at 01:00 Addis Ababa time (`BACKUP_BASE_HOUR_UTC`, default 22) | The last 3 (`repo1-retention-full`): the oldest is 14 to 21 days old, so a restore always reaches at least 14 days back |
+| Differential base backup | Every other day at the same time: what changed since the last full one | Until their full one expires |
+| Nightly `pg_dump` (above) | 02:40 | 30 days |
+
+- **Where.** The repository is its own volume, `pgbackrest_repo`, so losing the database volume does not lose the backups. In production, `repo1` is an S3 bucket and a second repository in another region or provider is added the same way (`repo2-type=s3`). That off-site copy is still to do (below).
+- **Recorded.** Each base backup is a row in `backup.base_backups` (migration 075): full or differential, what started it, its status, its size in the database and in the repository, the WAL range it needs, and pgBackRest's error when it failed. A backup pgBackRest expired is kept as `expired`. The database container's `backup.sh` writes the rows; the API only reads them.
+- **Asynchronous.** `archive-push` hands a segment to a background process and returns, so a slow repository never slows writes. Until a segment is shipped it waits in the spool and in `pg_wal`.
+
+### Targets
+
+| Event | Data lost at most (RPO) | Back in service (RTO) | How |
+|---|---|---|---|
+| Data deleted or damaged by mistake, or a bad migration | None: restore to the second before | 2 h | Point-in-time restore (below) |
+| Database disk or volume lost | Under 1 minute (`archive_timeout`) | 2 h | Point-in-time restore to the latest archived WAL |
+| The whole server or site lost | Under 1 minute, once the off-site repository exists | 4 h | The same, from the off-site repository on a new server |
+
+The replica (FMS-94) is seconds behind and can be promoted faster still; that runbook is FMS-162 (SE-205).
+
+### Setting it up
+
+1. **The passphrase.** `BACKUP_REPO_CIPHER_PASS` in `.env` encrypts the repository. `node scripts/init-env.mjs` adds it to an existing `.env` and keeps every other value. Without it the database does not start, so an unencrypted backup is never written. **Keep a copy away from this machine:** every backup is unreadable without it, and changing it makes the earlier ones unreadable.
+2. **The image.** `docker compose up -d --build postgres` builds `fms-postgres:16` from `docker/postgres/Dockerfile` (PostgreSQL 16 plus pgBackRest from the PostgreSQL apt repository). On Docker Desktop for Windows, if Compose asks for `--allow=fs.read`, build it directly: `docker build -t fms-postgres:16 docker/postgres`.
+3. **An existing database** works as it is. On start, the container creates pgBackRest's stanza (idempotent) and, when the repository is empty, takes a first full backup; WAL waiting in `pg_wal` is archived once the stanza exists.
+
+### Checking it
+
+```sh
+docker compose exec -u postgres postgres pgbackrest --stanza=fms info          # backups and the WAL range held
+docker compose exec postgres psql -U fms_admin -d fms_db -c "select archived_count, last_archived_wal, last_archived_time, failed_count, last_failed_time from pg_stat_archiver"
+docker compose exec postgres psql -U fms_admin -d fms_db -c "select backup_type, status, started_at, finished_at, pg_size_pretty(repo_size_bytes) from backup.base_backups order by started_at desc limit 5"
+docker compose exec -u postgres postgres /usr/local/bin/fms-pgbackrest/backup.sh full manual   # a backup now
+```
+
+`failed_count` rising, or `last_archived_time` older than a few minutes on a busy database, means archiving is failing: read `/var/log/pgbackrest/` in the container. While it fails, WAL piles up in `pg_wal` on the database's disk.
+
+### Point-in-time restore (runbook)
+
+Like the dump restore, it never writes over the live database.
+
+1. **Pick the moment.** The second before the mistake, with its time zone: `2026-11-24 10:14:59+03`. The audit log (S-10) usually tells when it happened.
+2. **Restore into a copy.**
+   ```sh
+   sh scripts/backup/pitr-restore.sh --to "2026-11-24 10:14:59+03" --name before-mistake
+   ```
+   It restores the latest base backup taken before that moment into a new volume (`fms_pitr_before-mistake_data`), replays the archived WAL up to it, and starts the result as `fms_pitr_before-mistake`, on the stack's network and published nowhere. It prints the last transaction replayed. The repository is mounted read-only, and the copy runs without archiving, so it changes nothing that exists.
+3. **Check it.** `docker exec -it fms_pitr_before-mistake psql -U fms_admin -d fms_db`: the rows you came back for are there, and the mistake is not.
+4. **Switch over** (a planned outage):
+    1. Stop the API, and the old database: `docker compose stop backend postgres`.
+    2. Copy the restored data into the database volume, or point `postgres_data` at the restored volume.
+    3. Start the database. Archiving resumes on its new timeline, which pgBackRest keeps apart from the old one.
+    4. Take a full backup at once (`backup.sh full manual`, above), rebuild the replica ([read-replica.md](read-replica.md#in-compose)), and start the API.
+5. **Remove the copy** when you no longer need it: `docker rm -f fms_pitr_before-mistake && docker volume rm fms_pitr_before-mistake_data`.
+
+To copy only some rows back instead of switching, read them from the copy and insert them into the live database.
+
+### Not covered yet
+
+The rest of SE-152's scope, still to do:
+
+- **The off-site repository** (`repo2` in another region or provider, object lock for 30 days), on the environments of FMS-107 (SE-151).
+- **The Backups screen** listing base backups beside the dumps, with *Recoverable from … to …*.
+- **System health and alerts**: a *Backups* component and alerts when no base backup has succeeded in 26 hours, archiving has failed for 5 minutes, or the off-site copy is 15 minutes old.
+- **The monthly restore drill** of a base backup with WAL replay, which records the measured RTO.
 
 ## Tests
 
