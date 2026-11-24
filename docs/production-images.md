@@ -39,6 +39,9 @@ CI tags each image with the full commit SHA. A deployment pins an image by that 
   system's fixes published since the base image was built are in. The web app is on `nginx-unprivileged:1.30-alpine`
   (nginx 1.30): the 1.28 line stopped at 1.28.2, which has a critical vulnerability (CVE-2026-42945) fixed only in later
   versions. When the scan below starts failing on a base image, move to its newest minor tag before anything else.
+  The base image pins its own nginx and modules, which `apk upgrade` does not move past, so the web app's runtime stage
+  removes the modules (the configuration loads none) and takes Alpine's latest nginx: 1.30.6, the newest base image,
+  has four critical vulnerabilities fixed in Alpine's 1.30.7. The unprivileged `nginx.conf` is kept.
 
 All three run as a non-root user, carry a `HEALTHCHECK`, and contain no secrets: every secret comes from the
 environment at run time.

@@ -176,7 +176,16 @@ export class TripRiskService {
       from: new Date(t.getTime() - (RECORD_DAYS * 24 + LONGEST_TRIP_HOURS) * HOUR_MS),
       to: t,
     });
-    const others = rows.filter((r) => r.publicId !== trip.publicId);
+    // A trip under way now has no end yet: it is expected to end at its scheduled end (or now, if that has passed). For a
+    // trip starting later, it counts until then, and as under way at t only if it is expected to run past t.
+    const now = this.now().getTime();
+    const others = rows
+      .filter((r) => r.publicId !== trip.publicId)
+      .map((r) => {
+        if (r.actualEnd !== null) return r;
+        const expected = Math.max(r.scheduledEnd?.getTime() ?? now, now);
+        return expected < t.getTime() ? { ...r, actualEnd: new Date(expected) } : r;
+      });
     const route = others.filter((r) => trip.routeId !== null && r.routeId === trip.routeId).map(this.toPast);
     const inputs = this.deps.models.spec().inputs;
     const items = driverPublicIds.map((driver) => ({

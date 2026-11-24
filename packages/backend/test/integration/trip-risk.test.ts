@@ -261,7 +261,14 @@ async function scene() {
   const expired = (await createDriver({ depot, license_expiry: '2020-01-01' })).driver as Row;
   await pastTrip(r, { driver: tired, vehicle, ago: 10, hours: 9, lateMin: 0 });
   await pastTrip(r, { driver: rested, vehicle, ago: 72, hours: 4, lateMin: 30 });
-  const start = new Date(Date.now() + 3 * HOUR);
+  // On a trip right now: started 4 h ago, due to end in 1 h, so 2 h before the trip being staffed starts.
+  const now = Date.now();
+  const onRoad = (await createDriver({ depot })).driver as Row;
+  await pool.query(
+    "INSERT INTO trip.trips (route_id, driver_id, vehicle_id, status, scheduled_start, scheduled_end, actual_start) VALUES ($1, $2, $3, 'en_route', $4, $5, $4)",
+    [r.id, onRoad.id, vehicle.id, new Date(now - 4 * HOUR), new Date(now + HOUR)],
+  );
+  const start = new Date(now + 3 * HOUR);
   const trip = (
     await pool.query<Row>(
       "INSERT INTO trip.trips (route_id, status, scheduled_start, scheduled_end, planned_distance_km, cargo_kind) VALUES ($1, 'scheduled', $2, $3, 340, 'hazardous') RETURNING *",
@@ -269,7 +276,7 @@ async function scene() {
     )
   ).rows[0];
   const window = { from: start.toISOString(), to: new Date(start.getTime() + 6 * HOUR).toISOString() };
-  return { depot, trip, rested, tired, expired, query: { depot_id: String(depot.public_id), exclude_trip_id: trip.public_id, ...window } };
+  return { depot, trip, rested, tired, expired, onRoad, query: { depot_id: String(depot.public_id), exclude_trip_id: trip.public_id, ...window } };
 }
 
 const driverOf = (res: request.Response, d: Row) => (res.body.data.drivers as { driver_id: string; trip_risk: unknown }[]).find((x) => x.driver_id === d.public_id)!;
@@ -324,7 +331,9 @@ describe('trip risk on GET /dispatch/availability', () => {
     const rested = sent.get(s.rested.public_id as string)!.features;
     // The tired driver drove 9 h ending 1 h before now, 4 h before the trip starts: inside the last day, and 4 h of rest.
     expect(tired).toMatchObject({ hours_driven_24h: 9, hours_since_last_trip: 4, driver_trips_90d: 1, driver_late_share_90d: 0, cargo_hazardous: 1, planned_distance_km: 340 });
-    expect(rested).toMatchObject({ hours_driven_24h: 0, driver_trips_90d: 1, driver_late_share_90d: 1, route_trips_90d: 2 });
+    expect(rested).toMatchObject({ hours_driven_24h: 0, driver_trips_90d: 1, driver_late_share_90d: 1, route_trips_90d: 3 });
+    // A trip under way now is expected to end at its scheduled end: not still driving when this trip starts in 3 h.
+    expect(sent.get(s.onRoad.public_id as string)!.features).toMatchObject({ hours_since_last_trip: 2, hours_driven_24h: 5, driver_trips_90d: 1 });
 
     expect(driverOf(res, s.tired).trip_risk).toEqual({
       late_probability: 0.55,
@@ -369,7 +378,7 @@ describe('trip risk on GET /dispatch/availability', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.trip_risk).toMatchObject({ status: 'unavailable', reason: 'unavailable' });
     expect(driverOf(res, s.tired).trip_risk).toBeNull();
-    expect(res.body.data.drivers.length).toBe(3);
+    expect(res.body.data.drivers.length).toBe(4);
   });
 
   test('npm run ml:model -- list registers the served trip risk model and labels it a demonstration', async () => {

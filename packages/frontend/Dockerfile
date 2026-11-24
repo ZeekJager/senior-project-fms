@@ -28,7 +28,12 @@ FROM ${NGINX_IMAGE} AS runtime
 # The base image is rebuilt rarely: take the operating system's security fixes published since (OpenSSL, nginx, ...),
 # which the image scan in CI otherwise fails on. Back to the unprivileged user afterwards.
 USER root
-RUN apk upgrade --no-cache
+# The base image pins nginx and its modules to its own release, so apk upgrade alone keeps an nginx with fixed critical CVEs
+# until the next base image (1.30.6 had four, fixed in Alpine's 1.30.7). None of the modules is loaded: dropping them and
+# the pin takes Alpine's latest nginx. Its nginx.conf, the unprivileged one, is kept as it is (apk writes its own as .apk-new).
+RUN apk del --no-cache nginx-module-geoip nginx-module-image-filter nginx-module-njs nginx-module-xslt \
+ && apk add --no-cache --upgrade nginx \
+ && apk upgrade --no-cache
 # Where the start-up script writes the Content-Security-Policy header (FMS-103): the nginx user owns it, the rest of /etc/nginx is root's.
 RUN mkdir -p /etc/nginx/snippets && chown nginx:nginx /etc/nginx/snippets
 USER nginx
