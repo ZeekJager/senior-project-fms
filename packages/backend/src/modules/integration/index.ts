@@ -11,8 +11,10 @@ import { logger } from '../../shared/logging/logger';
 import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
+import { auditTrail } from '../audit';
 import { userDirectory } from '../auth';
 import { trackingRefs, VEHICLE_EVENTS } from '../fleet';
+import { settings } from '../settings';
 import { enRouteTripOfDriver, liveTripsForVehicles, tripPartiesByIds, tripRoadsByIds, tripSpansOfDriver, tripSpansOfVehicles, TRIP_EVENTS, type DelayMargins } from '../trip';
 import { deviceRouter } from './api/device.routes';
 import { geofenceRouter } from './api/geofence.routes';
@@ -27,6 +29,7 @@ import { LiveMapService } from './application/live-map.service';
 import { LocationRulesService } from './application/location-rules.service';
 import { trackingRetentionJob } from './application/tracking-retention.job';
 import { RuleThresholdService } from './application/rule-threshold.service';
+import { thresholdKeysOf, thresholdParameterStore } from './application/threshold-parameters';
 import { NotificationGateway } from './application/notification-gateway';
 import { TelemetryRulesService, THRESHOLDS_TTL_MS } from './application/telemetry-rules.service';
 import { TrackHistoryService } from './application/track-history.service';
@@ -111,7 +114,9 @@ const liveMap = new LiveMapService({
 // idling rules, which open and close tracking.telemetry_flags on the event's transaction. The counters between
 // pings live in Redis (in process without it), so a restart does not reset them. docs/telemetry-rules.md.
 const memoryRuleState = new MemoryRuleStateStore();
-const flagRepository = new TelemetryFlagRepository();
+// A threshold disabled in the settings registry (FMS-157) answers with its default, for the fleet and every depot.
+const disabledThresholds = () => settings.disabledDefaults('rule_thresholds');
+const flagRepository = new TelemetryFlagRepository(disabledThresholds);
 const telemetryRules = new TelemetryRulesService({
   db: pool,
   tracking,
@@ -166,7 +171,7 @@ const geofences = new GeofenceService({
 });
 
 // Their thresholds from the settings screen (FMS-80): the fleet's and each depot's, admin only.
-const thresholdRepository = new RuleThresholdRepository();
+const thresholdRepository = new RuleThresholdRepository(disabledThresholds);
 // The trip delay margins (FMS-147), for the trip module's ETA, cached as the rules cache theirs.
 const delayMarginCache = new Map<string, { value: DelayMargins; until: number }>();
 async function tripDelayMargins(db: Queryable, depotId: string | null): Promise<DelayMargins> {
@@ -182,12 +187,18 @@ const ruleThresholds = new RuleThresholdService({
   thresholds: thresholdRepository,
   transaction: (fn) => withTransaction(pool, fn),
   refs: { depots: trackingRefs.depots, users: userDirectory },
-  onChange: () => {
-    telemetryRules.forgetThresholds();
-    locationRules.forgetThresholds();
-    delayMarginCache.clear();
-  },
+  onChange: () => forgetThresholds(),
+  onFleetChanged: (client, caller, fields) => settings.valuesChangedElsewhere(client, caller, thresholdKeysOf(fields)),
 });
+function forgetThresholds(): void {
+  telemetryRules.forgetThresholds();
+  locationRules.forgetThresholds();
+  delayMarginCache.clear();
+}
+// The fleet's thresholds are system parameters of the settings registry (FMS-157): it reads and changes them here, and
+// any parameter changing anywhere drops these caches too.
+settings.registerStore(thresholdParameterStore({ thresholds: thresholdRepository, service: ruleThresholds, trail: auditTrail.records }));
+settings.onForget(forgetThresholds);
 
 // A vehicle's GPS history (FMS-136): its stored pings, a page at a time, for the vehicle page's trip map.
 const trackHistory = new TrackHistoryService({

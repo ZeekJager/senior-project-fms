@@ -4408,19 +4408,23 @@ paths:
     patch:
       tags: [Settings]
       operationId: updateSettings
-      summary: Change settings (FMS-80)
+      summary: Change the values of settings parameters (FMS-80, FMS-157)
       description: >
-        One or more settings, each a whole number within its range, or null to go back to the default (sending
-        the default does the same). All are checked before any is written, and written in one transaction, each
-        an audited change. Takes effect within a minute. The four driver_score_weight_* (FMS-146) may each be 0 but
-        not all of them (all_zero). Needs settings:write (admin).
+        One or more parameters of the registry by key (the settings below, the driving rules' thresholds, custom
+        parameters), each a value valid for its type and rules, or null to go back to the default (sending the
+        default does the same). All are checked before any is written (400 with wrong_type, out_of_range,
+        not_an_option, invalid_format or unknown_parameter per field), and written in one transaction, each an
+        audited change and a SettingChanged event. Takes effect on every instance within seconds. The four
+        driver_score_weight_* (FMS-146) may each be 0 but not all of them (all_zero); the driving rules keep the
+        rules between them (not_above_late, the distance limits'). A parameter naming a required_permission needs it
+        too. Needs settings:write (admin). Answers with GET /settings.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: false
+              additionalProperties: { description: 'Any other parameter of the registry, by key: a value of its type, or null.' }
               minProperties: 1
               properties:
                 fuel_variance_threshold_pct: { type: [integer, 'null'], minimum: 1, maximum: 100 }
@@ -4442,10 +4446,187 @@ paths:
                   data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
                   meta: { $ref: '#/components/schemas/Meta' }
         '400':
-          description: VALIDATION_FAILED (out_of_range per field, an unknown key, a fraction, an empty body).
+          description: VALIDATION_FAILED (a reason per field, an unknown key, an empty body); nothing is written.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /settings/definitions:
+    get:
+      tags: [Settings]
+      operationId: listSettingParameters
+      summary: Every parameter of the settings registry (FMS-157)
+      description: >
+        Each with its type, rules, default, the value it answers with now (its default while disabled), whether it
+        is a system or a custom parameter, and who changed its value last. A secret's value and default are never
+        returned (null, with has_value). Any signed-in user; filters by category, a search, changed and enabled.
+      parameters:
+        - { name: category, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string }, description: Matches the key, label, category or description. }
+        - { name: changed, in: query, schema: { type: string, enum: ['true', 'false'] }, description: 'true: only those with a value of their own.' }
+        - { name: enabled, in: query, schema: { type: string, enum: ['true', 'false'] } }
+      responses:
+        '200':
+          description: The parameters, by category and label; meta.categories lists every category.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/SettingParameter' } }
+                  meta:
+                    allOf:
+                      - { $ref: '#/components/schemas/Meta' }
+                      - { type: object, properties: { categories: { type: array, items: { type: string } } } }
+        '400':
+          description: VALIDATION_FAILED (an unknown filter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [Settings]
+      operationId: defineSettingParameter
+      summary: Add a custom parameter (FMS-157)
+      description: >
+        Its key (2 to 80 lower-case letters, digits and _), label, category, type, default and rules, checked for
+        the type (400 invalid_rules, unsupported_schema_keyword, invalid_default), and optionally a value of its own
+        from the start. Code reads it with settings.get(key) at once, with no deployment. Audited; a SettingDefined
+        event. Needs settings:define (admin).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/NewSettingParameter' } } }
+      responses:
+        '201':
+          description: The parameter.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SettingParameter' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (the key's format, the rules, the default, an unknown required_permission).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (key_taken), a live parameter has the key.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /settings/definitions/{key}:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_]{1,79}$' } }
+    get:
+      tags: [Settings]
+      operationId: getSettingParameter
+      summary: One parameter of the registry (FMS-157)
+      description: As in the list, with its version as the ETag. Any signed-in user.
+      responses:
+        '200':
+          description: The parameter.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SettingParameter' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Settings]
+      operationId: updateSettingParameter
+      summary: Change a parameter's value, enable or disable it, or edit a custom one's definition (FMS-157)
+      description: >
+        value (null: back to the default) needs settings:write and the definition's required_permission, and for a
+        system parameter a reason (400 required). is_enabled, and a custom parameter's label, category, description,
+        default_value, rules and required_permission, need settings:define; a system parameter's definition is the
+        code's (409 CONFLICT_SYSTEM_PARAMETER). A disabled parameter answers with its default. With If-Match, a
+        version older than the parameter's is 412 PRECONDITION_FAILED, not an overwrite. Audited; SettingChanged,
+        SettingEnabled or SettingDisabled events.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SettingParameterPatch' } } }
+      responses:
+        '200':
+          description: The parameter, after the change.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SettingParameter' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (the value, the reason, the rules); nothing is written.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_SYSTEM_PARAMETER (system_parameter), a system parameter's definition.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '412':
+          description: PRECONDITION_FAILED (stale_version), someone else changed it since.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Settings]
+      operationId: deleteSettingParameter
+      summary: Delete a custom parameter (FMS-157)
+      description: >
+        Soft: settings.get(key) answers nothing from then on, the audit log keeps its history, and the key may be
+        added again (from its default). A system parameter is 409 CONFLICT_SYSTEM_PARAMETER: disable it instead.
+        If-Match as for PATCH. A SettingDeleted event. Needs settings:define (admin).
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_SYSTEM_PARAMETER (system_parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '412':
+          description: PRECONDITION_FAILED (stale_version).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /settings/definitions/{key}/history:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Settings]
+      operationId: getSettingParameterHistory
+      summary: A parameter's history (FMS-157)
+      description: >
+        Every audited change, newest first: its value (old and new; a secret's masked), its definition edited,
+        enabled, disabled, deleted; who, when and why. Needs settings:write or settings:define.
+      responses:
+        '200':
+          description: The history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/SettingParameterHistoryEntry' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /settings/telemetry-rules:
     get:
@@ -7798,6 +7979,102 @@ components:
         updated_by: { type: [string, 'null'], format: uuid, description: Who changed it last; null while never changed. }
         updated_by_name: { type: [string, 'null'] }
         updated_at: { type: [string, 'null'], format: date-time }
+    SettingParameter:
+      type: object
+      description: A parameter of the settings registry (FMS-157, docs/settings.md). A secret's value and default are null.
+      required: [key, label, category, description, type, rules, default_value, value, is_default, is_enabled, is_system, is_secret, has_value, required_permission, storage, version, value_changed_at, value_changed_by, value_changed_by_name, created_at, updated_at]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_]{1,79}$' }
+        label: { type: string }
+        category: { type: string }
+        description: { type: string }
+        type: { $ref: '#/components/schemas/SettingParameterType' }
+        rules: { $ref: '#/components/schemas/SettingParameterRules' }
+        default_value: { description: 'A value of the type; null for a secret.' }
+        value: { description: 'What it answers with now: its own value, or the default while disabled or never changed. Null for a secret.' }
+        is_default: { type: boolean, description: No value of its own. }
+        is_enabled: { type: boolean }
+        is_system: { type: boolean, description: Declared in code; never deleted, its definition never edited. }
+        is_secret: { description: 'A key or password: its value is never returned or exported.', type: boolean }
+        has_value: { type: boolean, description: 'Whether a secret parameter has a value. Always true otherwise.' }
+        required_permission: { type: [string, 'null'], description: Needed besides settings:write to change the value. }
+        storage: { type: string, enum: [settings, rule_thresholds], description: 'rule_thresholds: the fleet''s row of the driving rules (a depot''s own still overrides it).' }
+        version: { type: integer, description: 'The ETag: bumped by every change of the definition or the value.' }
+        value_changed_at: { type: [string, 'null'], format: date-time }
+        value_changed_by: { type: [string, 'null'], format: uuid }
+        value_changed_by_name: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SettingParameterType:
+      type: string
+      enum: [text, number, integer, boolean, dropdown, multi_select, duration, email, url, json]
+      description: 'duration: whole seconds. json: any JSON value, checked against rules.schema when it has one.'
+    SettingParameterRules:
+      type: object
+      description: Which apply depends on the type; any other is refused (invalid_rules).
+      properties:
+        min: { type: number, description: 'number, integer, duration (seconds).' }
+        max: { type: number }
+        decimals: { type: integer, minimum: 0, maximum: 10, description: number. }
+        min_length: { type: integer, minimum: 0, description: text. }
+        max_length: { type: integer, minimum: 0, maximum: 10000 }
+        pattern: { type: string, description: 'text: a regular expression the whole value matches.' }
+        options:
+          type: array
+          description: 'dropdown (2 or more), multi_select (1 or more).'
+          items: { type: object, required: [value, label], properties: { value: { type: string }, label: { type: string } } }
+        min_items: { type: integer, minimum: 0, description: multi_select. }
+        max_items: { type: integer, minimum: 0 }
+        schema:
+          type: object
+          description: >
+            json: a JSON Schema of type, enum, const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf,
+            minLength, maxLength, pattern, items, minItems, maxItems, uniqueItems, properties, required and
+            additionalProperties (title, description, default, examples and $schema are annotations). Any other
+            keyword is refused (unsupported_schema_keyword).
+        unit: { type: string, maxLength: 20, description: 'number, integer: for display.' }
+    NewSettingParameter:
+      type: object
+      additionalProperties: false
+      required: [key, label, category, type, default_value]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_]{1,79}$' }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        category: { type: string, minLength: 1, maxLength: 60 }
+        description: { type: string, maxLength: 1000 }
+        type: { $ref: '#/components/schemas/SettingParameterType' }
+        default_value: { description: A value of the type, valid for the rules. }
+        rules: { $ref: '#/components/schemas/SettingParameterRules' }
+        is_enabled: { type: boolean, default: true }
+        is_secret: { type: boolean, default: false }
+        required_permission: { type: [string, 'null'], description: A permission code that exists. }
+        value: { description: A value of its own from the start; left out, it answers with the default. }
+    SettingParameterPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        value: { description: 'A value of the type, or null: back to the default. settings:write.' }
+        reason: { type: string, maxLength: 500, description: Why; required with a system parameter's value. }
+        is_enabled: { type: boolean, description: settings:define. }
+        label: { type: string, minLength: 1, maxLength: 120, description: 'A custom parameter''s; settings:define.' }
+        category: { type: string, minLength: 1, maxLength: 60 }
+        description: { type: string, maxLength: 1000 }
+        default_value: {}
+        rules: { $ref: '#/components/schemas/SettingParameterRules' }
+        required_permission: { type: [string, 'null'] }
+    SettingParameterHistoryEntry:
+      type: object
+      required: [at, change, old_value, new_value, fields, reason, by, by_name]
+      properties:
+        at: { type: string, format: date-time }
+        change: { type: string, enum: [value, defined, edited, enabled, disabled, deleted] }
+        old_value: { description: 'For a value change; null is the default. A secret''s is [SECRET].' }
+        new_value: {}
+        fields: { type: array, items: { type: string }, description: 'For an edit: the definition fields it changed.' }
+        reason: { type: [string, 'null'] }
+        by: { type: [string, 'null'], format: uuid }
+        by_name: { type: [string, 'null'] }
     RuleThresholds:
       type: object
       description: >

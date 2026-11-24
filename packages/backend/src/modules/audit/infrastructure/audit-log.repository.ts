@@ -41,8 +41,34 @@ const ENTITY_PUBLIC_ID = "COALESCE(a.new_values->>'public_id', a.old_values->>'p
 /** A LIKE pattern for actions starting with `prefix` (letters, `_` and `.` only): its `_` matches only itself. */
 const likePrefix = (prefix: string) => `${prefix.replace(/_/g, '\\_')}%`;
 
+/** One audited change of a record, for another module's history of it (records()). */
+export interface RecordChange {
+  /** The audit row's id: orders changes made at the same instant (one transaction). */
+  id: string;
+  at: Date;
+  userId: string | null;
+  action: string;
+  entityId: string;
+  oldValues: Record<string, unknown> | null;
+  newValues: Record<string, unknown> | null;
+}
+
 /** Reads audit.audit_logs, newest first on (created_at, id). Never writes: the trail is append-only. */
 export class AuditLogRepository {
+  /** The successful changes of these records of one table, newest first (idx_audit_logs_entity). */
+  async records(db: Queryable, entityType: string, entityIds: readonly string[], limit: number): Promise<RecordChange[]> {
+    if (entityIds.length === 0) return [];
+    const res = await db.query<RecordChange>(
+      `SELECT a.id, a.created_at AS at, a.user_id AS "userId", a.action, a.entity_id AS "entityId", a.old_values AS "oldValues", a.new_values AS "newValues"
+         FROM audit.audit_logs a
+        WHERE a.entity_type = $1 AND a.entity_id = ANY($2::bigint[]) AND a.result = 'success'
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT $3`,
+      [entityType, entityIds, limit],
+    );
+    return res.rows;
+  }
+
   async list(db: Queryable, f: AuditLogFilter): Promise<AuditLogRow[]> {
     const params: unknown[] = [];
     const add = (value: unknown) => {

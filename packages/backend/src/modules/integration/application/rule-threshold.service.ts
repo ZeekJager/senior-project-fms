@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Scope } from '../../../shared/authz/scope';
 import { notFound, validationFailed } from '../../../shared/errors/app-error';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
@@ -93,6 +94,11 @@ export interface RuleThresholdServiceDeps {
   };
   /** Called after a change, so the rules on this instance use it from the next ping. */
   onChange: () => void;
+  /**
+   * The fleet's thresholds changed through PUT .../fleet, on its transaction: these fields (FMS-157). The settings
+   * registry moves those parameters' versions on and publishes the change, so every instance picks it up at once.
+   */
+  onFleetChanged?: (client: PoolClient, caller: Caller, fields: readonly (keyof ThresholdSet)[]) => Promise<void>;
 }
 
 export interface Caller {
@@ -172,24 +178,29 @@ export class RuleThresholdService {
         distanceWeightStandard: kept('distanceWeightStandard'),
         distanceWeightHeavy: kept('distanceWeightHeavy'),
       };
-      // Urgent is later than late (chk_rule_trip_delay_urgent).
-      if (t.tripDelayUrgentMinutes <= t.tripDelayMinutes) {
-        throw validationFailed(
-          [{ field: 'trip_delay_urgent_minutes', reason: 'not_above_late' }],
-          `A trip is urgent later than it is late: more than ${t.tripDelayMinutes} minutes.`,
-        );
-      }
-      // FMS-156: a week holds at least a day; a heavier job never counts for less (chk_rule_distance_limits, _weights).
-      const distance = distanceLimitsProblem({
-        dailyKm: t.dailyDistanceKm,
-        weeklyKm: t.weeklyDistanceKm,
-        weights: { light: t.distanceWeightLight, standard: t.distanceWeightStandard, heavy: t.distanceWeightHeavy },
-      });
-      if (distance) throw validationFailed([{ field: distance.field, reason: distance.reason }], distance.message);
+      checkBetween(t);
+      const fields = changedFields(current ?? DEFAULT_THRESHOLD_SET, t);
       if (!current) await this.deps.thresholds.insert(client, ctx, depotId, t);
-      else if (!same(current, t)) await this.deps.thresholds.update(client, ctx, current.id, t);
+      else if (fields.length) await this.deps.thresholds.update(client, ctx, current.id, t);
+      if (depotId === null && fields.length) await this.deps.onFleetChanged?.(client, caller, fields);
     });
     this.deps.onChange();
+  }
+
+  /**
+   * The fleet's thresholds from the settings registry (FMS-157), on its transaction: the given fields changed, the
+   * others kept, the rules between them checked (400, nothing written), audited with the reason. Returns the fields
+   * that changed. The caller forgets the caches once its transaction commits.
+   */
+  async applyFleet(client: PoolClient, ctx: MutationContext, changes: Partial<ThresholdSet>, reason: string | null): Promise<(keyof ThresholdSet)[]> {
+    const current = await this.deps.thresholds.lock(client, null);
+    const base: ThresholdSet = current ? pickSet(current) : DEFAULT_THRESHOLD_SET;
+    const t: ThresholdSet = { ...base, ...changes };
+    checkBetween(t);
+    const fields = changedFields(base, t);
+    if (!current) await this.deps.thresholds.insert(client, ctx, null, t, reason);
+    else if (fields.length) await this.deps.thresholds.update(client, ctx, current.id, t, reason);
+    return fields;
   }
 
   /** DELETE /settings/telemetry-rules/depots/{depot_id}: the depot follows the fleet's thresholds again. 404 when it had none of its own. */
@@ -206,22 +217,32 @@ export class RuleThresholdService {
   }
 }
 
-function same(a: ThresholdSet, b: ThresholdSet): boolean {
-  return (
-    a.speedLimitKmh === b.speedLimitKmh &&
-    a.speedingPings === b.speedingPings &&
-    a.clearPings === b.clearPings &&
-    a.idleMinutes === b.idleMinutes &&
-    a.routeDeviationM === b.routeDeviationM &&
-    a.routeDeviationPings === b.routeDeviationPings &&
-    a.tripDelayMinutes === b.tripDelayMinutes &&
-    a.tripDelayUrgentMinutes === b.tripDelayUrgentMinutes &&
-    a.attendanceException === b.attendanceException &&
-    a.overrunException === b.overrunException &&
-    a.dailyDistanceKm === b.dailyDistanceKm &&
-    a.weeklyDistanceKm === b.weeklyDistanceKm &&
-    a.distanceWeightLight === b.distanceWeightLight &&
-    a.distanceWeightStandard === b.distanceWeightStandard &&
-    a.distanceWeightHeavy === b.distanceWeightHeavy
-  );
+const SET_FIELDS = Object.keys(DEFAULT_THRESHOLD_SET) as (keyof ThresholdSet)[];
+
+/** A row's thresholds alone. */
+function pickSet(row: ThresholdSet): ThresholdSet {
+  return Object.fromEntries(SET_FIELDS.map((f) => [f, row[f]])) as unknown as ThresholdSet;
+}
+
+/** The fields whose value differs. */
+function changedFields(a: ThresholdSet, b: ThresholdSet): (keyof ThresholdSet)[] {
+  return SET_FIELDS.filter((f) => a[f] !== b[f]);
+}
+
+/** The rules between thresholds, as the table's checks have them. */
+function checkBetween(t: ThresholdSet): void {
+  // Urgent is later than late (chk_rule_trip_delay_urgent).
+  if (t.tripDelayUrgentMinutes <= t.tripDelayMinutes) {
+    throw validationFailed(
+      [{ field: 'trip_delay_urgent_minutes', reason: 'not_above_late' }],
+      `A trip is urgent later than it is late: more than ${t.tripDelayMinutes} minutes.`,
+    );
+  }
+  // FMS-156: a week holds at least a day; a heavier job never counts for less (chk_rule_distance_limits, _weights).
+  const distance = distanceLimitsProblem({
+    dailyKm: t.dailyDistanceKm,
+    weeklyKm: t.weeklyDistanceKm,
+    weights: { light: t.distanceWeightLight, standard: t.distanceWeightStandard, heavy: t.distanceWeightHeavy },
+  });
+  if (distance) throw validationFailed([{ field: distance.field, reason: distance.reason }], distance.message);
 }

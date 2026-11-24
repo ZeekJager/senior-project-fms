@@ -45,12 +45,14 @@ function softDeleteSql(tableName: string, extraKeys: string[]): string {
 
 // Never copied into audit.audit_logs, which is readable through GET
 // /audit-logs: a hash is enough for an offline guessing attack, and a
-// document's storage key is never shown to anyone (api-contract §8).
-const REDACTED_COLUMNS = new Set(['password_hash', 'token_hash', 'storage_key']);
+// document's storage key is never shown to anyone (api-contract §8). A
+// secret settings parameter's value (FMS-157) is never shown either.
+const REDACTED_COLUMNS = new Set(['password_hash', 'token_hash', 'storage_key', 'secret_value']);
 
 function forAudit(row: Row): Row {
   const copy: Row = { ...row };
-  for (const col of REDACTED_COLUMNS) if (col in copy) copy[col] = '[REDACTED]';
+  // Only what is there: an empty column stays null, so the trail still shows it was empty.
+  for (const col of REDACTED_COLUMNS) if (col in copy && copy[col] !== null) copy[col] = '[REDACTED]';
   return copy;
 }
 

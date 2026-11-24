@@ -705,18 +705,22 @@ in it.
 
 ### Settings
 
-**Settings** changes the rules' thresholds, without any code:
+**Settings** lists every parameter FMS applies, by category, without any code: the driving rules (speed limit,
+speeding and idling, off route), trip delays, assigning through a warning, driving distance limits, alerts and
+anomalies, the driver score, and any parameter an administrator added. Search, or show only those **Changed from
+default** or **Disabled**.
 
-- **Driving rules:** the speed limit, how many pings flag and clear speeding, idling minutes. A depot can have its own
-  rules.
-- **Assigning through a warning:** whether an absent driver, or a previous trip running late, only warns or needs a
-  fleet manager's approval.
-- **Driving distance limits:** the daily and weekly limits, and how much light, standard and heavy jobs count.
-- **Alerts and anomalies:** the fuel variance threshold, the health score's alert line, and how early expiries are
-  warned of.
+Select a parameter to open it:
 
-Each shows its default, who changed it last, and **Use the default**. A change takes effect within a minute and is in
-the audit log.
+- **Value:** an editor that fits it (a number with its unit, a switch, a dropdown, options to tick, a duration such as
+  `1h 30m`, JSON). A wrong value is refused as you type, with the reason. A system parameter needs a **Why**.
+- **Reset to default**, and **Enabled**: a disabled parameter answers with its default until enabled again.
+- **History:** who changed it, when and why, with **Restore this value** and **Export CSV**.
+
+**Add parameter** creates a custom one (a name, a category, a type with its rules and a default); code reads it at
+once, with no deployment. Only a custom parameter can be deleted. A secret (an API key) is never shown again once
+saved. Under **Driving rules**, a depot can have its own. If someone else saved the same parameter first, FMS says so
+instead of overwriting their change. A change reaches every server within seconds and is in the audit log.
 
 ![Settings](user-guide/images/admin-04-settings.png)
 

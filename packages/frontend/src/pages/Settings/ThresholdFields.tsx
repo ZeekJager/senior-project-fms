@@ -102,11 +102,6 @@ export function validateThresholds(v: ThresholdValues): { errors: ThresholdError
   return { errors, thresholds: Object.keys(errors).length ? null : (out as Thresholds) }
 }
 
-export const sameThresholds = (v: ThresholdValues, t: Thresholds) =>
-  WHOLE_FIELDS.every(({ key }) => v[key].trim() === String(t[key])) &&
-  WEIGHT_KEYS.every((key) => Number(v[key].trim().replace(',', '.')) === t[key]) &&
-  POLICY_KEYS.every((key) => v[key] === t[key])
-
 /**
  * The speeding, idling, route deviation and trip delay thresholds, two to a row from small screens up; then whether
  * each assignment warning waits for a fleet manager (FMS-151); then the driving distance limits and the job loads' weights (FMS-156).

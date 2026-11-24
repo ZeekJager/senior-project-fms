@@ -23,7 +23,7 @@ const COLUMNS = `id, depot_id AS "depotId", speed_limit_kmh AS "speedLimitKmh", 
 
 const TABLE = 'tracking.rule_thresholds';
 
-const columnsOf = (t: ThresholdSet) => ({
+const columnsOf = (t: ThresholdSet, reason: string | null) => ({
   speed_limit_kmh: t.speedLimitKmh,
   speeding_pings: t.speedingPings,
   clear_pings: t.clearPings,
@@ -39,10 +39,22 @@ const columnsOf = (t: ThresholdSet) => ({
   distance_weight_light: t.distanceWeightLight,
   distance_weight_standard: t.distanceWeightStandard,
   distance_weight_heavy: t.distanceWeightHeavy,
+  // Why (FMS-157): the registry asks for a reason; the driving rules screen sends none.
+  change_reason: reason,
 });
+
+/**
+ * The defaults of the registry's disabled thresholds (FMS-157), by parameter key: a disabled threshold answers with
+ * its default for the fleet and every depot. Empty when none is disabled.
+ */
+export type DisabledThresholds = () => Promise<Map<string, unknown>>;
+
+const num = (m: Map<string, unknown>, key: string, fallback: number) => (m.has(key) ? Number(m.get(key)) : fallback);
 
 /** Changes to tracking.rule_thresholds from the settings screen (FMS-80), each audited. */
 export class RuleThresholdRepository {
+  constructor(private readonly disabled: DisabledThresholds = async () => new Map()) {}
+
   /** The fleet's row first, then the depots' that differ. */
   async all(db: Queryable): Promise<ThresholdRow[]> {
     const res = await db.query<ThresholdRow>(`SELECT ${COLUMNS} FROM tracking.rule_thresholds ORDER BY depot_id NULLS FIRST, id`);
@@ -59,7 +71,9 @@ export class RuleThresholdRepository {
         LIMIT 1`,
       [depotId],
     );
-    return res.rows[0] ?? { lateMinutes: DEFAULT_THRESHOLD_SET.tripDelayMinutes, urgentMinutes: DEFAULT_THRESHOLD_SET.tripDelayUrgentMinutes };
+    const r = res.rows[0] ?? { lateMinutes: DEFAULT_THRESHOLD_SET.tripDelayMinutes, urgentMinutes: DEFAULT_THRESHOLD_SET.tripDelayUrgentMinutes };
+    const off = await this.disabled();
+    return { lateMinutes: num(off, 'trip_delay_minutes', r.lateMinutes), urgentMinutes: num(off, 'trip_delay_urgent_minutes', r.urgentMinutes) };
   }
 
   /** The exception policies (FMS-151) of a depot (internal id): its own row's, else the fleet's. Read on the caller's transaction. */
@@ -72,7 +86,12 @@ export class RuleThresholdRepository {
         LIMIT 1`,
       [depotId],
     );
-    return res.rows[0] ?? DEFAULT_EXCEPTION_POLICIES;
+    const r = res.rows[0] ?? DEFAULT_EXCEPTION_POLICIES;
+    const off = await this.disabled();
+    return {
+      attendance: (off.get('driver_attendance_exception') as ExceptionPolicies['attendance'] | undefined) ?? r.attendance,
+      overrun: (off.get('trip_overrun_exception') as ExceptionPolicies['overrun'] | undefined) ?? r.overrun,
+    };
   }
 
   /** The driving distance limits (FMS-156) of a depot (internal id): its own row's, else the fleet's. Read on the caller's transaction. */
@@ -87,7 +106,18 @@ export class RuleThresholdRepository {
       [depotId],
     );
     const r = res.rows[0];
-    return r ? { dailyKm: r.dailyKm, weeklyKm: r.weeklyKm, weights: { light: r.light, standard: r.standard, heavy: r.heavy } } : DEFAULT_DISTANCE_LIMITS;
+    const limits = r ? { dailyKm: r.dailyKm, weeklyKm: r.weeklyKm, weights: { light: r.light, standard: r.standard, heavy: r.heavy } } : DEFAULT_DISTANCE_LIMITS;
+    const off = await this.disabled();
+    if (off.size === 0) return limits;
+    return {
+      dailyKm: num(off, 'daily_distance_km', limits.dailyKm),
+      weeklyKm: num(off, 'weekly_distance_km', limits.weeklyKm),
+      weights: {
+        light: num(off, 'distance_weight_light', limits.weights.light),
+        standard: num(off, 'distance_weight_standard', limits.weights.standard),
+        heavy: num(off, 'distance_weight_heavy', limits.weights.heavy),
+      },
+    };
   }
 
   /** The fleet's row (depotId null) or a depot's, if it has one. Changes queue behind each other, so two cannot both insert a depot's row. */
@@ -97,12 +127,12 @@ export class RuleThresholdRepository {
     return res.rows[0] ?? null;
   }
 
-  async insert(client: PoolClient, ctx: MutationContext, depotId: string | null, t: ThresholdSet): Promise<void> {
-    await auditedMutation(client, ctx, TABLE, 'INSERT', null, { depot_id: depotId, ...columnsOf(t), updated_by: ctx.userId });
+  async insert(client: PoolClient, ctx: MutationContext, depotId: string | null, t: ThresholdSet, reason: string | null = null): Promise<void> {
+    await auditedMutation(client, ctx, TABLE, 'INSERT', null, { depot_id: depotId, ...columnsOf(t, reason), updated_by: ctx.userId });
   }
 
-  async update(client: PoolClient, ctx: MutationContext, id: string, t: ThresholdSet): Promise<void> {
-    await auditedMutation(client, ctx, TABLE, 'UPDATE', id, { ...columnsOf(t), updated_by: ctx.userId });
+  async update(client: PoolClient, ctx: MutationContext, id: string, t: ThresholdSet, reason: string | null = null): Promise<void> {
+    await auditedMutation(client, ctx, TABLE, 'UPDATE', id, { ...columnsOf(t, reason), updated_by: ctx.userId });
   }
 
   /** A depot's row goes: the depot follows the fleet's again. The table has no is_active, so the row is deleted and the audit keeps it. */

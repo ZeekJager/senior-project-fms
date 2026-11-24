@@ -52,6 +52,9 @@ const FLAG_COLUMNS = `f.id, f.public_id AS "publicId", f.vehicle_id AS "vehicleI
  * (TelemetryFlagRaised, TelemetryFlagResolved) record each one.
  */
 export class TelemetryFlagRepository {
+  /** `disabled`: the defaults of the registry's disabled thresholds by key (FMS-157); they replace the stored values. */
+  constructor(private readonly disabled: () => Promise<Map<string, unknown>> = async () => new Map()) {}
+
   /** Deletes up to `limit` flags observed before `cutoff`, oldest first (FMS-104 retention); returns how many went. */
   async purgeBefore(db: Queryable, cutoff: Date, limit: number): Promise<number> {
     const res = await db.query(
@@ -71,7 +74,16 @@ export class TelemetryFlagRepository {
         LIMIT 1`,
       [depotId],
     );
-    return res.rows[0] ?? DEFAULT_THRESHOLDS;
+    const t = res.rows[0] ?? DEFAULT_THRESHOLDS;
+    const off = await this.disabled();
+    if (off.size === 0) return t;
+    const pick = (key: string, v: number) => (off.has(key) ? Number(off.get(key)) : v);
+    return {
+      speedLimitKmh: pick('speed_limit_kmh', t.speedLimitKmh),
+      speedingPings: pick('speeding_pings', t.speedingPings),
+      clearPings: pick('clear_pings', t.clearPings),
+      idleMinutes: pick('idle_minutes', t.idleMinutes),
+    };
   }
 
   /** Route deviation's thresholds, with the shared clear count: the depot's row, else the fleet's, else the starting values. */
@@ -84,7 +96,15 @@ export class TelemetryFlagRepository {
         LIMIT 1`,
       [depotId],
     );
-    return res.rows[0] ?? DEFAULT_LOCATION_THRESHOLDS;
+    const t = res.rows[0] ?? DEFAULT_LOCATION_THRESHOLDS;
+    const off = await this.disabled();
+    if (off.size === 0) return t;
+    const pick = (key: string, v: number) => (off.has(key) ? Number(off.get(key)) : v);
+    return {
+      routeDeviationM: pick('route_deviation_m', t.routeDeviationM),
+      routeDeviationPings: pick('route_deviation_pings', t.routeDeviationPings),
+      clearPings: pick('clear_pings', t.clearPings),
+    };
   }
 
   /** The flag types the vehicle has open (condition ongoing), whoever reviewed them. */
