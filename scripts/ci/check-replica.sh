@@ -32,7 +32,11 @@ for _ in $(seq 1 30); do
   [ "$state" = "streaming" ] && break
   sleep 2
 done
-[ "$state" = "streaming" ] || { echo "The replica is not streaming from the primary"; exit 1; }
+[ "$state" = "streaming" ] || {
+  echo "The replica is not streaming from the primary. Its log:"
+  $COMPOSE logs --no-color --tail=40 postgres-replica 2>&1 | grep -v ' socat\[' || true
+  exit 1
+}
 echo "replica streaming: $(primary -c "select slot_name || ' active=' || active from pg_replication_slots where slot_name = 'fms_replica'")"
 
 token=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')

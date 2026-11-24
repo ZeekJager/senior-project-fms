@@ -47,10 +47,17 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
 fi
 
 # A standby copied before the stable endpoint streams from the primary by name: point it at the endpoint, so it
-# follows whichever server is the primary.
+# follows whichever server is the primary. Every primary_conninfo line is rewritten (PostgreSQL uses the last one,
+# and a copy of a server that was once a standby carries its old line too), whether its host is plain (host=postgres)
+# or quoted inside the setting's quotes as pg_basebackup -R writes it (host=''postgres''). Changes nothing when every
+# line already says the endpoint.
 AUTO="$PGDATA/postgresql.auto.conf"
-if [ -f "$AUTO" ] && grep -q "^primary_conninfo" "$AUTO" && ! grep -Eq "^primary_conninfo.*host=('')?$PRIMARY_HOST('')?[ ']" "$AUTO"; then
-  # pg_basebackup -R quotes each value inside the setting's quotes (host=''postgres''); older copies may not.
-  sed -Ei "/^primary_conninfo/s/host=('')?[^ ']*('')?/host=''$PRIMARY_HOST''/" "$AUTO"
-  echo "standby: now streams through $PRIMARY_HOST"
+if [ -f "$AUTO" ] && grep -q "^primary_conninfo" "$AUTO"; then
+  sed -E "/^primary_conninfo/s/host=('')?[^ ']*('')?/host=''$PRIMARY_HOST''/" "$AUTO" > "$AUTO.endpoint"
+  if cmp -s "$AUTO" "$AUTO.endpoint"; then
+    rm -f "$AUTO.endpoint"
+  else
+    cat "$AUTO.endpoint" > "$AUTO" && rm -f "$AUTO.endpoint"
+    echo "standby: now streams through $PRIMARY_HOST"
+  fi
 fi
