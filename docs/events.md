@@ -126,7 +126,7 @@ Today's projections (`eventBus.project`): they run inside `publish`, on the tran
 
 ## Retention
 
-The daily `event-outbox-cleanup` job (03:30, [jobs.md](jobs.md)) deletes events delivered more than 7 days ago, then `processed_events` rows as old whose event is gone. Dead letters, and the records of the consumers that did handle them, stay until someone deals with them. An event is redelivered only while its row is still in the outbox, so a consumer's records last as long as any redelivery can.
+The daily `event-outbox-cleanup` job (03:30, [jobs.md](jobs.md)) deletes events delivered more than 7 days ago, then `processed_events` rows as old whose event is gone. It deletes in batches (SE-206): each statement removes at most 10,000 rows, oldest first, and commits on its own, so a backlog after downtime never lands as one transaction (13.25 million rows once wrote 16 GB of WAL in 5 minutes, for the archive and the replica to absorb). A run stops after 5 minutes and leaves the rest for the next day; its result records `events_deleted`, `processed_deleted`, `batches` and whether it was `complete`. Dead letters, and the records of the consumers that did handle them, stay until someone deals with them. An event is redelivered only while its row is still in the outbox, so a consumer's records last as long as any redelivery can.
 
 ## Notes
 

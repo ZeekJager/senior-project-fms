@@ -10,6 +10,7 @@ import { RedisEventBroadcaster, type EventBroadcaster } from '../../src/shared/e
 import { createEvent, deterministicEventId, envelopeOf, type DomainEvent } from '../../src/shared/events/domain-event';
 import { eventBus, eventChannel } from '../../src/shared/events/event-bus';
 import { appendToOutbox, outboxStore } from '../../src/shared/events/outbox';
+import type { Queryable } from '../../src/shared/infrastructure/queryable';
 import { outboxCleanupJob } from '../../src/shared/events/outbox-cleanup';
 import { BROADCAST_LOCK_KEY, OutboxRelay, RELAY_LOCK_KEY, type OutboxRelayOptions } from '../../src/shared/events/outbox-relay';
 import { SubscriberRegistry } from '../../src/shared/events/subscribers';
@@ -287,7 +288,7 @@ describe('retention', () => {
     await pool.query(`UPDATE events.outbox SET created_at = created_at + interval '2 days' WHERE event_id = $1`, [recent.id]);
     const weekOn = new Date(Date.now() + 8 * 86_400_000);
     const ran = await outboxCleanupJob(pool).run({ now: weekOn, correlationId: randomUUID(), runKey: 'test' });
-    expect(ran).toEqual({ events_deleted: 1, processed_deleted: 2 });
+    expect(ran).toEqual({ events_deleted: 1, processed_deleted: 2, batches: 2, complete: true });
     expect((await publishedEvents()).map((e) => e.id)).toEqual([dead.id, recent.id]);
     // The dead letter keeps the record of the consumer that handled it: requeued, only test.keep runs again.
     const records = await pool.query('SELECT event_id, consumer FROM events.processed_events ORDER BY event_id, consumer');
@@ -298,6 +299,55 @@ describe('retention', () => {
       ]),
     );
     expect(records.rows.some((r) => r.event_id === old.id)).toBe(false);
+  });
+
+  // SE-206: a backlog after downtime is deleted a batch per statement, never in one transaction.
+  const MONTH_AGO = "now() - interval '30 days'";
+  const backlog = async (events: number, records: number) => {
+    await pool.query(
+      `INSERT INTO events.outbox (event_id, event_type, occurred_at, correlation_id, payload, created_at, dispatched_at, published_at)
+       SELECT gen_random_uuid(), 'TestPurged', ${MONTH_AGO}, gen_random_uuid(), '{}', ${MONTH_AGO}, ${MONTH_AGO}, ${MONTH_AGO} FROM generate_series(1, $1)`,
+      [events],
+    );
+    await pool.query(
+      `INSERT INTO events.processed_events (consumer, event_id, processed_at) SELECT 'test.purge', gen_random_uuid(), ${MONTH_AGO} FROM generate_series(1, $1)`,
+      [records],
+    );
+  };
+  /** The pool, recording each statement and the rows it changed. */
+  const recording = () => {
+    const statements: { sql: string; rows: number }[] = [];
+    const db: Queryable = {
+      query: async (sql, values) => {
+        const res = await pool.query(sql, values);
+        statements.push({ sql, rows: res.rowCount ?? 0 });
+        return res as never;
+      },
+    };
+    return { db, statements };
+  };
+  const weekAgo = () => new Date(Date.now() - 7 * 86_400_000);
+
+  test('the purge deletes a backlog in batches: no statement deletes more than one batch, and it opens no transaction of its own', async () => {
+    await backlog(25, 12);
+    const { db, statements } = recording();
+    const removed = await outboxStore.purge(db, weekAgo(), { batch: 10 });
+    expect(removed).toEqual({ events: 25, processed: 12, batches: 5, complete: true });
+    expect(statements.map((s) => s.rows)).toEqual([10, 10, 5, 10, 2]);
+    expect(statements.every((s) => /^\s*DELETE /.test(s.sql))).toBe(true);
+    const left = await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM events.outbox WHERE event_type = 'TestPurged'`);
+    expect(left.rows[0].n).toBe(0);
+  });
+
+  test('a run stops at its time budget and leaves the rest for the next day', async () => {
+    await backlog(25, 5);
+    let t = 0;
+    const { db, statements } = recording();
+    const removed = await outboxStore.purge(db, weekAgo(), { batch: 10, budgetMs: 1_000, clock: () => (t += 600) });
+    expect(removed).toEqual({ events: 20, processed: 0, batches: 2, complete: false });
+    expect(statements).toHaveLength(2);
+    const next = await outboxStore.purge(pool, weekAgo(), { batch: 10 });
+    expect(next).toEqual({ events: 5, processed: 5, batches: 2, complete: true });
   });
 });
 
