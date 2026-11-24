@@ -215,7 +215,7 @@ The inputs are checked against the spec: each required, in range, and nothing el
 **How it is worked out:**
 
 - **The model's status** is cached for a minute, as the board polls.
-- **The inputs** are read from the replica, as of the trip's scheduled start.
+- **The inputs** are read from the replica, as of the trip's scheduled start. A driver's trip under way now has no end yet: it counts as ending at its scheduled end (or now, if that has passed), and as under way at the trip's start only if it is expected to run past it.
 - **Failure:** the model is asked outside the board's transaction, and a failure leaves the board as it was.
 
 ## Training on the fleet's trips
