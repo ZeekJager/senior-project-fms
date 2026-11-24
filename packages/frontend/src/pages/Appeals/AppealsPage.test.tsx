@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { appealDetail } from '@/features/appeals/fixtures'
 import type { AppealDetail } from '@/features/appeals/api'
@@ -31,7 +31,7 @@ function serve(first: AppealDetail) {
   let current = first
   const posted: { path: string; body: unknown }[] = []
   server.use(
-    http.get('/api/v1/appeals', () => envelope([current], 200, { page: 1, page_size: 25, total_items: 1, total_pages: 1 })),
+    http.get('/api/v1/appeals', () => HttpResponse.json({ data: [current], meta: { request_id: 'r-1', page: 1, page_size: 25, total_items: 1, total_pages: 1 } })),
     http.get(`/api/v1/appeals/${first.id}`, () => envelope(current)),
     http.post(`/api/v1/appeals/${first.id}/:step`, async ({ request, params }) => {
       const body = await request.json().catch(() => null)
