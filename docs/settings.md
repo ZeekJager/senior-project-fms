@@ -41,7 +41,7 @@ Every parameter has a row: `key`, `label`, `category`, `description`, `type`, a 
 | `json` | any JSON value (at most 16 KB) | `schema`: a JSON Schema |
 
 - **One validator:** `checkValue` and `checkDefinition` in `parameter-types.ts`. The API runs them on save, the screen as each value is typed; the reasons are `wrong_type`, `out_of_range`, `not_an_option` and `invalid_format`. A rule a type does not take is refused (`invalid_rules`), and so is a schema with a keyword the json type does not check (`unsupported_schema_keyword`; it checks `type`, `enum`, `const`, the numeric bounds and `multipleOf`, the string lengths and `pattern`, `items`, `minItems`, `maxItems`, `uniqueItems`, `properties`, `required`, `additionalProperties`), so no part of a schema is silently ignored.
-- **System parameters** are the 7 settings below and the 15 driving rules' thresholds. The module whose rule each tunes declares it in code, and the API brings its row in step on start (label, category, description, type, rules, default; never whether it is enabled). Migration 077 inserted them, and a test checks the two agree. They are never deleted (`409 CONFLICT_SYSTEM_PARAMETER`), their definition is never edited, and a change of their value needs a reason.
+- **System parameters** are the 9 settings below and the 15 driving rules' thresholds. The module whose rule each tunes declares it in code, and the API brings its row in step on start (label, category, description, type, rules, default; never whether it is enabled). Migration 077 inserted them, and a test checks the two agree. They are never deleted (`409 CONFLICT_SYSTEM_PARAMETER`), their definition is never edited, and a change of their value needs a reason.
 - **Custom parameters** are added on the screen (`POST /settings/definitions`, `settings:define`) and deleted softly (`is_active`); the key can be used again, starting from its default. Code reads any parameter, with no deployment:
 
   ```ts
@@ -98,6 +98,17 @@ The score divides by their sum, so they need not add up to 100, and 0 leaves a p
 | `driver_score_weight_dvir` | 10 | 0-100 | Trips with the driver's pre-trip inspection |
 
 The defaults are the card's and still need the advisor's agreement.
+
+### Score appeals: `settings.settings`
+
+The driver score appeals' rules (FMS-159, [score-appeals.md](score-appeals.md)), in the category *Score appeals*.
+
+| Key | Default | Range | What it is |
+|---|---|---|---|
+| `appeal_window_days` | 30 | 1-365 | Days after a flag, an incident or the end of a month in which a driver may appeal it |
+| `appeal_review_working_days` | 5 | 1-30 | Working days, Monday to Friday, to decide an appeal before it is overdue and goes to the depot admin |
+
+A change applies to appeals sent from then on: an appeal keeps the deadline it was given.
 
 - The expiry setting moves the warnings only. The lists' *expiring soon* marks (licence status, the vehicle list's document filter, the documents panel) stay at 30 days.
 

@@ -242,16 +242,17 @@ export class ReportRepository {
                   WHERE r.trip_id = t.trip_id AND r.driver_id = t.driver_id AND r.inspection_type = 'pre_trip'
                 ))::int AS inspected
          FROM analytics.trip_history_facts t
-         WHERE status = 'completed' AND driver_id IS NOT NULL AND actual_end >= $1 AND actual_end < $2 GROUP BY 1
+         WHERE status = 'completed' AND driver_id IS NOT NULL AND actual_end >= $1 AND actual_end < $2
+           AND NOT EXISTS (SELECT 1 FROM analytics.score_exclusions e WHERE e.trip_id = t.trip_id) GROUP BY 1
        ),
        flags AS (
          SELECT driver_id, COUNT(*) FILTER (WHERE flag_type = 'speeding')::int AS speeding, COUNT(*) FILTER (WHERE flag_type = 'idling')::int AS idling
-         FROM analytics.telemetry_flag_facts WHERE driver_id IS NOT NULL AND observed_at >= $1 AND observed_at < $2 GROUP BY 1
+         FROM analytics.score_flag_facts WHERE driver_id IS NOT NULL AND observed_at >= $1 AND observed_at < $2 AND NOT score_excluded GROUP BY 1
        ),
        incidents AS (
          SELECT driver_id, COUNT(*)::int AS incidents, COUNT(*) FILTER (WHERE incident_type = 'accident')::int AS accidents
-         FROM analytics.incident_facts
-         WHERE driver_id IS NOT NULL AND occurred_at >= $1 AND occurred_at < $2 GROUP BY 1
+         FROM analytics.score_incident_facts
+         WHERE driver_id IS NOT NULL AND occurred_at >= $1 AND occurred_at < $2 AND NOT score_excluded GROUP BY 1
        )
        SELECT d.public_id, d.full_name, d.depot_name, COALESCE(t.trips, 0) AS trips, COALESCE(t.metres, 0) AS metres, COALESCE(t.minutes, 0) AS minutes,
               COALESCE(t.timed, 0) AS timed, COALESCE(t.on_time, 0) AS on_time,

@@ -1,5 +1,6 @@
-import { AlertCircle, Trophy } from 'lucide-react'
+import { AlertCircle, ChevronRight, Scale, Trophy } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { MonthStepper } from '@/components/shared'
 import { Skeleton, cn } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
@@ -76,6 +77,19 @@ function Parts({ p }: { p: MyPerformance }) {
   )
 }
 
+/** "Corrected after appeal" (FMS-159): the score before the first approved correction of the month, and now. */
+function Corrected({ p }: { p: MyPerformance }) {
+  const corrections = (p.corrections ?? []).filter((c) => c.score_before !== null && c.score_after !== null && c.score_before !== c.score_after)
+  if (corrections.length === 0) return null
+  const first = corrections[0]
+  return (
+    <p className="mt-3 rounded-control bg-success-soft px-3 py-1.5 text-sm font-medium text-success">
+      Corrected after appeal: {first.score_before} to {p.score}
+      {corrections.length > 1 ? ` (${corrections.length} corrections)` : ''}
+    </p>
+  )
+}
+
 /**
  * My score (FMS-146): the driver's own performance score for a month, from 0 to 100, and the four parts it is made of,
  * each with what it was worked out from. Only their own: no other driver's, and no ranking.
@@ -121,9 +135,26 @@ export function DriverScore() {
               <p className="mt-2 text-sm text-ink-muted">
                 {count(p.trips_completed, 'trip')} · {km(p.distance_m)}
               </p>
+              <Corrected p={p} />
             </section>
           )}
           {p.trips_completed > 0 && <Parts p={p} />}
+          {/* FMS-159: a month that has ended may be appealed, within the window. */}
+          {month < currentMonth() && (
+            <Link
+              to={`/driver/appeals/new?month=${month}`}
+              className="focus-ring flex items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3.5 text-ink shadow-soft hover:bg-surface-muted"
+            >
+              <span className="flex items-center gap-3">
+                <Scale className="h-5 w-5 text-brand-ink" aria-hidden="true" />
+                <span>
+                  <span className="block text-base font-semibold">Appeal this score</span>
+                  <span className="block text-sm text-ink-muted">If something counted against you that should not have</span>
+                </span>
+              </span>
+              <ChevronRight className="h-5 w-5 text-ink-subtle" aria-hidden="true" />
+            </Link>
+          )}
           <p className="text-center text-xs text-ink-subtle">Only you and your managers see your score.</p>
         </>
       )}

@@ -37,7 +37,7 @@ const inWindow = (column: string) => `${column} >= CURRENT_TIMESTAMP - interval 
 
 const ROW_SQL = `
   SELECT n.id, n.public_id AS "publicId", n.notification_type AS type, n.title, n.message,
-         a.public_id AS "alertPublicId", a.entity_type AS "entityType", a.entity_id AS "entityId",
+         a.public_id AS "alertPublicId", COALESCE(a.entity_type, n.entity_type) AS "entityType", COALESCE(a.entity_id::text, n.entity_id) AS "entityId",
          a.vehicle_id AS "vehicleId", a.driver_id AS "driverId", n.read_at AS "readAt", n.queued_at AS "createdAt"
     FROM alert.notifications n
     LEFT JOIN alert.alerts a ON a.id = n.alert_id`;
@@ -104,6 +104,36 @@ export class NotificationRepository extends Repository {
     );
     for (const r of res.rows) counts.set(r.userId, r.n);
     return counts;
+  }
+
+  /**
+   * In-app notices that are no alert (FMS-159: a step on a driver's appeal), delivered at once, naming what they are
+   * about so the inbox links to it. One statement and one audit entry.
+   */
+  async insertNotices(
+    client: PoolClient,
+    ctx: MutationContext,
+    recipients: readonly string[],
+    content: { type: string; title: string; message: string },
+    entity: { type: string; id: string },
+  ): Promise<number> {
+    if (recipients.length === 0) return 0;
+    const res = await client.query(
+      `INSERT INTO alert.notifications
+              (alert_id, recipient_user_id, notification_type, title, message, channel, status, sent_at, delivered_at, entity_type, entity_id)
+       SELECT NULL, r, $2, $3, $4, 'in_app', 'delivered', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5, $6
+         FROM unnest($1::bigint[]) AS r`,
+      [recipients, content.type, content.title, content.message, entity.type, entity.id],
+    );
+    await recordAuditEntry(client, {
+      action: 'notification.notice_sent',
+      userId: ctx.userId,
+      entityType: 'alert.notifications',
+      entityId: null,
+      correlationId: ctx.correlationId,
+      details: { channel: 'in_app', recipients: res.rowCount ?? recipients.length, notification_type: content.type, subject: entity },
+    });
+    return res.rowCount ?? recipients.length;
   }
 
   /** Marks one notification read: one audited change. */

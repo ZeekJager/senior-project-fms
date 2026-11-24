@@ -294,7 +294,8 @@ test('the system parameters in the database are the code’s: the migration and 
     ...settingParameters(settingDefinitions({ fuelVarianceThresholdPct: config.fuel.varianceThresholdPct })),
     ...thresholdParameterStore({ thresholds: null as never, service: null as never, trail: null as never }).parameters,
   ];
-  expect(declared).toHaveLength(22);
+  // 9 settings (FMS-80, FMS-146, the 2 of FMS-159's appeals) and 15 driving rules.
+  expect(declared).toHaveLength(24);
   // Bringing them in step changes nothing.
   expect(await new SettingsRepository(pool).syncSystem(pool, declared)).toEqual([]);
 });

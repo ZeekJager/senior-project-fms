@@ -37,13 +37,13 @@ export function Note({ tone, icon, children }: { tone: 'danger' | 'warning'; ico
   )
 }
 
-/** A driver form's heading, with the way back to My day. */
-export function FormHeader({ title }: { title: string }) {
+/** A driver form's heading, with the way back (to My day unless `back` says where). */
+export function FormHeader({ title, back = { to: '/driver', label: 'My day' } }: { title: string; back?: { to: string; label: string } }) {
   return (
     <header>
-      <Link to="/driver" className="focus-ring -ml-1 inline-flex items-center gap-1 rounded-control px-1 py-1 text-sm font-medium text-ink-muted hover:text-ink">
+      <Link to={back.to} className="focus-ring -ml-1 inline-flex items-center gap-1 rounded-control px-1 py-1 text-sm font-medium text-ink-muted hover:text-ink">
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        My day
+        {back.label}
       </Link>
       <h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink">{title}</h1>
     </header>

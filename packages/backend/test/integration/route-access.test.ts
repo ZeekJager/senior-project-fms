@@ -28,6 +28,8 @@ const REVIEWED_PUBLIC = [
   'POST /api/v1/auth/logout',
   'POST /api/v1/auth/password',
   'GET /api/v1/documents/:documentId/content',
+  // FMS-159: an appeal attachment's signed, time-limited link; the signature is the permission.
+  'GET /api/v1/appeal-attachments/:attachmentId/content',
   'POST /api/v1/webhooks/telematics/:provider',
   'POST /api/v1/webhooks/fuel-card/:provider',
   'POST /api/v1/webhooks/ev/:provider',

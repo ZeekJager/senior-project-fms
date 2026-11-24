@@ -19,7 +19,9 @@ export interface DueMessage {
   attempts: number;
   queuedAt: Date;
   pushSubscriptionId: string | null;
-  alert: { publicId: string; status: AlertStatus; severity: AlertSeverity; entityType: string | null; entityId: string | null; createdAt: Date };
+  /** Null for a notice that is no alert (an appeal's step, FMS-159): then `entity` says what it is about. */
+  alert: { publicId: string; status: AlertStatus; severity: AlertSeverity; entityType: string | null; entityId: string | null; createdAt: Date } | null;
+  entity: { type: string | null; id: string | null };
 }
 
 /** Every notification of an alert, for its delivery status (internal ids). */
@@ -77,25 +79,42 @@ export class DeliveryRepository extends Repository {
     return this.db;
   }
 
-  /** Emails, SMS and pushes for an alert's recipients, due at once. */
-  async queue(client: PoolClient, ctx: MutationContext, alertId: string, messages: readonly QueuedMessage[], content: { type: string; title: string; message: string }): Promise<number> {
+  /** Emails, SMS and pushes for an alert's recipients, or a notice's (no alert, its subject instead), due at once. */
+  async queue(
+    client: PoolClient,
+    ctx: MutationContext,
+    alertId: string | null,
+    messages: readonly QueuedMessage[],
+    content: { type: string; title: string; message: string },
+    entity: { type: string; id: string } | null = null,
+  ): Promise<number> {
     if (messages.length === 0) return 0;
     const res = await client.query(
       `INSERT INTO alert.notifications
-              (alert_id, recipient_user_id, notification_type, title, message, channel, status, next_attempt_at, push_subscription_id)
-       SELECT $1, m.recipient, $5, $6, $7, m.channel::alert.notification_channel, 'queued', CURRENT_TIMESTAMP, m.subscription
+              (alert_id, recipient_user_id, notification_type, title, message, channel, status, next_attempt_at, push_subscription_id, entity_type, entity_id)
+       SELECT $1, m.recipient, $5, $6, $7, m.channel::alert.notification_channel, 'queued', CURRENT_TIMESTAMP, m.subscription, $8, $9
          FROM unnest($2::bigint[], $3::text[], $4::bigint[]) AS m(recipient, channel, subscription)`,
-      [alertId, messages.map((m) => m.recipientId), messages.map((m) => m.channel), messages.map((m) => m.pushSubscriptionId), content.type, content.title, content.message],
+      [
+        alertId,
+        messages.map((m) => m.recipientId),
+        messages.map((m) => m.channel),
+        messages.map((m) => m.pushSubscriptionId),
+        content.type,
+        content.title,
+        content.message,
+        entity?.type ?? null,
+        entity?.id ?? null,
+      ],
     );
     const counts: Record<string, number> = {};
     for (const m of messages) counts[m.channel] = (counts[m.channel] ?? 0) + 1;
     await recordAuditEntry(client, {
       action: 'alert.delivery_queued',
       userId: ctx.userId,
-      entityType: 'alert.alerts',
+      entityType: alertId ? 'alert.alerts' : 'alert.notifications',
       entityId: alertId,
       correlationId: ctx.correlationId,
-      details: { channels: counts, notification_type: content.type },
+      details: { channels: counts, notification_type: content.type, ...(alertId ? {} : { subject: entity }) },
     });
     return res.rowCount ?? messages.length;
   }
@@ -119,20 +138,32 @@ export class DeliveryRepository extends Repository {
       [now, limit, leaseMinutes],
     );
     if (claimed.rowCount === 0) return [];
-    const res = await db.query<DueMessage & { alertPublicId: string; alertStatus: AlertStatus; severity: AlertSeverity; entityType: string | null; entityId: string | null; alertCreatedAt: Date }>(
+    const res = await db.query<
+      Omit<DueMessage, 'alert' | 'entity'> & {
+        alertPublicId: string | null;
+        alertStatus: AlertStatus;
+        severity: AlertSeverity;
+        entityType: string | null;
+        entityId: string | null;
+        alertCreatedAt: Date;
+        noticeEntityType: string | null;
+        noticeEntityId: string | null;
+      }
+    >(
       `SELECT n.id, n.public_id AS "publicId", n.recipient_user_id AS "recipientId", n.channel, n.notification_type AS type,
               n.title, n.message, n.delivery_attempts AS attempts, n.queued_at AS "queuedAt", n.push_subscription_id AS "pushSubscriptionId",
               a.public_id AS "alertPublicId", a.status AS "alertStatus", a.severity, a.entity_type AS "entityType", a.entity_id AS "entityId",
-              a.created_at AS "alertCreatedAt"
+              a.created_at AS "alertCreatedAt", n.entity_type AS "noticeEntityType", n.entity_id AS "noticeEntityId"
          FROM alert.notifications n
-         JOIN alert.alerts a ON a.id = n.alert_id
+         LEFT JOIN alert.alerts a ON a.id = n.alert_id
         WHERE n.id = ANY($1::bigint[])
         ORDER BY n.next_attempt_at, n.id`,
       [claimed.rows.map((r) => r.id)],
     );
-    return res.rows.map(({ alertPublicId, alertStatus, severity, entityType, entityId, alertCreatedAt, ...m }) => ({
+    return res.rows.map(({ alertPublicId, alertStatus, severity, entityType, entityId, alertCreatedAt, noticeEntityType, noticeEntityId, ...m }) => ({
       ...m,
-      alert: { publicId: alertPublicId, status: alertStatus, severity, entityType, entityId, createdAt: alertCreatedAt },
+      alert: alertPublicId ? { publicId: alertPublicId, status: alertStatus, severity, entityType, entityId, createdAt: alertCreatedAt } : null,
+      entity: { type: noticeEntityType, id: noticeEntityId },
     }));
   }
 

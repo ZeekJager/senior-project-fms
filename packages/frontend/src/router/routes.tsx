@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -11,7 +11,8 @@ import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
-import { DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverScore } from '@/pages/Driver'
+import { AppealsPage } from '@/pages/Appeals'
+import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNewAppeal, DriverScore } from '@/pages/Driver'
 import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
@@ -163,6 +164,14 @@ export const portals: Portal[] = [
         nav: { label: 'Reports', icon: FileChartColumn },
       },
       {
+        // S-36 (FMS-159): drivers' score appeals, oldest first, with their evidence. appeal:read: admin, fleet manager,
+        // depot admin, compliance officer; appeal:review (not the compliance officer) claims and decides.
+        path: '/appeals',
+        element: <AppealsPage />,
+        permission: 'appeal:read',
+        nav: { label: 'Score appeals', icon: Scale },
+      },
+      {
         // S-33 (FMS-142): availability, downtime by reason, MTBF and MTTR, with the repairs behind them. analytics:read
         // and maintenance:read: admin, fleet manager, compliance officer, fleet owner; in the user's depot scope.
         path: '/availability',
@@ -268,6 +277,11 @@ export const portals: Portal[] = [
       // FMS-146: the driver's own monthly score and its parts; never another driver's, never a ranking. Opened from My
       // day, not a tab: the bottom bar keeps to the day's work.
       { path: '/driver/score', element: <DriverScore />, permission: 'trip:execute' },
+      // FMS-159: the driver's appeals and complaints about a flag, an incident or a month's score. appeal:submit:
+      // drivers. Opened from My day and My score.
+      { path: '/driver/appeals', element: <DriverAppeals />, permission: 'appeal:submit' },
+      { path: '/driver/appeals/new', element: <DriverNewAppeal />, permission: 'appeal:submit' },
+      { path: '/driver/appeals/:appealId', element: <DriverAppeal />, permission: 'appeal:submit' },
     ],
   },
 ]

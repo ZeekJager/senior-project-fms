@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
@@ -189,6 +189,23 @@ export function DriverHome() {
             <span>
               <span className="block text-base font-semibold">My score</span>
               <span className="block text-sm text-ink-muted">How last month went, out of 100</span>
+            </span>
+          </span>
+          <ChevronRight className="h-5 w-5 text-ink-subtle" aria-hidden="true" />
+        </Link>
+      )}
+
+      {/* FMS-159: the driver's appeals and complaints about a flag, an incident or a score. */}
+      {hasPermission('appeal:submit') && (
+        <Link
+          to="/driver/appeals"
+          className="focus-ring flex items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3.5 text-ink shadow-soft hover:bg-surface-muted"
+        >
+          <span className="flex items-center gap-3">
+            <Scale className="h-5 w-5 text-brand-ink" aria-hidden="true" />
+            <span>
+              <span className="block text-base font-semibold">My appeals</span>
+              <span className="block text-sm text-ink-muted">Appeal a flag, an incident or your score</span>
             </span>
           </span>
           <ChevronRight className="h-5 w-5 text-ink-subtle" aria-hidden="true" />

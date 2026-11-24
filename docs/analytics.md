@@ -83,6 +83,12 @@ not ranked.
 | S-18, the analytics dashboard | *Driver ranking*: last whole month, a horizontal bar per driver (all up to 20, else the top and bottom 10), with a link to the full list in the report | `tracking:read` |
 | `GET /analytics/my-performance?month=` and *My score* in the driver app, from My day | The driver's own score and its parts, with what each came from: never another driver's, never a rank | `trip:execute`, signed in as a driver (404 for staff) |
 
+**Corrected after appeal (FMS-159).** A driver's approved appeal excludes a flag, an incident or a whole trip from the
+score ([score-appeals.md](score-appeals.md#the-correction)): the score reads its flags and incidents from
+`analytics.score_flag_facts` and `score_incident_facts` (migration 079), which say `score_excluded`, and leaves out the
+trips `analytics.score_exclusions` names, so the score and the rank change at once; the facts themselves stay. `my-performance` lists the month's
+corrections with the score before and after.
+
 **Tests.** The scoring is unit-tested (`domain/driver-score.test.ts`): each part, the weights, the minimum-trips rule,
 parts not judged, ties. `test/integration/driver-score.test.ts` covers the report and its CSV, the columns left out for
 a finance clerk, the weights changed in Settings, the ranking and who may read it, and a driver's own record.

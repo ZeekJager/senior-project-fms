@@ -169,6 +169,26 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
       [ids.vehicles],
     );
   }
+  // A score appeal (FMS-159) of a depot B driver, with a file.
+  if (await none('analytics.score_appeals WHERE depot_id = $1', [depotId])) {
+    const appeal = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO analytics.score_appeals (driver_id, depot_id, kind, target_type, score_month, target_key, event_at, reason, explanation, submitted_by, due_at)
+         SELECT d.id, $1, 'appeal', 'score', date_trunc('month', now() - interval '1 month')::date, 'score:' || d.id || ':scope-audit', now(), 'other',
+                'Depot B appeal for the scope audit.', d.user_id, now() + interval '5 days'
+           FROM fleet.drivers d WHERE d.id = (SELECT MIN(x) FROM unnest($2::bigint[]) x)
+         RETURNING id`,
+        [depotId, ids.drivers],
+      )
+    ).rows[0];
+    if (appeal) {
+      await pool.query(
+        `INSERT INTO analytics.appeal_attachments (appeal_id, storage_key, content_type, size_bytes, sha256, uploaded_by)
+         SELECT $1, 'appeals/scope-audit/' || gen_random_uuid(), 'image/jpeg', 10, repeat('0', 64), submitted_by FROM analytics.score_appeals WHERE id = $1`,
+        [appeal.id],
+      );
+    }
+  }
   if (await none('alert.notifications WHERE recipient_user_id = ANY($1::bigint[])', [ids.users])) {
     await pool.query("INSERT INTO alert.notifications (recipient_user_id, notification_type, title, message, channel, status) VALUES ($1, 'alert', 'Depot B', 'For depot B', 'in_app', 'delivered')", [user]);
   }
@@ -200,6 +220,8 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     programId: await one('SELECT public_id::text AS id FROM maintenance.service_programs WHERE depot_id = $1 ORDER BY id', [depotId]),
     geofenceId: await one('SELECT public_id::text AS id FROM tracking.geofences WHERE depot_id = $1 ORDER BY id', [depotId]),
     warrantyId: await byVehicle('maintenance.warranties'),
+    appealId: await one('SELECT public_id::text AS id FROM analytics.score_appeals WHERE depot_id = $1 ORDER BY id', [depotId]),
+    attachmentId: await one('SELECT t.public_id::text AS id FROM analytics.appeal_attachments t JOIN analytics.score_appeals a ON a.id = t.appeal_id WHERE a.depot_id = $1 ORDER BY t.id', [depotId]),
   };
 }
 

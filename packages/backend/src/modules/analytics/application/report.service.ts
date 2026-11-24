@@ -1,4 +1,5 @@
 import { depotScope, ownDriverScope, type Scope } from '../../../shared/authz/scope';
+import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { DataFreshness, ReadSession } from '../../../shared/infrastructure/read-router';
 import type { RequestUser } from '../../../types/express';
 import { monthWindow } from '../domain/downtime';
@@ -66,7 +67,18 @@ export interface ReportServiceDeps {
   repo: ReportRepository;
   /** The driver score's weights (FMS-146): the settings', as an administrator left them. */
   weights: () => Promise<ScoreWeights>;
+  /** The approved appeals that corrected a driver's month (FMS-159), for "Corrected after appeal". */
+  corrections?: (db: Queryable, driverUserId: string, month: string) => Promise<ScoreCorrection[]>;
   now?: () => Date;
+}
+
+/** An approved appeal that corrected a driver's month (FMS-159): the score before and after. */
+export interface ScoreCorrection {
+  appeal_id: string;
+  correction: string | null;
+  score_before: number | null;
+  score_after: number | null;
+  decided_at: string | null;
 }
 
 /** Behavioural data (the driver score and its ranking) is for the roles that may follow vehicles (FMS-146). */
@@ -116,6 +128,8 @@ export interface OwnPerformance {
     incidents: { score: number | null; weight: number; accidents: number };
     dvir: { score: number | null; weight: number; trips_inspected: number };
   };
+  /** Approved appeals that corrected this month, oldest first (FMS-159): the card shows "Corrected after appeal". */
+  corrections: ScoreCorrection[];
   generated_at: string;
 }
 
@@ -259,6 +273,7 @@ export class ReportService {
           incidents: { ...c.incidents, accidents: m.accidents },
           dvir: { ...c.dvir, trips_inspected: m.tripsInspected },
         },
+        corrections: this.deps.corrections ? await this.deps.corrections(db, user.id, w.month) : [],
         generated_at: this.now().toISOString(),
       },
       meta: { data_freshness: db.freshness() },
