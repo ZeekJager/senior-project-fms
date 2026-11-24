@@ -3874,3 +3874,34 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS idx_trip_trips_driver_start
     ON trip.trips (driver_id, scheduled_start)
     WHERE driver_id IS NOT NULL AND status IN ('assigned', 'en_route', 'completed');
+
+-- ===== 075_base_backups.sql =====
+CREATE TABLE IF NOT EXISTS backup.base_backups (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id        UUID         NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    label            VARCHAR(60)  UNIQUE,
+    backup_type      VARCHAR(4)   NOT NULL,
+    triggered_by     VARCHAR(12)  NOT NULL,
+    status           VARCHAR(10)  NOT NULL DEFAULT 'running',
+    started_at       TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp(),
+    finished_at      TIMESTAMPTZ,
+    size_bytes       BIGINT,
+    repo_size_bytes  BIGINT,
+    wal_start        VARCHAR(24),
+    wal_stop         VARCHAR(24),
+    error            TEXT,
+    CONSTRAINT chk_base_backup_type CHECK (backup_type IN ('full', 'diff', 'incr')),
+    CONSTRAINT chk_base_backup_trigger CHECK (triggered_by IN ('schedule', 'first-start', 'manual')),
+    CONSTRAINT chk_base_backup_status CHECK (status IN ('running', 'succeeded', 'failed', 'expired')),
+    CONSTRAINT chk_base_backup_succeeded CHECK (status NOT IN ('succeeded', 'expired') OR (label IS NOT NULL AND finished_at IS NOT NULL AND size_bytes IS NOT NULL)),
+    CONSTRAINT chk_base_backup_failed CHECK (status <> 'failed' OR (error IS NOT NULL AND finished_at IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_base_backups_recent ON backup.base_backups (started_at DESC);
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        GRANT SELECT ON backup.base_backups TO fms_app;
+    END IF;
+END $$;
