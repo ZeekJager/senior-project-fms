@@ -11,16 +11,22 @@ import { logger } from '../../shared/logging/logger';
 import type { JobContext } from '../../shared/jobs/job';
 import type { AppModule } from '../../shared/module';
 import { userDirectory } from '../auth';
+import { notificationGateway } from '../integration';
 import { tripRiskModels } from '../maintenance';
 import { settings } from '../settings';
 import { jobLoad, nightHours } from '../trip';
+import { isUnplanned, type DowntimeReason } from '../fleet';
 import { analyticsRouter } from './api/analytics.routes';
+import { reportJobsRouter } from './api/report-jobs.routes';
 import { appealRouter } from './api/appeal.routes';
 import { feedbackRouter } from './api/feedback.routes';
 import { AnalyticsService } from './application/analytics.service';
 import { AppealService, type MonthScore } from './application/appeal.service';
 import { FeedbackService } from './application/feedback.service';
+import { KpiService } from './application/kpi.service';
+import { ReportJobsService } from './application/report-jobs.service';
 import { ReportService } from './application/report.service';
+import { KPI_SETTING_KEYS } from './domain/kpi-targets';
 import { TripRiskService } from './application/trip-risk.service';
 import { monthEnd, monthStart } from './domain/appeal';
 import { scoreDriver, type ScoreWeights } from './domain/driver-score';
@@ -29,6 +35,8 @@ import { AppealRepository } from './infrastructure/appeal.repository';
 import { AttachmentUrlSigner } from './infrastructure/attachment-url';
 import { FeedbackRepository } from './infrastructure/feedback.repository';
 import { ReportRepository } from './infrastructure/report.repository';
+import { ReportStoreRepository } from './infrastructure/report-store.repository';
+import { writePdf, writeXlsx } from './infrastructure/report-writers';
 import { TripRiskRepository } from './infrastructure/trip-risk.repository';
 
 // Fleet KPIs (FMS-50): analytics_cache, refreshed hourly (today and yesterday) and nightly (35 days back), read
@@ -95,15 +103,53 @@ const appealService = new AppealService({
   },
 });
 
+const analyticsRepository = new AnalyticsRepository();
 const reportService = new ReportService({
   reads,
   repo: reportRepository,
   weights: scoreWeights,
+  // Utilisation and downtime (FMS-160) from the downtime periods and service spans (FMS-131).
+  downtime: {
+    serviceSpans: (db, ids) => analyticsRepository.serviceSpans(db, ids),
+    downtimeFacts: (db, ids, from, to) => analyticsRepository.downtimeFacts(db, ids, from, to),
+    isUnplanned: (reason) => isUnplanned(reason as DowntimeReason),
+  },
+  writers: { xlsx: writeXlsx, pdf: writePdf },
   corrections: (db, userId, month) => appealService.corrections(db, userId, month),
 });
 
+// The KPI dashboard and trends (FMS-160): read from the reports' totals, targets from the settings.
+const kpiService = new KpiService({
+  reports: reportService,
+  settings: async () => {
+    const v = await settings.values();
+    const out: Record<string, number> = { health_alert_below: v.health_alert_below };
+    for (const key of KPI_SETTING_KEYS) {
+      const value = await settings.get<number>(key);
+      if (typeof value === 'number') out[key] = value;
+    }
+    return out;
+  },
+  counts: (user, query, _period, line) => reportService.counts(user, query, line),
+  cache,
+});
+
+// Saved filters, background exports and schedules (FMS-160): on the primary; files under reports/exports/ in the document
+// storage, behind links signed for their own purpose.
+const reportJobs = new ReportJobsService({
+  repo: new ReportStoreRepository(pool),
+  reports: reportService,
+  storage: createDocumentStorage(config.storage),
+  urls: new AttachmentUrlSigner(config.jwtSecret, Date.now, 'fms:report-file-url:v1', '/api/v1/report-files/{id}/content'),
+  users: userDirectory,
+  mailer: { send: (message, correlationId) => notificationGateway.send(message, correlationId) },
+  appUrl: config.app.publicUrl,
+});
+
 const router = Router();
-router.use(analyticsRouter(analyticsService, reportService));
+// Before GET /reports/{report}, which would match /reports/filters and /reports/schedules.
+router.use(reportJobsRouter(reportJobs));
+router.use(analyticsRouter(analyticsService, reportService, kpiService, reportJobs));
 router.use(appealRouter(appealService));
 router.use(feedbackRouter(feedbackService));
 
@@ -119,6 +165,10 @@ export const analyticsModule: AppModule = {
     { name: 'appeal-auto-close', at: '03:50', run: ({ now, correlationId }) => appealService.autoClose({ now, correlationId }) },
     // Feedback older than feedback_retention_months (24) is deleted, retracted items too (FMS-158).
     { name: 'feedback-retention', at: '03:40', run: ({ now, correlationId }) => feedbackService.purge({ now, correlationId }) },
+    // Report schedules due now, and failed recipients' retries (FMS-160).
+    { name: 'report-schedules', every: 5, run: ({ now, correlationId }) => reportJobs.runSchedules({ now, correlationId }) },
+    // Exports over 20,000 rows, made in the background; files past their 24 hours removed.
+    { name: 'report-exports', every: 1, run: ({ now, correlationId }) => reportJobs.runExports({ now, correlationId }) },
   ],
 };
 
@@ -167,6 +217,12 @@ export { APPEAL_EVENTS } from './domain/appeal';
 export const driverFeedbackData = {
   forDriver: (db: Queryable, driverId: string) => feedbackService.exportFor(db, driverId),
   erase: (client: PoolClient, ctx: MutationContext, driverId: string) => feedbackService.eraseFor(client, ctx, driverId),
+};
+
+/** For tests: the report jobs as of `now` (FMS-160). */
+export const reportJobsRun = {
+  schedules: (now: Date, correlationId: string, maxAttachmentBytes?: number) => reportJobs.runSchedules({ now, correlationId, maxAttachmentBytes }),
+  exports: (now: Date, correlationId: string) => reportJobs.runExports({ now, correlationId }),
 };
 
 /** For tests: the feedback retention job as of `now`. */

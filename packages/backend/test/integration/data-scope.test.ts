@@ -9,6 +9,7 @@ import { runSeed } from '../../scripts/seed/apply';
 import { createApp } from '../../src/app';
 import { pool } from '../../src/db';
 import { REPORT_KINDS } from '../../src/modules/analytics/domain/reports';
+import { KPI_KEYS } from '../../src/modules/analytics/domain/kpi-targets';
 import { hashPassword } from '../../src/modules/auth';
 import { routeRegistry } from '../../src/shared/authz/route-policy';
 import { createUser, type RoleName } from '../support/factories';
@@ -29,7 +30,9 @@ const DEPOT_ROLES: RoleName[] = ['dispatcher', 'technician', 'depot_admin', 'fin
  */
 // A feedback template (FMS-158) is the fleet's, not a depot's.
 // A maintenance window (FMS-163) is the fleet's too.
-const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key', 'templateId', 'windowId']);
+// A saved report filter, an export and a report schedule (FMS-160) belong to a user, not a depot: another user's is 404
+// (test/integration/report-jobs.test.ts), and a schedule's report is built as each recipient, in their own scope.
+const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key', 'templateId', 'windowId', 'filterId', 'exportId', 'scheduleId', 'fileId']);
 
 /**
  * Path parameters naming a kind of answer, not a record: each value is swept as a list route of its own, with `query`.
@@ -37,6 +40,8 @@ const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', '
  */
 const KIND_PARAMS: Record<string, { values: readonly string[]; query: string }> = {
   report: { values: REPORT_KINDS, query: `month=${SEED.anchor.slice(0, 7)}` },
+  // A KPI's trend (FMS-160), over the same month.
+  kpi: { values: KPI_KEYS, query: `month=${SEED.anchor.slice(0, 7)}` },
 };
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;

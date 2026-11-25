@@ -112,6 +112,8 @@ export interface OutboundMessage {
   urgency: 'normal' | 'high';
   /** How long a push service may hold the message for an offline device. */
   ttlSeconds: number;
+  /** Email only (FMS-160, a scheduled report): files sent with it. */
+  attachments?: { filename: string; contentType: string; content: Buffer }[];
 }
 
 export interface DeliveryReceipt {

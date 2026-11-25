@@ -595,9 +595,22 @@ You cannot decide an appeal against an incident you reported or a flag you revie
 
 ### Reports and availability
 
-**Reports** builds the monthly reports for management: **Fuel**, **Maintenance**, **Cost**, **Trip history** and
-**Driver performance**. Choose the month (last month by default) and the depot. You get a preview with a totals row,
-and **Download CSV** or **Download PDF** saves the file.
+**Reports** builds the reports for management: **Fuel**, **Maintenance**, **Cost**, **Trip history**, **Driver
+performance**, **Utilisation**, **Compliance** and **Safety**. Choose the period (a month, by default last month; a
+quarter; a year; or a custom range of up to a year), one or more depots, a vehicle type, and under **More filters** a
+vehicle, a driver or a route. You get a preview with a totals row; **CSV**, **Excel** or **PDF** saves the file. A very
+large report (over 20,000 rows) is made in the background, and a **Download** button appears when it is ready.
+
+- **Saved filters:** save the period and filters you use often under a name, and bring them back in one click.
+- **Schedules:** have a report emailed every day, week or month, for the day, week or month before, to people in FMS.
+  Each person gets it as they are allowed to see it; someone who has lost access is skipped, and you are told. The
+  history shows every send, who got it, and any retries.
+
+**KPIs** shows the fleet's key figures against their targets: cost per km, fuel use, utilisation, availability, on
+time, programmed services on time, incidents per 100,000 km and vehicles at risk, with the appeals and feedback of the
+period. Each tile says *On target*, *Near target* or *Off target*, how it changed, and how it went over the last 12
+months; **Open report** shows the figures behind it. **Show trend** charts a KPI month by month beside the year before,
+by depot; pick a depot to see its vehicles. An administrator sets the targets in **Settings**, under *KPI targets*.
 
 ![Monthly reports](user-guide/images/fleet-manager-06-reports.png)
 

@@ -3,10 +3,11 @@
 // metres, minutes) as the rest of the analytics API keeps them; the CSV and PDF write them in litres, birr, km and
 // hours, in Addis Ababa time.
 
-export const REPORT_KINDS = ['fuel', 'maintenance', 'cost', 'trips', 'drivers'] as const;
+// FMS-160 adds utilisation and downtime, maintenance compliance, and safety and incidents.
+export const REPORT_KINDS = ['fuel', 'maintenance', 'cost', 'trips', 'drivers', 'utilisation', 'compliance', 'safety'] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 
-export const REPORT_FORMATS = ['json', 'csv', 'pdf'] as const;
+export const REPORT_FORMATS = ['json', 'csv', 'xlsx', 'pdf'] as const;
 export type ReportFormat = (typeof REPORT_FORMATS)[number];
 
 /**
@@ -18,9 +19,10 @@ export type ReportFormat = (typeof REPORT_FORMATS)[number];
  * - `l_per_100km`: ml per km, shown as litres per 100 km to 1 decimal;
  * - `pct`: a whole percentage;
  * - `hours`: minutes, shown in hours to 1 decimal;
- * - `datetime`: an ISO instant, shown as Addis Ababa date and time.
+ * - `datetime`: an ISO instant, shown as Addis Ababa date and time;
+ * - `rate`: tenths, shown to 1 decimal (incidents per 100,000 km).
  */
-export type ColumnKind = 'text' | 'count' | 'litres' | 'etb' | 'km' | 'l_per_100km' | 'pct' | 'hours' | 'datetime';
+export type ColumnKind = 'text' | 'count' | 'litres' | 'etb' | 'km' | 'l_per_100km' | 'pct' | 'hours' | 'datetime' | 'rate';
 
 export interface ReportColumn {
   key: string;
@@ -120,7 +122,77 @@ export const REPORTS: Record<ReportKind, ReportDefinition> = {
       col('incidents', 'Incidents', 'count'),
     ],
   },
+  // FMS-160: days available and in use, downtime by cause, availability.
+  utilisation: {
+    title: 'Utilisation and downtime',
+    rowNoun: { one: 'vehicle', many: 'vehicles' },
+    columns: [
+      col('registration_number', 'Vehicle', 'text'),
+      col('depot', 'Depot', 'text'),
+      col('days_in_fleet', 'Days in fleet', 'count'),
+      col('days_available', 'Days available', 'count'),
+      col('days_in_use', 'Days in use', 'count'),
+      col('utilisation_pct', 'Utilisation (%)', 'pct'),
+      col('downtime_minutes', 'Downtime (h)', 'hours'),
+      col('planned_service_minutes', 'Planned service (h)', 'hours'),
+      col('unplanned_repair_minutes', 'Unplanned repair (h)', 'hours'),
+      col('breakdown_minutes', 'Breakdown (h)', 'hours'),
+      col('accident_minutes', 'Accident (h)', 'hours'),
+      col('awaiting_parts_minutes', 'Awaiting parts (h)', 'hours'),
+      col('other_minutes', 'Other (h)', 'hours'),
+      col('availability_pct', 'Availability (%)', 'pct'),
+    ],
+  },
+  // FMS-160: programmed services on time, late and overdue; MTBF; repeat repairs; and cost by system and vendor.
+  compliance: {
+    title: 'Maintenance compliance',
+    rowNoun: { one: 'vehicle', many: 'vehicles' },
+    columns: [
+      col('registration_number', 'Vehicle', 'text'),
+      col('depot', 'Depot', 'text'),
+      col('pm_on_time', 'PM on time', 'count'),
+      col('pm_late', 'PM late', 'count'),
+      col('pm_overdue', 'PM overdue', 'count'),
+      col('pm_compliance_pct', 'PM compliance (%)', 'pct'),
+      col('corrective', 'Corrective repairs', 'count'),
+      col('repeat_repairs', 'Repeated within 30 days', 'count'),
+      col('unplanned_failures', 'Unplanned failures', 'count'),
+      col('mtbf_minutes', 'MTBF (h)', 'hours'),
+      col('cost_cents', 'Cost (ETB)', 'etb'),
+    ],
+  },
+  // FMS-160: incidents and flags per 100,000 km, by depot, driver or route, with the appeals against them.
+  safety: {
+    title: 'Safety and incidents',
+    rowNoun: { one: 'row', many: 'rows' },
+    columns: [
+      col('name', 'Depot', 'text'),
+      col('distance_m', 'Distance (km)', 'km'),
+      col('incidents', 'Incidents', 'count'),
+      col('accidents', 'Accidents', 'count'),
+      col('speeding', 'Speeding', 'count'),
+      col('idling', 'Idling', 'count'),
+      col('incidents_per_100k_km', 'Incidents per 100,000 km', 'rate'),
+      col('flags_per_100k_km', 'Flags per 100,000 km', 'rate'),
+      col('appeals_opened', 'Appeals opened', 'count'),
+      col('appeals_approved', 'Appeals approved', 'count'),
+    ],
+  },
 };
+
+/** A report's extra table (cost by system and by vendor for maintenance compliance): a sheet of its own in Excel. */
+export interface ReportSection {
+  title: string;
+  columns: readonly ReportColumn[];
+  rows: ReportRow[];
+}
+
+/** How safety is grouped (FMS-160): by depot (the default), driver or route. */
+export const SAFETY_GROUPS = ['depot', 'driver', 'route'] as const;
+export type SafetyGroup = (typeof SAFETY_GROUPS)[number];
+
+/** Tenths of a rate per 100,000 km, or null under 1 km. */
+export const per100kKm = (count: number, metres: number): number | null => (metres >= 1000 ? Math.round((count * 1e9) / metres) : null);
 
 /** A trip ending this long after its scheduled end is still on time (the analytics KPIs' rule). */
 export { ON_TIME_GRACE_MINUTES } from './kpis';
@@ -193,6 +265,8 @@ function plain(kind: ColumnKind, value: number): string {
       return fixed(value, 10, 1);
     case 'hours':
       return fixed(value, 60, 1);
+    case 'rate':
+      return fixed(value, 10, 1);
     default:
       return String(value);
   }
@@ -211,7 +285,7 @@ function csvCell(text: string, numeric: boolean): string {
   return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
 }
 
-const NUMERIC: readonly ColumnKind[] = ['count', 'litres', 'etb', 'km', 'l_per_100km', 'pct', 'hours'];
+const NUMERIC: readonly ColumnKind[] = ['count', 'litres', 'etb', 'km', 'l_per_100km', 'pct', 'hours', 'rate'];
 export const isNumeric = (kind: ColumnKind) => NUMERIC.includes(kind);
 
 /** The report as CSV: a header row, the rows, then the totals row; CRLF line ends and a byte-order mark for Excel. */

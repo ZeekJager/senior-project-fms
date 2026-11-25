@@ -12,17 +12,24 @@ export const ATTACHMENT_URL_TTL_SECONDS = 15 * 60;
 export class AttachmentUrlSigner {
   private readonly key: Buffer;
 
+  /**
+   * `purpose` keys the signature (a link for one kind of file never opens another kind); `path` is where the file is
+   * served, `{id}` standing for its id. The defaults are the appeal attachments' (FMS-159); the reports' files (FMS-160)
+   * have their own.
+   */
   constructor(
     secret: string,
     private readonly now: () => number = Date.now,
+    purpose = 'fms:appeal-attachment-url:v1',
+    private readonly path = '/api/v1/appeal-attachments/{id}/content',
   ) {
-    this.key = createHmac('sha256', secret).update('fms:appeal-attachment-url:v1').digest();
+    this.key = createHmac('sha256', secret).update(purpose).digest();
   }
 
   sign(attachmentId: string, ttlSeconds = ATTACHMENT_URL_TTL_SECONDS): { url: string; expiresAt: Date } {
     const expires = Math.floor(this.now() / 1000) + ttlSeconds;
     return {
-      url: `/api/v1/appeal-attachments/${attachmentId}/content?expires=${expires}&signature=${this.signatureOf(attachmentId, expires)}`,
+      url: `${this.path.replace('{id}', attachmentId)}?expires=${expires}&signature=${this.signatureOf(attachmentId, expires)}`,
       expiresAt: new Date(expires * 1000),
     };
   }

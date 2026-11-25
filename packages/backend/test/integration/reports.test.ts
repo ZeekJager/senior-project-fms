@@ -108,12 +108,11 @@ describe('GET /reports/{report} (FMS-91)', () => {
     expect(pdf.status).toBe(200);
     expect(pdf.headers['content-type']).toBe('application/pdf');
     expect(pdf.headers['content-disposition']).toBe(`attachment; filename="fuel-report-${MONTH}-all.pdf"`);
+    // Written by pdfkit with an embedded Unicode font (FMS-160): its text is in the font's glyphs, so the table's
+    // contents are checked where the PDF is built (report-writers.test.ts), and here only that it is one.
     const body = (pdf.body as Buffer).toString('latin1');
-    expect(body.startsWith('%PDF-1.4')).toBe(true);
-    expect(body).toContain(`(${w.truck.registration_number}) Tj`);
-    // People read the PDF: thousands are grouped, where the CSV keeps 17500.00.
-    expect(body).toContain('(17,500.00) Tj');
-    expect(body).toContain('(All depots in your scope');
+    expect(body.startsWith('%PDF-')).toBe(true);
+    expect(body).toContain('/FontFile2');
   });
 
   test('maintenance: repairs done by type, labour and cost, and what was still open when the month ended', async () => {
@@ -215,7 +214,7 @@ describe('GET /reports/{report} (FMS-91)', () => {
     expect((await get(`/reports/payroll?month=${MONTH}`, manager)).status).toBe(404);
     expect((await get('/reports/fuel?month=2026-13', manager)).body.error.details).toEqual([{ field: 'month', reason: 'invalid_format' }]);
     expect((await get('/reports/fuel?month=2999-01', manager)).body.error.details).toEqual([{ field: 'month', reason: 'future_month' }]);
-    expect((await get(`/reports/fuel?month=${MONTH}&format=xlsx`, manager)).status).toBe(400);
+    expect((await get(`/reports/fuel?month=${MONTH}&format=docx`, manager)).status).toBe(400);
   });
 
   test('a monthly fuel report for 200 vehicles generates in under 10 seconds, as JSON and as PDF', async () => {

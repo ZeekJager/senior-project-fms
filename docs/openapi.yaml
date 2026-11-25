@@ -3359,27 +3359,37 @@ paths:
     get:
       tags: [Analytics]
       operationId: getReport
-      summary: A monthly report, as JSON, CSV or PDF (FMS-91)
+      summary: A report for any period and filters, as JSON, CSV, Excel or PDF (FMS-91, FMS-160)
       description: >
-        One of five monthly reports for an Addis Ababa month and the caller's depots, or one of them: fuel (per
-        vehicle filled or driven: fill-ups, litres, cost, km, consumption against rated, cost per km), maintenance
-        (per vehicle: repairs completed by type, still open at the month's end, labour, cost), cost (per vehicle: km,
-        fuel and repair cost, cost per km), trips (every trip scheduled in the month, with vehicle, driver, times,
-        distances and whether it ended on time) and drivers (trips, km, driving time, on-time share, speeding and
-        idling flags, incidents). Live from the analytics views on the read replica (docs/reports.md). Values are
-        integers in base units (ml, cents, metres, minutes); the CSV and PDF write them in litres, birr, km and
-        hours, Addis Ababa time, with a totals row. For a caller who also holds tracking:read, drivers starts with
-        rank and gains score (0 to 100, or the reason there is none: "Not enough trips"), in rank order
-        (FMS-146, docs/analytics.md); without it, neither column, most trips first. Needs analytics:read; a driver
-        sees nothing.
+        One of eight reports for the caller's depots, live from the analytics views on the read replica
+        (docs/reports.md): fuel, maintenance, cost, trips and drivers (FMS-91), and utilisation and downtime,
+        maintenance compliance and safety and incidents (FMS-160). The period is a month (the FMS-91 links, kept), a
+        quarter, a year, or from and to (Addis Ababa days, both included, up to 366 days); this month when none is
+        given. Filters narrow it: several depots, a vehicle type, a vehicle, a driver, a route; one outside the
+        caller's scope is 404. Values are integers in base units (ml, cents, metres, minutes, tenths for a rate); CSV,
+        Excel and PDF write them in litres, birr, km and hours. Excel has typed cells, a frozen and filtered header, a
+        totals row and a sheet of the filters; PDF a cover page with a chart, the table, and an embedded Unicode font
+        (Ge'ez script prints). A file over 20,000 rows is made in the background: 202 and the export to poll. For a
+        caller who also holds tracking:read, drivers starts with rank and gains score (FMS-146). Needs
+        analytics:read; a driver sees nothing.
       parameters:
         - name: report
           in: path
           required: true
-          schema: { type: string, enum: [fuel, maintenance, cost, trips, drivers] }
+          schema: { type: string, enum: [fuel, maintenance, cost, trips, drivers, utilisation, compliance, safety] }
         - { name: month, in: query, description: 'An Addis Ababa month, YYYY-MM. Default: this month, up to now.', schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' } }
+        - { name: quarter, in: query, description: 'A quarter, YYYY-Qn.', schema: { type: string, pattern: '^\d{4}-Q[1-4]$' } }
+        - { name: year, in: query, description: 'A year, YYYY.', schema: { type: string, pattern: '^\d{4}$' } }
+        - { name: from, in: query, description: 'The first day of a range, YYYY-MM-DD (with to).', schema: { type: string, format: date } }
+        - { name: to, in: query, description: 'The last day of a range, included; at most 366 days after from.', schema: { type: string, format: date } }
         - { name: depot_id, in: query, description: 'One of the caller''s depots; an unknown or other depot gives an empty report.', schema: { type: string, format: uuid } }
-        - { name: format, in: query, description: 'json (default) for the screen; csv or pdf to download, as an attachment named for the report, month and depot.', schema: { type: string, enum: [json, csv, pdf], default: json } }
+        - { name: depot_ids, in: query, description: 'Several depots, comma-separated public ids (at most 50).', schema: { type: string } }
+        - { name: vehicle_type, in: query, schema: { type: string, maxLength: 40 } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: driver_id, in: query, schema: { type: string, format: uuid } }
+        - { name: route_id, in: query, schema: { type: string, format: uuid } }
+        - { name: by, in: query, description: 'Safety only: rows per depot (default), driver or route.', schema: { type: string, enum: [depot, driver, route] } }
+        - { name: format, in: query, description: 'json (default) for the screen; csv, xlsx or pdf to download, as an attachment named for the report, period and filters.', schema: { type: string, enum: [json, csv, xlsx, pdf], default: json } }
       responses:
         '200':
           description: The report.
@@ -3398,10 +3408,365 @@ paths:
                       request_id: { type: string }
             text/csv:
               schema: { type: string, description: 'A header row, the rows and a totals row; CRLF; UTF-8 with a byte-order mark.' }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary, description: 'The table with typed numbers, a frozen and filtered header and a totals row; each section on a sheet; a Filters sheet.' }
             application/pdf:
-              schema: { type: string, format: binary, description: 'Landscape A4, the header repeated on each page, totals on the last.' }
+              schema: { type: string, format: binary, description: 'Landscape A4: a cover page with the filters and a chart, the header repeated on each page, totals on the last.' }
+        '202':
+          description: Over 20,000 rows; the file is being made. Poll GET /reports/exports/{export_id}.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/ReportExport' }
+                  meta: { $ref: '#/components/schemas/Meta' }
         '400':
-          description: VALIDATION_FAILED (month not YYYY-MM or not yet begun, an unknown format, or an unknown query parameter).
+          description: VALIDATION_FAILED (a malformed period, two at once, a range over 366 days or backwards, a period not yet begun, an unknown format, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /reports/filters:
+    get:
+      tags: [Analytics]
+      operationId: listReportFilters
+      summary: The caller's saved report filters (FMS-160)
+      description: Filter combinations the caller saved by name, by name. Needs analytics:read.
+      responses:
+        '200':
+          description: The saved filters.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/SavedReportFilter' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Analytics]
+      operationId: saveReportFilter
+      summary: Save a filter combination by name (FMS-160)
+      description: The period and filters as GET /reports/{report} takes them; depot_ids as a list. Needs analytics:read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, filters]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                filters: { $ref: '#/components/schemas/ReportFiltersInput' }
+      responses:
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SavedReportFilter' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (the caller has a filter by that name).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /reports/filters/{filter_id}:
+    delete:
+      tags: [Analytics]
+      operationId: deleteReportFilter
+      summary: Remove a saved filter (FMS-160)
+      description: The caller's own; another's is 404. Needs analytics:read.
+      parameters:
+        - { name: filter_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /reports/exports/{export_id}:
+    get:
+      tags: [Analytics]
+      operationId: getReportExport
+      summary: A background export and, once ready, its 24-hour link (FMS-160)
+      description: The caller's own; another's is 404. Needs analytics:read.
+      parameters:
+        - { name: export_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The export.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/ReportExport' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /report-files/{file_id}/content:
+    get:
+      tags: [Analytics]
+      operationId: getReportFileContent
+      summary: A report file by its signed link (FMS-160)
+      description: >
+        A background export's file (24 hours) or a scheduled report too large to attach (7 days). Public; the
+        signature is the permission. Served as an attachment with nosniff.
+      security: []
+      parameters:
+        - { name: file_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: expires, in: query, schema: { type: string } }
+        - { name: signature, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: The file.
+          content:
+            text/csv: { schema: { type: string } }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } }
+            application/pdf: { schema: { type: string, format: binary } }
+        '401':
+          description: AUTH_TOKEN_EXPIRED (the link has expired), AUTH_TOKEN_INVALID (a link that is not one).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /reports/schedules:
+    get:
+      tags: [Analytics]
+      operationId: listReportSchedules
+      summary: Report schedules (FMS-160)
+      description: The caller's own; an administrator sees every one. Needs analytics:read.
+      responses:
+        '200':
+          description: The schedules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ReportSchedule' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Analytics]
+      operationId: createReportSchedule
+      summary: Email a report daily, weekly or monthly (FMS-160)
+      description: >
+        To active FMS users, through the email provider. Each run covers the period just ended (yesterday, last
+        Monday to Sunday, last month), built as each recipient now is: still active with analytics:read (else skipped
+        and the owner told), in their own depot scope, the driver score only with tracking:read. Up to 5 MB attached;
+        larger as a signed link valid 7 days. A failed recipient is retried, 3 attempts 15 minutes apart. Needs
+        analytics:read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportScheduleInput' }
+      responses:
+        '201':
+          description: Scheduled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/ReportSchedule' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown report, a weekly schedule without a weekday, a monthly one without a day 1 to 28, a recipient who is not an active user).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /reports/recipients:
+    get:
+      tags: [Analytics]
+      operationId: listReportRecipients
+      summary: Who a report schedule can go to (FMS-160)
+      description: Active users who hold analytics:read, by name, matching search in name or email; at most 20. Names and roles only. Needs analytics:read.
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 100 } }
+      responses:
+        '200':
+          description: The users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, roles]
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        roles: { type: array, items: { type: string } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /reports/schedules/{schedule_id}:
+    patch:
+      tags: [Analytics]
+      operationId: updateReportSchedule
+      summary: Change a report schedule (FMS-160)
+      description: Its owner, or an administrator; another's is 404. The next run is worked out again. Needs analytics:read.
+      parameters:
+        - { name: schedule_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportSchedulePatch' }
+      responses:
+        '200':
+          description: The schedule.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/ReportSchedule' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Analytics]
+      operationId: deleteReportSchedule
+      summary: Stop a report schedule (FMS-160)
+      description: Its owner, or an administrator. Kept, inactive, with its run history. Needs analytics:read.
+      parameters:
+        - { name: schedule_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Stopped. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /reports/schedules/{schedule_id}/runs:
+    get:
+      tags: [Analytics]
+      operationId: listReportScheduleRuns
+      summary: A schedule's run history (FMS-160)
+      description: The last 50 runs, newest first, with each recipient's outcome. Its owner, or an administrator. Needs analytics:read.
+      parameters:
+        - { name: schedule_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ReportScheduleRun' } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /analytics/kpis:
+    get:
+      tags: [Analytics]
+      operationId: getKpis
+      summary: The KPI dashboard (FMS-160)
+      description: >
+        Cost per km, fuel L/100 km, utilisation, availability, on time, PM compliance, incidents per 100,000 km,
+        vehicles at risk, and the score appeal and driver feedback counts, for the period and filters of
+        GET /reports/{report}. Each is read from the totals of the report it opens, so the two agree; with the period
+        before, the change, a 12-month sparkline, its target and its status against the target and amber band (the
+        kpi_* settings, FMS-157). Needs analytics:read.
+      parameters:
+        - { name: month, in: query, schema: { type: string } }
+        - { name: quarter, in: query, schema: { type: string } }
+        - { name: year, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+        - { name: depot_ids, in: query, schema: { type: string } }
+        - { name: vehicle_type, in: query, schema: { type: string } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: driver_id, in: query, schema: { type: string, format: uuid } }
+        - { name: route_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The KPIs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/KpiDashboard' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /analytics/kpis/{kpi}/trend:
+    get:
+      tags: [Analytics]
+      operationId: getKpiTrend
+      summary: A KPI month by month, beside last year, with its drill-down (FMS-160)
+      description: >
+        Up to 24 months ending with the period's, each with the same month a year before; and, with group, the KPI
+        per depot or per vehicle for the period (fleet to depot to vehicle). The filters of GET /reports/{report}.
+        Needs analytics:read.
+      parameters:
+        - name: kpi
+          in: path
+          required: true
+          schema: { type: string, enum: [cost_per_km, fuel_l_per_100km, utilisation_pct, availability_pct, on_time_pct, pm_compliance_pct, incidents_per_100k_km, vehicles_at_risk, appeals, feedback] }
+        - { name: months, in: query, schema: { type: integer, minimum: 1, maximum: 24, default: 12 } }
+        - { name: group, in: query, schema: { type: string, enum: [depot, vehicle] } }
+        - { name: month, in: query, schema: { type: string } }
+        - { name: depot_ids, in: query, schema: { type: string } }
+        - { name: vehicle_type, in: query, schema: { type: string } }
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The trend.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/KpiTrend' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -11079,21 +11444,47 @@ components:
         data_freshness: { $ref: '#/components/schemas/DataFreshness' }
     Report:
       type: object
-      description: A monthly report (FMS-91) as a table. Each row has a value for every column's key.
-      required: [report, title, month, period, depot, columns, rows, totals, generated_at]
+      description: A report (FMS-91, FMS-160) as a table. Each row has a value for every column's key.
+      required: [report, title, month, period, filters, filter_names, depot, columns, rows, totals, generated_at]
       properties:
-        report: { type: string, enum: [fuel, maintenance, cost, trips, drivers] }
+        report: { type: string, enum: [fuel, maintenance, cost, trips, drivers, utilisation, compliance, safety] }
         title: { type: string }
-        month: { type: string, description: YYYY-MM. }
+        month: { type: [string, 'null'], description: 'YYYY-MM when the period is a month; null for a quarter, a year or a range.' }
         period:
           type: object
-          description: The month as instants, from inclusive, to exclusive; up to now for the current month.
-          required: [from, to]
+          description: As instants, from inclusive, to exclusive (up to now when it reaches today); and as it was asked for.
+          required: [from, to, kind, key, label, first_day, last_day]
           properties:
             from: { type: string, format: date-time }
             to: { type: string, format: date-time }
+            kind: { type: string, enum: [month, quarter, year, range] }
+            key: { type: string, description: '2026-10, 2026-Q3, 2026 or 2026-01-01..2026-03-15.' }
+            label: { type: string }
+            first_day: { type: string, format: date }
+            last_day: { type: string, format: date }
+        filters: { $ref: '#/components/schemas/ReportFilters' }
+        filter_names:
+          type: object
+          description: What the filters name, to show them.
+          required: [depots, vehicle, driver, route]
+          properties:
+            depots: { type: array, items: { type: string } }
+            vehicle: { type: [string, 'null'] }
+            driver: { type: [string, 'null'] }
+            route: { type: [string, 'null'] }
+        group: { type: string, enum: [depot, driver, route], description: Safety only. }
+        sections:
+          type: array
+          description: More tables (compliance's cost by system and by vendor).
+          items:
+            type: object
+            required: [title, columns, rows]
+            properties:
+              title: { type: string }
+              columns: { type: array, items: { $ref: '#/components/schemas/ReportColumn' } }
+              rows: { type: array, items: { type: object, additionalProperties: { type: [string, number, 'null'] } } }
         depot:
-          description: The depot chosen; null for every depot in the caller's scope.
+          description: The depot chosen by depot_id; null otherwise.
           oneOf:
             - type: 'null'
             - type: object
@@ -11104,18 +11495,7 @@ components:
                 code: { type: string }
         columns:
           type: array
-          items:
-            type: object
-            required: [key, label, kind]
-            properties:
-              key: { type: string }
-              label: { type: string }
-              kind:
-                type: string
-                enum: [text, count, litres, etb, km, l_per_100km, pct, hours, datetime]
-                description: >
-                  How the values are kept: litres in ml, etb in cents, km in metres, l_per_100km in ml per km, hours in
-                  minutes, pct a whole percentage, datetime an ISO instant.
+          items: { $ref: '#/components/schemas/ReportColumn' }
         rows:
           type: array
           items: { type: object, additionalProperties: { type: [string, number, 'null'] } }
@@ -11125,6 +11505,212 @@ components:
             - type: 'null'
             - { type: object, additionalProperties: { type: [string, number, 'null'] } }
         generated_at: { type: string, format: date-time }
+
+    ReportColumn:
+      type: object
+      required: [key, label, kind]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        kind:
+          type: string
+          enum: [text, count, litres, etb, km, l_per_100km, pct, hours, datetime, rate]
+          description: >
+            How the values are kept: litres in ml, etb in cents, km in metres, l_per_100km in ml per km, hours in
+            minutes, pct a whole percentage, datetime an ISO instant, rate tenths (per 100,000 km).
+
+    ReportFilters:
+      type: object
+      description: The period and filters a report was asked for (public ids).
+      properties:
+        month: { type: string }
+        quarter: { type: string }
+        year: { type: string }
+        from: { type: string }
+        to: { type: string }
+        depot_ids: { type: array, items: { type: string, format: uuid } }
+        vehicle_type: { type: string }
+        vehicle_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        route_id: { type: string, format: uuid }
+
+    ReportFiltersInput:
+      type: object
+      additionalProperties: false
+      properties:
+        month: { type: string }
+        quarter: { type: string }
+        year: { type: string }
+        from: { type: string }
+        to: { type: string }
+        depot_ids: { type: array, maxItems: 50, items: { type: string, format: uuid } }
+        vehicle_type: { type: string, maxLength: 40 }
+        vehicle_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        route_id: { type: string, format: uuid }
+        by: { type: string, enum: [depot, driver, route] }
+
+    SavedReportFilter:
+      type: object
+      required: [id, name, filters, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        filters: { type: object, description: 'As a query string takes them: depot_ids comma-separated.', additionalProperties: { type: string } }
+        created_at: { type: string, format: date-time }
+
+    ReportExport:
+      type: object
+      required: [id, report, format, status, rows, size_bytes, error, created_at, expires_at, url]
+      properties:
+        id: { type: string, format: uuid }
+        report: { type: string }
+        format: { type: string, enum: [csv, xlsx, pdf] }
+        status: { type: string, enum: [queued, running, ready, failed, expired] }
+        rows: { type: [integer, 'null'] }
+        size_bytes: { type: [integer, 'null'] }
+        error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+        url: { type: [string, 'null'], description: 'The signed link, while ready (24 hours).' }
+
+    ReportScheduleInput:
+      type: object
+      required: [name, report, format, frequency, hour, recipients]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        report: { type: string, enum: [fuel, maintenance, cost, trips, drivers, utilisation, compliance, safety] }
+        filters: { $ref: '#/components/schemas/ReportFiltersInput' }
+        format: { type: string, enum: [csv, xlsx, pdf] }
+        frequency: { type: string, enum: [daily, weekly, monthly] }
+        day: { type: [integer, 'null'], minimum: 1, maximum: 28, description: 'Weekly: 1 (Monday) to 7; monthly: 1 to 28.' }
+        hour: { type: integer, minimum: 0, maximum: 23, description: The Addis Ababa hour. }
+        recipients: { type: array, minItems: 1, maxItems: 50, items: { type: string, format: uuid }, description: Active FMS users by public id. }
+
+    ReportSchedulePatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        report: { type: string, enum: [fuel, maintenance, cost, trips, drivers, utilisation, compliance, safety] }
+        filters: { $ref: '#/components/schemas/ReportFiltersInput' }
+        format: { type: string, enum: [csv, xlsx, pdf] }
+        frequency: { type: string, enum: [daily, weekly, monthly] }
+        day: { type: [integer, 'null'], minimum: 1, maximum: 28 }
+        hour: { type: integer, minimum: 0, maximum: 23 }
+        recipients: { type: array, minItems: 1, maxItems: 50, items: { type: string, format: uuid } }
+
+    ReportSchedule:
+      type: object
+      required: [id, name, report, filters, format, frequency, day, hour, recipients, owner, next_run_at, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        report: { type: string }
+        filters: { type: object }
+        format: { type: string, enum: [csv, xlsx, pdf] }
+        frequency: { type: string, enum: [daily, weekly, monthly] }
+        day: { type: [integer, 'null'] }
+        hour: { type: integer }
+        recipients:
+          type: array
+          items: { type: object, required: [id, name], properties: { id: { type: string }, name: { type: string } } }
+        owner:
+          oneOf:
+            - type: 'null'
+            - { type: object, required: [id, name], properties: { id: { type: string }, name: { type: string } } }
+        next_run_at: { type: string, format: date-time }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    ReportScheduleRun:
+      type: object
+      required: [id, due_at, period, status, attempts, next_attempt_at, rows, size_bytes, error, recipients, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        due_at: { type: string, format: date-time }
+        period:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        status: { type: string, enum: [running, sent, partial, failed, retrying] }
+        attempts: { type: integer }
+        next_attempt_at: { type: [string, 'null'], format: date-time }
+        rows: { type: [integer, 'null'] }
+        size_bytes: { type: [integer, 'null'] }
+        error: { type: [string, 'null'] }
+        recipients:
+          type: array
+          items:
+            type: object
+            required: [user, outcome, reason, delivered]
+            properties:
+              user:
+                oneOf:
+                  - type: 'null'
+                  - { type: object, required: [id, name], properties: { id: { type: string }, name: { type: string } } }
+              outcome: { type: string, enum: [sent, skipped, failed] }
+              reason: { type: [string, 'null'], description: 'Skipped: inactive or no_access; failed: what the provider said.' }
+              delivered: { type: [string, 'null'], enum: [attached, link, null] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+
+    KpiDashboard:
+      type: object
+      required: [period, kpis]
+      properties:
+        period:
+          type: object
+          required: [key, label, from, to]
+          properties:
+            key: { type: string }
+            label: { type: string }
+            from: { type: string, format: date }
+            to: { type: string, format: date }
+        kpis:
+          type: array
+          items:
+            type: object
+            required: [key, label, unit, value, previous, change, target, status, sparkline, report]
+            properties:
+              key: { type: string }
+              label: { type: string }
+              unit: { type: string, enum: [cents_per_km, tenths_l_per_100km, pct, tenths_per_100k_km, count] }
+              value: { type: [number, 'null'] }
+              previous: { type: [number, 'null'] }
+              change: { type: [number, 'null'] }
+              target: { type: [number, 'null'], description: 'In the unit, except incidents: whole incidents per 100,000 km.' }
+              status: { type: string, enum: [green, amber, red, none] }
+              sparkline:
+                type: array
+                description: The 12 months to the period's end, oldest first, as [YYYY-MM, value].
+                items: { type: array, prefixItems: [{ type: string }, { type: [number, 'null'] }] }
+              report: { type: [string, 'null'], description: The report it opens. }
+
+    KpiTrend:
+      type: object
+      required: [kpi, label, unit, period, series, group, breakdown]
+      properties:
+        kpi: { type: string }
+        label: { type: string }
+        unit: { type: string }
+        period: { type: object, required: [key, label], properties: { key: { type: string }, label: { type: string } } }
+        series:
+          type: array
+          items:
+            type: object
+            required: [month, value, last_year]
+            properties:
+              month: { type: string }
+              value: { type: [number, 'null'] }
+              last_year: { type: [number, 'null'] }
+        group: { type: [string, 'null'], enum: [depot, vehicle, null] }
+        breakdown:
+          type: array
+          items: { type: object, required: [name, value], properties: { name: { type: string }, value: { type: [number, 'null'] } } }
 
     DriverScoreWeights:
       type: object
