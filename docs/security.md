@@ -14,6 +14,7 @@ what is in place, where, and how it is tested. The rules themselves are in api-c
 | Sort and filter allow-lists | each list's schema | `security-sorting.test.ts` |
 | Dependency scanning | CI job `dependency-audit` | the job itself |
 | Secret scanning | CI job `secrets-scan` | the job itself |
+| TLS, HSTS, HTTP to HTTPS (FMS-106) | `docker/caddy/Caddyfile`, [deployment.md](deployment.md) | `scripts/ci/smoke-tls.sh` |
 
 ## Response headers
 
@@ -26,6 +27,8 @@ routes (`default-src 'none'` and a type), and the documentation page `/api-docs`
 scripts and styles and calls to this origin.
 
 HSTS is the TLS terminator's to set where it is not the API: the web app's nginx does not send it, because TLS ends in front of it.
+In the production stack that is Caddy (FMS-106, [deployment.md](deployment.md)): a year with subdomains on every response, the
+API's included, with TLS 1.2 and 1.3 only and HTTP redirected to HTTPS.
 
 ### The web app
 
@@ -113,7 +116,8 @@ down. The limits cannot be switched off, only raised.
 ### The client's address: `TRUST_PROXY`
 
 Behind nginx or a load balancer, the address of every request is the proxy's unless the API is told to read `X-Forwarded-For`. Set
-**`TRUST_PROXY` to the number of proxies in front of the API** (1 behind the web app's nginx, which sets the header). Without it the
+**`TRUST_PROXY` to the number of proxies in front of the API** (1 behind the web app's nginx, which sets the header, and 1 behind Caddy in `docker-compose.prod.yml`, which sends `/api` to the
+API directly). Without it the
 per-address limits count every client as one, the sign-in throttle does too, and the audit log names the proxy as the source. Never set
 it higher than the real number: a client could then choose its own address by sending the header.
 

@@ -1,0 +1,69 @@
+# The edge of the production stack (FMS-106, docs/deployment.md): TLS for the web app, the API and the
+# Socket.IO socket (HTTPS and WSS), HTTP redirected to HTTPS, and the API spread over its instances.
+#
+#   FMS_DOMAIN       the site's host name, e.g. fleet.example.com (localhost for a local run)
+#   FMS_TLS_ISSUER   an e-mail address: a Let's Encrypt certificate for FMS_DOMAIN, renewed by Caddy;
+#                    "internal": a certificate from Caddy's own authority (local runs and CI only)
+{
+	# Caddy's own authority ("internal") is never added to the container's trust store: nothing there needs it.
+	skip_install_trust
+	# HTTP/1.1 and HTTP/2 over TCP: no UDP port to open, and nothing the browsers need.
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$FMS_DOMAIN} {
+	# Port 80 answers every request with a permanent redirect to HTTPS (Caddy's automatic HTTPS), except
+	# the ACME challenge that proves the domain for the certificate.
+	tls {$FMS_TLS_ISSUER} {
+		protocols tls1.2 tls1.3
+	}
+
+	header {
+		# Deferred: applied as the response is written, so it replaces what the upstream sent.
+		defer
+		# A year, subdomains too: a browser that has seen the site once never tries plain HTTP again.
+		# The API sets its own (six months) when it is reached without this proxy; this one replaces it.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	encode zstd gzip
+
+	# The API and its socket go straight to the API instances. A browser keeps to one instance (the fms_lb
+	# cookie), which Socket.IO's long-polling needs; an instance that stops answering is skipped, and a
+	# request that could not reach one is tried on another within 10 s.
+	handle /api/* {
+		reverse_proxy api-1:3000 api-2:3000 {
+			lb_policy cookie fms_lb
+			lb_try_duration 10s
+			lb_try_interval 250ms
+			fail_duration 30s
+			max_fails 1
+			health_uri /health/ready
+			health_interval 5s
+			health_timeout 2s
+			health_status 200
+			# A dead instance's address stops answering: give up on it fast and try the other.
+			transport http {
+				dial_timeout 2s
+			}
+			# Caddy keeps the browser's Host (the CSRF and socket origin checks compare against it) and sets
+			# X-Forwarded-For and X-Forwarded-Proto; the API trusts one proxy hop (TRUST_PROXY=1).
+		}
+	}
+
+	# Everything else is the web app's nginx: the built files and the single-page app's routes.
+	handle {
+		reverse_proxy web:8080 {
+			health_uri /healthz
+			health_interval 10s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

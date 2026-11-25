@@ -9,6 +9,9 @@ packages/backend/storage/
 .env
 .env.*
 !.env.example
+# The production stack's secrets and extra backend settings (docker-compose.prod.yml, docs/deployment.md).
+/prod.env
+/api.env
 # The off-site backup repository's credentials (docker/postgres/offsite.env.example).
 docker/postgres/offsite.env
 # scripts/backup/pitr-restore.sh's passphrases while it runs (removed on exit).
