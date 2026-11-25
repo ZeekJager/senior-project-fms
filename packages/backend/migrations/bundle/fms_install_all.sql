@@ -4105,6 +4105,15 @@ INSERT INTO auth.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM auth.roles r, auth.permissions p
  WHERE r.name = 'admin' AND p.code = 'settings:define'
 ON CONFLICT DO NOTHING;
+
+-- ===== 078_job_runs_delete.sql =====
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        GRANT DELETE ON jobs.job_runs TO fms_app;
+    END IF;
+END $$;
+
 -- ===== 079_score_appeals.sql =====
 CREATE TABLE IF NOT EXISTS analytics.score_appeals (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
