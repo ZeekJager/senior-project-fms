@@ -139,6 +139,10 @@ Mocks that most tests need can go in `src/test/msw/handlers.ts`.
 
 jsdom has no IndexedDB: `src/test/setup.ts` adds [fake-indexeddb](https://github.com/dumbmatter/fakeIndexedDB) and gives each test an empty one, so the driver app's offline queue (FMS-81) starts empty in every test.
 
+## End to end
+
+The golden path (FMS-63) runs with Playwright against a running stack, through the web app and the API: `packages/e2e`, `npm run e2e -w fms-e2e` ([e2e.md](e2e.md)).
+
 ## Coverage
 
 Coverage is reported (text summary in the CI log, HTML report as the `backend-coverage` / `frontend-coverage` artifacts) but has no minimum yet.

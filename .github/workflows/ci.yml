@@ -346,6 +346,77 @@ jobs:
         if: always()
         run: docker compose down -v --remove-orphans
 
+  # FMS-63 (docs/e2e.md): the golden path end to end with Playwright, against the Compose stack: the web app through
+  # the frontend dev server, the API behind it, the event relay and the alert engine as they run. An admin is created
+  # for the run with a random password; the test makes its own depot, people and vehicles.
+  e2e:
+    name: e2e-golden-path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create .env with generated secrets
+        run: node scripts/init-env.mjs
+      - name: Generate the admin's password
+        run: |
+          value="E2e-$(openssl rand -hex 16)"
+          echo "::add-mask::$value"
+          echo "E2E_ADMIN_PASSWORD=$value" >> "$GITHUB_ENV"
+      # Before Compose starts: its bind mount gives the packages' node_modules mount points to root, which npm ci
+      # then cannot write to.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx -w fms-e2e playwright install --with-deps chromium
+      - name: Type-check
+        run: npm run -s typecheck -w fms-e2e
+      - name: Build images
+        run: docker compose build backend frontend
+      - name: Start stack
+        run: docker compose up -d backend frontend
+      - name: Backend answers its health check
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/health/ready; then echo; exit 0; fi
+            sleep 2
+          done
+          echo "Backend did not become healthy in 120 s"; exit 1
+      - name: Migrate and create the admin
+        run: |
+          docker compose exec -T backend npm run -s migrate
+          docker compose exec -T -e FMS_USER_PASSWORD="$E2E_ADMIN_PASSWORD" backend npm run -s user:create -- --email e2e.admin@fms.local --name "E2E Admin" --role admin
+      - name: Web app answers
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:5173/login; then exit 0; fi
+            sleep 2
+          done
+          echo "The frontend dev server did not answer in 120 s"; exit 1
+      - name: Golden path
+        run: npm run -s e2e -w fms-e2e
+        env:
+          E2E_WEB_URL: http://localhost:5173
+          E2E_ADMIN_EMAIL: e2e.admin@fms.local
+      - name: Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report
+          path: |
+            packages/e2e/playwright-report
+            packages/e2e/test-results
+          retention-days: 7
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=300 backend frontend
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
   # FMS-111 (docs/resilience.md): on the Compose stack, migrated and with an administrator, Redis, the AI service and the
   # read replica are each stopped for 20 s and started again, and the API is killed and restarted, while the API is asked
   # something every second. Each drill must keep every request answered (the API instance: come back) within its target.
