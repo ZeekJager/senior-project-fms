@@ -93,6 +93,18 @@ rm -f "$D/fms.fenced"
 echo "rejoin: $MODE done; the fence is removed"
 SH
 
+# What the old server is doing when it does not stream (SE-208): its container's state, what runs in it, its log.
+not_streaming() {
+  {
+    echo "$OLD is not streaming from $PRIMARY after 3 minutes."
+    echo "Its container: $(docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} restarting={{.State.Restarting}} restarts={{.RestartCount}} started={{.State.StartedAt}} error={{.State.Error}}' "$OLD" 2>&1)"
+    echo "What runs in it:"
+    docker top "$OLD" -o pid,etime,args 2>&1 || true
+    echo "Its last 100 log lines:"
+    docker logs --tail 100 "$OLD" 2>&1 || true
+  } >&2
+}
+
 say "Starting $OLD as the standby"
 docker start "$OLD" >/dev/null
 OLD_IP=""
@@ -100,7 +112,7 @@ i=0
 until [ -n "$OLD_IP" ] && [ "$(docker exec "$PRIMARY" sh -c "psql -X -q -At -h /var/run/postgresql -U fms_admin -d fms_db -c \"select count(*) from pg_stat_replication where state = 'streaming' and client_addr is not null\"" 2>/dev/null)" -ge 1 ] \
       && [ "$(docker exec "$PRIMARY" sh -c 'PGPASSWORD="$DB_ADMIN_PASSWORD" PGCONNECT_TIMEOUT=5 psql -X -q -At -h db-proxy -p 5433 -U fms_admin -d fms_db -c "select pg_is_in_recovery()"' 2>/dev/null)" = t ]; do
   OLD_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$OLD" 2>/dev/null || true)
-  i=$((i + 1)); [ "$i" -gt 180 ] && { echo "$OLD is not streaming from $PRIMARY after 3 minutes; its log:" >&2; docker logs --tail 30 "$OLD" >&2; exit 1; }
+  i=$((i + 1)); [ "$i" -gt 180 ] && { not_streaming; exit 1; }
   sleep 1
 done
 say "Done: $OLD streams from $PRIMARY, and db-proxy:5433 reaches it. $PRIMARY stays the primary."

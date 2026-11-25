@@ -87,7 +87,7 @@ Is the site itself lost (both servers, or the repository beside them)?
    sh scripts/dr/rejoin.sh            # pg_rewind; --rebuild copies it again instead
    ```
 
-   It rewinds the old primary to the new timeline (or copies the primary again when that fails), makes it a standby streaming through the endpoint, removes the fence and starts it. Reporting reads use it again.
+   It rewinds the old primary to the new timeline (or copies the primary again when that fails), makes it a standby streaming through the endpoint, removes the fence and starts it. Reporting reads use it again. Before PostgreSQL starts, the standby looks for the primary through the endpoint for up to 2 minutes, each try giving up after 5 s (`PGCONNECT_TIMEOUT`) and each statement after 30 s, so a stalled connection cannot hold it silently. If it is not streaming 3 minutes after the start, `rejoin.sh` prints the old server's container state (status, exit code, restarts), what runs in it and its last 100 log lines.
 5. **Fail back** (optional, in a quiet hour): `sh scripts/dr/promote.sh` then `sh scripts/dr/rejoin.sh` again.
 6. **Write it up:** what happened, the times, what was lost (normally nothing), and any gap found, filed as a card.
 
