@@ -60,7 +60,8 @@ describe('the API contract (FMS-100)', () => {
 
   test('a request is matched to its operation by method and path, literal segments first', () => {
     expect(operationFor('GET', 'http://127.0.0.1:1234/api/v1/vehicles/00000000-0000-4000-8000-000000000001?x=1')?.path).toBe('/vehicles/{vehicle_id}');
-    expect(operationFor('GET', '/api/v1/vehicles/00000000-0000-4000-8000-000000000001/assignments')).toBeNull();
+    // A path no operation has: an unknown sub-resource of a known one (not a real route, so the spec never gains it).
+    expect(operationFor('GET', '/api/v1/vehicles/00000000-0000-4000-8000-000000000001/no-such-subresource')).toBeNull();
     expect(operationFor('GET', '/health/ready')?.path).toBe('/health/ready');
     expect(operationFor('GET', '/api/v1/health/ready')).toBeNull();
     expect(operationFor('DELETE', '/api/v1/auth/me')).toBeNull();
