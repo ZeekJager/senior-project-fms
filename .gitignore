@@ -4,6 +4,8 @@ dist/
 coverage/
 # Load test reports and the API log of each run (FMS-61); CI keeps them as artifacts.
 load-report/
+# The API contract coverage of the integration tests (FMS-100); CI keeps it as an artifact.
+contract-coverage.json
 # Uploaded documents in local development (FMS-17)
 packages/backend/storage/
 .env

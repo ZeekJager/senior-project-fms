@@ -27,6 +27,26 @@ All of it in `backend-ci` ([testing.md](testing.md#the-openapi-spec-is-the-contr
 | Routes, both ways | a route is mounted and the spec does not describe it, or the spec describes an operation that is not mounted (a misspelt path or method included) |
 | Structure (the lint) | an operation lacks an operation id, a summary or a declared tag; has no success response, or no `401` though it is not public; a `{path parameter}` is undeclared or declared for a path without it; a `$ref` is broken; a schema is not valid JSON Schema; an error code is not in `ERROR_CODES` |
 | Responses | a real response has a status the operation does not list, or a body that does not match its schema |
+| Every response, closed (FMS-100) | any response an integration test receives through supertest names a field the spec does not, has a status its operation does not list, or a body that does not match (see below) |
+
+## Contract tests on every response (FMS-100)
+
+`test/support/contract-hook.ts` is a setup file of the integration project: it hooks supertest, so **every response
+every integration test receives** is checked against the spec, not only the calls in `contract.test.ts`.
+
+- **Matched by method and path** to its operation (literal segments before parameters; `/api/v1` or the root for the
+  health probes). A path that is no operation (a test-only route) is not checked here: the routes check covers those.
+- **Closed:** every object the spec describes field by field is checked with `unevaluatedProperties: false`, so a field
+  the API sends and the spec does not name fails. A free-form map (`type: object` alone, or `additionalProperties`)
+  stays open, and so does a schema used inside an `allOf` or `oneOf`, whose composing schema is closed instead.
+- **Statuses:** one the operation does not list fails, except the ones every route may answer (`401`, `403`, `413`,
+  `429`, `500`, `503`), whose body must still be the error envelope. A body that is not JSON (a file, a photo) only has
+  its status checked; a `404` that is not JSON came from something other than the API (the metrics port).
+- **When it fails:** the test file fails in `afterAll`, naming each operation, status and the validator's words.
+  Document the field or status in `docs/openapi.yaml`, or stop sending it.
+- **Coverage:** after the run, `packages/backend/contract-coverage.json` lists how many operations the tests called, with
+  which statuses, and the ones never called (the `backend-contract-coverage` artifact in CI); the run prints the count.
+  `CONTRACT_MODE=report` records drift without failing, to survey it.
 
 ## Adding an operation
 

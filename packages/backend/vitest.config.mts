@@ -17,7 +17,7 @@ export default defineConfig({
           environment: 'node',
           globalSetup: ['test/support/global-setup.ts'],
           // env-setup must run first: it sets DB_NAME to the test database.
-          setupFiles: ['test/support/env-setup.ts', 'test/support/transaction-per-test.ts'],
+          setupFiles: ['test/support/env-setup.ts', 'test/support/transaction-per-test.ts', 'test/support/contract-hook.ts'],
           // One database: files run one at a time so their transactions never wait on each other.
           fileParallelism: false,
           testTimeout: 15_000,
