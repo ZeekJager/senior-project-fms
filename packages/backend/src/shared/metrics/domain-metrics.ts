@@ -16,6 +16,8 @@ export interface MetricReaders {
   backups?: () => Promise<Record<string, number>>;
   /** Trips under way now: no GPS point stored while there are some is an alert (FMS-163). */
   tripsUnderWay?: () => Promise<number>;
+  /** The GPS months (FMS-110): until when they reach, and the pings outside every month. */
+  gpsPartitions?: () => Promise<{ coveredUntil: Date | null; partitions: number; defaultRows: number }>;
 }
 
 let readers: MetricReaders = {};
@@ -60,7 +62,8 @@ const snapshot = shortLived(async () => {
   const thresholds = await attempt(readers.thresholds);
   const backups = await attempt(readers.backups);
   const tripsUnderWay = await attempt(readers.tripsUnderWay);
-  return { outbox, replica, circuits, thresholds, backups, tripsUnderWay };
+  const gpsPartitions = await attempt(readers.gpsPartitions);
+  return { outbox, replica, circuits, thresholds, backups, tripsUnderWay, gpsPartitions };
 }, 1000);
 
 const fromOutbox = (key: 'undispatched' | 'unpublished' | 'oldest_pending_seconds' | 'dead_lettered') => async () => (await snapshot()).outbox?.[key] ?? null;
@@ -89,3 +92,10 @@ scrapedGauge('socket_connections', 'Open Socket.IO connections on this instance'
 scrapedLabelledGauge('fms_alert_threshold', 'A monitoring threshold from the settings, by setting key', 'setting', async () => (await snapshot()).thresholds ?? {});
 scrapedLabelledGauge('backup_findings', 'Backup and point-in-time recovery findings by severity (FMS-108)', 'severity', async () => (await snapshot()).backups ?? {});
 scrapedGauge('trips_under_way', 'Trips under way now (en route)', async () => (await snapshot()).tripsUnderWay ?? null);
+// FMS-110: days of months still ahead (0 when there are none, so the alert fires rather than going quiet), and pings outside them.
+scrapedGauge('gps_partition_days_ahead', 'Days from now to the end of the last monthly GPS partition', async () => {
+  const status = (await snapshot()).gpsPartitions;
+  if (!status) return null;
+  return status.coveredUntil ? Math.max(0, (status.coveredUntil.getTime() - Date.now()) / 86_400_000) : 0;
+});
+scrapedGauge('gps_default_partition_rows', 'GPS pings in the default partition, outside every month (counted up to a million)', async () => (await snapshot()).gpsPartitions?.defaultRows ?? null);

@@ -11,7 +11,7 @@ const DAY_MS = 86_400_000;
 
 export interface TrackingRetentionDeps {
   db: Queryable;
-  tracking: Pick<TrackingRepository, 'purgePingsBefore'>;
+  tracking: Pick<TrackingRepository, 'purgePingsBefore' | 'dropPartitionsBefore'>;
   flags: Pick<TelemetryFlagRepository, 'purgeBefore'>;
   /** Days kept (config.tracking.retention). */
   retention: { pingDays: number; flagDays: number };
@@ -32,6 +32,9 @@ async function drain(purge: (limit: number) => Promise<number>): Promise<number>
  * Nightly (FMS-104, docs/driver-data-protection.md): where a vehicle was, and so its driver, is not kept for ever. Deletes GPS
  * pings recorded, and telemetry flags observed, before the retention period. The run's counts (never the data) are on its
  * audit entry, which the scheduler writes. A night's cap leaves a larger backlog for the next night.
+ *
+ * Pings live in monthly partitions (FMS-110): a month that ended before the cutoff is dropped whole first, which costs
+ * nothing however many pings it held; the deletes then take what is left of the month the cutoff falls in.
  */
 export function trackingRetentionJob(deps: TrackingRetentionDeps): ScheduledJob {
   return {
@@ -40,9 +43,17 @@ export function trackingRetentionJob(deps: TrackingRetentionDeps): ScheduledJob 
     async run({ now }) {
       const pingCutoff = new Date(now.getTime() - deps.retention.pingDays * DAY_MS);
       const flagCutoff = new Date(now.getTime() - deps.retention.flagDays * DAY_MS);
+      const dropped = await deps.tracking.dropPartitionsBefore(deps.db, pingCutoff);
       const pings = await drain((limit) => deps.tracking.purgePingsBefore(deps.db, pingCutoff, limit));
       const flags = await drain((limit) => deps.flags.purgeBefore(deps.db, flagCutoff, limit));
-      return { pings_deleted: pings, flags_deleted: flags, ping_cutoff: pingCutoff.toISOString(), flag_cutoff: flagCutoff.toISOString() };
+      return {
+        partitions_dropped: dropped.length,
+        months_dropped: dropped,
+        pings_deleted: pings,
+        flags_deleted: flags,
+        ping_cutoff: pingCutoff.toISOString(),
+        flag_cutoff: flagCutoff.toISOString(),
+      };
     },
   };
 }
