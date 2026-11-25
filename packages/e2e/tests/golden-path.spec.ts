@@ -142,7 +142,7 @@ test('the golden path: inspection, repair, dispatch, GPS on the map, an alert ac
 
   await step('the technician repairs the truck, and the flag is cleared', async () => {
     const repair = await technician.post<{ id: string }>('/maintenance', { vehicle_id: ids.truck, maintenance_type: 'corrective', description: 'Replace the left tail light lens', labour_hours: 0.5, total_cost_cents: 45_000 }, 201)
-    const done = await technician.put<{ status: string }>(`/maintenance/${repair.data.id}`, {
+    const done = await technician.post<{ status: string }>(`/maintenance/${repair.data.id}/complete`, {
       completed_at: new Date().toISOString(),
       // A corrective repair says what failed (FMS-125).
       failures: [{ component: 'electrical', failure_mode: 'breakage', unplanned: true, detected_by: 'dvir' }],
