@@ -97,6 +97,15 @@ jobs:
           name: backend-coverage
           path: packages/backend/coverage/
           retention-days: 14
+      # FMS-100 (docs/api-docs.md): which of the spec's operations the integration tests called, and any drift.
+      - name: Upload API contract coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-contract-coverage
+          path: packages/backend/contract-coverage.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # The load suite (FMS-61, docs/load-testing.md): the compiled API with NODE_ENV=production on a seeded database of its
   # own. Pull requests run the smoke profile, so the suite keeps working; pushes to master and manual runs run the card's

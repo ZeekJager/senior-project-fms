@@ -169,6 +169,9 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (a one-off route named like an active route of the depot).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /trips/{trip_id}:
     get:
@@ -4219,6 +4222,18 @@ paths:
                             type: object
                             properties: { score: { type: [integer, 'null'] }, weight: { type: integer }, trips_inspected: { type: integer } }
                       generated_at: { type: string, format: date-time }
+                      corrections:
+                        type: array
+                        description: The month's approved appeal corrections (FMS-159), for "Corrected after appeal" on the score card.
+                        items:
+                          type: object
+                          required: [appeal_id, correction, score_before, score_after, decided_at]
+                          properties:
+                            appeal_id: { type: string, format: uuid }
+                            correction: { type: [string, 'null'] }
+                            score_before: { type: [integer, 'null'] }
+                            score_after: { type: [integer, 'null'] }
+                            decided_at: { type: [string, 'null'], format: date-time }
                   meta:
                     type: object
                     required: [data_freshness, request_id]
@@ -9238,7 +9253,7 @@ components:
       required: [component, kind, label, status, checked_at, latency_ms, error, uptime]
       properties:
         component: { type: string, description: 'api, database, replica, redis, ai_service, or provider:<code>.' }
-        kind: { type: string, enum: [api, database, replica, redis, ai_service, provider] }
+        kind: { type: string, enum: [api, database, replica, redis, ai_service, backups, provider] }
         label: { type: string }
         status: { type: string, enum: [ok, down, disabled, no_data], description: Its sample of the last minute or the one before. }
         checked_at: { type: [string, 'null'], format: date-time }
@@ -9479,22 +9494,11 @@ components:
       description: A setting an administrator tunes (FMS-80, docs/settings.md).
       required: [key, value, default_value, is_default, unit, min, max, updated_by, updated_by_name, updated_at]
       properties:
-        key:
-          type: string
-          enum:
-            [
-              fuel_variance_threshold_pct,
-              health_alert_below,
-              expiry_warning_days,
-              driver_score_weight_punctuality,
-              driver_score_weight_safety,
-              driver_score_weight_incidents,
-              driver_score_weight_dvir,
-            ]
+        key: { type: string, description: 'A setting of the registry (FMS-157, docs/settings.md), e.g. fuel_variance_threshold_pct.' }
         value: { type: integer }
         default_value: { type: integer }
         is_default: { type: boolean }
-        unit: { type: string, enum: [percent, score, days, weight], description: 'weight: a share of the driver performance score (FMS-146).' }
+        unit: { type: string, description: 'percent, score, days, months, weight (a share of the driver performance score, FMS-146), and the registry''s others.' }
         min: { type: integer }
         max: { type: integer }
         updated_by: { type: [string, 'null'], format: uuid, description: Who changed it last; null while never changed. }
@@ -10115,6 +10119,9 @@ components:
               longitude: { type: [number, 'null'] }
         distance_km: { type: [number, 'null'] }
         estimated_duration_seconds: { type: [integer, 'null'] }
+        distance_source: { type: [string, 'null'], enum: [road, manual, null], description: 'road: measured along the road (FMS-84); manual: typed in.' }
+        measured_at: { type: [string, 'null'], format: date-time, description: 'When the road was measured; its line is at GET /routes/{route_id}/geometry.' }
+        is_adhoc: { type: boolean, description: 'Made for one unplanned trip (FMS-139): readable by id, never listed.' }
         is_active: { type: boolean }
         version: { type: integer }
         created_at: { type: string, format: date-time }
@@ -10322,6 +10329,7 @@ components:
         vehicle_type: { type: string, enum: [car, suv, van, truck, bus, motorcycle, other] }
         fuel_type: { type: string, enum: [petrol, diesel, hybrid, electric, cng, lpg, other] }
         fuel_efficiency_ml_per_km: { type: [integer, 'null'] }
+        tank_capacity_ml: { type: [integer, 'null'], description: 'The fuel tank, whole millilitres (FMS-82): a fill-up larger than it is an anomaly; null while nobody has said.' }
         payload_capacity_kg: { type: [number, 'null'], description: What it carries, kg (FMS-153); null while nobody has said. }
         body: { type: [string, 'null'], enum: [passenger, dry_cargo, tanker, special, null] }
         seats: { type: [integer, 'null'] }
@@ -11952,6 +11960,10 @@ components:
       required: [generated_at, account, driver, trips, fuel_logs, incident_reports, location_history]
       properties:
         generated_at: { type: string, format: date-time }
+        feedback:
+          type: array
+          description: The feedback the driver was given (FMS-158), retracted items too; a person who is not a driver has none.
+          items: { type: object }
         account:
           type: object
           required: [id, email, full_name, phone, status, roles, last_login_at, created_at]
