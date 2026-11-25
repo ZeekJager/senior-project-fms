@@ -71,6 +71,30 @@ describe('api client', () => {
     expect(seen).toEqual([true, false])
   })
 
+  it('says it is reconnecting while the server itself does not answer: no answer, or a proxy error that is not JSON (FMS-111)', async () => {
+    const api = testApi()
+    const seen: boolean[] = []
+    api.onReconnectingChange((r) => seen.push(r))
+    // The proxy in front of the API could not reach it.
+    server.use(http.get('/api/v1/ping', () => new HttpResponse('Bad Gateway', { status: 502, headers: { 'Content-Type': 'text/plain' } })))
+    await expect(api.request('/ping')).rejects.toBeInstanceOf(ApiError)
+    expect(api.reconnecting()).toBe(true)
+    expect(api.reconnectingCause()).toBe('server')
+    // No answer at all.
+    server.use(http.get('/api/v1/ping', () => HttpResponse.error()))
+    await expect(api.request('/ping')).rejects.toThrow()
+    expect(api.reconnectingCause()).toBe('server')
+    // The database failing over is told apart, and the API's own 500 (JSON) is an error, not an outage.
+    server.use(http.get('/api/v1/ping', () => HttpResponse.json({ error: { code: 'UPSTREAM_UNAVAILABLE', message: 'm', details: [] }, meta: {} }, { status: 503, headers: { 'Retry-After': '5' } })))
+    await expect(api.request('/ping')).rejects.toBeInstanceOf(ApiError)
+    expect(api.reconnectingCause()).toBe('database')
+    server.use(http.get('/api/v1/ping', () => errorEnvelope(500, 'INTERNAL_ERROR', 'Something went wrong.')))
+    await expect(api.request('/ping')).rejects.toBeInstanceOf(ApiError)
+    expect(api.reconnecting()).toBe(false)
+    expect(api.reconnectingCause()).toBeNull()
+    expect(seen).toEqual([true, true, false])
+  })
+
   describe('idempotencyKey', () => {
     it('sends no key by default, a fresh UUID for `true`, and a given string as is', async () => {
       const keys: (string | null)[] = []

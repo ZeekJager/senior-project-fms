@@ -67,13 +67,19 @@ export interface ApiClient {
   /** Called when that changes. Returns an unsubscribe function. */
   onServedOfflineChange(handler: (offline: boolean) => void): () => void
   /**
-   * Whether the server's database is unavailable for a moment (FMS-162): its latest answer was 503 with Retry-After,
-   * as while the primary fails over. Cleared by the next answer that is not.
+   * Whether the server is unavailable for a moment: its database (FMS-162: the latest answer was 503 with Retry-After,
+   * as while the primary fails over), or the API itself (FMS-111: no answer, or a 5xx from the proxy in front of it
+   * rather than the API, which always answers JSON). Cleared by the next answer from the API that is not.
    */
   reconnecting(): boolean
-  /** Called when that changes. Returns an unsubscribe function. */
+  /** Why: `database` or `server`; null while it is not reconnecting. */
+  reconnectingCause(): ReconnectingCause | null
+  /** Called when that, or its cause, changes. Returns an unsubscribe function. */
   onReconnectingChange(handler: (reconnecting: boolean) => void): () => void
 }
+
+/** What is unavailable: the server's database (it fails over), or the server itself (restarting, or out of reach). */
+export type ReconnectingCause = 'database' | 'server'
 
 /**
  * `pwa` when the app runs installed (standalone), else `web`: the server
@@ -96,15 +102,24 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
   let inflightRefresh: Promise<unknown> | undefined
   let offline = false
   const reconnectingHandlers = new Set<(reconnecting: boolean) => void>()
-  let reconnecting = false
+  let reconnecting: ReconnectingCause | null = null
 
-  /** 503 with Retry-After is the server's own "the database is unavailable, try again shortly" (FMS-162). */
-  function noteDatabase(res: Response) {
+  function setReconnecting(cause: ReconnectingCause | null) {
+    if (cause === reconnecting) return
+    reconnecting = cause
+    reconnectingHandlers.forEach((handler) => handler(reconnecting !== null))
+  }
+
+  /**
+   * 503 with Retry-After is the server's own "the database is unavailable, try again shortly" (FMS-162). A 5xx that is
+   * not JSON comes from the proxy in front of the API, which could not reach it (FMS-111): the API is restarting.
+   */
+  function noteServer(res: Response) {
     if (res.headers?.get('X-FMS-Offline') === 'true') return
-    const down = res.status === 503 && Boolean(res.headers?.get('Retry-After'))
-    if (down === reconnecting) return
-    reconnecting = down
-    reconnectingHandlers.forEach((handler) => handler(reconnecting))
+    const fromApi = (res.headers?.get('Content-Type') ?? '').includes('json')
+    if (res.status === 503 && res.headers?.get('Retry-After')) setReconnecting('database')
+    else if (res.status >= 500 && !fromApi) setReconnecting('server')
+    else setReconnecting(null)
   }
 
   /** Every answer says where it came from: the server, or the worker's saved copy. */
@@ -121,21 +136,28 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
     const { json, formData, idempotencyKey, headers, ...init } = options
     // A write sends the token the sign-in set, read now: a refresh replaces it, so the retry after one sends the new one.
     const token = SAFE_METHODS.has((init.method ?? 'GET').toUpperCase()) ? undefined : csrfToken()
-    const res = await fetchImpl(`${API_BASE}${path}`, {
-      credentials: 'same-origin',
-      ...init,
-      headers: {
-        Accept: 'application/json',
-        'X-Client-Channel': clientChannel(),
-        ...(token ? { [CSRF_HEADER]: token } : {}),
-        ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...(typeof idempotencyKey === 'string' ? { 'Idempotency-Key': idempotencyKey } : {}),
-        ...headers,
-      },
-      body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
-    })
+    let res: Response
+    try {
+      res = await fetchImpl(`${API_BASE}${path}`, {
+        credentials: 'same-origin',
+        ...init,
+        headers: {
+          Accept: 'application/json',
+          'X-Client-Channel': clientChannel(),
+          ...(token ? { [CSRF_HEADER]: token } : {}),
+          ...(json === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(typeof idempotencyKey === 'string' ? { 'Idempotency-Key': idempotencyKey } : {}),
+          ...headers,
+        },
+        body: formData ?? (json === undefined ? undefined : JSON.stringify(json)),
+      })
+    } catch (err) {
+      // No answer at all (the server, or the way to it, is down): not a request this page cancelled.
+      if (!(err instanceof DOMException && err.name === 'AbortError')) setReconnecting('server')
+      throw err
+    }
     noteSource(res)
-    noteDatabase(res)
+    noteServer(res)
     if (!res.ok) throw await toApiError(res)
     if (res.status === 204) return { data: undefined as T, meta: {} }
     const body = (await res.json()) as Partial<Envelope<T>>
@@ -208,7 +230,8 @@ export function createApiClient(fetchImpl: typeof fetch = (...args) => fetch(...
       offlineHandlers.add(handler)
       return () => offlineHandlers.delete(handler)
     },
-    reconnecting: () => reconnecting,
+    reconnecting: () => reconnecting !== null,
+    reconnectingCause: () => reconnecting,
     onReconnectingChange(handler) {
       reconnectingHandlers.add(handler)
       return () => reconnectingHandlers.delete(handler)

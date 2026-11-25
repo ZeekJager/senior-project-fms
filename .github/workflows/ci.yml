@@ -346,6 +346,65 @@ jobs:
         if: always()
         run: docker compose down -v --remove-orphans
 
+  # FMS-111 (docs/resilience.md): on the Compose stack, migrated and with an administrator, Redis, the AI service and the
+  # read replica are each stopped for 20 s and started again, and the API is killed and restarted, while the API is asked
+  # something every second. Each drill must keep every request answered (the API instance: come back) within its target.
+  resilience:
+    name: resilience-drills
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create .env with generated secrets
+        run: node scripts/init-env.mjs
+      - name: Generate the drill administrator's password
+        run: |
+          value="Drill-$(openssl rand -hex 16)"
+          echo "::add-mask::$value"
+          echo "FMS_DRILL_PASSWORD=$value" >> "$GITHUB_ENV"
+      - name: Build images
+        run: docker compose build
+      - name: Start stack
+        run: docker compose up -d
+      - name: Backend answers its health check
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS -o /dev/null http://localhost:3000/health/ready; then exit 0; fi
+            sleep 2
+          done
+          echo "Backend did not become healthy in 180 s"; exit 1
+      - name: Migrate and create the drill administrator
+        run: |
+          docker compose exec -T backend npm run -s migrate
+          docker compose exec -T -e FMS_USER_PASSWORD="$FMS_DRILL_PASSWORD" backend npm run -s user:create -- --email drill.admin@fms.local --name "Drill Admin" --role admin
+      - name: Every dependency ready
+        run: |
+          for i in $(seq 1 90); do
+            body="$(curl -s http://localhost:3000/health/ready || true)"
+            if echo "$body" | grep -q '"status":"ok"'; then echo "$body"; exit 0; fi
+            sleep 2
+          done
+          echo "Not every dependency became ready: $body"; exit 1
+      - name: Drills
+        run: sh scripts/ci/check-resilience.sh --report resilience-report.md
+        env:
+          FMS_API_URL: http://localhost:3000
+          FMS_DRILL_EMAIL: drill.admin@fms.local
+      - name: Drill report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: resilience-report
+          path: resilience-report.md
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200 backend redis ai-service postgres-replica
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
   # FMS-105 (docs/production-images.md): the three production images are built (tagged by commit),
   # scanned, and run. Separate from docker-stack, which builds the development images.
   images:
