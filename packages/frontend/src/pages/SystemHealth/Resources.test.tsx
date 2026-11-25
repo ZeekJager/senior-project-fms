@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { scrubEvent, scrubText } from '@/lib/errorTracking'
 import { currentUser, envelope, renderApp, signedInAs } from '@/test/auth'
@@ -51,7 +51,7 @@ function serve(metrics: SystemMetrics = METRICS, windows: MaintenanceWindow[] = 
       const body = (await request.json()) as { hosts: string[]; starts_at: string; ends_at: string; reason: string }
       created.push(body)
       list = [...list, { id: 'w-1', ...body, cancelled_at: null, in_force: true, suppressed: 0, version: 1 }]
-      return envelope(list.at(-1), 201)
+      return HttpResponse.json({ data: list.at(-1), meta: { request_id: 'r-1' } }, { status: 201 })
     }),
   )
   return { asked, created }
