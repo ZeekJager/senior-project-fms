@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest, multiprocess
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, create_model
 
-from ml import artefact
+from ml import artefact, error_tracking
 from ml.serving import Predictor
 from ml.spec import load_spec
 from ml.trip_risk import serving as trip_risk
@@ -198,6 +198,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     trip_predictor = trip_risk.TripRiskPredictor.load(trip_folder) if trip_folder else None
     load_seconds = round(time.perf_counter() - started, 2)
 
+    # Error tracking (FMS-109, docs/observability.md): off without SENTRY_DSN.
+    error_tracking.init_error_tracking(os.environ.get("SENTRY_DSN") or None, os.environ.get("SENTRY_ENVIRONMENT", "development"))
+
     # No interactive docs: the API is internal, and documented in docs/api-contract.md §10.3.
     app = FastAPI(title="FMS predictive maintenance", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.predictor = predictor
@@ -235,6 +238,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def invalid(request: Request, exc: RequestValidationError):
         details = [{"field": _field(tuple(e["loc"])), "reason": REASONS.get(e["type"], "invalid")} for e in exc.errors()]
         return error(request, 422, "VALIDATION_FAILED", "The request is invalid.", details)
+
+    # Anything else is a 500 in the envelope, and goes to error tracking with its request id (FMS-109).
+    @app.exception_handler(Exception)
+    async def unexpected(request: Request, exc: Exception):
+        error_tracking.capture(exc, getattr(request.state, "request_id", None), route_template(request), request.method)
+        return error(request, 500, "INTERNAL_SERVER_ERROR", "Something went wrong.", [])
 
     def authorized(request: Request) -> None:
         sent = request.headers.get(AUTH_HEADER, "")

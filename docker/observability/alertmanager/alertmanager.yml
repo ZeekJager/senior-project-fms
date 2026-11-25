@@ -1,0 +1,26 @@
+# Alertmanager (FMS-163, docs/observability.md): every alert goes to the FMS alert engine's webhook, which opens the FMS
+# alert, tells the administrators on the severity's channels (critical: app, email, SMS, push and Teams; warning: app
+# and Teams), escalates and resolves it. Maintenance windows are kept in FMS (Settings and System health), not here.
+# The token is ALERTMANAGER_WEBHOOK_TOKEN, written to a file by the container's entry point.
+route:
+  receiver: fms
+  group_by: [alertname, host, service, provider]
+  group_wait: 30s
+  group_interval: 1m
+  repeat_interval: 4h
+
+receivers:
+  - name: fms
+    webhook_configs:
+      - url: http://backend:3000/api/v1/system/alerts/webhook
+        send_resolved: true
+        max_alerts: 100
+        http_config:
+          authorization:
+            credentials_file: /alertmanager/secrets/webhook-token
+
+# A critical alert holds back the warning of the same metric on the same host or service.
+inhibit_rules:
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [metric, host, service]

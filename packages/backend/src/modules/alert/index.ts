@@ -1,3 +1,5 @@
+import { ChannelPostService } from './application/channel-post.service';
+import type { DeliveryChannel } from './domain/delivery';
 import { Router } from 'express';
 import { config } from '../../config';
 import { pool } from '../../db';
@@ -17,7 +19,7 @@ import { IncidentService } from './application/incident.service';
 import { InboxService } from './application/inbox.service';
 import { APPEAL_NOTICE_EVENTS, FEEDBACK_NOTICE_EVENTS, NoticeService } from './application/notice.service';
 import type { IncidentType } from './domain/incident';
-import { ALERT_RULES } from './domain/rules';
+import { ALERT_RESOLVERS, ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
 import { DeliveryRepository } from './infrastructure/delivery.repository';
 import { IncidentRepository } from './infrastructure/incident.repository';
@@ -46,7 +48,11 @@ const repo = new AlertRepository(pool);
 // delivery job. Only this module reads the recipients' email addresses and phone numbers.
 const delivery = new DeliveryService({
   repo: new DeliveryRepository(pool),
-  gateway: notificationGateway,
+  // Per-person channels only: Teams is a channel post (FMS-163), sent by the channel-post job below.
+  gateway: {
+    ...notificationGateway,
+    channels: async (db) => new Set([...(await notificationGateway.channels(db))].filter((c): c is DeliveryChannel => c !== 'teams')),
+  },
   users: {
     accounts: async (db, ids) =>
       new Map(
@@ -115,6 +121,19 @@ for (const type of Object.keys(ALERT_RULES)) {
     await service.raise(tx, event);
   });
 }
+// Events that close an alert by themselves (FMS-163: a monitoring alert Alertmanager says is resolved).
+for (const type of Object.keys(ALERT_RESOLVERS)) {
+  eventBus.subscribe(type, 'alert.resolver', async (event, tx) => {
+    await service.resolveBySource(tx, event);
+  });
+}
+
+// Monitoring alerts posted to the operations channel (FMS-163): Teams, when its provider is set up.
+const channelPosts = new ChannelPostService({
+  repo,
+  gateway: { send: (message, correlationId) => notificationGateway.send(message, correlationId), channels: () => notificationGateway.channels() },
+  appUrl: config.app.publicUrl,
+});
 
 const router = Router();
 router.use(alertRouter(service, delivery));
@@ -139,7 +158,19 @@ export const alertModule: AppModule = {
       leaseMs: 5 * 60_000,
       run: async ({ now, correlationId }) => ({ ...(await delivery.drain({ now, correlationId })) }),
     },
+    {
+      // Monitoring alerts to the Teams channel, opened and resolved (FMS-163), with the same retries.
+      name: 'channel-post-delivery',
+      every: 1,
+      leaseMs: 5 * 60_000,
+      run: async ({ now, correlationId }) => ({ ...(await channelPosts.drain({ now, correlationId })) }),
+    },
   ],
+};
+
+/** For tests: the channel posts due by `now`, as the job sends them. */
+export const channelPostDelivery = {
+  drain: (now: Date, correlationId: string) => channelPosts.drain({ now, correlationId }),
 };
 
 /** For tests: send the emails, SMS and pushes due by `now`, as the delivery job does. */

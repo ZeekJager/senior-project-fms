@@ -12,6 +12,8 @@ import { encryptPushPayload, MAX_PAYLOAD_BYTES, PUSH_SERVICE_HOSTS, pushEndpoint
 //          Authorization: Bearer <api key> and Idempotency-Key: <reference>; answers 2xx with { id } (or
 //          { message_id }). An SMS vendor with another API gets an adapter of its own, registered by its code.
 //   push   Web Push with VAPID: vapid_public_key, subject (mailto: or https:). The VAPID private key is the API key.
+//   teams  A Microsoft Teams channel (FMS-163): an Adaptive Card posted to its Workflows webhook. The webhook URL, which
+//          carries its own signature, is the API key: it lives in the environment, never in the database.
 
 const emailSettings = z.object({
   host: z.string().min(1),
@@ -29,7 +31,13 @@ export interface NotificationAdapterOptions {
   pushHosts?: readonly string[];
   /** Allow http push endpoints (tests only). */
   allowHttpPush?: boolean;
+  /** Hosts a Teams webhook may be on (Microsoft's unless given: tests use a local server), and http for tests. */
+  teamsHosts?: readonly string[];
+  allowHttpTeams?: boolean;
 }
+
+/** Where Teams' Workflows webhooks live: Power Automate and Logic Apps. A webhook URL elsewhere is refused. */
+export const TEAMS_WEBHOOK_HOSTS: readonly string[] = ['.logic.azure.com', '.api.powerplatform.com', '.webhook.office.com'];
 
 /** Settings a row must have; a row without them is a configuration mistake, retried until it is fixed. */
 function settings<T>(schema: z.ZodType<T>, ctx: AdapterContext): T {
@@ -49,6 +57,7 @@ export function notificationAdapter(code: string, options: NotificationAdapterOp
     if (configuration.channel === 'push') return to.push ? pushEndpointProblem(to.push.endpoint, pushHosts, options.allowHttpPush) : 'no_subscription';
     if (configuration.channel === 'sms') return to.phone ? null : 'no_phone';
     if (configuration.channel === 'email') return to.email ? null : 'no_email';
+    if (configuration.channel === 'teams') return null;
     return 'unknown_channel';
   };
   return {
@@ -76,6 +85,7 @@ export function notificationAdapter(code: string, options: NotificationAdapterOp
       if (problem) throw new DeliveryRefused('invalid_destination', `The ${message.channel} address cannot be used (${problem}).`);
       if (channel === 'email') return sendEmail(ctx, message);
       if (channel === 'sms') return sendSms(ctx, message);
+      if (channel === 'teams') return sendTeams(ctx, message, options.teamsHosts ?? TEAMS_WEBHOOK_HOSTS, options.allowHttpTeams ?? false);
       return sendPush(ctx, message);
     },
   };
@@ -180,6 +190,53 @@ async function sendPush(ctx: AdapterContext, message: OutboundMessage): Promise<
     // 404 and 410: the browser unsubscribed, or the subscription expired. It never comes back.
     if (err instanceof ProviderCallError && (err.status === 404 || err.status === 410)) throw new DeliveryRefused('subscription_expired', 'The push subscription has expired.');
     if (err instanceof ProviderCallError && err.status === 413) throw new DeliveryRefused('payload_too_large', 'The push service refused the message size.');
+    throw err;
+  }
+}
+
+/**
+ * A Teams post (FMS-163): an Adaptive Card with the alert's title, text and severity, and a button to the screen it is
+ * about. The webhook is the API key; its host must be Microsoft's. A 4xx is refused for good (the webhook is gone or
+ * wrong), a 5xx or a timeout retried.
+ */
+async function sendTeams(ctx: AdapterContext, message: OutboundMessage, hosts: readonly string[], allowHttp: boolean): Promise<DeliveryReceipt> {
+  if (!ctx.apiKey) throw new ProviderCallError('network', `${ctx.provider.code} is not set up: its webhook URL (API key) is missing.`);
+  let url: URL;
+  try {
+    url = new URL(ctx.apiKey);
+  } catch {
+    throw new ProviderCallError('network', `${ctx.provider.code} is not set up: its webhook URL is not a URL.`);
+  }
+  const hostOk = hosts.some((h) => (h.startsWith('.') ? url.hostname.endsWith(h) : url.hostname === h));
+  if ((url.protocol !== 'https:' && !(allowHttp && url.protocol === 'http:')) || !hostOk) {
+    throw new ProviderCallError('network', `${ctx.provider.code} is not set up: its webhook is not a Teams Workflows URL.`);
+  }
+  const link = typeof message.data?.url === 'string' ? (message.data.url as string) : null;
+  const card = {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        content: {
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          type: 'AdaptiveCard',
+          version: '1.4',
+          body: [
+            { type: 'TextBlock', text: message.subject, weight: 'Bolder', size: 'Medium', wrap: true, color: message.urgency === 'high' ? 'Attention' : 'Warning' },
+            { type: 'TextBlock', text: message.text, wrap: true },
+          ],
+          ...(link ? { actions: [{ type: 'Action.OpenUrl', title: 'Open in FMS', url: link }] } : {}),
+        },
+      },
+    ],
+  };
+  try {
+    await ctx.clientFor(url.origin).call({ method: 'POST', path: url.pathname, query: Object.fromEntries(url.searchParams), body: card, idempotent: false });
+    return { messageId: null };
+  } catch (err) {
+    if (err instanceof ProviderCallError && err.status !== undefined && err.status >= 400 && err.status < 500 && err.status !== 429) {
+      throw new DeliveryRefused('invalid_destination', `Teams refused the post (${err.status}).`);
+    }
     throw err;
   }
 }

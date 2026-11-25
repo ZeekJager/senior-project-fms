@@ -8,7 +8,7 @@ import { limitOffset, pageMeta, type Page } from '../../../shared/http/paginatio
 import type { RequestUser } from '../../../types/express';
 import { ACTIVE_STATUSES, ALERT_EVENTS, alertNotActive, alertNotFound, moreSevere, priorityOf, type AlertSeverity, type AlertStatus, type AlertView } from '../domain/alert';
 import { PERSONAL_CHANNELS } from '../domain/delivery';
-import { ALERT_RULES, ESCALATION_TIERS, PERSONAL_NOTIFICATION_TYPE, tiersOf, type AlertRule, type Names, type Payload } from '../domain/rules';
+import { ALERT_RESOLVERS, ALERT_RULES, ESCALATION_TIERS, PERSONAL_NOTIFICATION_TYPE, tiersOf, type AlertRule, type Names, type Payload } from '../domain/rules';
 import type { AlertRepository, AlertRow } from '../infrastructure/alert.repository';
 
 /** What the alert engine needs from fleet, trip and auth (connected in alert/index.ts). */
@@ -148,6 +148,8 @@ export class AlertService {
     });
     await this.notifyTier(tx, ctx, alert, rule.audience, 'alert');
     await this.notifyPersonal(tx, ctx, alert, rule, payload, names, occurredAt);
+    // FMS-163: and to the operations channel (Teams), sent by the channel-post job.
+    if (rule.channelPost) await repo.queueChannelPost(tx, ctx, alert.id, 'opened');
     const [view] = await this.views(tx, [alert]);
     await this.publish(tx, ctx, ALERT_EVENTS.created, view, {
       alert_type: view.type,
@@ -162,6 +164,26 @@ export class AlertService {
       created_at: view.created_at,
     });
     return { alertId: alert.publicId, created: true };
+  }
+
+  /**
+   * An event that closes an alert by itself (ALERT_RESOLVERS, FMS-163: Alertmanager's resolved): the active alert with its
+   * dedup key is resolved by nobody, its channel told. Nothing active: nothing to do (a repeat, or it was resolved by hand).
+   */
+  async resolveBySource(tx: PoolClient, event: DomainEvent): Promise<string | null> {
+    const key = ALERT_RESOLVERS[event.type]?.(event.payload as Record<string, unknown>);
+    if (!key) return null;
+    const { repo } = this.deps;
+    const ctx: MutationContext = { userId: null, correlationId: event.correlation_id };
+    await repo.lockSource(tx, key);
+    const active = await repo.findActiveByDedup(tx, key, new Date(0));
+    if (!active) return null;
+    const updated = await repo.update(tx, ctx, active.id, { status: 'resolved', resolved_at: new Date(event.occurred_at), resolved_by: null });
+    const rule = ALERT_RULES[active.sourceEventType ?? ''];
+    if (rule?.channelPost) await repo.queueChannelPost(tx, ctx, active.id, 'resolved');
+    const [view] = await this.views(tx, [updated]);
+    await this.publish(tx, ctx, ALERT_EVENTS.resolved, view, { status: view.status, resolved_at: view.resolved_at, resolved_by: null, by: 'system' });
+    return updated.publicId;
   }
 
   async list(user: RequestUser, query: AlertQuery): Promise<{ items: AlertView[]; meta: ReturnType<typeof pageMeta> }> {

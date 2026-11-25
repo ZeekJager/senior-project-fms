@@ -780,6 +780,11 @@ instead of overwriting their change. A change reaches every server within second
 - **System health:** each part of FMS (the API, the database and its replica, Redis, the AI service, the outside
   providers), whether it is working now, and its uptime over 24 hours, 7 days and 30 days. Below that are the request
   rate, errors, response times, outages and failed nightly jobs.
+- **Resources** (a tab of System health): every server and service with its CPU, memory, disk and network, each marked
+  *OK*, *Warning* or *Critical*, the API's requests and errors, and the database, live and back 12 months. Choose the
+  range above. You are alerted, in the app, by email, SMS and Teams, when a line in Settings, *Monitoring*, is passed.
+  Before planned work, **Add a window** with the servers it touches: their alerts are held back until it ends.
+  **Capacity report (PDF)** says how fast the disks fill and what will pass 80% within 90 days.
 - **Backups:** the database is backed up every night and kept 30 days. **Back up now** takes one at once;
   **Download** saves one (the link lasts 5 minutes). Restoring is done by the technical team, never from a button.
 

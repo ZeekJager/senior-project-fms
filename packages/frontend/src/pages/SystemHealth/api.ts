@@ -1,5 +1,6 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
+import { API_BASE } from '@/lib/api/client'
 
 // System health (api-contract §3.8, FMS-143): GET /system/health and /system/health/history. Admin only (system:read).
 
@@ -103,5 +104,131 @@ export function useSystemHealthHistory(window: HealthWindow) {
     queryFn: () => api.request<SystemHealthHistory>(`/system/health/history?window=${window}`),
     placeholderData: keepPreviousData,
     refetchInterval: REFRESH_MS,
+  })
+}
+
+// Resources (FMS-163, docs/observability.md): GET /system/metrics, read from Prometheus by the API (the browser never
+// calls it), refreshed every 15 s; the maintenance windows and the capacity report.
+
+export type ResourceRange = '1h' | '24h' | '7d' | '30d' | '12m'
+export const RESOURCE_RANGES: readonly { value: ResourceRange; label: string }[] = [
+  { value: '1h', label: '1 hour' },
+  { value: '24h', label: '24 hours' },
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '12m', label: '12 months' },
+]
+
+export type ResourceStatus = 'ok' | 'warning' | 'critical' | 'unknown'
+
+export interface ResourceMetric {
+  value: number | null
+  sampled_at: string | null
+  status: ResourceStatus
+  /** [unix seconds, value] */
+  series: [number, number][]
+}
+
+export interface ResourceTile {
+  name: string
+  status: ResourceStatus
+  cpu: ResourceMetric
+  memory: ResourceMetric
+  disk: ResourceMetric | null
+  network_in: ResourceMetric
+  network_out: ResourceMetric
+}
+
+export interface Lines {
+  warning: number
+  critical: number
+}
+
+export interface SystemMetrics {
+  range: ResourceRange
+  step_seconds: number
+  generated_at: string
+  source: { configured: boolean; reachable: boolean; error?: string }
+  thresholds: { cpu_pct: Lines; memory_pct: Lines; disk_pct: Lines; db_connections_pct: Lines; replica_lag_seconds: Lines; error_pct: Lines; p95_ms: Lines; gps_silence_minutes: number }
+  hosts: ResourceTile[]
+  services: ResourceTile[]
+  application: {
+    request_rate_per_minute: ResourceMetric
+    error_pct: ResourceMetric
+    p95_ms: ResourceMetric
+    gps_points_per_minute: ResourceMetric
+    sockets: ResourceMetric
+    job_failures_last_hour: ResourceMetric
+  } | null
+  database: {
+    connections_pct: ResourceMetric
+    transactions_per_second: ResourceMetric
+    cache_hit_pct: ResourceMetric
+    replica_lag_seconds: ResourceMetric
+    slowest_queries: { query: string; calls: number; mean_ms: number; total_ms: number }[]
+  } | null
+}
+
+export interface MaintenanceWindow {
+  id: string
+  hosts: string[]
+  starts_at: string
+  ends_at: string
+  reason: string
+  cancelled_at: string | null
+  in_force: boolean
+  suppressed: number
+  version: number
+}
+
+/** Prometheus scrapes every 15 s: the tab reads as often, so a value is at most about 30 s old. */
+const RESOURCES_REFRESH_MS = 15_000
+
+export function useSystemMetrics(range: ResourceRange) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['system', 'metrics', range],
+    queryFn: () => api.request<SystemMetrics>(`/system/metrics?range=${range}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: RESOURCES_REFRESH_MS,
+  })
+}
+
+export function useMaintenanceWindows() {
+  const { api } = useAuth()
+  return useQuery({ queryKey: ['system', 'maintenance-windows'], queryFn: () => api.request<MaintenanceWindow[]>('/system/maintenance-windows'), refetchInterval: 60_000 })
+}
+
+export function useCreateMaintenanceWindow() {
+  const { api } = useAuth()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (w: { hosts: string[]; starts_at: string; ends_at: string; reason: string }) => api.request<MaintenanceWindow>('/system/maintenance-windows', { method: 'POST', json: w }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['system', 'maintenance-windows'] }),
+  })
+}
+
+export function useCancelMaintenanceWindow() {
+  const { api } = useAuth()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.request<MaintenanceWindow>(`/system/maintenance-windows/${id}/cancel`, { method: 'POST' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['system', 'maintenance-windows'] }),
+  })
+}
+
+/** The capacity report as a PDF, by a download link (as the reports are: the session is checked first). */
+export function useDownloadCapacityReport() {
+  const { api } = useAuth()
+  return useMutation({
+    mutationFn: async () => {
+      await api.request('/auth/me')
+      const link = document.createElement('a')
+      link.href = `${API_BASE}/system/capacity-report?format=pdf`
+      link.download = ''
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    },
   })
 }

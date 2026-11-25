@@ -34,6 +34,8 @@ const REVIEWED_PUBLIC = [
   'POST /api/v1/webhooks/fuel-card/:provider',
   'POST /api/v1/webhooks/ev/:provider',
   'GET /api/v1/system/backups/:backupId/content',
+  // FMS-163: Alertmanager's webhook; its bearer token (ALERTMANAGER_WEBHOOK_TOKEN) is the permission.
+  'POST /api/v1/system/alerts/webhook',
 ];
 
 /**

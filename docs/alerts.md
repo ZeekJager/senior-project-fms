@@ -29,6 +29,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `AssignmentExceptionRequested` (FMS-151, [assignment-exceptions.md](assignment-exceptions.md)): an assignment held for approval | `assignment_exception` | medium | `depot_id` (the route's) | the request (24 h) | fleet manager |
 | `AssignmentExceptionDecided` (FMS-151): refused only; an approval assigns the trip | `assignment_exception_refused` | low | `depot_id` | the request (24 h) | dispatcher |
 | `IncidentReported` (FMS-38, docs/incidents.md) | `incident` | critical: only a critical incident is an alert | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
+| `MonitoringAlertFiring` (FMS-163, [observability.md](observability.md#alerts)): an alert Prometheus fired, through Alertmanager's webhook; `MonitoringAlertResolved` closes it by itself | `monitoring_<rule>` (`monitoring_host_cpu_critical`) | critical, or medium for a warning | fleet-wide | the alert's fingerprint (7 days) | admin; also posted to Teams |
 
 The events from FMS-82 and FMS-96 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
 

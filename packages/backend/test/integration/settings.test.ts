@@ -71,6 +71,22 @@ describe('GET and PATCH /settings', () => {
       // The score appeals' window and review deadline (FMS-159).
       appeal_window_days: 30,
       appeal_review_working_days: 5,
+      // The monitoring thresholds (FMS-163), at their defaults.
+      monitor_cpu_warning_pct: 75,
+      monitor_cpu_critical_pct: 90,
+      monitor_memory_warning_pct: 80,
+      monitor_memory_critical_pct: 90,
+      monitor_disk_warning_pct: 75,
+      monitor_disk_critical_pct: 90,
+      monitor_db_connections_warning_pct: 70,
+      monitor_db_connections_critical_pct: 85,
+      monitor_replica_lag_warning_seconds: 30,
+      monitor_replica_lag_critical_seconds: 60,
+      monitor_error_rate_warning_pct: 2,
+      monitor_error_rate_critical_pct: 5,
+      monitor_p95_warning_ms: 500,
+      monitor_p95_critical_ms: 1000,
+      monitor_gps_silence_minutes: 2,
     });
 
     // Back to the default: stored as NULL, so it follows the code's default.

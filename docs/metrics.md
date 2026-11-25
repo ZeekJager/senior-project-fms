@@ -2,8 +2,8 @@
 
 Architecture §36 (observability) and §29 (performance): the system is measured against the CFG-3 budgets, so a regression is seen
 before users feel it. The API, and the AI service, expose their numbers in **Prometheus' text format** at `GET /metrics`, on a port
-of their own that is never the public one. A Prometheus (or any compatible scraper) collects them; nothing in the repository
-stores or graphs them.
+of their own that is never the public one. A Prometheus (or any compatible scraper) collects them: the observability stack
+(docker-compose.observability.yml, [observability.md](observability.md), FMS-109) stores, graphs and alerts on them.
 
 This is separate from the System health screen (docs/system-health.md, FMS-143): that one keeps minute samples in PostgreSQL for
 an administrator to read in the app; these are for the operators' monitoring stack.
@@ -34,6 +34,10 @@ paths with ids, no query strings, no users.
 | `replica_in_use`, `replica_fallbacks` | gauge | `1` while reporting reads use the replica; how many fell back to the primary |
 | `circuit_breaker_state{provider}` | gauge | Each active provider's circuit on this instance (FMS-85): `0` closed, `1` half open, `2` open |
 | `socket_connections` | gauge | Open Socket.IO connections on this instance (FMS-43) |
+| `gps_points_stored_total`, `gps_last_point_age_seconds` | counter, gauge | GPS points stored, and seconds since this instance stored one (FMS-163: points per minute, and the silence alert) |
+| `trips_under_way` | gauge | Trips en route now, fleet-wide (FMS-163) |
+| `backup_findings{severity}` | gauge | The backups' findings by severity (FMS-108): a critical one is an alert |
+| `fms_alert_threshold{setting}` | gauge | Each monitoring threshold from the settings (FMS-163): the alert rules compare against it |
 | `job_duration_seconds{job,status}` | histogram | Each scheduled job run, `succeeded` or `failed` |
 | `web_vitals_*` | histogram | Core Web Vitals reported by the web app (below) |
 | `process_*`, `nodejs_*` | | `prom-client`'s defaults: CPU, memory, event-loop lag, GC, handles |

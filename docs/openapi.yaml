@@ -8150,6 +8150,221 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /system/metrics:
+    get:
+      tags: [System]
+      operationId: getSystemMetrics
+      summary: Hosts, services, the application and the database, live and over a range (FMS-163)
+      description: >
+        Read from Prometheus (VictoriaMetrics for history) by the API; the browser never calls it. Every host and
+        service tile has CPU, memory, disk (hosts) and network, each with its latest value, when it was sampled, its
+        status against the Monitoring settings' lines, and its series over the range. Without PROMETHEUS_URL,
+        source.configured is false; with the store down, source.reachable is false. Needs system:read. docs/observability.md.
+      parameters:
+        - { name: range, in: query, schema: { type: string, enum: ['1h', '24h', '7d', '30d', '12m'], default: '1h' } }
+      responses:
+        '200':
+          description: The resources.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/SystemMetrics' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown range).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /system/capacity-report:
+    get:
+      tags: [System]
+      operationId: getCapacityReport
+      summary: The capacity report over the last 30 days, as JSON or PDF (FMS-163)
+      description: >
+        Each host's disk, memory and CPU now, their growth over 30 days, the days until each disk is full and what is
+        expected past 80% within 90 days (a least-squares line through the daily points); requests, GPS points and the
+        database's size. format=pdf downloads it. Needs system:read.
+      parameters:
+        - { name: format, in: query, schema: { type: string, enum: [json, pdf], default: json } }
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [generated_at, period, resources, growth]
+                    properties:
+                      generated_at: { type: string, format: date-time }
+                      period: { type: object, properties: { from: { type: string, format: date-time }, to: { type: string, format: date-time } } }
+                      resources:
+                        type: array
+                        items:
+                          type: object
+                          required: [host, resource, current_pct, growth_pct_30d, days_to_full, days_to_80_pct, past_80_within_90_days]
+                          properties:
+                            host: { type: string }
+                            resource: { type: string, enum: [disk, memory, cpu] }
+                            current_pct: { type: [number, 'null'] }
+                            growth_pct_30d: { type: [number, 'null'] }
+                            days_to_full: { type: [number, 'null'] }
+                            days_to_80_pct: { type: [number, 'null'] }
+                            past_80_within_90_days: { type: boolean }
+                      growth: { type: object, additionalProperties: { type: [number, 'null'] } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503':
+          description: UPSTREAM_UNAVAILABLE (no metrics store set up, or it is not answering).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /system/maintenance-windows:
+    get:
+      tags: [System]
+      operationId: listMaintenanceWindows
+      summary: Maintenance windows in force, coming and of the last week (FMS-163)
+      description: Needs system:read.
+      responses:
+        '200':
+          description: The windows, soonest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MaintenanceWindow' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [System]
+      operationId: createMaintenanceWindow
+      summary: Hold back monitoring alerts for chosen hosts between two times (FMS-163)
+      description: >
+        Alerts for these hosts (their host or service label) are held back and counted while it is in force; its start
+        and end are written to the audit log when they happen. At most 31 days, ending in the future. Needs settings:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hosts, starts_at, ends_at, reason]
+              additionalProperties: false
+              properties:
+                hosts: { type: array, minItems: 1, maxItems: 50, items: { type: string, minLength: 1, maxLength: 120 } }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '201':
+          description: The window.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MaintenanceWindow' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (it ends before it starts, in the past, or after more than 31 days).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /system/maintenance-windows/{window_id}/cancel:
+    post:
+      tags: [System]
+      operationId: cancelMaintenanceWindow
+      summary: End a maintenance window now (FMS-163)
+      description: Its end is written to the audit log by the next run of the maintenance-window-edges job. Needs settings:write.
+      parameters:
+        - { name: window_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The window, cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/MaintenanceWindow' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /system/alerts/webhook:
+    post:
+      tags: [System]
+      operationId: receiveMonitoringAlerts
+      summary: "Alertmanager's alerts into the alert engine (FMS-163)"
+      description: >
+        Alertmanager's webhook body (version 4), sent with Authorization: Bearer ALERTMANAGER_WEBHOOK_TOKEN (compared in
+        constant time; without the token set, every request is refused). Each firing alert becomes MonitoringAlertFiring
+        (an FMS alert for the administrators, de-duplicated by its fingerprint), each resolved one MonitoringAlertResolved
+        (the alert closes by itself); a firing alert for a host in a maintenance window is held back. Public: the token is
+        the permission.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, alerts]
+              properties:
+                version: { type: string }
+                status: { type: string, enum: [firing, resolved] }
+                alerts:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [status, labels, startsAt, fingerprint]
+                    properties:
+                      status: { type: string, enum: [firing, resolved] }
+                      labels: { type: object, additionalProperties: { type: string } }
+                      annotations: { type: object, additionalProperties: { type: string } }
+                      startsAt: { type: string }
+                      endsAt: { type: string }
+                      fingerprint: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '202':
+          description: Taken; how many became events and how many were held back.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [published, suppressed]
+                    properties:
+                      published: { type: integer }
+                      suppressed: { type: integer }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (not Alertmanager's body).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
 components:
   securitySchemes:
     session:
@@ -9151,6 +9366,63 @@ components:
         title: { type: string }
         body: { type: string }
         updated_at: { type: string, format: date-time }
+        version: { type: integer }
+    ResourceMetric:
+      type: object
+      required: [value, sampled_at, status, series]
+      properties:
+        value: { type: [number, 'null'] }
+        sampled_at: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [ok, warning, critical, unknown] }
+        series:
+          type: array
+          description: '[unix seconds, value] over the range.'
+          items: { type: array, minItems: 2, maxItems: 2, items: { type: number } }
+    ResourceTile:
+      type: object
+      required: [name, status, cpu, memory, disk, network_in, network_out]
+      properties:
+        name: { type: string }
+        status: { type: string, enum: [ok, warning, critical, unknown] }
+        cpu: { $ref: '#/components/schemas/ResourceMetric' }
+        memory: { $ref: '#/components/schemas/ResourceMetric' }
+        disk:
+          oneOf:
+            - { $ref: '#/components/schemas/ResourceMetric' }
+            - { type: 'null' }
+        network_in: { $ref: '#/components/schemas/ResourceMetric' }
+        network_out: { $ref: '#/components/schemas/ResourceMetric' }
+    SystemMetrics:
+      type: object
+      required: [range, step_seconds, generated_at, source, thresholds, hosts, services, application, database]
+      properties:
+        range: { type: string, enum: ['1h', '24h', '7d', '30d', '12m'] }
+        step_seconds: { type: integer }
+        generated_at: { type: string, format: date-time }
+        source:
+          type: object
+          required: [configured, reachable]
+          properties:
+            configured: { type: boolean }
+            reachable: { type: boolean }
+            error: { type: string }
+        thresholds: { type: object, description: Each metric's warning and critical lines, from the Monitoring settings. }
+        hosts: { type: array, items: { $ref: '#/components/schemas/ResourceTile' } }
+        services: { type: array, items: { $ref: '#/components/schemas/ResourceTile' } }
+        application: { type: [object, 'null'], additionalProperties: { $ref: '#/components/schemas/ResourceMetric' } }
+        database: { type: [object, 'null'] }
+    MaintenanceWindow:
+      type: object
+      required: [id, hosts, starts_at, ends_at, reason, cancelled_at, in_force, suppressed, version]
+      properties:
+        id: { type: string, format: uuid }
+        hosts: { type: array, items: { type: string } }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        reason: { type: string }
+        cancelled_at: { type: [string, 'null'], format: date-time }
+        in_force: { type: boolean }
+        suppressed: { type: integer, description: Alerts it held back. }
         version: { type: integer }
     AppealPage:
       type: object

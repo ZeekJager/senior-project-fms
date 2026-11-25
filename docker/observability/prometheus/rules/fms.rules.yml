@@ -1,0 +1,189 @@
+# FMS alert rules (FMS-109, FMS-163, docs/observability.md). Prometheus evaluates them every 15 s; Alertmanager sends
+# what fires to the API's webhook (POST /api/v1/system/alerts/webhook), where the alert engine opens, de-duplicates,
+# escalates and resolves the FMS alert.
+#
+# The warning and critical lines are the settings an administrator changes on the Settings screen (category
+# Monitoring): the API exports them as fms_alert_threshold{setting=...}, and each rule compares against
+# scalar(max(...)) of it, so a change applies at the next scrape, with no deployment. How long a line must be passed
+# (`for`) is fixed here. Every rule is exercised by fms.rules.test.yml (promtool test rules, in CI).
+#
+# Labels: severity (critical or warning), and host (a node), service (a container) or provider: what a maintenance
+# window names.
+
+groups:
+  - name: fms-resources
+    rules:
+      - alert: HostCpuCritical
+        expr: (100 * (1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[2m])))) > scalar(max(fms_alert_threshold{setting="monitor_cpu_critical_pct"}))
+        for: 5m
+        labels: { severity: critical, metric: host_cpu }
+        annotations:
+          summary: CPU above its critical line
+          description: "{{ $labels.host }} has used {{ $value | printf \"%.0f\" }}% CPU for 5 minutes."
+      - alert: HostCpuWarning
+        expr: (100 * (1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[2m])))) > scalar(max(fms_alert_threshold{setting="monitor_cpu_warning_pct"}))
+        for: 5m
+        labels: { severity: warning, metric: host_cpu }
+        annotations:
+          summary: CPU above its warning line
+          description: "{{ $labels.host }} has used {{ $value | printf \"%.0f\" }}% CPU for 5 minutes."
+      - alert: HostMemoryCritical
+        expr: (100 * (1 - sum by (host) (node_memory_MemAvailable_bytes) / sum by (host) (node_memory_MemTotal_bytes))) > scalar(max(fms_alert_threshold{setting="monitor_memory_critical_pct"}))
+        for: 5m
+        labels: { severity: critical, metric: host_memory }
+        annotations:
+          summary: Memory above its critical line
+          description: "{{ $labels.host }} has had {{ $value | printf \"%.0f\" }}% of its memory in use for 5 minutes."
+      - alert: HostMemoryWarning
+        expr: (100 * (1 - sum by (host) (node_memory_MemAvailable_bytes) / sum by (host) (node_memory_MemTotal_bytes))) > scalar(max(fms_alert_threshold{setting="monitor_memory_warning_pct"}))
+        for: 5m
+        labels: { severity: warning, metric: host_memory }
+        annotations:
+          summary: Memory above its warning line
+          description: "{{ $labels.host }} has had {{ $value | printf \"%.0f\" }}% of its memory in use for 5 minutes."
+      - alert: HostDiskCritical
+        expr: max by (host) (100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"})) > scalar(max(fms_alert_threshold{setting="monitor_disk_critical_pct"}))
+        for: 10m
+        labels: { severity: critical, metric: host_disk }
+        annotations:
+          summary: Disk above its critical line
+          description: "A disk of {{ $labels.host }} is {{ $value | printf \"%.0f\" }}% full."
+      - alert: HostDiskWarning
+        expr: max by (host) (100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"})) > scalar(max(fms_alert_threshold{setting="monitor_disk_warning_pct"}))
+        for: 10m
+        labels: { severity: warning, metric: host_disk }
+        annotations:
+          summary: Disk above its warning line
+          description: "A disk of {{ $labels.host }} is {{ $value | printf \"%.0f\" }}% full."
+      - alert: HostDiskFullSoon
+        expr: min by (host) (predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}[6h], 7 * 86400)) < 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: Disk to be full within 7 days
+          description: "At the last 6 hours' rate, a disk of {{ $labels.host }} is full within 7 days."
+      - alert: ServiceCpuCritical
+        expr: (100 * sum by (service) (rate(container_cpu_usage_seconds_total{service!=""}[2m]))) > scalar(max(fms_alert_threshold{setting="monitor_cpu_critical_pct"}))
+        for: 5m
+        labels: { severity: critical, metric: service_cpu }
+        annotations:
+          summary: A service's CPU above its critical line
+          description: "{{ $labels.service }} has used {{ $value | printf \"%.0f\" }}% of a CPU for 5 minutes."
+      - alert: ServiceCpuWarning
+        expr: (100 * sum by (service) (rate(container_cpu_usage_seconds_total{service!=""}[2m]))) > scalar(max(fms_alert_threshold{setting="monitor_cpu_warning_pct"}))
+        for: 5m
+        labels: { severity: warning, metric: service_cpu }
+        annotations:
+          summary: A service's CPU above its warning line
+          description: "{{ $labels.service }} has used {{ $value | printf \"%.0f\" }}% of a CPU for 5 minutes."
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: A monitored service is not answering
+          description: "{{ $labels.job }} ({{ $labels.instance }}) has not answered Prometheus for 2 minutes."
+
+  - name: fms-application
+    rules:
+      - alert: ApiErrorRateCritical
+        expr: (100 * sum(rate(http_request_duration_seconds_count{service="fms-backend",status_class="5xx"}[5m])) / clamp_min(sum(rate(http_request_duration_seconds_count{service="fms-backend"}[5m])), 1e-9)) > scalar(max(fms_alert_threshold{setting="monitor_error_rate_critical_pct"}))
+        for: 5m
+        labels: { severity: critical, service: backend, metric: api_errors }
+        annotations:
+          summary: API server errors above their critical line
+          description: "{{ $value | printf \"%.1f\" }}% of the API's answers have been 5xx for 5 minutes."
+      - alert: ApiErrorRateWarning
+        expr: (100 * sum(rate(http_request_duration_seconds_count{service="fms-backend",status_class="5xx"}[5m])) / clamp_min(sum(rate(http_request_duration_seconds_count{service="fms-backend"}[5m])), 1e-9)) > scalar(max(fms_alert_threshold{setting="monitor_error_rate_warning_pct"}))
+        for: 5m
+        labels: { severity: warning, service: backend, metric: api_errors }
+        annotations:
+          summary: API server errors above their warning line
+          description: "{{ $value | printf \"%.1f\" }}% of the API's answers have been 5xx for 5 minutes."
+      - alert: ApiLatencyCritical
+        expr: (1000 * histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service="fms-backend"}[5m])))) > scalar(max(fms_alert_threshold{setting="monitor_p95_critical_ms"}))
+        for: 5m
+        labels: { severity: critical, service: backend, metric: api_latency }
+        annotations:
+          summary: API p95 latency above its critical line
+          description: "The API's p95 has been {{ $value | printf \"%.0f\" }} ms for 5 minutes."
+      - alert: ApiLatencyWarning
+        expr: (1000 * histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service="fms-backend"}[5m])))) > scalar(max(fms_alert_threshold{setting="monitor_p95_warning_ms"}))
+        for: 5m
+        labels: { severity: warning, service: backend, metric: api_latency }
+        annotations:
+          summary: API p95 latency above the CFG-3 budget
+          description: "The API's p95 has been {{ $value | printf \"%.0f\" }} ms for 5 minutes, above the budget."
+      - alert: GpsIngestionSilent
+        expr: min(gps_last_point_age_seconds) > 60 * scalar(max(fms_alert_threshold{setting="monitor_gps_silence_minutes"})) and on() max(trips_under_way) > 0
+        for: 1m
+        labels: { severity: critical, service: backend }
+        annotations:
+          summary: No GPS points during trips
+          description: "Trips are under way and no GPS point has been stored for {{ $value | printf \"%.0f\" }} seconds."
+      - alert: OutboxLagging
+        expr: max(outbox_oldest_pending_seconds) > 60
+        for: 5m
+        labels: { severity: warning, service: backend }
+        annotations:
+          summary: Events are waiting in the outbox
+          description: "The oldest event has waited {{ $value | printf \"%.0f\" }} seconds to be delivered."
+      - alert: OutboxDeadLetters
+        expr: max(outbox_dead_lettered_events) > 0
+        for: 5m
+        labels: { severity: warning, service: backend }
+        annotations:
+          summary: Events a consumer gave up on
+          description: "{{ $value | printf \"%.0f\" }} events were dead-lettered; someone has to look (docs/events.md)."
+      - alert: CircuitBreakerOpen
+        expr: max by (provider) (circuit_breaker_state) == 2
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: A provider's circuit breaker is open
+          description: "Calls to {{ $labels.provider }} have been failing; its breaker has been open for 2 minutes."
+      - alert: JobFailing
+        expr: sum by (job) (increase(job_duration_seconds_count{status="failed"}[15m])) > 0
+        for: 1m
+        labels: { severity: warning, service: backend }
+        annotations:
+          summary: A scheduled job failed
+          description: "The {{ $labels.job }} job failed in the last 15 minutes (docs/jobs.md)."
+
+  - name: fms-database
+    rules:
+      - alert: DbConnectionsCritical
+        expr: (100 * sum(pg_stat_activity_count{role="primary"}) / max(pg_settings_max_connections{role="primary"})) > scalar(max(fms_alert_threshold{setting="monitor_db_connections_critical_pct"}))
+        for: 5m
+        labels: { severity: critical, service: postgres, metric: db_connections }
+        annotations:
+          summary: Database connections above their critical line
+          description: "{{ $value | printf \"%.0f\" }}% of the primary's connections are in use."
+      - alert: DbConnectionsWarning
+        expr: (100 * sum(pg_stat_activity_count{role="primary"}) / max(pg_settings_max_connections{role="primary"})) > scalar(max(fms_alert_threshold{setting="monitor_db_connections_warning_pct"}))
+        for: 5m
+        labels: { severity: warning, service: postgres, metric: db_connections }
+        annotations:
+          summary: Database connections above their warning line
+          description: "{{ $value | printf \"%.0f\" }}% of the primary's connections are in use."
+      - alert: ReplicaLagCritical
+        expr: max(replica_lag_seconds) > scalar(max(fms_alert_threshold{setting="monitor_replica_lag_critical_seconds"}))
+        for: 2m
+        labels: { severity: critical, service: postgres-replica, metric: replica_lag }
+        annotations:
+          summary: The standby is far behind the primary
+          description: "The standby has been {{ $value | printf \"%.0f\" }} seconds behind for 2 minutes."
+      - alert: ReplicaLagWarning
+        expr: max(replica_lag_seconds) > scalar(max(fms_alert_threshold{setting="monitor_replica_lag_warning_seconds"}))
+        for: 2m
+        labels: { severity: warning, service: postgres-replica, metric: replica_lag }
+        annotations:
+          summary: The standby is behind the primary
+          description: "The standby has been {{ $value | printf \"%.0f\" }} seconds behind for 2 minutes."
+      - alert: BackupFailing
+        expr: max(backup_findings{severity="critical"}) > 0
+        for: 5m
+        labels: { severity: critical, service: postgres }
+        annotations:
+          summary: A backup failed or is overdue
+          description: "The backups report {{ $value | printf \"%.0f\" }} critical finding(s); see Backups (docs/backups.md)."

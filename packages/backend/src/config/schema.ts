@@ -91,6 +91,12 @@ const appSchema = z
     METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(9464),
     METRICS_HOST: z.string().trim().min(1).default('127.0.0.1'),
     METRICS_TOKEN: z.string().min(16, 'must be at least 16 characters').optional(),
+    // Observability (FMS-109, FMS-163, docs/observability.md): where the API reads its metrics history (Prometheus' query
+    // API, or VictoriaMetrics', which speaks the same), the token Alertmanager's webhook sends, and error tracking.
+    PROMETHEUS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
+    ALERTMANAGER_WEBHOOK_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(32, 'must be at least 32 characters').optional()),
+    SENTRY_DSN: z.preprocess((v) => (v === '' ? undefined : v), z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
+    SENTRY_ENVIRONMENT: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).max(64).optional()),
     // Readiness (FMS-75): the ML service is reported in /health/ready either way. `true` makes it a reason for 503, for a
     // deployment that cannot run without predictions; otherwise it is degraded and the API keeps serving.
     READINESS_ML_CRITICAL: z.enum(['true', 'false']).default('false'),
@@ -205,6 +211,11 @@ export interface AppConfig {
   tracking: { eventIntervalSeconds: number; retention: { pingDays: number; flagDays: number } };
   /** Metrics (FMS-75): where GET /metrics is served (port 0: nowhere), and the bearer token it needs, if any. */
   metrics: { port: number; host: string; token: string | null };
+  /**
+   * Observability (FMS-109, FMS-163): the metrics store the API queries (null: the Resources tab says it is not set up),
+   * the token Alertmanager's webhook must send (null: the webhook refuses everything), and error tracking (null: off).
+   */
+  observability: { prometheusUrl: string | null; alertmanagerToken: string | null; sentry: { dsn: string; environment: string } | null };
   /** Readiness (FMS-75): whether the ML service being down makes /health/ready answer 503. */
   readiness: { mlCritical: boolean };
   alerts: { escalationMinutes: number };
@@ -382,6 +393,11 @@ export function loadAppConfig(env: Env): AppConfig {
       retention: { pingDays: e.GPS_PING_RETENTION_DAYS, flagDays: e.TELEMETRY_FLAG_RETENTION_DAYS },
     },
     metrics: { port: e.METRICS_PORT, host: e.METRICS_HOST, token: e.METRICS_TOKEN ?? null },
+    observability: {
+      prometheusUrl: e.PROMETHEUS_URL ? e.PROMETHEUS_URL.replace(/\/+$/, '') : null,
+      alertmanagerToken: e.ALERTMANAGER_WEBHOOK_TOKEN ?? null,
+      sentry: e.SENTRY_DSN ? { dsn: e.SENTRY_DSN, environment: e.SENTRY_ENVIRONMENT ?? e.NODE_ENV } : null,
+    },
     readiness: { mlCritical: e.READINESS_ML_CRITICAL === 'true' },
     alerts: { escalationMinutes: e.ALERT_ESCALATION_MINUTES },
     fuel: {

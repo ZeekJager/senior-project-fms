@@ -1,10 +1,12 @@
 import { CircleCheck, CircleSlash, Clock, HeartPulse, OctagonAlert, ServerCrash } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { DataTable, EmptyState, ErrorState, type Column } from '@/components/shared'
 import { Badge, Card, cn, Skeleton, ViewTabs, type BadgeTone } from '@/components/ui'
 import { WINDOWS, useSystemHealth, useSystemHealthHistory, type ComponentHealth, type ComponentStatus, type FailedJobRun, type HealthWindow, type Outage, type SystemHealthHistory, type TimelineCell } from './api'
 import { ErrorRateChart, LatencyChart } from './charts'
 import { cellRange, clock, duration, milliseconds, percentText, when } from './describe'
+import { ResourcesTab } from './Resources'
 
 // S-31 System health (FMS-143, docs/system-health.md): how FMS itself is doing. Each component checked every
 // minute, its uptime over 24 hours, 7 days and 30 days, the outages, the failed scheduled jobs, and the API's
@@ -224,7 +226,36 @@ function Components({
 /** Outages and failed jobs that reach into the period. */
 const inWindow = (endIso: string | null, windowEnd: string, minutes: number) => endIso === null || Date.parse(endIso) > Date.parse(windowEnd) - minutes * 60_000
 
+const TABS = [
+  { value: 'overview', label: 'Overview' },
+  { value: 'resources', label: 'Resources' },
+] as const
+type Tab = (typeof TABS)[number]['value']
+
+/** S-31 System health: the components' checks (Overview), and the hosts and services live (Resources, FMS-163). */
 export function SystemHealthPage() {
+  const [params, setParams] = useSearchParams()
+  const tab: Tab = params.get('tab') === 'resources' ? 'resources' : 'overview'
+  const onTab = (t: Tab) => {
+    const next = new URLSearchParams(params)
+    if (t === 'overview') next.delete('tab')
+    else next.set('tab', t)
+    setParams(next, { replace: true })
+  }
+  const tabs = <ViewTabs label="Section" value={tab} options={TABS.map((t) => ({ value: t.value, label: t.label }))} onChange={onTab} />
+  if (tab === 'resources') {
+    return (
+      <div className="space-y-6">
+        <Header period={null} onPeriod={() => {}} checkedAt={undefined} />
+        {tabs}
+        <ResourcesTab />
+      </div>
+    )
+  }
+  return <Overview tabs={tabs} />
+}
+
+function Overview({ tabs }: { tabs: ReactNode }) {
   const [period, setPeriod] = useState<HealthWindow>('24h')
   const summary = useSystemHealth()
   const history = useSystemHealthHistory(period)
@@ -315,6 +346,7 @@ export function SystemHealthPage() {
     return (
       <div className="space-y-6">
         <Header period={period} onPeriod={setPeriod} checkedAt={undefined} />
+        {tabs}
         <ErrorState error={summary.error} heading="System health could not be loaded" onRetry={() => void summary.refetch()} />
       </div>
     )
@@ -323,6 +355,7 @@ export function SystemHealthPage() {
   return (
     <div className="space-y-6">
       <Header period={period} onPeriod={setPeriod} checkedAt={data?.generated_at} />
+      {tabs}
 
       {data ? <Overall components={data.components} sampledFrom={data.sampled_from} /> : <Skeleton className="h-[4.5rem] w-full" />}
 
@@ -377,7 +410,7 @@ export function SystemHealthPage() {
   )
 }
 
-function Header({ period, onPeriod, checkedAt }: { period: HealthWindow; onPeriod: (w: HealthWindow) => void; checkedAt: string | undefined }) {
+function Header({ period, onPeriod, checkedAt }: { period: HealthWindow | null; onPeriod: (w: HealthWindow) => void; checkedAt: string | undefined }) {
   return (
     <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
       <div className="min-w-0 basis-72 flex-1">
@@ -390,7 +423,7 @@ function Header({ period, onPeriod, checkedAt }: { period: HealthWindow; onPerio
           {checkedAt ? `; updated ${clock(checkedAt)}, every minute` : ''}.
         </p>
       </div>
-      <ViewTabs label="Period" value={period} options={WINDOWS.map((w) => ({ value: w.value, label: w.label }))} onChange={onPeriod} />
+      {period && <ViewTabs label="Period" value={period} options={WINDOWS.map((w) => ({ value: w.value, label: w.label }))} onChange={onPeriod} />}
     </header>
   )
 }

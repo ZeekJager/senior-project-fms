@@ -16,13 +16,28 @@ export const SETTING_KEYS = [
   'driver_score_weight_dvir',
   'appeal_window_days',
   'appeal_review_working_days',
+  'monitor_cpu_warning_pct',
+  'monitor_cpu_critical_pct',
+  'monitor_memory_warning_pct',
+  'monitor_memory_critical_pct',
+  'monitor_disk_warning_pct',
+  'monitor_disk_critical_pct',
+  'monitor_db_connections_warning_pct',
+  'monitor_db_connections_critical_pct',
+  'monitor_replica_lag_warning_seconds',
+  'monitor_replica_lag_critical_seconds',
+  'monitor_error_rate_warning_pct',
+  'monitor_error_rate_critical_pct',
+  'monitor_p95_warning_ms',
+  'monitor_p95_critical_ms',
+  'monitor_gps_silence_minutes',
 ] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 export interface SettingDefinition {
   key: SettingKey;
   /** What the number counts, for the screen: `percent`, `score`, `days`, `weight` (a share of the driver score). */
-  unit: 'percent' | 'score' | 'days' | 'weight';
+  unit: 'percent' | 'score' | 'days' | 'weight' | 'seconds' | 'milliseconds' | 'minutes';
   min: number;
   max: number;
   default: number;
@@ -52,6 +67,23 @@ export function settingDefinitions(defaults: { fuelVarianceThresholdPct: number 
     // may appeal it, and how many working days (Monday to Friday) a reviewer has to decide before it is overdue.
     appeal_window_days: { key: 'appeal_window_days', unit: 'days', min: 1, max: 365, default: 30 },
     appeal_review_working_days: { key: 'appeal_review_working_days', unit: 'days', min: 1, max: 30, default: 5 },
+    // Monitoring (FMS-163, docs/observability.md): each metric's warning and critical lines. Prometheus' alert rules compare
+    // against them as the API exports them (fms_alert_threshold), so a change applies within a minute.
+    monitor_cpu_warning_pct: { key: 'monitor_cpu_warning_pct', unit: 'percent', min: 1, max: 100, default: 75 },
+    monitor_cpu_critical_pct: { key: 'monitor_cpu_critical_pct', unit: 'percent', min: 1, max: 100, default: 90 },
+    monitor_memory_warning_pct: { key: 'monitor_memory_warning_pct', unit: 'percent', min: 1, max: 100, default: 80 },
+    monitor_memory_critical_pct: { key: 'monitor_memory_critical_pct', unit: 'percent', min: 1, max: 100, default: 90 },
+    monitor_disk_warning_pct: { key: 'monitor_disk_warning_pct', unit: 'percent', min: 1, max: 100, default: 75 },
+    monitor_disk_critical_pct: { key: 'monitor_disk_critical_pct', unit: 'percent', min: 1, max: 100, default: 90 },
+    monitor_db_connections_warning_pct: { key: 'monitor_db_connections_warning_pct', unit: 'percent', min: 1, max: 100, default: 70 },
+    monitor_db_connections_critical_pct: { key: 'monitor_db_connections_critical_pct', unit: 'percent', min: 1, max: 100, default: 85 },
+    monitor_replica_lag_warning_seconds: { key: 'monitor_replica_lag_warning_seconds', unit: 'seconds', min: 1, max: 3600, default: 30 },
+    monitor_replica_lag_critical_seconds: { key: 'monitor_replica_lag_critical_seconds', unit: 'seconds', min: 1, max: 3600, default: 60 },
+    monitor_error_rate_warning_pct: { key: 'monitor_error_rate_warning_pct', unit: 'percent', min: 1, max: 100, default: 2 },
+    monitor_error_rate_critical_pct: { key: 'monitor_error_rate_critical_pct', unit: 'percent', min: 1, max: 100, default: 5 },
+    monitor_p95_warning_ms: { key: 'monitor_p95_warning_ms', unit: 'milliseconds', min: 50, max: 60000, default: 500 },
+    monitor_p95_critical_ms: { key: 'monitor_p95_critical_ms', unit: 'milliseconds', min: 50, max: 60000, default: 1000 },
+    monitor_gps_silence_minutes: { key: 'monitor_gps_silence_minutes', unit: 'minutes', min: 1, max: 60, default: 2 },
   };
 }
 
@@ -117,6 +149,96 @@ const COPY: Record<SettingKey, { label: string; category: string; description: s
     category: 'Score appeals',
     description: 'Working days, Monday to Friday, to decide an appeal before it is overdue and goes to the depot admin.',
     unit: 'working days',
+  },
+  monitor_cpu_warning_pct: {
+    label: 'CPU warning',
+    category: 'Monitoring',
+    description: 'A host or container using more CPU than this for 5 minutes is a warning.',
+    unit: '%',
+  },
+  monitor_cpu_critical_pct: {
+    label: 'CPU critical',
+    category: 'Monitoring',
+    description: 'A host or container using more CPU than this for 5 minutes is critical.',
+    unit: '%',
+  },
+  monitor_memory_warning_pct: {
+    label: 'Memory warning',
+    category: 'Monitoring',
+    description: 'Memory in use above this for 5 minutes is a warning.',
+    unit: '%',
+  },
+  monitor_memory_critical_pct: {
+    label: 'Memory critical',
+    category: 'Monitoring',
+    description: 'Memory in use above this for 5 minutes is critical.',
+    unit: '%',
+  },
+  monitor_disk_warning_pct: {
+    label: 'Disk warning',
+    category: 'Monitoring',
+    description: 'A disk fuller than this for 10 minutes is a warning; one to be full within 7 days is too.',
+    unit: '%',
+  },
+  monitor_disk_critical_pct: {
+    label: 'Disk critical',
+    category: 'Monitoring',
+    description: 'A disk fuller than this for 10 minutes is critical.',
+    unit: '%',
+  },
+  monitor_db_connections_warning_pct: {
+    label: 'Database connections warning',
+    category: 'Monitoring',
+    description: 'Database connections in use, as a share of the most allowed, above this for 5 minutes is a warning.',
+    unit: '%',
+  },
+  monitor_db_connections_critical_pct: {
+    label: 'Database connections critical',
+    category: 'Monitoring',
+    description: 'Database connections in use above this share for 5 minutes is critical.',
+    unit: '%',
+  },
+  monitor_replica_lag_warning_seconds: {
+    label: 'Replica lag warning',
+    category: 'Monitoring',
+    description: 'The standby this many seconds behind the primary for 2 minutes is a warning.',
+    unit: 'seconds',
+  },
+  monitor_replica_lag_critical_seconds: {
+    label: 'Replica lag critical',
+    category: 'Monitoring',
+    description: 'The standby this many seconds behind the primary for 2 minutes is critical.',
+    unit: 'seconds',
+  },
+  monitor_error_rate_warning_pct: {
+    label: 'Server errors warning',
+    category: 'Monitoring',
+    description: 'API answers that are 5xx above this share for 5 minutes is a warning.',
+    unit: '%',
+  },
+  monitor_error_rate_critical_pct: {
+    label: 'Server errors critical',
+    category: 'Monitoring',
+    description: 'API answers that are 5xx above this share for 5 minutes is critical.',
+    unit: '%',
+  },
+  monitor_p95_warning_ms: {
+    label: 'Latency warning',
+    category: 'Monitoring',
+    description: 'The API p95 latency above this for 5 minutes is a warning (the CFG-3 budget).',
+    unit: 'ms',
+  },
+  monitor_p95_critical_ms: {
+    label: 'Latency critical',
+    category: 'Monitoring',
+    description: 'The API p95 latency above this for 5 minutes is critical.',
+    unit: 'ms',
+  },
+  monitor_gps_silence_minutes: {
+    label: 'GPS silence',
+    category: 'Monitoring',
+    description: 'No GPS point stored for this many minutes while trips are under way is critical.',
+    unit: 'minutes',
   },
 };
 
@@ -189,3 +311,14 @@ export interface SettingView {
 
 /** PATCH /settings: a value per setting to change, null to go back to the default. */
 export type SettingChanges = Partial<Record<SettingKey, number | null>>;
+
+/** Each monitored metric's warning and critical settings (FMS-163): the warning must stay below the critical. */
+export const MONITOR_THRESHOLD_PAIRS: readonly (readonly [SettingKey, SettingKey])[] = [
+  ['monitor_cpu_warning_pct', 'monitor_cpu_critical_pct'],
+  ['monitor_memory_warning_pct', 'monitor_memory_critical_pct'],
+  ['monitor_disk_warning_pct', 'monitor_disk_critical_pct'],
+  ['monitor_db_connections_warning_pct', 'monitor_db_connections_critical_pct'],
+  ['monitor_replica_lag_warning_seconds', 'monitor_replica_lag_critical_seconds'],
+  ['monitor_error_rate_warning_pct', 'monitor_error_rate_critical_pct'],
+  ['monitor_p95_warning_ms', 'monitor_p95_critical_ms'],
+];

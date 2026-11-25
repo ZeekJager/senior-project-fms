@@ -28,7 +28,8 @@ const DEPOT_ROLES: RoleName[] = ['dispatcher', 'technician', 'depot_admin', 'fin
  * key) is the fleet's, not a depot's.
  */
 // A feedback template (FMS-158) is the fleet's, not a depot's.
-const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key', 'templateId']);
+// A maintenance window (FMS-163) is the fleet's too.
+const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key', 'templateId', 'windowId']);
 
 /**
  * Path parameters naming a kind of answer, not a record: each value is swept as a list route of its own, with `query`.

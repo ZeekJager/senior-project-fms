@@ -2,6 +2,7 @@ import { AlertTriangle, Check, Copy, RotateCcw } from 'lucide-react'
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
 import { Button, cn } from '@/components/ui'
 import { ApiError } from '@/lib/api/errors'
+import { captureScreenError } from '@/lib/errorTracking'
 
 /** What support needs from a failure: the error code and, for API errors, the request (correlation) id. */
 export function errorDetails(error: unknown): { code: string; message: string; requestId?: string } {
@@ -118,6 +119,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, { error: unknow
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
     console.error('Render error', error, info.componentStack)
+    // To error tracking (FMS-109), with the API's request id when an API error caused it.
+    captureScreenError(error, { path: window.location.pathname })
   }
 
   render() {

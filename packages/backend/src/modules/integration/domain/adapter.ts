@@ -84,7 +84,8 @@ export interface NormalizedWebhook {
 }
 
 /** The channels a notification provider delivers on (FMS-93): its row's `configuration.channel`. */
-export const NOTIFICATION_CHANNELS = ['email', 'sms', 'push'] as const;
+// teams (FMS-163): a post to one Teams channel, for monitoring alerts; it has no recipient address.
+export const NOTIFICATION_CHANNELS = ['email', 'sms', 'push', 'teams'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
 /** A browser's Web Push subscription: its endpoint, P-256 key and auth secret (base64url). */

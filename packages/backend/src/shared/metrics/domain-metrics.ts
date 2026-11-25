@@ -10,6 +10,12 @@ export interface MetricReaders {
   circuits?: () => Promise<{ code: string; state: string }[]>;
   /** Open Socket.IO connections on this instance (FMS-43). */
   sockets?: () => number;
+  /** The monitoring thresholds (FMS-163), by setting key: Prometheus' alert rules compare against them. */
+  thresholds?: () => Promise<Record<string, number>>;
+  /** Backup findings by severity (FMS-108): a critical one (a failed or overdue backup) is an alert. */
+  backups?: () => Promise<Record<string, number>>;
+  /** Trips under way now: no GPS point stored while there are some is an alert (FMS-163). */
+  tripsUnderWay?: () => Promise<number>;
 }
 
 let readers: MetricReaders = {};
@@ -51,7 +57,10 @@ const snapshot = shortLived(async () => {
   const outbox = await attempt(readers.outbox);
   const replica = await attempt(readers.replica);
   const circuits = (await attempt(readers.circuits)) ?? [];
-  return { outbox, replica, circuits };
+  const thresholds = await attempt(readers.thresholds);
+  const backups = await attempt(readers.backups);
+  const tripsUnderWay = await attempt(readers.tripsUnderWay);
+  return { outbox, replica, circuits, thresholds, backups, tripsUnderWay };
 }, 1000);
 
 const fromOutbox = (key: 'undispatched' | 'unpublished' | 'oldest_pending_seconds' | 'dead_lettered') => async () => (await snapshot()).outbox?.[key] ?? null;
@@ -73,3 +82,10 @@ scrapedLabelledGauge('circuit_breaker_state', 'A provider circuit breaker on thi
 );
 
 scrapedGauge('socket_connections', 'Open Socket.IO connections on this instance', () => readers.sockets?.() ?? 0);
+
+// The monitoring thresholds (FMS-163, docs/observability.md) as the settings say now: a rule such as
+// `cpu > scalar(max(fms_alert_threshold{setting="monitor_cpu_critical_pct"}))` follows a change at the next scrape.
+// With the backup findings and the trips under way, read in the same snapshot as the rest, one after the other.
+scrapedLabelledGauge('fms_alert_threshold', 'A monitoring threshold from the settings, by setting key', 'setting', async () => (await snapshot()).thresholds ?? {});
+scrapedLabelledGauge('backup_findings', 'Backup and point-in-time recovery findings by severity (FMS-108)', 'severity', async () => (await snapshot()).backups ?? {});
+scrapedGauge('trips_under_way', 'Trips under way now (en route)', async () => (await snapshot()).tripsUnderWay ?? null);

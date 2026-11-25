@@ -1,3 +1,4 @@
+import { noteGpsPointsStored } from '../../../shared/metrics/registry';
 import { createHash, randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { depotScope, type Scope } from '../../../shared/authz/scope';
@@ -129,7 +130,12 @@ export class IngestionService {
   /** On `tx` when given (the webhook consumer's), else in a transaction of its own. */
   ingest(reporter: Reporter, pings: readonly PingInput[], correlationId: string, tx?: PoolClient): Promise<IngestResult> {
     const run = (client: PoolClient) => this.ingestIn(client, reporter, pings, correlationId);
-    return tx ? run(tx) : this.deps.devices.inTransaction(run);
+    const done = tx ? run(tx) : this.deps.devices.inTransaction(run);
+    // Counted once committed (on a caller's transaction, once it returns): the GPS points per minute (FMS-163).
+    return done.then((result) => {
+      noteGpsPointsStored(result.accepted);
+      return result;
+    });
   }
 
   /** The active device holding this token, or null. */

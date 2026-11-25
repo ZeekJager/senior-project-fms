@@ -79,6 +79,9 @@ export function alertPath(entityType: string | null, entityId: string | null, no
   // Feedback from a manager (FMS-158): the item in My feedback.
   if (notificationType === FEEDBACK_NOTICE_TYPE) return entityId ? `/driver/feedback/${encodeURIComponent(entityId)}` : '/driver/feedback';
   switch (entityType) {
+    case 'monitoring':
+      // A monitoring alert (FMS-163): the resources it is about, on System health.
+      return '/system-health?tab=resources';
     case 'appeal':
       // An appeal past its review deadline (FMS-159): the reviewers' queue opens it.
       return entityId ? `/appeals?appeal=${encodeURIComponent(entityId)}` : '/appeals';

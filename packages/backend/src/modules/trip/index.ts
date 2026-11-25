@@ -215,6 +215,8 @@ export const tripLookups = {
   idsByPublicIds: (db: Queryable, publicIds: readonly string[]) => tripRepository.idsByPublicIds(db, publicIds),
   /** For the real-time gateway (FMS-43): a trip's summary for `trip.updated`, with no caller. */
   summary: (db: Queryable, publicId: string) => tripService.summary(db, publicId),
+  /** For the monitoring (FMS-163): how many trips are under way now, fleet-wide. */
+  underWay: async (db: Queryable): Promise<number> => (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM trip.trips WHERE status = 'en_route'")).rows[0].n,
 };
 
 export { ROUTE_EVENTS } from './domain/route';

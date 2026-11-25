@@ -26,6 +26,7 @@ import {
 } from '../domain/registry';
 import {
   DRIVER_SCORE_WEIGHT_KEYS,
+  MONITOR_THRESHOLD_PAIRS,
   SETTING_KEYS,
   settingParameters,
   type SettingDefinition,
@@ -546,9 +547,22 @@ export class SettingsService {
    * A store checks its own (write).
    */
   private async checkGroups(changes: ReadonlyMap<string, unknown>): Promise<void> {
+    const { definitions } = this.deps;
+    // A monitored metric's warning stays below its critical (FMS-163).
+    const pairs = MONITOR_THRESHOLD_PAIRS.filter(([w, c]) => changes.has(w) || changes.has(c));
+    if (pairs.length) {
+      const now = await this.values();
+      const value = (k: SettingKey) => (changes.has(k) ? ((changes.get(k) as number | null) ?? definitions[k].default) : now[k]);
+      const crossed = pairs.filter(([w, c]) => value(w) >= value(c));
+      if (crossed.length) {
+        throw validationFailed(
+          crossed.flatMap(([w, c]) => [w, c].filter((k) => changes.has(k)).map((field) => ({ field, reason: 'warning_not_below_critical' }))),
+          'A warning line must be below its critical line.',
+        );
+      }
+    }
     if (!DRIVER_SCORE_WEIGHT_KEYS.some((k) => changes.has(k))) return;
     const current = await this.values();
-    const { definitions } = this.deps;
     const after = DRIVER_SCORE_WEIGHT_KEYS.map((k) => (changes.has(k) ? (changes.get(k) ?? definitions[k].default) : current[k]));
     if (after.every((w) => w === 0)) {
       throw validationFailed(
