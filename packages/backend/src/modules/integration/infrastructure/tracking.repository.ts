@@ -262,6 +262,33 @@ export class TrackingRepository {
   }
 
   /**
+   * FMS-110 (migration 083): the month of `asOf` and the `monthsAhead` after it exist as partitions, and any month with
+   * pings in the default partition has its own, its rows moved there. The months made, with the rows each took.
+   */
+  async ensurePartitions(db: Queryable, asOf: Date, monthsAhead: number): Promise<{ partition: string; rowsMoved: number }[]> {
+    const res = await db.query<{ partition: string; rowsMoved: string }>(
+      'SELECT partition_name AS partition, rows_moved AS "rowsMoved" FROM tracking.ensure_gps_partitions($1, $2)',
+      [asOf, monthsAhead],
+    );
+    return res.rows.map((r) => ({ partition: r.partition, rowsMoved: Number(r.rowsMoved) }));
+  }
+
+  /** FMS-110: every month that ended at or before `cutoff` detached and dropped, its pings with it. The months dropped. */
+  async dropPartitionsBefore(db: Queryable, cutoff: Date): Promise<string[]> {
+    const res = await db.query<{ partition: string }>('SELECT partition_name AS partition FROM tracking.drop_gps_partitions_before($1)', [cutoff]);
+    return res.rows.map((r) => r.partition);
+  }
+
+  /** How far ahead the monthly partitions reach, how many there are, and the pings outside them (for the metrics). */
+  async partitionStatus(db: Queryable): Promise<{ coveredUntil: Date | null; partitions: number; defaultRows: number }> {
+    const res = await db.query<{ coveredUntil: Date | null; partitions: number; defaultRows: string }>(
+      'SELECT covered_until AS "coveredUntil", partitions, default_rows AS "defaultRows" FROM tracking.gps_partition_status()',
+    );
+    const row = res.rows[0];
+    return { coveredUntil: row.coveredUntil, partitions: row.partitions, defaultRows: Number(row.defaultRows) };
+  }
+
+  /**
    * The vehicle's stored ping nearest `at` in time, within `windowMs` either side of it, or null (FMS-82: where the
    * vehicle was when a fill-up was logged). History pings of a trip that has ended count: it is where it was then.
    */

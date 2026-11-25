@@ -514,6 +514,9 @@ jobs:
           done
       - name: Smoke run
         run: sh scripts/ci/smoke-images.sh "fms-backend:${GITHUB_SHA}" "fms-frontend:${GITHUB_SHA}" "fms-ai-service:${GITHUB_SHA}"
+      # FMS-106 (docs/deployment.md): the production stack behind Caddy, for localhost with Caddy's own authority.
+      - name: TLS, the proxy and two API instances
+        run: sh scripts/ci/smoke-tls.sh "${GITHUB_SHA}"
 
   # FMS-103 (docs/security.md): a known critical vulnerability in a dependency fails the build. The lockfile and the pins are
   # audited as they are, with no install. npm grades its advisories, so the bar is critical, and high ones are listed; pip-audit does

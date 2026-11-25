@@ -8,6 +8,7 @@ import { eventBus } from '../../shared/events/event-bus';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import { withTransaction } from '../../shared/infrastructure/transaction';
 import { logger } from '../../shared/logging/logger';
+import { setMetricReaders } from '../../shared/metrics/domain-metrics';
 import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { AppModule } from '../../shared/module';
 import type { RequestUser } from '../../types/express';
@@ -27,6 +28,7 @@ import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
 import { LiveMapService } from './application/live-map.service';
 import { LocationRulesService } from './application/location-rules.service';
+import { gpsPartitionsJob } from './application/gps-partitions.job';
 import { trackingRetentionJob } from './application/tracking-retention.job';
 import { RuleThresholdService } from './application/rule-threshold.service';
 import { thresholdKeysOf, thresholdParameterStore } from './application/threshold-parameters';
@@ -220,12 +222,17 @@ router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
 router.use(ruleThresholdRouter(ruleThresholds));
 router.use(geofenceRouter(geofences));
 
+// FMS-110: how far ahead the GPS months reach, and the pings outside them (the GpsPartitionMissing alert reads it).
+setMetricReaders({ gpsPartitions: () => tracking.partitionStatus(pool) });
+
 export const integrationModule: AppModule = {
   name: 'integration',
   router,
   jobs: [
     // FMS-104: pings and flags older than the retention period are deleted (docs/driver-data-protection.md).
     trackingRetentionJob({ db: pool, tracking, flags: flagRepository, retention: config.tracking.retention }),
+    // FMS-110: a partition a month, made ahead; pings outside every month moved into one (docs/gps-ingestion.md#partitions).
+    gpsPartitionsJob({ db: pool, tracking }),
   ],
 };
 

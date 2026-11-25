@@ -20,7 +20,7 @@ Cards: FMS-109 (SE-153) and its Wave 6 scope FMS-163. Problems are found by the 
 
 **Nothing is published to the network**: Grafana and GlitchTip listen on the host's loopback only, the rest on the Compose network. The browser never calls Prometheus: the Resources tab asks the API (`GET /system/metrics`).
 
-The API's own metrics are in [metrics.md](metrics.md); this adds `gps_points_stored_total`, `gps_last_point_age_seconds`, `trips_under_way`, `backup_findings{severity}` and `fms_alert_threshold{setting}`.
+The API's own metrics are in [metrics.md](metrics.md); this adds `gps_points_stored_total`, `gps_last_point_age_seconds`, `trips_under_way`, `backup_findings{severity}`, `fms_alert_threshold{setting}` and the GPS partitions' `gps_partition_days_ahead` (FMS-110).
 
 ## Thresholds
 
@@ -39,7 +39,7 @@ The warning and critical lines are settings in the category *Monitoring* (Settin
 
 Prometheus compares against them as the API exports them (`fms_alert_threshold{setting="monitor_cpu_critical_pct"}`, read at each scrape), so **a change in Settings applies within a minute, with no deployment**. A warning must stay below its critical (`400`, `warning_not_below_critical`). How long a line must be passed (*For*) is in the rules, not a setting: Prometheus cannot take a rule's `for` from data.
 
-Beside them, fixed: a target not answering (2 min, critical), the outbox lagging (> 60 s) or dead-lettering, a provider's circuit breaker open (2 min), a scheduled job failing, a backup failing or overdue (critical). The rules are `docker/observability/prometheus/rules/fms.rules.yml`; **each fires once in `fms.rules.test.yml`** (`promtool test rules`, the CI job `observability-rules`), and none fires on a quiet fleet or under a raised threshold.
+Beside them, fixed: a target not answering (2 min, critical), the outbox lagging (> 60 s) or dead-lettering, a provider's circuit breaker open (2 min), a scheduled job failing, a backup failing or overdue (critical), the GPS partitions reaching less than 10 days ahead for an hour (FMS-110, warning). The rules are `docker/observability/prometheus/rules/fms.rules.yml`; **each fires once in `fms.rules.test.yml`** (`promtool test rules`, the CI job `observability-rules`), and none fires on a quiet fleet or under a raised threshold.
 
 ## Alerts
 
