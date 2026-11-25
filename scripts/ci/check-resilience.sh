@@ -60,7 +60,13 @@ probe() {
 drill() {
   name="$1" container="$2" check="$3" behaviour="$4" target="$5"
   echo "== $name: $container stopped for ${OUTAGE_SECONDS} s"
-  check_is "$check" ok || { echo "  $check is not ok before the drill: $(ready_body)" >&2; FAILED=1; return; }
+  # Settled first: readiness keeps one answer from the AI service for 5 s, so a single slow one reads as degraded for a moment.
+  waited=0
+  until check_is "$check" ok; do
+    waited=$((waited + 1))
+    [ "$waited" -gt 60 ] && { echo "  $check is not ok before the drill: $(ready_body)" >&2; FAILED=1; echo "| $name | (not run: $check was not ok before it) | - | - | - | ${target} s | fail |" >>"$ROWS"; return; }
+    sleep 1
+  done
   failures=0; probes=0; detected=""
   docker stop "$container" >/dev/null
   start=$(now)
