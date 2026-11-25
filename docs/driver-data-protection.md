@@ -25,11 +25,13 @@ A job, `tracking-retention`, runs daily at 03:20 (Addis Ababa) and deletes:
 - GPS pings recorded more than `GPS_PING_RETENTION_DAYS` ago (default **180**);
 - telemetry flags observed more than `TELEMETRY_FLAG_RETENTION_DAYS` ago (default **365**).
 
-Both settings are whole days, at least 30 (the history screen reads up to 30 days back) and at most 3650. They are environment
-settings (`.env.example`), not screen settings: a retention period is a policy, changed with the deployment. Deletes run in
-batches of 5,000 rows, up to 1,000,000 a night per table, so one run never holds a long lock; a larger backlog is cleared over
-the next nights. The run's audit entry has the counts and the cutoffs, never a position. A vehicle's *current* position
-(`tracking.vehicle_current_location`) is not a history and is not touched.
+Both settings are whole days, at least 30 (the history screen reads up to 30 days back) and at most 3650. They are
+environment settings (`.env.example`), not screen settings: a retention period is a policy, changed with the deployment.
+Deletes run in batches of 5,000 rows, up to 1,000,000 a night per table, so one run never holds a long lock; a larger
+backlog is cleared over the next nights. Pings are kept in monthly partitions (FMS-110,
+[gps-ingestion.md](gps-ingestion.md#partitions)): a month that ended before the cutoff is dropped whole first, and the
+deletes take only the rest of the month the cutoff falls in. The run's audit entry has the counts and the cutoffs, never
+a position. A vehicle's *current* position (`tracking.vehicle_current_location`) is not a history and is not touched.
 
 Not covered, by decision: the audit log itself (the open question of CFG-4 is whether it is purged after 5 years or kept), and
 trips, fuel logs and attendance, which are business records (see below for how a person gets a copy).

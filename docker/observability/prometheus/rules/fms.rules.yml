@@ -187,3 +187,12 @@ groups:
         annotations:
           summary: A backup failed or is overdue
           description: "The backups report {{ $value | printf \"%.0f\" }} critical finding(s); see Backups (docs/backups.md)."
+      # FMS-110: next month's GPS partition should exist from the 1st (the job makes two months ahead); under 10 days
+      # left means the gps-partitions job has not run for weeks, and next month's pings would go to the default partition.
+      - alert: GpsPartitionMissing
+        expr: min(gps_partition_days_ahead) < 10
+        for: 1h
+        labels: { severity: warning, service: postgres }
+        annotations:
+          summary: Next month's GPS partition is missing
+          description: "The GPS partitions reach {{ $value | printf \"%.0f\" }} days ahead; see the gps-partitions job (docs/gps-ingestion.md#partitions)."
