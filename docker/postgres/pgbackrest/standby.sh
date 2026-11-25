@@ -18,14 +18,20 @@ set -eu
 : "${DB_REPLICATION_PASSWORD:?DB_REPLICATION_PASSWORD is not set}"
 PRIMARY_HOST="${PRIMARY_HOST:-db-proxy}"
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+# Every connection gives up after 5 s (SE-208): during a failover the endpoint can hold a connection open without
+# answering, and a psql with no timeout then waits for ever, silently, before PostgreSQL has even started.
+export PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-5}"
+# And no statement waits longer than 30 s for an answer (the endpoint keeps idle sessions for an hour).
+export PGOPTIONS="${PGOPTIONS:--c statement_timeout=30s}"
 
-# The primary may still be starting (or the endpoint finding it): wait up to 2 minutes.
-i=0
+# The primary may still be starting (or the endpoint finding it): wait up to 2 minutes, by the clock.
+echo "standby: looking for the primary at $PRIMARY_HOST"
+deadline=$(( $(date +%s) + 120 ))
 until PGPASSWORD="$DB_ADMIN_PASSWORD" psql -X -q -h "$PRIMARY_HOST" -U fms_admin -d fms_db -Atc 'select not pg_is_in_recovery()' 2>/dev/null | grep -q t; do
-  i=$((i + 1))
-  [ "$i" -gt 60 ] && { echo "standby: no primary at $PRIMARY_HOST after 2 minutes" >&2; exit 1; }
+  [ "$(date +%s)" -ge "$deadline" ] && { echo "standby: no primary at $PRIMARY_HOST after 2 minutes" >&2; exit 1; }
   sleep 2
 done
+echo "standby: the primary answers at $PRIMARY_HOST"
 
 PGPASSWORD="$DB_ADMIN_PASSWORD" psql -X -h "$PRIMARY_HOST" -U fms_admin -d fms_db -v ON_ERROR_STOP=1 -q \
   -v password="$DB_REPLICATION_PASSWORD" <<'SQL'
