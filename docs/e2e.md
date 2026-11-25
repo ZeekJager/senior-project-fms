@@ -52,6 +52,7 @@ E2E_WEB_URL=http://localhost:5173 E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… npm
 
 ## In CI
 
-The `e2e-golden-path` job ([ci.md](ci.md)) builds and starts the backend and frontend from Compose, migrates, creates
-an admin with a random password for the run, installs Chromium, type-checks the suite and runs it. It replaces the
+The `e2e-golden-path` job ([ci.md](ci.md)) installs the suite and Chromium and type-checks it (before Compose, whose
+bind mounts leave root-owned `node_modules` folders behind), then builds and starts the backend and frontend from
+Compose, migrates, creates an admin with a random password for the run, and runs the suite. It replaces the
 card's "on staging": there is no shared staging environment yet, and the Compose stack runs the same images.

@@ -362,6 +362,18 @@ jobs:
           value="E2e-$(openssl rand -hex 16)"
           echo "::add-mask::$value"
           echo "E2E_ADMIN_PASSWORD=$value" >> "$GITHUB_ENV"
+      # Before Compose starts: its bind mount gives the packages' node_modules mount points to root, which npm ci
+      # then cannot write to.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx -w fms-e2e playwright install --with-deps chromium
+      - name: Type-check
+        run: npm run -s typecheck -w fms-e2e
       - name: Build images
         run: docker compose build backend frontend
       - name: Start stack
@@ -384,16 +396,6 @@ jobs:
             sleep 2
           done
           echo "The frontend dev server did not answer in 120 s"; exit 1
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Install Chromium
-        run: npx -w fms-e2e playwright install --with-deps chromium
-      - name: Type-check
-        run: npm run -s typecheck -w fms-e2e
       - name: Golden path
         run: npm run -s e2e -w fms-e2e
         env:
