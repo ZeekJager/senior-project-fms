@@ -436,7 +436,14 @@ export const fuelRefs = {
  * drivers' public ids.
  */
 /** For a driver's data export (FMS-104): the driver behind an account, with their fleet records; null for a user who is not a driver. */
-export const driverData = { forUser: (db: Queryable, userId: string) => driverDataExport(db, userId) };
+/** For the privacy module (FMS-104): a driver's own data export, and a driver by public id for an erasure. */
+export const driverData = {
+  forUser: (db: Queryable, userId: string) => driverDataExport(db, userId),
+  byPublicId: async (db: Queryable, publicId: string): Promise<{ id: string; publicId: string; userId: string } | null> => {
+    const d = await driverRepository.findByPublicId(db, publicId);
+    return d ? { id: String(d.id), publicId: String(d.publicId), userId: String(d.userId) } : null;
+  },
+};
 
 export const trackingRefs = {
   vehicles: {

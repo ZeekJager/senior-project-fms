@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import type { DomainEvent } from '../../../shared/events/domain-event';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
-import { APPEAL_NOTICE_TYPE } from '../domain/delivery';
+import { APPEAL_NOTICE_TYPE, FEEDBACK_NOTICE_TYPE } from '../domain/delivery';
 import type { NotificationRepository } from '../infrastructure/notification.repository';
 
 /** What a driver is told of a step on their appeal (FMS-159), and whether by push too. Never a person's name. */
@@ -37,6 +37,23 @@ function noticeOf(event: DomainEvent): AppealNotice | null {
   }
 }
 
+/** The feedback events a driver hears of (FMS-158): new feedback in the app and by push, a correction in the app. */
+export const FEEDBACK_NOTICE_EVENTS = ['FeedbackGiven', 'FeedbackEdited'] as const;
+
+function feedbackNoticeOf(event: DomainEvent): AppealNotice | null {
+  const p = event.payload as Record<string, unknown>;
+  switch (event.type) {
+    case 'FeedbackGiven':
+      return p.tone === 'praise'
+        ? { title: 'Well done: new feedback', message: 'Your manager sent you praise. Open it in My feedback.', push: true }
+        : { title: 'New feedback from your manager', message: 'Open it in My feedback to read it.', push: true };
+    case 'FeedbackEdited':
+      return { title: 'Feedback was corrected', message: 'Your manager corrected feedback they sent you. Open it to read it again.', push: false };
+    default:
+      return null;
+  }
+}
+
 export interface NoticeServiceDeps {
   notifications: Pick<NotificationRepository, 'insertNotices'>;
   inbox: { announce(tx: PoolClient, userIds: readonly string[], reason: 'delivered', ctx: MutationContext): Promise<unknown> };
@@ -56,16 +73,27 @@ export class NoticeService {
   constructor(private readonly deps: NoticeServiceDeps) {}
 
   async appealStep(tx: PoolClient, event: DomainEvent): Promise<number> {
-    const notice = noticeOf(event);
     const p = event.payload as Record<string, unknown>;
-    if (!notice || typeof p.driver_id !== 'string' || typeof p.appeal_id !== 'string') return 0;
+    if (typeof p.appeal_id !== 'string') return 0;
+    return this.tell(tx, event, noticeOf(event), APPEAL_NOTICE_TYPE, { type: 'appeal', id: p.appeal_id });
+  }
+
+  /** Feedback given or corrected (FMS-158): in the inbox, and new feedback by push. Never by email or SMS. */
+  async feedbackStep(tx: PoolClient, event: DomainEvent): Promise<number> {
+    const p = event.payload as Record<string, unknown>;
+    if (typeof p.feedback_id !== 'string') return 0;
+    return this.tell(tx, event, feedbackNoticeOf(event), FEEDBACK_NOTICE_TYPE, { type: 'feedback', id: p.feedback_id });
+  }
+
+  private async tell(tx: PoolClient, event: DomainEvent, notice: AppealNotice | null, type: string, entity: { type: string; id: string }): Promise<number> {
+    const p = event.payload as Record<string, unknown>;
+    if (!notice || typeof p.driver_id !== 'string') return 0;
     const driver = await this.deps.drivers.subject(tx, p.driver_id);
     if (!driver) return 0;
     const userId = (await this.deps.drivers.activeAccounts(tx, [String(driver.id)])).get(String(driver.id));
     if (!userId) return 0;
     const ctx: MutationContext = { userId: null, correlationId: event.correlation_id };
-    const content = { type: APPEAL_NOTICE_TYPE, title: notice.title, message: notice.message };
-    const entity = { type: 'appeal', id: p.appeal_id };
+    const content = { type, title: notice.title, message: notice.message };
     const told = await this.deps.notifications.insertNotices(tx, ctx, [userId], content, entity);
     if (told > 0) await this.deps.inbox.announce(tx, [userId], 'delivered', ctx);
     if (notice.push) await this.deps.delivery.queueNotice(tx, ctx, [userId], content, entity);

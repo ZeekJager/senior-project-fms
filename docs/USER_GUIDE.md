@@ -292,6 +292,16 @@ something (answer under the appeal) and when they decide. If it is approved, wha
 score is worked out again: *My score* shows *Corrected after appeal* with the old and new score. Until it is decided
 you can **Withdraw** it. Tap **I have read the decision** when you have.
 
+### Feedback from your managers
+
+**My feedback** on *My day* lists what your managers told you about a trip, a month or your driving, newest first; *My day*
+says how many are new. You are told in the app and by push when there is new feedback. It opens with no signal too, as last
+saved.
+
+- Tap **Got it** when you have read it: your manager sees when.
+- **Reply** once, in up to 1,000 characters.
+- **I disagree** opens an appeal about it. The manager who gave the feedback will not decide it.
+
 ## Dispatcher
 
 You staff your depot's trips: you create them, give each one a driver and a vehicle who are free and allowed to do it,
@@ -556,6 +566,19 @@ comes to you as a notification. Open the trip on **Dispatch**: the panel shows t
 - **Refuse** sends it back with your reason, which the dispatcher sees as *Approval refused*.
 
 Nobody decides on their own request.
+
+### Feedback to drivers
+
+**Feedback** on a driver's row in *Drivers* shows what managers told them, newest first, with the count per
+category over the last 90 days. Items the driver has not read after 7 days are marked. Depot admins see their
+depot's drivers.
+
+1. **Give feedback**: what it is about (a trip, a month, or overall), the category, the tone (*Praise*, *Needs
+   improvement*, *Information*) and the message. **Start from a template**, or **Save as template** for next time.
+   On a finished trip in a vehicle's history, **Give feedback on this trip** opens the same form.
+2. The driver is told in the app and by push, and you see when they read it and their reply.
+3. **Correct** a message within 24 hours of sending it; the earlier text is kept. After that, **Retract** it with a
+   reason: it disappears for the driver and stays in the record.
 
 ### Drivers' score appeals
 

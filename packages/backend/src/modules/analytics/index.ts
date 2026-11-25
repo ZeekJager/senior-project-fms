@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import type { PoolClient } from 'pg';
 import { config } from '../../config';
 import { pool, reads } from '../../db';
 import { cache } from '../../shared/cache';
 import { eventBus } from '../../shared/events/event-bus';
+import type { MutationContext } from '../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../shared/infrastructure/queryable';
 import { createDocumentStorage } from '../../shared/storage/document-storage';
 import { logger } from '../../shared/logging/logger';
@@ -14,8 +16,10 @@ import { settings } from '../settings';
 import { jobLoad, nightHours } from '../trip';
 import { analyticsRouter } from './api/analytics.routes';
 import { appealRouter } from './api/appeal.routes';
+import { feedbackRouter } from './api/feedback.routes';
 import { AnalyticsService } from './application/analytics.service';
 import { AppealService, type MonthScore } from './application/appeal.service';
+import { FeedbackService } from './application/feedback.service';
 import { ReportService } from './application/report.service';
 import { TripRiskService } from './application/trip-risk.service';
 import { monthEnd, monthStart } from './domain/appeal';
@@ -23,6 +27,7 @@ import { scoreDriver, type ScoreWeights } from './domain/driver-score';
 import { AnalyticsRepository } from './infrastructure/analytics.repository';
 import { AppealRepository } from './infrastructure/appeal.repository';
 import { AttachmentUrlSigner } from './infrastructure/attachment-url';
+import { FeedbackRepository } from './infrastructure/feedback.repository';
 import { ReportRepository } from './infrastructure/report.repository';
 import { TripRiskRepository } from './infrastructure/trip-risk.repository';
 
@@ -60,6 +65,18 @@ async function monthScore(db: Queryable, driverUserId: string, month: string): P
   return { score: scoreDriver(m, await scoreWeights()), figures };
 }
 
+// Admin-to-driver feedback (FMS-158, docs/driver-feedback.md): on the primary; categories and retention are settings.
+const feedbackService = new FeedbackService({
+  repo: new FeedbackRepository(pool),
+  events: eventBus,
+  rules: async () => ({
+    categories: (await settings.get<string[]>('feedback_categories')) ?? [],
+    retentionMonths: (await settings.get<number>('feedback_retention_months')) ?? 24,
+  }),
+  score: monthScore,
+  users: userDirectory,
+});
+
 // Score appeals (FMS-159, docs/score-appeals.md): on the primary, the files in the document storage under appeals/.
 const appealService = new AppealService({
   repo: new AppealRepository(pool),
@@ -72,6 +89,10 @@ const appealService = new AppealService({
   },
   score: monthScore,
   users: userDirectory,
+  feedback: {
+    ownLiveItem: (db, driverId, publicId) => feedbackService.ownLiveItem(db, driverId, publicId),
+    authorOf: (db, feedbackId) => feedbackService.authorOf(db, feedbackId),
+  },
 });
 
 const reportService = new ReportService({
@@ -84,6 +105,7 @@ const reportService = new ReportService({
 const router = Router();
 router.use(analyticsRouter(analyticsService, reportService));
 router.use(appealRouter(appealService));
+router.use(feedbackRouter(feedbackService));
 
 export const analyticsModule: AppModule = {
   name: 'analytics',
@@ -95,6 +117,8 @@ export const analyticsModule: AppModule = {
     { name: 'appeal-escalation', every: 15, run: ({ now, correlationId }) => appealService.escalate({ now, correlationId }) },
     // A decision the driver never acknowledged closes a week after it was made.
     { name: 'appeal-auto-close', at: '03:50', run: ({ now, correlationId }) => appealService.autoClose({ now, correlationId }) },
+    // Feedback older than feedback_retention_months (24) is deleted, retracted items too (FMS-158).
+    { name: 'feedback-retention', at: '03:40', run: ({ now, correlationId }) => feedbackService.purge({ now, correlationId }) },
   ],
 };
 
@@ -135,3 +159,18 @@ export const appealJobs = {
   autoClose: (now: Date, correlationId: string) => appealService.autoClose({ now, correlationId }),
 };
 export { APPEAL_EVENTS } from './domain/appeal';
+
+/**
+ * A driver's feedback (FMS-158) for the privacy module (FMS-104): their data export, and an erasure, on the caller's
+ * transaction. Internal driver ids.
+ */
+export const driverFeedbackData = {
+  forDriver: (db: Queryable, driverId: string) => feedbackService.exportFor(db, driverId),
+  erase: (client: PoolClient, ctx: MutationContext, driverId: string) => feedbackService.eraseFor(client, ctx, driverId),
+};
+
+/** For tests: the feedback retention job as of `now`. */
+export const feedbackJobs = {
+  purge: (now: Date, correlationId: string) => feedbackService.purge({ now, correlationId }),
+};
+export { FEEDBACK_EVENTS } from './domain/feedback';

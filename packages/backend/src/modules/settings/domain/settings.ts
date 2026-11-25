@@ -120,13 +120,53 @@ const COPY: Record<SettingKey, { label: string; category: string; description: s
   },
 };
 
-/** The settings as system parameters of the registry (FMS-157): whole numbers in settings.settings. */
+/** Driver feedback's categories (FMS-158): the options of `feedback_categories`, every one in use by default. */
+export const FEEDBACK_CATEGORY_OPTIONS = [
+  { value: 'safety', label: 'Safety' },
+  { value: 'driving_behaviour', label: 'Driving behaviour' },
+  { value: 'fuel_efficiency', label: 'Fuel efficiency' },
+  { value: 'punctuality', label: 'Punctuality' },
+  { value: 'vehicle_care', label: 'Vehicle care' },
+  { value: 'general', label: 'General comment' },
+] as const;
+
+/**
+ * System parameters that are no whole-number setting, read with `settings.get(key)`: driver feedback's categories in
+ * use and how long it is kept (FMS-158, docs/driver-feedback.md).
+ */
+export const OTHER_PARAMETERS: readonly SystemParameter[] = [
+  {
+    key: 'feedback_categories',
+    label: 'Feedback categories',
+    category: 'Driver feedback',
+    description: 'The categories a manager files feedback under. At least one.',
+    type: 'multi_select',
+    default_value: FEEDBACK_CATEGORY_OPTIONS.map((o) => o.value),
+    rules: { options: FEEDBACK_CATEGORY_OPTIONS.map((o) => ({ ...o })), min_items: 1 },
+    storage: 'settings',
+  },
+  {
+    key: 'feedback_retention_months',
+    label: 'Feedback kept',
+    category: 'Driver feedback',
+    description: 'Months feedback is kept, retracted items too; older items are deleted each night.',
+    type: 'integer',
+    default_value: 24,
+    rules: { min: 1, max: 120, unit: 'months' },
+    storage: 'settings',
+  },
+];
+
+/** The settings as system parameters of the registry (FMS-157): whole numbers in settings.settings, and the others. */
 export function settingParameters(definitions: Record<SettingKey, SettingDefinition>): SystemParameter[] {
-  return SETTING_KEYS.map((key) => {
-    const d = definitions[key];
-    const { unit, ...copy } = COPY[key];
-    return { key, ...copy, type: 'integer', default_value: d.default, rules: { min: d.min, max: d.max, unit }, storage: 'settings' };
-  });
+  return [
+    ...SETTING_KEYS.map((key): SystemParameter => {
+      const d = definitions[key];
+      const { unit, ...copy } = COPY[key];
+      return { key, ...copy, type: 'integer', default_value: d.default, rules: { min: d.min, max: d.max, unit }, storage: 'settings' };
+    }),
+    ...OTHER_PARAMETERS,
+  ];
 }
 
 /** Every setting's value: the stored one, else the default. */

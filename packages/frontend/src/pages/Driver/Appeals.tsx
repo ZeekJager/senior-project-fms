@@ -262,6 +262,8 @@ export function DriverNewAppeal() {
   const { toast } = useToast()
   const camera = useRef<HTMLInputElement>(null)
   const picker = useRef<HTMLInputElement>(null)
+  // "I disagree" on feedback (FMS-158) opens this form with the feedback, and its month when it was about one.
+  const feedbackId = params.get('feedback')
   const preset = params.get('month') ? `score:${params.get('month')}` : params.get('flag') ? `flag:${params.get('flag')}` : params.get('incident') ? `incident:${params.get('incident')}` : ''
   const [target, setTarget] = useState(preset)
   const [kind, setKind] = useState<'appeal' | 'complaint'>('appeal')
@@ -323,6 +325,7 @@ export function DriverNewAppeal() {
         ...(c.type === 'score' ? { month: c.month } : { target_id: c.id }),
         reason,
         explanation: explanation.trim(),
+        ...(feedbackId ? { feedback_id: feedbackId } : {}),
         files,
       })
       toast({ title: 'Appeal sent', description: 'A reviewer at your depot will look at it.' })
@@ -345,7 +348,12 @@ export function DriverNewAppeal() {
 
   return (
     <form className="space-y-5" onSubmit={(e) => void onSubmit(e)} noValidate>
-      <FormHeader title="Appeal or complain" back={MY_APPEALS} />
+      <FormHeader title="Appeal or complain" back={feedbackId ? { to: `/driver/feedback/${feedbackId}`, label: 'The feedback' } : MY_APPEALS} />
+      {feedbackId && (
+        <p className="rounded-control border border-line bg-surface-muted px-3.5 py-3 text-base text-ink-muted">
+          You disagree with feedback from your manager. Choose what it is about below; the manager who gave it will not decide your appeal.
+        </p>
+      )}
       {appealable.isError ? (
         <Panel icon={<AlertCircle />} title="What you can appeal could not be loaded" tone="danger">
           Check your signal and try again.

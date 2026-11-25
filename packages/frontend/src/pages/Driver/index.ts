@@ -1,5 +1,6 @@
 export { DriverAppeal, DriverAppeals, DriverNewAppeal } from './Appeals'
 export { DriverCheckIn } from './CheckIn'
+export { DriverFeedbackItem, DriverFeedbackList } from './Feedback'
 export { DriverFuel } from './Fuel'
 export { DriverHome } from './Home'
 export { DriverIncident } from './Incident'

@@ -134,7 +134,10 @@ A detail may carry `record_id`: the public id of the record the problem is about
 | `CONFLICT_SYSTEM_PARAMETER` | 409 | A system settings parameter deleted, or its definition edited (FMS-157) | `settings.definitions` |
 | `CONFLICT_APPEAL_OPEN` | 409 | A second open appeal against the same flag, incident or month's score (FMS-159) | `analytics.score_appeals` |
 | `CONFLICT_APPEAL_WINDOW_CLOSED` | 409 | An appeal past the appeal window, 30 days by default (FMS-159) | `analytics.score_appeals` |
-| `CONFLICT_OWN_REPORT` | 409 | A reviewer deciding an appeal against the incident they reported or the flag they reviewed (FMS-159) | `analytics.score_appeals` |
+| `CONFLICT_OWN_REPORT` | 409 | A reviewer deciding an appeal against the incident they reported, the flag they reviewed or the feedback they gave (FMS-159, FMS-158) | `analytics.score_appeals` |
+| `CONFLICT_FEEDBACK_LOCKED` | 409 | Correcting feedback more than 24 hours after it was given; it can only be retracted (FMS-158) | `analytics.driver_feedback` |
+| `CONFLICT_FEEDBACK_REPLIED` | 409 | A driver's second reply to the same feedback (FMS-158) | `analytics.driver_feedback` |
+| `CONFLICT_FEEDBACK_RETRACTED` | 409 | Correcting or retracting feedback already retracted (FMS-158) | `analytics.driver_feedback` |
 | `PRECONDITION_FAILED` | 412 | `If-Match` names an older version of a settings parameter (FMS-157) | `settings.definitions.version` |
 | `RATE_LIMITED` | 429 | Rate limit exceeded | API |
 | `INTERNAL_SERVER_ERROR` | 500 | Unexpected error (catch-all; no internals in the message) | API |
@@ -1103,6 +1106,11 @@ Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The
 | `GET /appeals`, `GET /appeals/kpis`, `GET /appeals/{appeal_id}` | The reviewers' queue, oldest first, one appeal with its timeline and evidence, and the KPI figures (FMS-159) | `appeal:read` (the driver's own for one appeal) | `status`, `depot_id`, `overdue`; `from`, `to` -> appeals; `opened`, `decided`, `approved_share`, `median_days_to_decision` |
 | `POST /appeals/{appeal_id}/claim`, `/comments`, `/decision`, `/withdraw`, `/acknowledge` | The status flow: Submitted, Under review, Approved or Rejected, Closed (FMS-159) | `appeal:review` (claim, decide, write), the driver's own (write, withdraw, acknowledge) | A step not in the flow is `409 CONFLICT_INVALID_STATE_TRANSITION`; a decision needs a `note`, an approval a `correction` (`exclude_flag`, `exclude_incident`, `exclude_trip`) |
 | `GET /appeals/{appeal_id}/attachments/{attachment_id}/link` | A signed, 15-minute link to an appeal's file, recorded on its timeline (FMS-159) | The driver's own, or `appeal:read` | -> `url` (`/appeal-attachments/{id}/content?expires=&signature=`, public), `expires_at` |
+| `POST /drivers/{driver_id}/feedback`, `GET /drivers/{driver_id}/feedback` | Give a driver feedback on a trip, a month or overall; their feedback newest first with the 90 days' counts (FMS-158) | `feedback:write`, `feedback:read`; the driver in the caller's depots, else 403 | `subject_type` (`trip`, `month`, `overall`), `trip_id` or `month`, `category`, `tone`, `message` -> `Feedback` ([driver-feedback.md](driver-feedback.md)); `category`, `tone` -> `meta.counts` |
+| `GET /feedback/{feedback_id}`, `PATCH /feedback/{feedback_id}`, `POST /feedback/{feedback_id}/retract` | One item; its author's correction within 24 hours; a retraction with a reason (FMS-158) | `feedback:read`, `feedback:write` | `message`; `reason`. Late: `409 CONFLICT_FEEDBACK_LOCKED` |
+| `GET`, `POST /feedback/templates`, `PATCH`, `DELETE /feedback/templates/{template_id}` | Saved feedback messages per category (FMS-158) | `feedback:write` | `category`, `title`, `body` |
+| `GET /driver/feedback`, `GET /driver/feedback/{feedback_id}`, `POST .../acknowledge`, `POST .../reply` | The signed-in driver's live feedback, Got it, one reply (FMS-158) | Signed in; the driver's own | `body` (1,000 characters). A second reply: `409 CONFLICT_FEEDBACK_REPLIED` |
+| `POST /drivers/{driver_id}/data-erasure` | Erase a driver's personal data held for erasure: today their feedback (FMS-158) | `privacy:erase` | `reason` -> `erased` per kind |
 
 - **Range:** `from` and `to` are Addis Ababa days, both included; the 30 days to today by default, never past today, at most 366 days (`400 VALIDATION_FAILED`, `before_from` or `range_too_long`).
 - **Who:** the caller's depots (admins, fleet managers, owners and compliance officers see every depot); `depot_id` narrows to one of them, and a depot that is unknown or not the caller's gives zeros. A driver has no `analytics:read` (`403`).

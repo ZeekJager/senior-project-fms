@@ -1,8 +1,9 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, MessageSquareText, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import { useMyFeedback } from '@/features/feedback/api'
 import type { GpsState } from '@/features/phoneGps/broadcaster'
 import { usePhoneGps } from '@/features/phoneGps/PhoneGps'
 import { ApiError } from '@/lib/api/errors'
@@ -194,6 +195,9 @@ export function DriverHome() {
           <ChevronRight className="h-5 w-5 text-ink-subtle" aria-hidden="true" />
         </Link>
       )}
+
+      {/* FMS-158: feedback from managers. */}
+      {hasPermission('trip:execute') && <FeedbackLink />}
 
       {/* FMS-159: the driver's appeals and complaints about a flag, an incident or a score. */}
       {hasPermission('appeal:submit') && (
@@ -474,5 +478,26 @@ function LocationLine() {
         {good && status.waiting > 1 && <span className="font-normal text-ink-muted">{` · ${status.waiting} positions wait for signal`}</span>}
       </span>
     </p>
+  )
+}
+
+/** My feedback, with how many items are still to read. */
+function FeedbackLink() {
+  const mine = useMyFeedback()
+  const unread = mine.data?.unacknowledged ?? 0
+  return (
+    <Link
+      to="/driver/feedback"
+      className="focus-ring flex items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-3.5 text-ink shadow-soft hover:bg-surface-muted"
+    >
+      <span className="flex items-center gap-3">
+        <MessageSquareText className="h-5 w-5 text-brand-ink" aria-hidden="true" />
+        <span>
+          <span className="block text-base font-semibold">My feedback</span>
+          <span className="block text-sm text-ink-muted">{unread > 0 ? `${unread} new from your managers` : 'What your managers told you'}</span>
+        </span>
+      </span>
+      <ChevronRight className="h-5 w-5 text-ink-subtle" aria-hidden="true" />
+    </Link>
   )
 }

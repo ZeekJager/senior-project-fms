@@ -47,7 +47,7 @@ Any other step is `409 CONFLICT_INVALID_STATE_TRANSITION` (the card's `invalid_t
 - **Who:** `appeal:review` (admin, fleet manager, depot admin) claims, writes and decides the appeals of their depots; `appeal:read` (those and the compliance officer) reads them. An appeal is in the depot the driver belonged to when they sent it. A depot admin of another depot gets `404`.
 - **The queue** (S-36, `/appeals`): oldest first, *To review*, *Overdue*, *Decided* and *Closed*, by depot. Each appeal shows the evidence beside it: the driver's explanation and files, the GPS track of the flag's trip (or 30 minutes either side of a flag or incident on no trip), the trip's flags with the appealed one marked, and the month's score with its parts.
 - **The deadline:** `appeal_review_working_days` (a setting, 5) working days, Monday to Friday in Addis Ababa, from when it was sent; public holidays are not known. Past it, the appeal is marked overdue, and the `appeal-escalation` job (every 15 minutes) raises an `appeal_overdue` alert for the depot's admins, once.
-- **Own reports:** a reviewer who reported the incident, or reviewed the flag, cannot decide the appeal against it (`409 CONFLICT_OWN_REPORT`); another reviewer must. Feedback (FMS-158) is not built yet, so nothing else counts as the reviewer's own.
+- **Own reports:** a reviewer who reported the incident, or reviewed the flag, cannot decide the appeal against it (`409 CONFLICT_OWN_REPORT`); another reviewer must. Nor can the manager who gave the feedback an appeal disagrees with: *I disagree* on feedback (FMS-158, [driver-feedback.md](driver-feedback.md)) sends `feedback_id` with the appeal.
 
 ## The correction
 
@@ -106,7 +106,6 @@ The contract is in [openapi.yaml](openapi.yaml).
 ## Not covered
 
 - Public holidays in the review deadline: only weekends are skipped.
-- *Cannot decide against their own feedback*: admin-to-driver feedback (FMS-158) is not built; reported incidents and reviewed flags count.
 - The KPI dashboard's tiles: the figures are served for FMS-160 to show.
 - Notifying the reviewer of the driver's answers: the queue and an open appeal refresh every 30 seconds.
 - Offline sending: an appeal with files needs signal (the offline queue takes fill-ups, inspections and incidents).

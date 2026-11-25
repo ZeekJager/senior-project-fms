@@ -50,6 +50,7 @@ tags:
   - name: Notifications
   - name: Analytics
   - name: Appeals
+  - name: Feedback
   - name: Settings
   - name: System
 
@@ -2667,6 +2668,366 @@ paths:
           description: AUTH_TOKEN_EXPIRED (the link has expired), AUTH_TOKEN_INVALID (a link that is not one).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /drivers/{driver_id}/feedback:
+    post:
+      tags: [Feedback]
+      operationId: giveDriverFeedback
+      summary: Give a driver feedback on a trip, a month or overall (FMS-158)
+      description: >
+        Needs feedback:write (admin, fleet manager, depot admin) and the driver in the caller's depots; another
+        depot's driver is 403. A trip must be one of the driver's completed trips; a month (YYYY-MM) records the score
+        shown then. The category is one of the feedback_categories setting's in use. The driver is told in the app and
+        by push, never by email or SMS. Editable by its author for 24 hours. docs/driver-feedback.md.
+      parameters:
+        - { name: driver_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeedbackSubmission' }
+      responses:
+        '201': { $ref: '#/components/responses/Feedback' }
+        '400':
+          description: VALIDATION_FAILED (a message under 10 characters, a category not in use, a trip not the driver's, a month to come).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    get:
+      tags: [Feedback]
+      operationId: listDriverFeedback
+      summary: A driver's feedback, newest first, with counts per category (FMS-158)
+      description: >
+        Retracted items too, marked. meta.counts has the live items per category of the last 90 days and how many are
+        unacknowledged after 7 days. Needs feedback:read and the driver in the caller's depots (else 403).
+      parameters:
+        - { name: driver_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: tone, in: query, schema: { type: string, enum: [praise, needs_improvement, information] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of feedback.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Feedback' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages, counts]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+                      counts:
+                        type: object
+                        required: [days, by_category, unacknowledged_overdue]
+                        properties:
+                          days: { type: integer }
+                          by_category: { type: object, additionalProperties: { type: integer } }
+                          unacknowledged_overdue: { type: integer }
+        '400':
+          description: VALIDATION_FAILED (an unknown tone).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /drivers/{driver_id}/data-erasure:
+    post:
+      tags: [Feedback]
+      operationId: eraseDriverData
+      summary: Erase a driver's personal data held for erasure (FMS-158)
+      description: >
+        Deletes for good, in one transaction, what the modules hold for erasure: today the driver's feedback, with its
+        earlier texts. Trips, fuel logs and the other fleet records keep their own retention. Audited as
+        privacy.data_erased with the counts and the reason. Needs privacy:erase (admin).
+      parameters:
+        - { name: driver_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: What was erased, per kind.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [driver_id, erased]
+                    properties:
+                      driver_id: { type: string, format: uuid }
+                      erased: { type: object, additionalProperties: { type: integer } }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (no reason).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /feedback/templates:
+    get:
+      tags: [Feedback]
+      operationId: listFeedbackTemplates
+      summary: Saved feedback messages, by category (FMS-158)
+      description: The fleet's templates, by category and title. Needs feedback:write.
+      parameters:
+        - { name: category, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: The templates.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FeedbackTemplate' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Feedback]
+      operationId: createFeedbackTemplate
+      summary: Save a feedback message as a template (FMS-158)
+      description: Needs feedback:write. The category is one in use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeedbackTemplateInput' }
+      responses:
+        '201': { $ref: '#/components/responses/FeedbackTemplate' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /feedback/templates/{template_id}:
+    patch:
+      tags: [Feedback]
+      operationId: updateFeedbackTemplate
+      summary: Change a feedback template (FMS-158)
+      description: Needs feedback:write.
+      parameters:
+        - { name: template_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                category: { type: string }
+                title: { type: string, minLength: 1, maxLength: 80 }
+                body: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/FeedbackTemplate' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Feedback]
+      operationId: deleteFeedbackTemplate
+      summary: Remove a feedback template (FMS-158)
+      description: Needs feedback:write. It is kept, inactive, for the audit.
+      parameters:
+        - { name: template_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /feedback/{feedback_id}:
+    get:
+      tags: [Feedback]
+      operationId: getFeedback
+      summary: One feedback item, with its earlier texts and the driver's answer (FMS-158)
+      description: Needs feedback:read and the driver in the caller's depots (else 403).
+      parameters:
+        - { name: feedback_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/Feedback' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Feedback]
+      operationId: editFeedback
+      summary: Correct feedback within 24 hours (FMS-158)
+      description: Its author only, within 24 hours of giving it; the earlier text is kept. The driver is told in the app. Needs feedback:write.
+      parameters:
+        - { name: feedback_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              additionalProperties: false
+              properties:
+                message: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/Feedback' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_FEEDBACK_LOCKED (more than 24 hours after it was given), CONFLICT_FEEDBACK_RETRACTED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /feedback/{feedback_id}/retract:
+    post:
+      tags: [Feedback]
+      operationId: retractFeedback
+      summary: Retract feedback, with a reason (FMS-158)
+      description: Gone for the driver; kept, with the reason, for the managers and in the audit log. Needs feedback:write.
+      parameters:
+        - { name: feedback_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { $ref: '#/components/responses/Feedback' }
+        '400':
+          description: VALIDATION_FAILED (no reason).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_FEEDBACK_RETRACTED (already retracted).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /driver/feedback:
+    get:
+      tags: [Feedback]
+      operationId: listMyFeedback
+      summary: The signed-in driver's feedback, newest first (FMS-158)
+      description: Live items only (a retracted one is gone). meta.unacknowledged counts those not yet acknowledged. Anyone who is not a driver gets 404.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of the driver's feedback.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverFeedback' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages, unacknowledged]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+                      unacknowledged: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /driver/feedback/{feedback_id}:
+    get:
+      tags: [Feedback]
+      operationId: getMyFeedback
+      summary: One of the signed-in driver's feedback items (FMS-158)
+      description: Another driver's, or a retracted one, is 404.
+      parameters:
+        - { name: feedback_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/DriverFeedback' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /driver/feedback/{feedback_id}/acknowledge:
+    post:
+      tags: [Feedback]
+      operationId: acknowledgeMyFeedback
+      summary: Acknowledge feedback, the driver's Got it (FMS-158)
+      description: Once; again changes nothing. The author sees when.
+      parameters:
+        - { name: feedback_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/DriverFeedback' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /driver/feedback/{feedback_id}/reply:
+    post:
+      tags: [Feedback]
+      operationId: replyToMyFeedback
+      summary: Reply once to feedback (FMS-158)
+      description: Up to 1,000 characters; it acknowledges the item too. The author sees it with its time.
+      parameters:
+        - { name: feedback_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '201': { $ref: '#/components/responses/DriverFeedback' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT_FEEDBACK_REPLIED (already replied).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
   /fuel-anomalies:
     get:
@@ -8032,6 +8393,36 @@ components:
             properties:
               data: { $ref: '#/components/schemas/AppealDetail' }
               meta: { $ref: '#/components/schemas/Meta' }
+    Feedback:
+      description: The feedback item, as a manager reads it.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/Feedback' }
+              meta: { $ref: '#/components/schemas/Meta' }
+    DriverFeedback:
+      description: The feedback item, as the driver reads it.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/DriverFeedback' }
+              meta: { $ref: '#/components/schemas/Meta' }
+    FeedbackTemplate:
+      description: The template.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { $ref: '#/components/schemas/FeedbackTemplate' }
+              meta: { $ref: '#/components/schemas/Meta' }
     AppealTransition:
       description: CONFLICT_INVALID_STATE_TRANSITION (a step the status flow does not have from where it is).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
@@ -8580,6 +8971,7 @@ components:
         month: { type: string, pattern: '^\d{4}-\d{2}$', description: The month of the score; required when target_type is score. }
         reason: { type: string, enum: [wrong_data, not_my_trip, road_conditions, vehicle_fault, other] }
         explanation: { type: string, minLength: 20, maxLength: 2000 }
+        feedback_id: { type: string, format: uuid, description: "The driver's feedback (FMS-158) the appeal disagrees with (I disagree): its author may not decide the appeal." }
         files: { type: array, maxItems: 5, items: { type: string, format: binary }, description: Multipart only. }
     AppealPerson:
       type: [object, 'null']
@@ -8589,7 +8981,7 @@ components:
         name: { type: string }
     Appeal:
       type: object
-      required: [id, kind, status, outcome, target, reason, explanation, driver, depot, submitted_at, due_at, overdue, escalated_at, claimed_by, claimed_at, decided_by, decided_at, decision_note, correction, score_before, score_after, acknowledged_at, closed_at, attachments, version]
+      required: [id, kind, status, outcome, target, reason, explanation, feedback_id, driver, depot, submitted_at, due_at, overdue, escalated_at, claimed_by, claimed_at, decided_by, decided_at, decision_note, correction, score_before, score_after, acknowledged_at, closed_at, attachments, version]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, enum: [appeal, complaint] }
@@ -8606,6 +8998,7 @@ components:
             event_at: { type: string, format: date-time }
         reason: { type: string, enum: [wrong_data, not_my_trip, road_conditions, vehicle_fault, other] }
         explanation: { type: string }
+        feedback_id: { type: [string, 'null'], format: uuid }
         driver: { $ref: '#/components/schemas/AppealPerson' }
         depot: { $ref: '#/components/schemas/AppealPerson' }
         submitted_at: { type: string, format: date-time }
@@ -8675,6 +9068,90 @@ components:
                 decide: { type: boolean }
                 withdraw: { type: boolean }
                 acknowledge: { type: boolean }
+    FeedbackSubmission:
+      type: object
+      required: [subject_type, category, tone, message]
+      additionalProperties: false
+      properties:
+        subject_type: { type: string, enum: [trip, month, overall] }
+        trip_id: { type: string, format: uuid, description: The driver's completed trip; required when subject_type is trip. }
+        month: { type: string, pattern: '^\d{4}-\d{2}$', description: Required when subject_type is month. }
+        category: { type: string, description: One of the feedback_categories setting's values in use. }
+        tone: { type: string, enum: [praise, needs_improvement, information] }
+        message: { type: string, minLength: 10, maxLength: 2000 }
+    DriverFeedback:
+      type: object
+      required: [id, subject, category, tone, message, from, given_at, edited_at, acknowledged_at, reply, replied_at, can]
+      properties:
+        id: { type: string, format: uuid }
+        subject:
+          type: object
+          required: [type, trip_id, month, score_shown]
+          properties:
+            type: { type: string, enum: [trip, month, overall] }
+            trip_id: { type: [string, 'null'], format: uuid }
+            month: { type: [string, 'null'] }
+            score_shown: { type: [integer, 'null'], description: The month's score when the feedback was given. }
+        category: { type: string }
+        tone: { type: string, enum: [praise, needs_improvement, information] }
+        message: { type: string }
+        from: { $ref: '#/components/schemas/AppealPerson' }
+        given_at: { type: string, format: date-time }
+        edited_at: { type: [string, 'null'], format: date-time }
+        acknowledged_at: { type: [string, 'null'], format: date-time }
+        reply: { type: [string, 'null'] }
+        replied_at: { type: [string, 'null'], format: date-time }
+        can:
+          type: object
+          required: [edit, retract, acknowledge, reply, disagree]
+          properties:
+            edit: { type: boolean }
+            retract: { type: boolean }
+            acknowledge: { type: boolean }
+            reply: { type: boolean }
+            disagree: { type: boolean }
+    Feedback:
+      allOf:
+        - { $ref: '#/components/schemas/DriverFeedback' }
+        - type: object
+          required: [driver, depot, editable_until, retracted_at, retracted_by, retraction_reason, unacknowledged_overdue, revisions, version]
+          properties:
+            driver: { $ref: '#/components/schemas/AppealPerson' }
+            depot: { $ref: '#/components/schemas/AppealPerson' }
+            editable_until: { type: string, format: date-time }
+            retracted_at: { type: [string, 'null'], format: date-time }
+            retracted_by: { $ref: '#/components/schemas/AppealPerson' }
+            retraction_reason: { type: [string, 'null'] }
+            unacknowledged_overdue: { type: boolean, description: Live, not acknowledged, given 7 or more days ago. }
+            revisions:
+              type: array
+              description: The earlier texts, oldest first.
+              items:
+                type: object
+                required: [message, revised_by, at]
+                properties:
+                  message: { type: string }
+                  revised_by: { $ref: '#/components/schemas/AppealPerson' }
+                  at: { type: string, format: date-time }
+            version: { type: integer }
+    FeedbackTemplateInput:
+      type: object
+      required: [category, title, body]
+      additionalProperties: false
+      properties:
+        category: { type: string }
+        title: { type: string, minLength: 1, maxLength: 80 }
+        body: { type: string, minLength: 10, maxLength: 2000 }
+    FeedbackTemplate:
+      type: object
+      required: [id, category, title, body, updated_at, version]
+      properties:
+        id: { type: string, format: uuid }
+        category: { type: string }
+        title: { type: string }
+        body: { type: string }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer }
     AppealPage:
       type: object
       required: [data, meta]
