@@ -49,7 +49,9 @@ jobs:
   backend:
     name: backend-ci
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The tests take 4-5 minutes on a quiet runner and over 8 on a busy one (several merges at once): 20 leaves room
+    # for that without letting a hung run sit for long.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
