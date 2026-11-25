@@ -134,6 +134,23 @@ Admin-to-driver feedback (FMS-158, [driver-feedback.md](driver-feedback.md)), in
 | `feedback_categories` | multi-select | all six | at least 1 of *Safety*, *Driving behaviour*, *Fuel efficiency*, *Punctuality*, *Vehicle care*, *General comment* | The categories a manager files feedback under; one taken out is refused for new feedback, and old items keep it |
 | `feedback_retention_months` | integer | 24 | 1-120 months | How long feedback is kept, retracted items too; the `feedback-retention` job deletes older items each night |
 
+### KPI targets: `settings.settings`
+
+The KPI dashboard's targets (FMS-160, [reports.md](reports.md#kpis)), in the category *KPI targets*. A change shows in
+the KPIs' statuses at once.
+
+| Key | Default | Range | What it is |
+|---|---|---|---|
+| `kpi_cost_per_km_target_cents` | 3500 | 1-1,000,000 | Cost per km, in cents (ETB 35.00) |
+| `kpi_fuel_target_l100km_tenths` | 300 | 1-10,000 | Fuel use, in tenths of L/100 km (30.0) |
+| `kpi_utilisation_target_pct` | 75 | 1-100 | Utilisation, % |
+| `kpi_availability_target_pct` | 90 | 1-100 | Availability, % |
+| `kpi_on_time_target_pct` | 90 | 1-100 | Trips on time, % |
+| `kpi_pm_compliance_target_pct` | 95 | 1-100 | Programmed services on time, % |
+| `kpi_incidents_target_per_100k_km` | 5 | 0-10,000 | Incidents per 100,000 km, whole |
+| `kpi_vehicles_at_risk_target` | 5 | 0-10,000 | Vehicles below the health alert line |
+| `kpi_amber_band_pct` | 10 | 1-100 | How far past a target, as a share of it, is amber rather than red |
+
 - The expiry setting moves the warnings only. The lists' *expiring soon* marks (licence status, the vehicle list's document filter, the documents panel) stay at 30 days.
 
 ## Taking effect within seconds

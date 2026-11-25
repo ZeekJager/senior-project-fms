@@ -41,6 +41,8 @@ COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY packages/backend/package.json ./
 COPY --from=build /app/packages/backend/dist ./dist
 COPY packages/backend/migrations ./migrations
+# The reports' PDF font (FMS-160, ADR-11): Latin and Ethiopic script, so Amharic names print.
+COPY packages/backend/assets ./assets
 COPY packages/ai-service/feature_spec.json /app/packages/ai-service/feature_spec.json
 COPY packages/ai-service/trip_risk_spec.json /app/packages/ai-service/trip_risk_spec.json
 # Uploaded documents when STORAGE_DRIVER=local: mount a volume here (or use S3).

@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -20,6 +20,7 @@ import { GeofencesPage } from '@/pages/Geofences'
 import { DashboardPage } from '@/pages/placeholders'
 import { RecallsPage } from '@/pages/Recalls'
 import { ReportsPage } from '@/pages/Reports'
+import { KpisPage } from '@/pages/Kpis'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
 import { SettingsPage } from '@/pages/Settings'
@@ -162,6 +163,13 @@ export const portals: Portal[] = [
         element: <ReportsPage />,
         permission: 'analytics:read',
         nav: { label: 'Reports', icon: FileChartColumn },
+      },
+      {
+        // S-39 (FMS-160): the KPIs against their targets (settings), with trends and their reports. analytics:read.
+        path: '/analytics/kpis',
+        element: <KpisPage />,
+        permission: 'analytics:read',
+        nav: { label: 'KPIs', icon: Target },
       },
       {
         // S-36 (FMS-159): drivers' score appeals, oldest first, with their evidence. appeal:read: admin, fleet manager,

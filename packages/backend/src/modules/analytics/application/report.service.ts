@@ -1,8 +1,10 @@
+import { AppError } from '../../../shared/errors/app-error';
 import { depotScope, ownDriverScope, type Scope } from '../../../shared/authz/scope';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { DataFreshness, ReadSession } from '../../../shared/infrastructure/read-router';
 import type { RequestUser } from '../../../types/express';
-import { monthWindow } from '../domain/downtime';
+import { addTotals, downtimeKpis, monthWindow, NO_TOTALS, vehicleTotals, type DowntimeFact, type DowntimeTotals, type ServiceSpan } from '../domain/downtime';
+import { NO_FILTERS, resolvePeriod, type PeriodQuery, type ReportFilters, type ReportPeriod, type ResolvedFilters } from '../domain/report-period';
 import {
   MIN_SCORED_TRIPS,
   rankDrivers,
@@ -20,7 +22,7 @@ import {
   FUEL_TYPE_WORDS,
   isNumeric,
   mlPerKmDriven,
-  monthTitle,
+  per100kKm,
   percent,
   REPORTS,
   toCsv,
@@ -29,24 +31,40 @@ import {
   type ReportFormat,
   type ReportKind,
   type ReportRow,
+  type ReportSection,
+  type SafetyGroup,
 } from '../domain/reports';
+
+const DAY_MS = 86_400_000;
+/** The downtime causes, as fleet stores them (fleet.downtime_reason). */
+const DOWNTIME_CAUSES = ['planned_service', 'unplanned_repair', 'breakdown', 'accident', 'awaiting_parts', 'other'] as const;
 import type { Audience } from '../infrastructure/analytics.repository';
-import type { DriverRow, ReportRepository } from '../infrastructure/report.repository';
+import type { DriverRow, FilterNames, ReportRepository } from '../infrastructure/report.repository';
 import { renderTablePdf } from '../infrastructure/table-pdf';
 
-export interface ReportQuery {
-  /** YYYY-MM in Addis Ababa; this month when left out. */
-  month?: string;
+export interface ReportQuery extends PeriodQuery, ReportFilters {
+  /** One depot (FMS-91's filter); depot_ids takes several (FMS-160). */
   depot_id?: string;
+  /** Safety's grouping (FMS-160). */
+  by?: SafetyGroup;
 }
 
 /** A report as GET /reports/{report} returns it (format json), and what the CSV and PDF are written from. */
 export interface ReportData {
   report: ReportKind;
   title: string;
-  month: string;
-  /** The month as instants, [from, to): up to now for the current month. */
-  period: { from: string; to: string };
+  /** The month, for a period that is one (FMS-91); null for a quarter, a year or a range. */
+  month: string | null;
+  /** The period as instants, [from, to): up to now for the current one; and how it was asked for (FMS-160). */
+  period: { from: string; to: string; kind: ReportPeriod['kind']; key: string; label: string; first_day: string; last_day: string };
+  /** The filters applied, by public id (FMS-160). */
+  filters: ReportFilters;
+  /** What the filters name (FMS-160): the depots, the vehicle's registration, the driver, the route. */
+  filter_names: FilterNames;
+  /** Safety's grouping. */
+  group?: SafetyGroup;
+  /** Extra tables (maintenance compliance's cost by system and by vendor). */
+  sections?: ReportSection[];
   /** The depot chosen; null for every depot in the caller's scope. */
   depot: { id: string; name: string; code: string } | null;
   columns: readonly ReportColumn[];
@@ -65,6 +83,14 @@ export interface ReportFile {
 export interface ReportServiceDeps {
   reads: { session(): Promise<ReadSession> };
   repo: ReportRepository;
+  /** Downtime and service spans (FMS-131), for the utilisation report. */
+  downtime?: {
+    serviceSpans(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, ServiceSpan>>;
+    downtimeFacts(db: Queryable, vehicleIds: readonly string[], from: Date, to: Date): Promise<Map<string, Omit<DowntimeFact, 'unplanned'>[]>>;
+    isUnplanned(reason: string): boolean;
+  };
+  /** Excel and the Unicode PDF (FMS-160, ADR-11). */
+  writers?: { xlsx(doc: ReportDocument): Promise<Buffer>; pdf(doc: ReportDocument): Promise<Buffer> };
   /** The driver score's weights (FMS-146): the settings', as an administrator left them. */
   weights: () => Promise<ScoreWeights>;
   /** The approved appeals that corrected a driver's month (FMS-159), for "Corrected after appeal". */
@@ -139,7 +165,25 @@ const FILE_NAMES: Record<ReportKind, string> = {
   cost: 'cost-report',
   trips: 'trip-history',
   drivers: 'driver-performance',
+  utilisation: 'utilisation-report',
+  compliance: 'maintenance-compliance',
+  safety: 'safety-report',
 };
+
+/** What the Excel and PDF writers take: the report and the lines that say what it covers (FMS-160). */
+export interface ReportDocument {
+  title: string;
+  subtitle: string;
+  filterLines: string[];
+  columns: readonly ReportColumn[];
+  rows: readonly ReportRow[];
+  totals: ReportRow | null;
+  sections: readonly ReportSection[];
+  footer: string;
+}
+
+/** Exports larger than this run in the background (FMS-160). */
+export const BACKGROUND_EXPORT_ROWS = 20_000;
 
 const sum = <T>(rows: readonly T[], pick: (r: T) => number) => rows.reduce((total, r) => total + pick(r), 0);
 const plural = (count: number, kind: ReportKind) => `${count.toLocaleString('en-US')} ${count === 1 ? REPORTS[kind].rowNoun.one : REPORTS[kind].rowNoun.many}`;
@@ -157,34 +201,56 @@ export class ReportService {
     this.now = deps.now ?? (() => new Date());
   }
 
-  /** The month, the read session, and the caller's audience narrowed to the depot chosen. */
+  /**
+   * The period, the read session, the caller's audience and the filters resolved within it. A depot, vehicle, driver or
+   * route that is unknown or outside the caller's depots matches nothing: an empty report, as a filter does elsewhere.
+   */
   private async scoped(user: RequestUser | undefined, query: ReportQuery) {
-    const w = monthWindow(query.month, this.now());
+    const period = resolvePeriod(query, this.now());
     const db = await this.deps.reads.session();
     const a: Audience = { scope: staffScope(user) };
     let depot: ReportData['depot'] = null;
+    const asked: ReportFilters = {
+      ...(query.depot_ids?.length ? { depot_ids: query.depot_ids } : {}),
+      ...(query.vehicle_type ? { vehicle_type: query.vehicle_type } : {}),
+      ...(query.vehicle_id ? { vehicle_id: query.vehicle_id } : {}),
+      ...(query.driver_id ? { driver_id: query.driver_id } : {}),
+      ...(query.route_id ? { route_id: query.route_id } : {}),
+    };
     if (query.depot_id) {
       const found = await this.deps.repo.depot(db, query.depot_id, a);
-      // A depot that is unknown, or not one of the caller's, matches nothing: an empty report, as a filter does elsewhere.
       if (found) {
         a.depotId = found.id;
         depot = { id: query.depot_id, name: found.name, code: found.code };
       } else a.scope = { kind: 'none' };
     }
-    return { w, db, a, depot };
+    const resolved = a.scope.kind === 'none' ? NO_FILTERS : await this.deps.repo.resolveFilters(db, a, asked);
+    // A filter naming a depot, vehicle, driver or route outside the caller's scope (or none at all) is 404, as the
+    // record itself would be; the answer never echoes it.
+    if (resolved === false) throw new AppError(404, 'NOT_FOUND', 'A filter names a depot, vehicle, driver or route that was not found.');
+    const filters: ResolvedFilters = resolved;
+    // The month window, for the callers that take one (the ranking, a driver's own score).
+    const w = { month: period.month ?? period.key, start: period.start, end: period.end };
+    return { period, w, db, a, depot, filters, asked };
   }
 
   async report(kind: ReportKind, user: RequestUser | undefined, query: ReportQuery): Promise<{ data: ReportData; meta: { data_freshness: DataFreshness } }> {
-    const { w, db, a, depot } = await this.scoped(user, query);
-    const { rows, totals } = await this.build(kind, db, a, w.start, w.end, seesScores(user));
+    const { period, db, a, depot, filters, asked } = await this.scoped(user, query);
+    const group: SafetyGroup = query.by ?? 'depot';
+    const { rows, totals, sections } = await this.build(kind, db, a, period.start, period.end, seesScores(user), filters, group);
     // The driver score and rank only for the roles allowed behavioural data (FMS-146).
-    const columns = kind === 'drivers' && !seesScores(user) ? REPORTS[kind].columns.filter((c) => c.key !== 'rank' && c.key !== 'score') : REPORTS[kind].columns;
+    let columns = kind === 'drivers' && !seesScores(user) ? REPORTS[kind].columns.filter((c) => c.key !== 'rank' && c.key !== 'score') : REPORTS[kind].columns;
+    if (kind === 'safety') columns = columns.map((c) => (c.key === 'name' ? { ...c, label: group === 'driver' ? 'Driver' : group === 'route' ? 'Route' : 'Depot' } : c));
     return {
       data: {
         report: kind,
         title: REPORTS[kind].title,
-        month: w.month,
-        period: { from: w.start.toISOString(), to: w.end.toISOString() },
+        month: period.month,
+        period: { from: period.start.toISOString(), to: period.end.toISOString(), kind: period.kind, key: period.key, label: period.label, first_day: period.from, last_day: period.to },
+        filters: { ...asked, ...(query.depot_id ? { depot_ids: [query.depot_id, ...(asked.depot_ids ?? [])] } : {}) },
+        filter_names: await this.deps.repo.filterNames(db, filters),
+        ...(kind === 'safety' ? { group } : {}),
+        ...(sections?.length ? { sections } : {}),
         depot,
         columns,
         rows,
@@ -195,22 +261,52 @@ export class ReportService {
     };
   }
 
-  /** The report as a file to download: CSV, or PDF. */
+  /** For the KPIs (FMS-160): vehicles at risk now, and the period's appeals and feedback, as the filters narrow them. */
+  async counts(user: RequestUser | undefined, query: ReportQuery, healthLine: number): Promise<{ vehiclesAtRisk: number; appeals: number; feedback: number }> {
+    const { period, db, a, filters } = await this.scoped(user, query);
+    const vehiclesAtRisk = await this.deps.repo.vehiclesAtRisk(db, a, healthLine, filters);
+    const { appeals, feedback } = await this.deps.repo.appealsAndFeedback(db, a, period.start, period.end, filters);
+    return { vehiclesAtRisk, appeals, feedback };
+  }
+
+  /** The report as a file to download: CSV, Excel or PDF. */
   async file(kind: ReportKind, format: Exclude<ReportFormat, 'json'>, user: RequestUser | undefined, query: ReportQuery): Promise<ReportFile> {
     const { data, meta } = await this.report(kind, user, query);
-    const filename = `${FILE_NAMES[kind]}-${data.month}-${(data.depot?.code ?? 'all').toLowerCase().replace(/[^a-z0-9-]/g, '') || 'depot'}.${format}`;
+    return this.render(data, format, meta.data_freshness);
+  }
+
+  /** A report already built, as a file: its name says the report, the period and the depot. */
+  async render(data: ReportData, format: Exclude<ReportFormat, 'json'>, freshness: DataFreshness): Promise<ReportFile> {
+    const kind = data.report;
+    const where = (data.depot?.code ?? (data.filters.depot_ids?.length ? 'filtered' : 'all')).toLowerCase().replace(/[^a-z0-9-]/g, '') || 'depot';
+    const filename = `${FILE_NAMES[kind]}-${data.period.key.split('..').join('_to_')}-${where}.${format}`;
     if (format === 'csv') return { filename, contentType: 'text/csv; charset=utf-8', body: toCsv(data.columns, data.rows, data.totals) };
+    const doc: ReportDocument = {
+      title: `${data.title}, ${data.period.label}`,
+      subtitle: subtitle(data, freshness, this.now()),
+      filterLines: filterLines(data),
+      columns: data.columns,
+      rows: data.rows,
+      totals: data.totals,
+      sections: data.sections ?? [],
+      footer: `${data.title}, ${data.period.label} · ${plural(data.rows.length, kind)}`,
+    };
+    if (format === 'xlsx') {
+      if (!this.deps.writers) throw new Error('No Excel writer is set up.');
+      return { filename, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', body: await this.deps.writers.xlsx(doc) };
+    }
+    if (this.deps.writers) return { filename, contentType: 'application/pdf', body: await this.deps.writers.pdf(doc) };
     const cells = (row: ReportRow) => data.columns.map((c) => formatValue(c.kind, row[c.key] ?? null, { grouped: true }));
     return {
       filename,
       contentType: 'application/pdf',
       body: renderTablePdf({
-        title: `${data.title}, ${monthTitle(data.month)}`,
-        subtitle: subtitle(data, meta.data_freshness, this.now()),
+        title: doc.title,
+        subtitle: doc.subtitle,
         columns: data.columns.map((c) => ({ label: c.label, align: isNumeric(c.kind) ? 'right' : 'left' })),
         rows: data.rows.map(cells),
         totals: data.totals ? cells(data.totals) : null,
-        footer: `${data.title}, ${monthTitle(data.month)} · ${plural(data.rows.length, kind)}`,
+        footer: doc.footer,
       }),
     };
   }
@@ -280,11 +376,26 @@ export class ReportService {
     };
   }
 
-  private async build(kind: ReportKind, db: ReadSession, a: Audience, start: Date, end: Date, scores = false): Promise<{ rows: ReportRow[]; totals: ReportRow }> {
+  private async build(
+    kind: ReportKind,
+    db: ReadSession,
+    a: Audience,
+    start: Date,
+    end: Date,
+    scores = false,
+    f: ResolvedFilters = NO_FILTERS,
+    group: SafetyGroup = 'depot',
+  ): Promise<{ rows: ReportRow[]; totals: ReportRow; sections?: ReportSection[] }> {
     const { repo } = this.deps;
     switch (kind) {
+      case 'utilisation':
+        return this.utilisation(db, a, start, end, f);
+      case 'compliance':
+        return this.compliance(db, a, start, end, f);
+      case 'safety':
+        return this.safety(db, a, start, end, f, group);
       case 'fuel': {
-        const found = await repo.fuel(db, a, start, end);
+        const found = await repo.fuel(db, a, start, end, f);
         const rows = found.map((r) => ({
           registration_number: r.registrationNumber,
           depot: r.depot,
@@ -322,7 +433,7 @@ export class ReportService {
         };
       }
       case 'maintenance': {
-        const found = await repo.maintenance(db, a, start, end);
+        const found = await repo.maintenance(db, a, start, end, f);
         return {
           rows: found.map((r) => ({
             registration_number: r.registrationNumber,
@@ -349,7 +460,7 @@ export class ReportService {
         };
       }
       case 'cost': {
-        const found = await repo.cost(db, a, start, end);
+        const found = await repo.cost(db, a, start, end, f);
         const total = (r: { fuelCostCents: number; maintenanceCostCents: number }) => r.fuelCostCents + r.maintenanceCostCents;
         return {
           rows: found.map((r) => ({
@@ -376,7 +487,7 @@ export class ReportService {
         };
       }
       case 'trips': {
-        const found = await repo.trips(db, a, start, end);
+        const found = await repo.trips(db, a, start, end, f);
         const judged = found.filter((r) => r.onTime !== null);
         const onTime = percent(judged.filter((r) => r.onTime).length, judged.length);
         return {
@@ -407,7 +518,7 @@ export class ReportService {
         };
       }
       case 'drivers': {
-        const found = await repo.drivers(db, a, start, end);
+        const found = await repo.drivers(db, a, start, end, undefined, f);
         // With the score (FMS-146), drivers in rank order, those with no score after them; without it, most trips first.
         const weights = scores ? await this.deps.weights() : null;
         const ranked: { row: { r: DriverRow; score: number | null; reason: ScoreReason | null }; rank: number | null }[] = weights
@@ -445,6 +556,153 @@ export class ReportService {
       }
     }
   }
+  /** FMS-160: each vehicle's days in the fleet, available and in use, its downtime by cause, and its availability. */
+  private async utilisation(db: ReadSession, a: Audience, start: Date, end: Date, f: ResolvedFilters): Promise<{ rows: ReportRow[]; totals: ReportRow }> {
+    const { repo } = this.deps;
+    const down = this.deps.downtime;
+    if (!down) throw new Error('No downtime source is set up.');
+    const vehicles = await repo.vehiclesInPeriod(db, a, start, end, f);
+    const ids = vehicles.map((v) => v.vehicleId);
+    const spans = await down.serviceSpans(db, ids);
+    const facts = await down.downtimeFacts(db, ids, start, end);
+    const inUse = await repo.daysInUse(db, ids, start, end, f);
+    const window = { month: '', start, end };
+    let all: DowntimeTotals = { ...NO_TOTALS, byReasonMs: {} };
+    let daysInUseTotal = 0;
+    const row = (label: { registration_number: string; depot: string }, t: DowntimeTotals, daysInUse: number): ReportRow => {
+      const k = downtimeKpis(t, DOWNTIME_CAUSES);
+      const inFleetDays = Math.round(t.inFleetMs / DAY_MS);
+      const availableDays = Math.round((t.inFleetMs - t.downtimeMs) / DAY_MS);
+      const used = Math.min(daysInUse, inFleetDays);
+      return {
+        ...label,
+        days_in_fleet: inFleetDays,
+        days_available: availableDays,
+        days_in_use: used,
+        utilisation_pct: percent(used, availableDays),
+        downtime_minutes: k.downtime_minutes,
+        planned_service_minutes: k.downtime_by_reason.planned_service ?? 0,
+        unplanned_repair_minutes: k.downtime_by_reason.unplanned_repair ?? 0,
+        breakdown_minutes: k.downtime_by_reason.breakdown ?? 0,
+        accident_minutes: k.downtime_by_reason.accident ?? 0,
+        awaiting_parts_minutes: k.downtime_by_reason.awaiting_parts ?? 0,
+        other_minutes: k.downtime_by_reason.other ?? 0,
+        availability_pct: percent(t.inFleetMs - t.downtimeMs, t.inFleetMs),
+      };
+    };
+    const rows: ReportRow[] = [];
+    for (const v of vehicles) {
+      const span = spans.get(v.vehicleId);
+      if (!span) continue;
+      const periods = (facts.get(v.vehicleId) ?? []).map((x) => ({ ...x, unplanned: down.isUnplanned(x.reason) }));
+      const t = vehicleTotals(span, periods, window);
+      if (!t) continue;
+      const days = inUse.get(v.vehicleId) ?? 0;
+      all = addTotals(all, t);
+      daysInUseTotal += Math.min(days, Math.round(t.inFleetMs / DAY_MS));
+      rows.push(row({ registration_number: v.registrationNumber, depot: v.depot }, t, days));
+    }
+    const totals = row({ registration_number: 'Total', depot: plural(rows.length, 'utilisation') }, all, daysInUseTotal);
+    return { rows, totals: { ...totals, days_in_use: daysInUseTotal, utilisation_pct: percent(daysInUseTotal, Number(totals.days_available)) } };
+  }
+
+  /** FMS-160: programmed services on time, late and overdue; corrective and repeat repairs; MTBF; cost by system and vendor. */
+  private async compliance(db: ReadSession, a: Audience, start: Date, end: Date, f: ResolvedFilters): Promise<{ rows: ReportRow[]; totals: ReportRow; sections: ReportSection[] }> {
+    const { repo } = this.deps;
+    const found = await repo.compliance(db, a, start, end, f);
+    const vehicles = await repo.vehiclesInPeriod(db, a, start, end, f);
+    const spans = this.deps.downtime ? await this.deps.downtime.serviceSpans(db, vehicles.map((v) => v.vehicleId)) : new Map<string, ServiceSpan>();
+    const fleetMinutes = new Map(
+      vehicles.map((v) => {
+        const span = spans.get(v.vehicleId);
+        const from = span && span.joinedAt > start ? span.joinedAt : start;
+        const to = span?.retiredAt && span.retiredAt < end ? span.retiredAt : end;
+        return [v.registrationNumber, Math.max(0, Math.round((to.getTime() - from.getTime()) / 60_000))];
+      }),
+    );
+    const mtbf = (minutes: number, failures: number) => (failures > 0 ? Math.round(minutes / failures) : null);
+    const rows = found.map((r) => ({
+      registration_number: r.registrationNumber,
+      depot: r.depot,
+      pm_on_time: r.pmOnTime,
+      pm_late: r.pmLate,
+      pm_overdue: r.pmOverdue,
+      pm_compliance_pct: percent(r.pmOnTime, r.pmOnTime + r.pmLate + r.pmOverdue),
+      corrective: r.corrective,
+      repeat_repairs: r.repeatRepairs,
+      unplanned_failures: r.unplannedFailures,
+      mtbf_minutes: mtbf(fleetMinutes.get(r.registrationNumber) ?? 0, r.unplannedFailures),
+      cost_cents: r.costCents,
+    }));
+    const onTime = sum(found, (r) => r.pmOnTime);
+    const late = sum(found, (r) => r.pmLate);
+    const overdue = sum(found, (r) => r.pmOverdue);
+    const failures = sum(found, (r) => r.unplannedFailures);
+    const breakdown = async (by: 'component' | 'workshop', title: string, label: string): Promise<ReportSection> => ({
+      title,
+      columns: [
+        { key: 'name', label, kind: 'text' },
+        { key: 'repairs', label: 'Repairs', kind: 'count' },
+        { key: 'cost_cents', label: 'Cost (ETB)', kind: 'etb' },
+      ],
+      rows: (await repo.costBy(db, a, start, end, by, f)).map((r) => ({ name: r.key || (by === 'component' ? 'Not recorded' : 'No workshop'), repairs: r.repairs, cost_cents: r.costCents })),
+    });
+    return {
+      rows,
+      totals: {
+        registration_number: 'Total',
+        depot: plural(found.length, 'compliance'),
+        pm_on_time: onTime,
+        pm_late: late,
+        pm_overdue: overdue,
+        pm_compliance_pct: percent(onTime, onTime + late + overdue),
+        corrective: sum(found, (r) => r.corrective),
+        repeat_repairs: sum(found, (r) => r.repeatRepairs),
+        unplanned_failures: failures,
+        mtbf_minutes: mtbf(
+          [...fleetMinutes.values()].reduce((x, y) => x + y, 0),
+          failures,
+        ),
+        cost_cents: sum(found, (r) => r.costCents),
+      },
+      sections: [await breakdown('component', 'Repair cost by system', 'System (failed component)'), await breakdown('workshop', 'Repair cost by vendor', 'Workshop')],
+    };
+  }
+
+  /** FMS-160: incidents and flags per 100,000 km by depot, driver or route, and the appeals against them. */
+  private async safety(db: ReadSession, a: Audience, start: Date, end: Date, f: ResolvedFilters, group: SafetyGroup): Promise<{ rows: ReportRow[]; totals: ReportRow }> {
+    const found = await this.deps.repo.safety(db, a, start, end, group, f);
+    const rows = found.map((r) => ({
+      name: r.name,
+      distance_m: r.distanceM,
+      incidents: r.incidents,
+      accidents: r.accidents,
+      speeding: r.speeding,
+      idling: r.idling,
+      incidents_per_100k_km: per100kKm(r.incidents, r.distanceM),
+      flags_per_100k_km: per100kKm(r.speeding + r.idling, r.distanceM),
+      appeals_opened: r.appealsOpened,
+      appeals_approved: r.appealsApproved,
+    }));
+    const km = sum(found, (r) => r.distanceM);
+    const incidents = sum(found, (r) => r.incidents);
+    const flags = sum(found, (r) => r.speeding + r.idling);
+    return {
+      rows,
+      totals: {
+        name: 'Total',
+        distance_m: km,
+        incidents,
+        accidents: sum(found, (r) => r.accidents),
+        speeding: sum(found, (r) => r.speeding),
+        idling: sum(found, (r) => r.idling),
+        incidents_per_100k_km: per100kKm(incidents, km),
+        flags_per_100k_km: per100kKm(flags, km),
+        appeals_opened: sum(found, (r) => r.appealsOpened),
+        appeals_approved: sum(found, (r) => r.appealsApproved),
+      },
+    };
+  }
 }
 
 /** "Addis Ababa Central · 1–31 October 2026 · generated 2026-11-01 14:05 · data as of 14:04 (reporting copy)", Addis Ababa times. */
@@ -452,7 +710,7 @@ function subtitle(data: ReportData, freshness: DataFreshness, now: Date): string
   const lastDay = new Date(new Date(data.period.to).getTime() - 1);
   const through = formatAddisDateTime(lastDay).slice(0, 10);
   return [
-    data.depot?.name ?? 'All depots in your scope',
+    data.depot?.name ?? (data.filter_names.depots.length ? data.filter_names.depots.join(', ') : 'All depots in your scope'),
     `${formatAddisDateTime(data.period.from).slice(0, 10)} to ${through}`,
     `Generated ${formatAddisDateTime(now)} (Addis Ababa)`,
     `Data as of ${formatAddisDateTime(freshness.as_of)}${freshness.source === 'replica' ? ', reporting copy' : ''}`,
@@ -468,4 +726,18 @@ function flatScore(s: DriverScore): { score: number | null; reason: ScoreReason 
 /** Staff see their depots (FMS-94's audience); a driver, whose own scope is narrower, sees nothing. */
 function staffScope(user: RequestUser | undefined): Scope {
   return ownDriverScope(user).kind === 'all' ? depotScope(user) : { kind: 'none' };
+}
+
+/** What a report covers, a line each: the period and each filter (an Excel sheet of its own; a PDF's cover). */
+function filterLines(data: ReportData): string[] {
+  const f = data.filters;
+  return [
+    `Period: ${data.period.label} (${data.period.first_day} to ${data.period.last_day})`,
+    `Depots: ${data.depot?.name ?? (data.filter_names.depots.length ? data.filter_names.depots.join(', ') : 'all in your scope')}`,
+    ...(f.vehicle_type ? [`Vehicle type: ${f.vehicle_type}`] : []),
+    ...(data.filter_names.vehicle ? [`Vehicle: ${data.filter_names.vehicle}`] : []),
+    ...(data.filter_names.driver ? [`Driver: ${data.filter_names.driver}`] : []),
+    ...(data.filter_names.route ? [`Route: ${data.filter_names.route}`] : []),
+    ...(data.group ? [`Grouped by: ${data.group}`] : []),
+  ];
 }

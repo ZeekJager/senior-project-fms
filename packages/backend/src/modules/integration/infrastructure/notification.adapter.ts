@@ -136,6 +136,7 @@ async function sendEmail(ctx: AdapterContext, message: OutboundMessage): Promise
           subject: message.subject,
           text: message.text,
           headers: { 'X-FMS-Reference': message.reference, 'Auto-Submitted': 'auto-generated' },
+          ...(message.attachments?.length ? { attachments: message.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content })) } : {}),
         }),
       ),
     );

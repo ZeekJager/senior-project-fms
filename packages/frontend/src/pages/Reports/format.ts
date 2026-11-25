@@ -19,6 +19,7 @@ export function displayValue(kind: ColumnKind, value: ReportValue): string {
     case 'etb':
       return decimals(value, 100, 2)
     case 'l_per_100km':
+    case 'rate':
       return decimals(value, 10, 1)
     case 'hours':
       return decimals(value, 60, 1)
@@ -33,6 +34,7 @@ export const isNumeric = (kind: ColumnKind) => kind !== 'text' && kind !== 'date
 /** Places, people and routes need room; a figure fits in a little. Whole class names, so Tailwind finds them. */
 const TEXT_WIDTHS: Record<string, string> = {
   route: 'w-[14rem]',
+  name: 'w-[13rem]',
   depot: 'w-[11rem]',
   driver: 'w-[11rem]',
   registration_number: 'w-[8.5rem]',

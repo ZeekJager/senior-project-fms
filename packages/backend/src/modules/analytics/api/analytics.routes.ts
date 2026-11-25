@@ -5,8 +5,11 @@ import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { AnalyticsService, Report } from '../application/analytics.service';
+import type { KpiService } from '../application/kpi.service';
+import type { ReportJobsService } from '../application/report-jobs.service';
 import { SCORE_PERMISSION, type ReportService } from '../application/report.service';
-import { REPORT_FORMATS, REPORT_KINDS, type ReportKind } from '../domain/reports';
+import { KPI_KEYS, type KpiKey } from '../domain/kpi-targets';
+import { REPORT_FORMATS, REPORT_KINDS, SAFETY_GROUPS, type ReportKind } from '../domain/reports';
 
 /** Addis Ababa days, both included; a depot by public id. */
 const analyticsQuery = z.object({
@@ -22,11 +25,37 @@ const downtimeQuery = z.object({
   vehicle_id: z.uuid().optional(),
 });
 
-/** A monthly report (FMS-91): a month in Addis Ababa, a depot by public id, and json (default), csv or pdf. */
-const reportQuery = z.object({
+/** A comma-separated list of public ids (`depot_ids=a,b`), at most 50. */
+export const idList = z
+  .string()
+  .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean))
+  .pipe(z.array(z.uuid()).min(1).max(50));
+
+/**
+ * A report (FMS-91, FMS-160): a month (YYYY-MM), a quarter (YYYY-Qn), a year (YYYY) or from and to (days, up to 366);
+ * a depot or several, a vehicle type, a vehicle, a driver and a route by public id; safety's grouping; json (default),
+ * csv, xlsx or pdf.
+ */
+export const reportQuery = z.object({
   month: z.string().optional(),
+  quarter: z.string().optional(),
+  year: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
   depot_id: z.uuid().optional(),
+  depot_ids: idList.optional(),
+  vehicle_type: z.string().trim().min(1).max(40).optional(),
+  vehicle_id: z.uuid().optional(),
+  driver_id: z.uuid().optional(),
+  route_id: z.uuid().optional(),
+  by: z.enum(SAFETY_GROUPS).optional(),
   format: z.enum(REPORT_FORMATS).default('json'),
+});
+
+/** A KPI's trend (FMS-160): the report filters and period, how many months (up to 24), and the drill-down grouping. */
+const trendQuery = reportQuery.extend({
+  months: z.coerce.number().int().min(1).max(24).optional(),
+  group: z.enum(['depot', 'vehicle']).optional(),
 });
 
 /** The driver ranking (FMS-146): a month in Addis Ababa and a depot by public id. */
@@ -48,7 +77,7 @@ const REPORTS: readonly Report[] = ['fleet-summary', 'utilisation', 'fuel-effici
  * analytics_cache and the analytics views on the read replica, and says in `meta` how old the cache is (`computed_at`,
  * `stale` after 25 hours) and which database answered (`data_freshness`).
  */
-export function analyticsRouter(service: AnalyticsService, reports: ReportService): Router {
+export function analyticsRouter(service: AnalyticsService, reports: ReportService, kpis?: KpiService, jobs?: ReportJobsService): Router {
   const router = Router();
   // The fleet-wide health score trend (FMS-150): analytics and the health scores themselves (prediction:read).
   router.get(
@@ -104,7 +133,34 @@ export function analyticsRouter(service: AnalyticsService, reports: ReportServic
     }),
   );
 
-  // Monthly reports and exports (FMS-91, docs/reports.md): the same table as JSON for the screen, CSV or PDF.
+  // The KPI dashboard (FMS-160, docs/reports.md#kpis): each KPI, its change, a 12-month sparkline and its status.
+  router.get(
+    '/analytics/kpis',
+    authorize('analytics:read'),
+    asyncHandler(async (req, res) => {
+      if (!kpis) throw notFound('No KPIs.');
+      // A KPI has no file: the format the report query takes is dropped.
+      const query: Partial<ReturnType<typeof reportQuery.parse>> = parseInput(reportQuery, req.query);
+      delete query.format;
+      res.set('Cache-Control', 'no-store').json({ data: await kpis.kpis(req.user, query), meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // A KPI's trend over up to 24 months, last year beside it, and its breakdown by depot or vehicle (the drill-down).
+  router.get(
+    '/analytics/kpis/:kpi/trend',
+    authorize('analytics:read'),
+    asyncHandler(async (req, res) => {
+      if (!kpis) throw notFound('No KPIs.');
+      const key = KPI_KEYS.find((k) => k === req.params.kpi) as KpiKey | undefined;
+      if (!key) throw notFound('No such KPI.');
+      const query: Partial<ReturnType<typeof trendQuery.parse>> = parseInput(trendQuery, req.query);
+      delete query.format;
+      res.set('Cache-Control', 'no-store').json({ data: await kpis.trend(req.user, key, query), meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // Reports and exports (FMS-91, FMS-160, docs/reports.md): the same table as JSON for the screen, CSV, Excel or PDF.
   router.get(
     '/reports/:report',
     authorize('analytics:read'),
@@ -117,7 +173,16 @@ export function analyticsRouter(service: AnalyticsService, reports: ReportServic
         res.json({ data, meta: { ...meta, request_id: req.correlationId } });
         return;
       }
-      const file = await reports.file(kind, format, req.user, query);
+      // Over 20,000 rows the file is made in the background: 202 and the export to poll (FMS-160).
+      let file;
+      if (jobs) {
+        const made = await jobs.exportOrFile({ user: req.user!, correlationId: req.correlationId }, kind, format, query);
+        if ('queued' in made) {
+          res.status(202).json({ data: made.queued, meta: { request_id: req.correlationId } });
+          return;
+        }
+        file = made.file;
+      } else file = await reports.file(kind, format, req.user, query);
       res
         .set({
           'Content-Type': file.contentType,

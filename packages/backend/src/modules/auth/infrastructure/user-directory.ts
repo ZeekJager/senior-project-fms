@@ -1,3 +1,4 @@
+import type { RequestUser } from '../../../types/express';
 import type { PoolClient } from 'pg';
 import { DEPOT_UNSCOPED_ROLES } from '../../../shared/authz/scope';
 import { auditedMutation, type MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -34,6 +35,41 @@ const ACCOUNT_SQL = `
  * whose name, contact details and home depot live on their account.
  */
 export const userDirectory = {
+  /**
+   * An active user as a request would see them: roles, permissions and depot (FMS-160, a scheduled report run as its
+   * recipient). Null for an unknown or inactive account, or one without the permissions a request would refuse.
+   */
+  async requestUser(db: Queryable, id: string): Promise<RequestUser | null> {
+    const res = await db.query<{ public_id: string; depot_id: string | null; roles: string[] | null; permissions: string[] | null }>(
+      `SELECT u.public_id::text, u.depot_id::text,
+              ARRAY(SELECT DISTINCT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id WHERE ur.user_id = u.id) AS roles,
+              ARRAY(SELECT DISTINCT p.code FROM auth.user_roles ur JOIN auth.role_permissions rp ON rp.role_id = ur.role_id
+                     JOIN auth.permissions p ON p.id = rp.permission_id WHERE ur.user_id = u.id) AS permissions
+         FROM auth.users u WHERE u.id = $1 AND u.status = 'active'`,
+      [id],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return { id, publicId: r.public_id, roles: r.roles ?? [], permissions: r.permissions ?? [], depotId: r.depot_id };
+  },
+  /**
+   * Active users holding `permission`, by name, matching `search` in name or email (FMS-160: who a report schedule can
+   * go to). Names and roles only; at most `limit`.
+   */
+  async withPermission(db: Queryable, permission: string, search: string, limit: number): Promise<{ publicId: string; fullName: string; roles: string[] }[]> {
+    const res = await db.query<{ public_id: string; full_name: string; roles: string[] }>(
+      `SELECT u.public_id::text, u.full_name, ARRAY(SELECT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id WHERE ur.user_id = u.id ORDER BY r.name) AS roles
+         FROM auth.users u
+        WHERE u.status = 'active'
+          AND EXISTS (SELECT 1 FROM auth.user_roles ur JOIN auth.role_permissions rp ON rp.role_id = ur.role_id JOIN auth.permissions p ON p.id = rp.permission_id
+                       WHERE ur.user_id = u.id AND p.code = $1)
+          AND ($2 = '' OR u.full_name ILIKE '%' || $2 || '%' OR u.email ILIKE '%' || $2 || '%')
+        ORDER BY lower(u.full_name), u.id LIMIT $3`,
+      [permission, search, limit],
+    );
+    return res.rows.map((r) => ({ publicId: r.public_id, fullName: r.full_name, roles: r.roles }));
+  },
+
   async findByPublicId(db: Queryable, publicId: string): Promise<UserAccount | null> {
     const res = await db.query<UserAccount>(`${ACCOUNT_SQL} WHERE u.public_id = $1 GROUP BY u.id`, [publicId]);
     return res.rows[0] ?? null;
