@@ -48,6 +48,9 @@ environment at run time.
 
 ## Running them
 
+The production stack, with TLS and two API instances, is `docker-compose.prod.yml` ([deployment.md](deployment.md)).
+Running an image by hand:
+
 Required environment for the backend in production: `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`,
 `DATA_ENCRYPTION_KEY` (encrypts licence and phone numbers; losing it loses them, see [driver-data-protection.md](driver-data-protection.md)),
 `TRUST_PROXY=1` behind the web app's nginx (the client's address, for the rate limits and the audit log; see [security.md](security.md)),

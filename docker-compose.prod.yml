@@ -1,0 +1,167 @@
+# The production stack (FMS-106, docs/deployment.md): the production images (FMS-105) behind Caddy, which
+# terminates TLS, redirects HTTP to HTTPS and spreads the API over two instances.
+#
+#   docker compose -f docker-compose.prod.yml --env-file prod.env up -d --wait
+#
+# prod.env holds the secrets and the site's name (docs/deployment.md lists them); it is never committed.
+# A missing value stops `docker compose up` and names it.
+#
+# Two networks:
+#   edge  Caddy, the web app and the API instances. Only Caddy publishes ports (80 and 443).
+#   data  internal: no route out and none in. PostgreSQL, Redis, the AI service, and the API instances,
+#         which are the only ones on both.
+
+name: fms
+
+x-api: &api
+  image: "${FMS_REGISTRY:-}fms-backend:${FMS_IMAGE_TAG:?is not set - the commit tag of the images to run (docs/production-images.md)}"
+  restart: unless-stopped
+  environment:
+    NODE_ENV: production
+    DB_HOST: postgres
+    DB_NAME: fms_db
+    DB_USER: fms_app
+    DB_PASSWORD: "${DB_APP_PASSWORD:?is not set}"
+    JWT_SECRET: "${JWT_SECRET:?is not set}"
+    DATA_ENCRYPTION_KEY: "${DATA_ENCRYPTION_KEY:?is not set}"
+    REDIS_HOST: redis
+    REDIS_PASSWORD: "${REDIS_PASSWORD:?is not set}"
+    ML_SERVICE_URL: http://ai-service:5000
+    ML_SERVICE_TOKEN: "${ML_SERVICE_TOKEN:?is not set}"
+    # Caddy is the one proxy in front: the client's address comes from its X-Forwarded-For (rate limits, audit log).
+    TRUST_PROXY: "1"
+    APP_PUBLIC_URL: "https://${FMS_DOMAIN:?is not set - the site's host name}"
+    STORAGE_DRIVER: "${STORAGE_DRIVER:-local}"
+  # Any other backend setting of .env.example (S3, mail and SMS providers, retention...), when the deployment
+  # needs it: api.env next to this file (or FMS_API_ENV_FILE), never committed.
+  env_file:
+    - path: "${FMS_API_ENV_FILE:-./api.env}"
+      required: false
+  volumes:
+    # Uploaded documents, shared by both instances (or STORAGE_DRIVER=s3 and no volume needed).
+    - uploads:/app/packages/backend/storage
+  networks:
+    edge:
+      # Both instances answer to "api" too (the web app's nginx needs one name that is always there).
+      aliases: [api]
+    data: {}
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+
+services:
+  # TLS (HTTPS and WSS), HSTS, HTTP -> HTTPS, and the load balancer for the API (docker/caddy/Caddyfile).
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FMS_DOMAIN: "${FMS_DOMAIN:?is not set - the site's host name}"
+      FMS_TLS_ISSUER: "${FMS_TLS_ISSUER:?is not set - an e-mail address for Let's Encrypt, or internal for a local run}"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account: kept, or every restart asks Let's Encrypt again (and hits its limits).
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on:
+      api-1:
+        condition: service_healthy
+      api-2:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+  # Two API instances. They share PostgreSQL and Redis: jobs and the event relay run once across them
+  # (docs/jobs.md, docs/events.md), and Socket.IO joins their sockets through Redis (docs/realtime.md).
+  api-1:
+    <<: *api
+  api-2:
+    <<: *api
+
+  # Migrations, as the schema owner, before either instance starts (docs/production-images.md).
+  migrate:
+    image: "${FMS_REGISTRY:-}fms-backend:${FMS_IMAGE_TAG:?is not set}"
+    command: ["node", "dist/scripts/migrate.js"]
+    environment:
+      DB_HOST: postgres
+      DB_NAME: fms_db
+      DB_USER: fms_app
+      DB_PASSWORD: "${DB_APP_PASSWORD:?is not set}"
+      DB_ADMIN_USER: fms_admin
+      DB_ADMIN_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set}"
+      DATA_ENCRYPTION_KEY: "${DATA_ENCRYPTION_KEY:?is not set}"
+    networks: [data]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # The built web app behind nginx. Caddy sends it everything but /api; its own /api route is unused here.
+  web:
+    image: "${FMS_REGISTRY:-}fms-frontend:${FMS_IMAGE_TAG:?is not set}"
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: http://api:3000
+      CSP_MODE: "${CSP_MODE:-report-only}"
+    networks: [edge]
+    depends_on:
+      api-1:
+        condition: service_healthy
+
+  ai-service:
+    image: "${FMS_REGISTRY:-}fms-ai-service:${FMS_IMAGE_TAG:?is not set}"
+    restart: unless-stopped
+    environment:
+      ML_SERVICE_TOKEN: "${ML_SERVICE_TOKEN:?is not set}"
+    networks: [data]
+
+  # One PostgreSQL server, published nowhere. For the standby, failover and backups of docker-compose.yml
+  # (docs/disaster-recovery.md), point DB_HOST at that pair's db-proxy instead.
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fms_admin
+      POSTGRES_PASSWORD: "${DB_ADMIN_PASSWORD:?is not set}"
+      POSTGRES_DB: fms_db
+      DB_APP_PASSWORD: "${DB_APP_PASSWORD:?is not set}"
+    volumes:
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fms_admin -d fms_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [data]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --save '' --appendonly no --maxmemory 256mb --maxmemory-policy volatile-lru
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?is not set}"
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [data]
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  postgres_data: {}
+  uploads: {}
