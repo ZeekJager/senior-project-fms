@@ -53,6 +53,7 @@ tags:
   - name: Feedback
   - name: Settings
   - name: System
+  - name: EV
 
 paths:
   /trips:
@@ -1062,6 +1063,292 @@ paths:
           description: CONFLICT_INVALID_STATE_TRANSITION (nothing leaves retired), CONFLICT_VEHICLE_IN_USE (on a trip under way; record_id is the trip) or CONFLICT_CONCURRENT_MODIFICATION.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
 
+  /ev/battery-logs:
+    get:
+      tags: [EV]
+      operationId: listBatteryLogs
+      summary: Battery observations of the caller's electric vehicles, newest first (FMS-96)
+      description: Needs ev:read; the vehicles of the caller's depots, or one of them (an unknown one lists nothing).
+      parameters:
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of battery logs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/BatteryLog' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [EV]
+      operationId: createBatteryLog
+      summary: Record a battery observation (FMS-96)
+      description: >
+        Only an electric vehicle takes one (400 `not_electric`); a retired vehicle is 409. Needs ev:write, the vehicle
+        in the caller's depots. Publishes BatteryLogged.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vehicle_id, state_of_charge]
+              properties:
+                vehicle_id: { type: string, format: uuid }
+                state_of_charge: { type: number, minimum: 0, maximum: 100 }
+                battery_health: { type: [number, 'null'], minimum: 0, maximum: 100 }
+                battery_temperature_c: { type: [number, 'null'], minimum: -60, maximum: 150 }
+                voltage_v: { type: [number, 'null'], minimum: 0, maximum: 2000 }
+                current_a: { type: [number, 'null'], minimum: -2000, maximum: 2000 }
+                estimated_range_km: { type: [number, 'null'], minimum: 0, maximum: 2000 }
+                recorded_at: { type: string, format: date-time }
+      responses:
+        '201':
+          description: The battery log.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/BatteryLog' }
+                  meta: { type: object, required: [request_id], properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (`not_electric`, `references_missing_record`, a value out of range).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (`vehicle_retired`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  /ev/charging-stations:
+    get:
+      tags: [EV]
+      operationId: listChargingStations
+      summary: Charging stations, by name (FMS-96)
+      description: Needs ev:read. Stations are shared by every depot.
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of stations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChargingStation' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /ev/charging-sessions:
+    post:
+      tags: [EV]
+      operationId: createChargingSession
+      summary: Plan or start a charging session (FMS-96)
+      description: >
+        `planned` (the default), or `in_progress` to start it now. Only an electric vehicle charges (400
+        `not_electric`), in one session at a time (409 CONFLICT_VEHICLE_IN_USE `already_charging`). Needs ev:write.
+        Starting publishes ChargingSessionStarted.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vehicle_id]
+              properties:
+                vehicle_id: { type: string, format: uuid }
+                station_id: { type: [string, 'null'], format: uuid }
+                status: { type: string, enum: [planned, in_progress], default: planned }
+                started_at: { type: string, format: date-time }
+                start_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
+                external_session_id: { type: [string, 'null'], maxLength: 255 }
+      responses:
+        '201':
+          description: The session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/ChargingSession' }
+                  meta: { type: object, required: [request_id], properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (`not_electric`, `references_missing_record`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_VEHICLE_IN_USE (`already_charging`), CONFLICT_DUPLICATE (`external_session_id`), CONFLICT_INVALID_STATE_TRANSITION (`vehicle_retired`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  /ev/charging-sessions/{session_id}:
+    patch:
+      tags: [EV]
+      operationId: updateChargingSession
+      summary: Update a charging session and move it along its states (FMS-96)
+      description: >
+        planned → in_progress or cancelled; in_progress → completed or failed; completed, failed and cancelled are
+        final. Any other move, or any change to a final session, is 409 CONFLICT_INVALID_STATE_TRANSITION with
+        `allowed_transitions`. Starting sets `started_at`, completing or failing sets `ended_at` (now, unless given).
+        Needs ev:write. Publishes ChargingSessionStarted, ChargingSessionCompleted or ChargingSessionFailed.
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                status: { type: string, enum: [planned, in_progress, completed, failed, cancelled] }
+                station_id: { type: [string, 'null'], format: uuid }
+                started_at: { type: string, format: date-time }
+                ended_at: { type: string, format: date-time }
+                energy_kwh: { type: [number, 'null'], minimum: 0, maximum: 10000 }
+                cost_cents: { type: [integer, 'null'], minimum: 0 }
+                start_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
+                end_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
+      responses:
+        '200':
+          description: The session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/ChargingSession' }
+                  meta: { type: object, required: [request_id], properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED, VALIDATION_INVALID_DATE_RANGE (ends before it starts).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION, CONFLICT_VEHICLE_IN_USE (`already_charging`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  /vehicles/{vehicle_id}/charging-sessions:
+    get:
+      tags: [EV]
+      operationId: listVehicleChargingSessions
+      summary: A vehicle's charging sessions, newest first (FMS-96)
+      description: Needs ev:read, the vehicle in the caller's depots.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: status, in: query, schema: { type: string, enum: [planned, in_progress, completed, failed, cancelled] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChargingSession' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  /vehicles/{vehicle_id}/battery-summary:
+    get:
+      tags: [EV]
+      operationId: getBatterySummary
+      summary: An electric vehicle's battery summary (FMS-96)
+      description: >
+        The latest observation, the state of charge by Addis Ababa day over `days` (30 by default), the battery health
+        now and at the start of the period with the change, and the sessions completed in it. Needs ev:read; a vehicle
+        that is not electric is 400 `not_electric`.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+      responses:
+        '200':
+          description: The summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/BatterySummary' }
+                  meta: { type: object, required: [request_id], properties: { request_id: { type: string, format: uuid } } }
+        '400':
+          description: VALIDATION_FAILED (`not_electric`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
   /vehicles/{vehicle_id}/meter-readings:
     get:
       tags: [Vehicles]
@@ -12629,6 +12916,96 @@ components:
         repairs: { type: integer, description: Unplanned periods ended in the month. }
         mttr_minutes: { type: [integer, 'null'], description: 'Their whole length per repair; null without one.' }
         downtime_by_reason: { type: object, description: 'Minutes down in the month for each reason: planned_service, unplanned_repair, breakdown, accident, awaiting_parts, other.', additionalProperties: { type: integer } }
+    BatteryLog:
+      type: object
+      required: [id, vehicle_id, registration_number, state_of_charge, battery_health, battery_temperature_c, voltage_v, current_a, estimated_range_km, recorded_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        state_of_charge: { type: number }
+        battery_health: { type: [number, 'null'] }
+        battery_temperature_c: { type: [number, 'null'] }
+        voltage_v: { type: [number, 'null'] }
+        current_a: { type: [number, 'null'] }
+        estimated_range_km: { type: [number, 'null'] }
+        recorded_at: { type: string, format: date-time }
+    ChargingStation:
+      type: object
+      required: [id, name, external_station_id, latitude, longitude, connector_type, power_kw, status]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        external_station_id: { type: string }
+        latitude: { type: [number, 'null'] }
+        longitude: { type: [number, 'null'] }
+        connector_type: { type: [string, 'null'] }
+        power_kw: { type: [number, 'null'] }
+        status: { type: string }
+    ChargingSession:
+      type: object
+      required: [id, vehicle_id, registration_number, station, status, allowed_transitions, started_at, ended_at, energy_kwh, cost_cents, start_soc, end_soc, external_session_id, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        station:
+          type: [object, 'null']
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        status: { type: string, enum: [planned, in_progress, completed, failed, cancelled] }
+        allowed_transitions: { type: array, items: { type: string } }
+        started_at: { type: [string, 'null'], format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+        energy_kwh: { type: [number, 'null'] }
+        cost_cents: { type: [integer, 'null'] }
+        start_soc: { type: [number, 'null'] }
+        end_soc: { type: [number, 'null'] }
+        external_session_id: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BatterySummary:
+      type: object
+      required: [vehicle_id, registration_number, days, latest, soc_trend, health, charging]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        days: { type: integer }
+        latest:
+          type: [object, 'null']
+          required: [state_of_charge, battery_health, estimated_range_km, recorded_at]
+          properties:
+            state_of_charge: { type: number }
+            battery_health: { type: [number, 'null'] }
+            estimated_range_km: { type: [number, 'null'] }
+            recorded_at: { type: string, format: date-time }
+        soc_trend:
+          type: array
+          items:
+            type: object
+            required: [day, average, minimum, maximum, readings]
+            properties:
+              day: { type: string, format: date }
+              average: { type: number }
+              minimum: { type: number }
+              maximum: { type: number }
+              readings: { type: integer }
+        health:
+          type: object
+          required: [current, at_start, change]
+          properties:
+            current: { type: [number, 'null'] }
+            at_start: { type: [number, 'null'] }
+            change: { type: [number, 'null'] }
+        charging:
+          type: object
+          required: [sessions_completed, energy_kwh, cost_cents]
+          properties:
+            sessions_completed: { type: integer }
+            energy_kwh: { type: number }
+            cost_cents: { type: integer }
     MeterReading:
       type: object
       description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).

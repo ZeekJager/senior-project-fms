@@ -310,6 +310,18 @@ export class VehicleRepository extends Repository {
     return res.rows[0] ?? null;
   }
 
+  /** For the EV module (FMS-96): a vehicle in the scope by public id, with its fuel type, plate and whether it is live. */
+  async evRef(db: Queryable, publicId: string, scope: Scope): Promise<{ id: string; publicId: string; registrationNumber: string; fuelType: FuelType; isActive: boolean } | null> {
+    const clause = scopeClause(scope, 'v.depot_id', 2);
+    const res = await db.query<{ id: string; publicId: string; registrationNumber: string; fuelType: FuelType; isActive: boolean }>(
+      `SELECT v.id, v.public_id AS "publicId", v.registration_number AS "registrationNumber", v.fuel_type AS "fuelType",
+              (v.is_active AND v.status <> 'retired') AS "isActive"
+         FROM fleet.vehicles v WHERE v.public_id = $1 AND ${clause.sql}`,
+      [publicId, ...clause.params],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** Both ids of a vehicle in the caller's scope (retired included), by either id; null when not visible. */
   async findRef(db: Queryable, by: { publicId: string } | { id: string }, scope: Scope): Promise<{ id: string; publicId: string } | null> {
     const clause = scopeClause(scope, 'v.depot_id', 2);

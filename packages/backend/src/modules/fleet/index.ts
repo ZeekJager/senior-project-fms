@@ -469,6 +469,19 @@ export const trackingRefs = {
 export type { LiveMapVehicle, TrackingVehicle } from './infrastructure/vehicle.repository';
 
 /**
+ * For the EV module (FMS-96): a vehicle in a scope with its fuel type (only electric ones take battery logs and charging
+ * sessions), row-locked for a write; the scope's vehicle ids (null: all); public ids and plates for responses.
+ */
+export const evRefs = {
+  vehicles: {
+    find: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.evRef(db, publicId, scope),
+    lock: (client: PoolClient, publicId: string, scope: Scope) => vehicleRepository.lockForWrite(client, publicId, scope),
+    idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
+    refsByIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.refsByIds(db, ids),
+  },
+};
+
+/**
  * For the alert engine (FMS-92): an alert's subject (a vehicle or driver by public id, with the depot whose
  * alert it is), a depot by public id, and public ids and plates for alert responses.
  */
