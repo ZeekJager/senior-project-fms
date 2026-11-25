@@ -49,6 +49,11 @@ const REVIEWED_AUTHENTICATED = [
   'GET /api/v1/depots',
   'GET /api/v1/depots/:depotId',
   'GET /api/v1/drivers/me',
+  // A driver's own feedback (FMS-158): only the caller's, found by their own driver record; anyone else's is 404.
+  'GET /api/v1/driver/feedback',
+  'GET /api/v1/driver/feedback/:feedbackId',
+  'POST /api/v1/driver/feedback/:feedbackId/acknowledge',
+  'POST /api/v1/driver/feedback/:feedbackId/reply',
   'GET /api/v1/settings/telemetry-rules',
   'GET /api/v1/settings',
   // The settings registry (FMS-157): every parameter's value, as GET /settings; a secret's never in clear.

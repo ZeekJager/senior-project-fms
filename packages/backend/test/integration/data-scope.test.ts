@@ -27,7 +27,8 @@ const DEPOT_ROLES: RoleName[] = ['dispatcher', 'technician', 'depot_admin', 'fin
  * public id of their own), and a vehicle's recalls are swept under its vehicleId. A settings parameter (FMS-157, its
  * key) is the fleet's, not a depot's.
  */
-const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key']);
+// A feedback template (FMS-158) is the fleet's, not a depot's.
+const GLOBAL_PARAMS = new Set(['modelId', 'providerId', 'provider', 'depotId', 'recallId', 'key', 'templateId']);
 
 /**
  * Path parameters naming a kind of answer, not a record: each value is swept as a list route of its own, with `query`.
@@ -189,6 +190,15 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
       );
     }
   }
+  // Feedback (FMS-158) to a depot B driver.
+  if (await none('analytics.driver_feedback WHERE driver_id = ANY($1::bigint[])', [ids.drivers])) {
+    await pool.query(
+      `INSERT INTO analytics.driver_feedback (driver_id, depot_id, subject_type, category, tone, message, author_id, editable_until)
+       SELECT d.id, $1, 'overall', 'general', 'information', 'Depot B feedback for the scope audit.', d.user_id, now() + interval '1 day'
+         FROM fleet.drivers d WHERE d.id = (SELECT MIN(x) FROM unnest($2::bigint[]) x)`,
+      [depotId, ids.drivers],
+    );
+  }
   if (await none('alert.notifications WHERE recipient_user_id = ANY($1::bigint[])', [ids.users])) {
     await pool.query("INSERT INTO alert.notifications (recipient_user_id, notification_type, title, message, channel, status) VALUES ($1, 'alert', 'Depot B', 'For depot B', 'in_app', 'delivered')", [user]);
   }
@@ -222,6 +232,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     warrantyId: await byVehicle('maintenance.warranties'),
     appealId: await one('SELECT public_id::text AS id FROM analytics.score_appeals WHERE depot_id = $1 ORDER BY id', [depotId]),
     attachmentId: await one('SELECT t.public_id::text AS id FROM analytics.appeal_attachments t JOIN analytics.score_appeals a ON a.id = t.appeal_id WHERE a.depot_id = $1 ORDER BY t.id', [depotId]),
+    feedbackId: await one('SELECT public_id::text AS id FROM analytics.driver_feedback WHERE driver_id = ANY($1::bigint[]) ORDER BY id', [ids.drivers]),
   };
 }
 

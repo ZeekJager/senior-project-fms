@@ -22,6 +22,8 @@ export interface Appeal {
   target: { type: 'flag' | 'incident' | 'score'; id: string | null; month: string | null; trip_id: string | null; event_at: string }
   reason: AppealReason
   explanation: string
+  /** The feedback (FMS-158) the driver disagrees with, when the appeal came from "I disagree". */
+  feedback_id: string | null
   driver: Person
   depot: Person | null
   submitted_at: string
@@ -135,6 +137,8 @@ export interface NewAppeal {
   month?: string
   reason: AppealReason
   explanation: string
+  /** The feedback (FMS-158) the appeal disagrees with. */
+  feedback_id?: string
   files: File[]
 }
 
@@ -150,6 +154,7 @@ export function useSubmitAppeal() {
       if (a.month) form.set('month', a.month)
       form.set('reason', a.reason)
       form.set('explanation', a.explanation)
+      if (a.feedback_id) form.set('feedback_id', a.feedback_id)
       for (const f of a.files) form.append('files', f, f.name)
       return api.request<AppealDetail>('/appeals', { method: 'POST', formData: form })
     },

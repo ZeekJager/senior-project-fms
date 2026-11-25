@@ -9,6 +9,7 @@ data-access logic, not only in the screens. Four things hold that line.
 | How long location data is kept | A nightly job deletes older GPS pings and telemetry flags | `tracking-retention`, `GPS_PING_RETENTION_DAYS`, `TELEMETRY_FLAG_RETENTION_DAYS` |
 | Licence and phone numbers at rest | Encrypted in PostgreSQL with `pgcrypto` | migration 063, `DATA_ENCRYPTION_KEY` |
 | A person's own data | A JSON download of everything held about the caller | `GET /auth/me/data-export` |
+| A driver's erasure | The personal data the modules hold for erasure (today feedback, FMS-158) deleted for good, by an admin, with a reason | `POST /drivers/{id}/data-erasure`, `privacy:erase`, `privacy.data_erased` |
 
 ## Who looked at where a vehicle was
 
@@ -70,10 +71,21 @@ Encrypted columns: `fleet.drivers.license_number`, `fleet.drivers.emergency_phon
 attachment`, `Cache-Control: no-store`). There is no id in the path or the query: nobody can ask for someone else's.
 
 It holds: the account (never the password hash or sessions); and for a driver the licence and phones, vehicle assignments, attendance,
-inspections, trips, fuel logs, incident reports (about them or filed by them) and the GPS points recorded on their trips: the newest
+inspections, trips, fuel logs, incident reports (about them or filed by them), the feedback managers gave them (FMS-158: every item,
+retracted ones too, with its earlier texts and their reply) and the GPS points recorded on their trips: the newest
 50,000, `truncated: true` if there were more, reaching back as far as the retention period (`retention_days`). Vehicles and trips
 appear by public id (a vehicle also by its plate). The privacy module owns no schema; it reads the other modules through their
 `index.ts`. Every export is audited as `privacy.data_exported` with counts only.
 
 Not in it: other people's data that mentions the person (a colleague's note), and system records about the person's account
 (login history, audit entries).
+
+## Erasing a driver's data
+
+`POST /drivers/{driver_id}/data-erasure` with a `reason` (`privacy:erase`, admins only) deletes for good, in one transaction, what
+the modules register for erasure, and answers with the count per kind (`{"erased": {"feedback": 3}}`). Today that is the feedback
+managers gave the driver, with its earlier texts (FMS-158, [driver-feedback.md](driver-feedback.md)). Trips, fuel logs,
+inspections and the other fleet records keep their own retention and are not erased. The erasure is audited as
+`privacy.data_erased` with its counts and reason; each item deleted as `privacy.feedback_erased`, which never repeats its words. The
+audit entries written while the item lived stay, under the audit trail's own retention. A module adds its records by registering
+an eraser in `privacy/index.ts`.

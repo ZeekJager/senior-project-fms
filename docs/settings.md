@@ -110,6 +110,15 @@ The driver score appeals' rules (FMS-159, [score-appeals.md](score-appeals.md)),
 
 A change applies to appeals sent from then on: an appeal keeps the deadline it was given.
 
+### Driver feedback: `settings.settings`
+
+Admin-to-driver feedback (FMS-158, [driver-feedback.md](driver-feedback.md)), in the category *Driver feedback*. Read with `settings.get(key)`: they are no whole-number setting of `GET /settings`.
+
+| Key | Type | Default | Rules | What it is |
+|---|---|---|---|---|
+| `feedback_categories` | multi-select | all six | at least 1 of *Safety*, *Driving behaviour*, *Fuel efficiency*, *Punctuality*, *Vehicle care*, *General comment* | The categories a manager files feedback under; one taken out is refused for new feedback, and old items keep it |
+| `feedback_retention_months` | integer | 24 | 1-120 months | How long feedback is kept, retracted items too; the `feedback-retention` job deletes older items each night |
+
 - The expiry setting moves the warnings only. The lists' *expiring soon* marks (licence status, the vehicle list's document filter, the documents panel) stay at 30 days.
 
 ## Taking effect within seconds

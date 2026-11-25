@@ -51,4 +51,6 @@ export const handlers: RequestHandler[] = [
   http.get('/api/v1/settings', () => HttpResponse.json({ data: DEFAULT_SETTINGS, meta: { request_id: 'r-0' } })),
   // Geofences (FMS-90): the live map draws them under the vehicles. None by default.
   http.get('/api/v1/geofences', () => HttpResponse.json({ data: [], meta: { request_id: 'r-0' } })),
+  // FMS-158: My day asks how much feedback is still to read.
+  http.get('/api/v1/driver/feedback', () => HttpResponse.json({ data: [], meta: { request_id: 'r-0', page: 1, page_size: 100, total_items: 0, total_pages: 0, unacknowledged: 0 } })),
 ]

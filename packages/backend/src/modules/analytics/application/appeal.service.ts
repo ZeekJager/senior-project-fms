@@ -70,6 +70,14 @@ export interface AppealServiceDeps {
   score: (db: Queryable, driverUserId: string, month: string) => Promise<MonthScore>;
   /** User accounts by internal id (auth): who claimed, decided and wrote each step. */
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string; fullName: string }[]> };
+  /**
+   * Driver feedback (FMS-158): the driver's own live item an appeal disagrees with ("I disagree"), and who gave it, who
+   * may then not decide the appeal.
+   */
+  feedback?: {
+    ownLiveItem(db: Queryable, driverId: string, publicId: string): Promise<{ id: string; month: string | null } | null>;
+    authorOf(db: Queryable, feedbackId: string): Promise<string | null>;
+  };
   now?: () => Date;
 }
 
@@ -80,6 +88,8 @@ export interface SubmitInput {
   month?: string;
   reason: AppealReason;
   explanation: string;
+  /** The feedback (FMS-158) the appeal disagrees with. */
+  feedback_id?: string;
 }
 
 export interface UploadedFile {
@@ -157,6 +167,8 @@ export class AppealService {
     const rules = await this.deps.rules();
     const target = await this.resolveTarget(db, driver, input, now);
     if (!withinWindow(target.eventAt, now, rules.windowDays)) throw windowClosed(rules.windowDays);
+    const feedback = input.feedback_id ? await this.deps.feedback?.ownLiveItem(db, driver.driverId, input.feedback_id) : null;
+    if (input.feedback_id && !feedback) throw new AppError(404, 'NOT_FOUND', 'There is no such feedback of yours to disagree with.');
 
     const publicId = randomUUID();
     const stored = checked.map((f) => ({ ...f, key: `appeals/${publicId}/${randomUUID()}`, sha256: createHash('sha256').update(f.bytes).digest('hex') }));
@@ -183,6 +195,7 @@ export class AppealService {
               event_at: target.eventAt,
               reason: input.reason,
               explanation: input.explanation,
+              feedback_id: feedback?.id ?? null,
               status: 'submitted',
               submitted_by: caller.user.id,
               due_at: addWorkingDays(now, rules.reviewWorkingDays),
@@ -311,6 +324,8 @@ export class AppealService {
       // The reviewer may not decide against what they reported or reviewed themselves.
       const own = await this.targetFact(client, appeal);
       if (own?.reporterId && own.reporterId === String(caller.user.id)) throw ownReport();
+      // Nor an appeal against feedback they gave (FMS-158).
+      if (appeal.feedbackId && (await this.deps.feedback?.authorOf(client, appeal.feedbackId)) === String(caller.user.id)) throw ownReport();
 
       if (input.outcome === 'rejected') {
         await repo.update(ctx, appeal.id, { status: 'rejected', outcome: 'rejected', decision_note: input.note, decided_by: caller.user.id, decided_at: now }, client);
@@ -728,6 +743,7 @@ export class AppealService {
         target: { type: r.targetType, id: r.targetPublicId, month: r.scoreMonth, trip_id: r.tripPublicId, event_at: r.eventAt.toISOString() },
         reason: r.reason,
         explanation: r.explanation,
+        feedback_id: r.feedbackPublicId,
         driver: { id: driver?.publicId ?? '', name: driver?.name ?? '' },
         depot: depot ? { id: depot.publicId, name: depot.name } : null,
         submitted_at: r.createdAt.toISOString(),

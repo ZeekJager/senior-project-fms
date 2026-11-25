@@ -37,6 +37,7 @@ const submitBody = z
     month: z.string().regex(MONTH, 'Use YYYY-MM.').optional(),
     reason: z.enum(APPEAL_REASONS),
     explanation: z.string().trim().min(MIN_EXPLANATION).max(MAX_EXPLANATION),
+    feedback_id: z.uuid().optional(),
   })
   .superRefine((v, ctx) => {
     if (v.target_type === 'score' && !v.month) ctx.addIssue({ code: 'custom', path: ['month'], message: 'required' });

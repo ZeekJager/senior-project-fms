@@ -10,6 +10,7 @@ export function appealDetail(overrides: Partial<AppealDetail> = {}): AppealDetai
     target: { type: 'flag', id: '7a1d1d1e-0000-4000-8000-0000000000f1', month: null, trip_id: '7a1d1d1e-0000-4000-8000-0000000000a1', event_at: '2026-11-20T07:30:00.000Z' },
     reason: 'wrong_data',
     explanation: 'The GPS jumped near the bridge; I was going 60.',
+    feedback_id: null,
     driver: { id: '7a1d1d1e-0000-4000-8000-0000000000d1', name: 'Abebe Kebede' },
     depot: { id: '7a1d1d1e-0000-4000-8000-0000000000e1', name: 'Addis North' },
     submitted_at: '2026-11-20T09:00:00.000Z',

@@ -76,6 +76,8 @@ export function alertPath(entityType: string | null, entityId: string | null, no
   if (notificationType === 'alert_personal') return '/driver';
   // A driver's appeal step (FMS-159): their appeal in the driver app.
   if (notificationType === APPEAL_NOTICE_TYPE) return entityId ? `/driver/appeals/${encodeURIComponent(entityId)}` : '/driver/appeals';
+  // Feedback from a manager (FMS-158): the item in My feedback.
+  if (notificationType === FEEDBACK_NOTICE_TYPE) return entityId ? `/driver/feedback/${encodeURIComponent(entityId)}` : '/driver/feedback';
   switch (entityType) {
     case 'appeal':
       // An appeal past its review deadline (FMS-159): the reviewers' queue opens it.
@@ -106,6 +108,9 @@ export function alertPath(entityType: string | null, entityId: string | null, no
 
 /** A driver's notice of a step on their appeal (FMS-159): no alert behind it, the appeal its subject. */
 export const APPEAL_NOTICE_TYPE = 'appeal_update';
+
+/** A driver's notice of feedback given or corrected (FMS-158): no alert behind it, the feedback its subject. */
+export const FEEDBACK_NOTICE_TYPE = 'feedback_update';
 
 export interface MessageFacts {
   severity: AlertSeverity;

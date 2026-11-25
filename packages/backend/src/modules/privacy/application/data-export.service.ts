@@ -28,6 +28,8 @@ export interface DataExportRefs {
   pings(db: Queryable, tripIds: readonly string[], limit: number): Promise<{ tripId: string; recordedAt: string; latitude: number; longitude: number; speedKmh: number }[]>;
   vehicles(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; registrationNumber: string }>>;
   tripIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string }>>;
+  /** The feedback the driver was given (FMS-158), retracted items too, by public ids. */
+  feedback(db: Queryable, driverId: string): Promise<Json[]>;
 }
 
 export interface DataExportDeps {
@@ -57,6 +59,7 @@ export class DataExportService {
     const trips = fleet ? await refs.trips(db, fleet.driverId) : [];
     const fuelLogs = fleet ? await refs.fuelLogs(db, fleet.driverId) : [];
     const incidents = await refs.incidents(db, fleet?.driverId ?? null, userId);
+    const feedback = fleet ? await refs.feedback(db, fleet.driverId) : [];
     const tripInternalIds = trips.map((t) => t.internalId);
     const pings = await refs.pings(db, tripInternalIds, EXPORT_PING_CAP);
     const truncated = pings.length > EXPORT_PING_CAP;
@@ -102,6 +105,7 @@ export class DataExportService {
       trips: trips.map((t) => ({ ...snake(omit(t, ['internalId', 'vehicleId'])), ...vehicle(t.vehicleId) })),
       fuel_logs: fuelLogs.map(({ vehicleId, tripId, ...f }) => ({ ...snake(f), ...vehicle(vehicleId), trip_id: trip(tripId) })),
       incident_reports: incidents.map(({ vehicleId, tripId, ...i }) => ({ ...snake(i), ...vehicle(vehicleId), trip_id: trip(tripId) })),
+      feedback,
       location_history: {
         retention_days: this.deps.pingRetentionDays,
         truncated,
@@ -121,6 +125,7 @@ export class DataExportService {
         trips: data.trips.length,
         fuel_logs: data.fuel_logs.length,
         incident_reports: data.incident_reports.length,
+        feedback: data.feedback.length,
         location_points: data.location_history.points.length,
         truncated,
       },

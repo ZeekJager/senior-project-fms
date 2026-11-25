@@ -27,6 +27,9 @@ export interface AppealRow {
   eventAt: Date;
   reason: AppealReason;
   explanation: string;
+  /** The feedback the appeal disagrees with (FMS-158), internal and public ids. */
+  feedbackId: string | null;
+  feedbackPublicId: string | null;
   status: AppealStatus;
   outcome: AppealOutcome | null;
   correction: Correction | null;
@@ -113,7 +116,8 @@ const COLUMNS = `a.id, a.public_id AS "publicId", a.driver_id AS "driverId", a.d
   COALESCE((SELECT f.public_id::text FROM analytics.score_flag_facts f WHERE f.flag_id = a.flag_id),
            (SELECT i.public_id::text FROM analytics.score_incident_facts i WHERE i.incident_id = a.incident_id)) AS "targetPublicId",
   (SELECT t.public_id::text FROM analytics.trip_history_facts t WHERE t.trip_id = a.trip_id) AS "tripPublicId",
-  a.event_at AS "eventAt", a.reason, a.explanation, a.status, a.outcome, a.correction, a.decision_note AS "decisionNote",
+  a.event_at AS "eventAt", a.reason, a.explanation, a.feedback_id::text AS "feedbackId",
+  (SELECT fb.public_id::text FROM analytics.driver_feedback fb WHERE fb.id = a.feedback_id) AS "feedbackPublicId", a.status, a.outcome, a.correction, a.decision_note AS "decisionNote",
   a.score_before AS "scoreBefore", a.score_after AS "scoreAfter", a.submitted_by AS "submittedBy",
   a.claimed_by AS "claimedBy", a.claimed_at AS "claimedAt", a.decided_by AS "decidedBy", a.decided_at AS "decidedAt",
   a.due_at AS "dueAt", a.escalated_at AS "escalatedAt", a.acknowledged_at AS "acknowledgedAt", a.closed_at AS "closedAt",

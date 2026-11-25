@@ -175,6 +175,8 @@ export interface AppealView {
   };
   reason: AppealReason;
   explanation: string;
+  /** The feedback (FMS-158) the driver disagrees with, when the appeal came from "I disagree". */
+  feedback_id: string | null;
   driver: { id: string; name: string };
   depot: { id: string; name: string } | null;
   submitted_at: string;
@@ -228,7 +230,7 @@ export const windowClosed = (days: number) =>
     { field: 'target', reason: 'appeal_window_closed' },
   ]);
 export const ownReport = () =>
-  new AppError(409, 'CONFLICT_OWN_REPORT', 'You reported or reviewed what this appeal is against, so another reviewer must decide it.', [
+  new AppError(409, 'CONFLICT_OWN_REPORT', 'You reported or reviewed what this appeal is against, or gave the feedback it disagrees with, so another reviewer must decide it.', [
     { field: 'reviewer', reason: 'own_report' },
   ]);
 export const tooManyFiles = () =>

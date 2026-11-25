@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { ArrowRight, Route as RouteIcon } from 'lucide-react'
 import { useState } from 'react'
 import { DataTable, EmptyState, StatusBadge, useCursorPages, type Column } from '@/components/shared'
@@ -132,6 +133,7 @@ export function TripsSection({ vehicle }: { vehicle: Vehicle }) {
 function TripPanel({ vehicle, trip, driver, onClose }: { vehicle: Vehicle; trip: TripRecord | null; driver: string; onClose: () => void }) {
   const { hasPermission } = useAuth()
   const canTrack = hasPermission('tracking:read')
+  const canGiveFeedback = hasPermission('feedback:write')
   const route = useRoute(trip?.route_id ?? null, trip !== null && hasPermission('route:read'))
   // The road its route follows today (FMS-84); the trip itself keeps only the two ends.
   const road = useRouteRoad(route.data ?? null)
@@ -155,7 +157,15 @@ function TripPanel({ vehicle, trip, driver, onClose }: { vehicle: Vehicle; trip:
             <Fact label="Status">
               <StatusBadge status={trip.status} />
             </Fact>
-            <Fact label="Driver">{driver}</Fact>
+            <Fact label="Driver">
+              {driver}
+              {/* FMS-158: feedback to the driver on this trip, in the drivers' feedback drawer. */}
+              {trip.status === 'completed' && trip.driver_id && canGiveFeedback && (
+                <Link to={`/drivers?${new URLSearchParams({ feedback: trip.driver_id, give: 'trip', trip: trip.id })}`} className="focus-ring mt-1 block w-fit rounded-control text-sm font-medium text-brand underline-offset-2 hover:underline">
+                  Give feedback on this trip
+                </Link>
+              )}
+            </Fact>
             <Fact label="Route" wide>
               <Ends trip={trip} />
             </Fact>

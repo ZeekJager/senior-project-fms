@@ -12,7 +12,7 @@ import { MaintenancePage } from '@/pages/Maintenance'
 import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { AppealsPage } from '@/pages/Appeals'
-import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNewAppeal, DriverScore } from '@/pages/Driver'
+import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFeedbackItem, DriverFeedbackList, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNewAppeal, DriverScore } from '@/pages/Driver'
 import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
@@ -282,6 +282,10 @@ export const portals: Portal[] = [
       { path: '/driver/appeals', element: <DriverAppeals />, permission: 'appeal:submit' },
       { path: '/driver/appeals/new', element: <DriverNewAppeal />, permission: 'appeal:submit' },
       { path: '/driver/appeals/:appealId', element: <DriverAppeal />, permission: 'appeal:submit' },
+      // FMS-158 (S-38): feedback from managers, read, acknowledged and answered. Drivers hold no feedback permission:
+      // the API gives each only their own. Opened from My day.
+      { path: '/driver/feedback', element: <DriverFeedbackList />, permission: 'trip:execute' },
+      { path: '/driver/feedback/:feedbackId', element: <DriverFeedbackItem />, permission: 'trip:execute' },
     ],
   },
 ]

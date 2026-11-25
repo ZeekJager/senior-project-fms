@@ -15,7 +15,7 @@ import { AlertService } from './application/alert.service';
 import { DeliveryService } from './application/delivery.service';
 import { IncidentService } from './application/incident.service';
 import { InboxService } from './application/inbox.service';
-import { APPEAL_NOTICE_EVENTS, NoticeService } from './application/notice.service';
+import { APPEAL_NOTICE_EVENTS, FEEDBACK_NOTICE_EVENTS, NoticeService } from './application/notice.service';
 import type { IncidentType } from './domain/incident';
 import { ALERT_RULES } from './domain/rules';
 import { AlertRepository } from './infrastructure/alert.repository';
@@ -99,6 +99,12 @@ const notices = new NoticeService({
 for (const type of APPEAL_NOTICE_EVENTS) {
   eventBus.subscribe(type, 'alert.appeal-notices', async (event, tx) => {
     await notices.appealStep(tx, event);
+  });
+}
+// Feedback from a manager (FMS-158): in the inbox, and by push when new.
+for (const type of FEEDBACK_NOTICE_EVENTS) {
+  eventBus.subscribe(type, 'alert.feedback-notices', async (event, tx) => {
+    await notices.feedbackStep(tx, event);
   });
 }
 

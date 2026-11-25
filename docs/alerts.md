@@ -35,6 +35,7 @@ The events from FMS-82 and FMS-96 are not published yet. Their payloads are the 
 - **Depot.** An alert belongs to the depot of its vehicle or driver, or the one the event names. Its depot decides who sees it (GET /alerts) and who receives it on the socket. An alert with no depot is seen only by roles that see every depot.
 - **Title and message** name the vehicle by its plate and never a person: `AlertCreated` goes out to sockets with them.
 - **Priority** follows severity: P1 is critical and P4 is low.
+- **Notices that are no alert.** A step on a driver's own score appeal (FMS-159) and feedback from a manager (FMS-158, [driver-feedback.md](driver-feedback.md)) reach the driver as `alert.notifications` rows with no alert: `appeal_update` or `feedback_update`, with `entity_type` and `entity_id` naming what opens. In the app always; by push for an appeal's question or decision and for new feedback; never by email or SMS.
 - **Not every event.** A rule's `when` can turn an event down: an incident below critical is no alert (it is on the command center's incident list instead).
 
 ## De-duplication

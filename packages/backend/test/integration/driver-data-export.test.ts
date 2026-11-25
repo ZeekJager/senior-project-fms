@@ -76,7 +76,7 @@ describe('GET /auth/me/data-export', () => {
     const audited = await pool.query("SELECT details, user_id FROM audit.audit_logs WHERE action = 'privacy.data_exported' AND correlation_id = $1", [res.headers['x-request-id']]);
     expect(audited.rows).toHaveLength(1);
     expect(String(audited.rows[0].user_id)).toBe(String(user.id));
-    expect(audited.rows[0].details).toEqual({ driver: true, trips: 1, fuel_logs: 1, incident_reports: 1, location_points: 1, truncated: false });
+    expect(audited.rows[0].details).toEqual({ driver: true, trips: 1, fuel_logs: 1, incident_reports: 1, feedback: 0, location_points: 1, truncated: false });
   });
 
   test('only their own: another driver’s trips, fuel and locations are not in it', async () => {

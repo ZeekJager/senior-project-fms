@@ -3,7 +3,7 @@
 Generated from the role grants seeded in `packages/backend/migrations/001_core_identity.sql`. Do not edit by hand: run
 `npm run -s permissions:doc -w fms-backend > docs/permissions.md` after changing a grant. A test fails when this file is stale.
 
-66 permissions, 9 roles. `x` means the role holds the permission.
+69 permissions, 9 roles. `x` means the role holds the permission.
 
 | Permission | admin | fleet_manager | dispatcher | depot_admin | technician | driver | finance_clerk | compliance_officer | fleet_owner |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -37,6 +37,8 @@ Generated from the role grants seeded in `packages/backend/migrations/001_core_i
 | `dvir:write` | x | x |  | x | x | x |  |  |  |
 | `ev:read` | x | x |  | x |  |  |  |  | x |
 | `ev:write` | x | x |  | x |  |  |  |  |  |
+| `feedback:read` | x | x |  | x |  |  |  |  |  |
+| `feedback:write` | x | x |  | x |  |  |  |  |  |
 | `fuel-anomaly:read` | x | x |  | x |  |  | x | x |  |
 | `fuel-anomaly:write` | x | x |  |  |  |  | x |  |  |
 | `fuel:read` | x | x |  | x |  | x | x | x | x |
@@ -55,6 +57,7 @@ Generated from the role grants seeded in `packages/backend/migrations/001_core_i
 | `ml-model:activate` | x |  |  |  |  |  |  |  |  |
 | `notification:read` | x | x | x | x | x | x | x | x | x |
 | `prediction:read` | x | x |  | x | x |  |  | x | x |
+| `privacy:erase` | x |  |  |  |  |  |  |  |  |
 | `roles:read` | x | x |  |  |  |  |  | x |  |
 | `route:read` | x | x | x | x |  | x |  | x | x |
 | `route:write` | x | x | x | x |  |  |  |  |  |
