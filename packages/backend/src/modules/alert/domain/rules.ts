@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { toBirr, toLitres } from '../../../lib/units';
 import { SEVERITIES, type AlertSeverity } from './alert';
 
@@ -54,6 +55,11 @@ export interface AlertRule {
    * information: the alert stays the audience's to act on.
    */
   personal?: PersonalNotice;
+  /**
+   * FMS-163: also posted to the channels with no recipient (a Teams channel) when it opens, and again when it resolves.
+   * For the monitoring alerts, which an operations channel follows.
+   */
+  channelPost?: boolean;
 }
 
 /** What a driver is told of an alert about them or their vehicle (FMS-149). */
@@ -76,6 +82,11 @@ const str = (p: Payload, key: string): string | null => (typeof p[key] === 'stri
 const num = (p: Payload, key: string): number | null => (typeof p[key] === 'number' ? (p[key] as number) : null);
 const severityOr = (p: Payload, key: string, fallback: AlertSeverity): AlertSeverity =>
   SEVERITIES.includes(p[key] as AlertSeverity) ? (p[key] as AlertSeverity) : fallback;
+/** A UUID that is the same for the same text: entity ids are UUIDs, and an alert from outside has none. */
+const uuidOf = (text: string): string => {
+  const h = createHash('sha256').update(text).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+};
 const vehicleName = (names: Names) => names.plate ?? 'a vehicle';
 const daysLabel = (days: number | null) => (days === null ? 'soon' : days <= 0 ? 'today' : days === 1 ? 'in 1 day' : `in ${days} days`);
 const humanize = (s: string | null) => (s ?? 'item').replace(/_/g, ' ');
@@ -644,4 +655,37 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     message: (p) => `A critical incident was reported${p.maintenance_flag_set === true ? ' and the vehicle is flagged for maintenance' : ''}. Review it and follow up.`,
     audience: ['dispatcher', 'depot_admin'],
   },
+
+  // Monitoring (FMS-109, FMS-163, docs/observability.md): an alert Prometheus fired, through Alertmanager's webhook
+  // (POST /system/alerts/webhook): `fingerprint`, `alert_name`, `severity` (critical or warning), `host`, `summary`,
+  // `description`, `started_at`. Fleet-wide: the administrators. Critical by email, SMS and push too; a warning in the
+  // app; both posted to Teams. MonitoringAlertResolved (Alertmanager's resolved) closes it by itself (ALERT_RESOLVERS).
+  MonitoringAlertFiring: {
+    type: (p) => `monitoring_${(str(p, 'alert_name') ?? 'alert').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 80)}`,
+    module: 'system',
+    facts: (p) => ({
+      severity: p.severity === 'critical' ? 'critical' : 'medium',
+      vehicleId: null,
+      driverId: null,
+      tripId: null,
+      depotId: null,
+      // The link opens the resources (System health); the id is the alert's, stable for its fingerprint.
+      entity: { type: 'monitoring', id: uuidOf(`monitoring:${str(p, 'fingerprint')}`) },
+      dedupKey: `monitoring:${str(p, 'fingerprint')}`,
+    }),
+    windowMinutes: 7 * DAY,
+    title: (p) => `${p.severity === 'critical' ? 'Critical' : 'Warning'}: ${str(p, 'summary') ?? humanize(str(p, 'alert_name'))}${str(p, 'host') ? ` (${str(p, 'host')})` : ''}`,
+    message: (p) => str(p, 'description') ?? 'A monitored limit was passed. Open System health to see the resource.',
+    audience: ['admin'],
+    renotifyWhenRaised: true,
+    channelPost: true,
+  },
+};
+
+/**
+ * Events that close an active alert by themselves (FMS-163): the event's dedup key, as its firing rule made it. The
+ * alert is resolved with no person (resolved_by null), its queued messages are dropped, and its channels told.
+ */
+export const ALERT_RESOLVERS: Record<string, (payload: Payload) => string | null> = {
+  MonitoringAlertResolved: (p) => (str(p, 'fingerprint') ? `monitoring:${str(p, 'fingerprint')}` : null),
 };

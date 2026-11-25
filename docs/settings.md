@@ -110,6 +110,21 @@ The driver score appeals' rules (FMS-159, [score-appeals.md](score-appeals.md)),
 
 A change applies to appeals sent from then on: an appeal keeps the deadline it was given.
 
+### Monitoring: `settings.settings`
+
+The monitoring thresholds (FMS-163, [observability.md](observability.md#thresholds)), in the category *Monitoring*: a warning and a critical line per metric, which Prometheus' alert rules compare against as the API exports them (`fms_alert_threshold`), so a change applies within a minute. A warning must stay below its critical.
+
+| Keys | Defaults | Range | What they are |
+|---|---|---|---|
+| `monitor_cpu_warning_pct`, `monitor_cpu_critical_pct` | 75, 90 | 1-100 % | A host's or a service's CPU for 5 minutes |
+| `monitor_memory_warning_pct`, `monitor_memory_critical_pct` | 80, 90 | 1-100 % | Memory in use for 5 minutes |
+| `monitor_disk_warning_pct`, `monitor_disk_critical_pct` | 75, 90 | 1-100 % | A disk's use for 10 minutes |
+| `monitor_db_connections_warning_pct`, `monitor_db_connections_critical_pct` | 70, 85 | 1-100 % | The primary's connections in use, of `max_connections` |
+| `monitor_replica_lag_warning_seconds`, `monitor_replica_lag_critical_seconds` | 30, 60 | 1-3600 s | The standby behind the primary for 2 minutes |
+| `monitor_error_rate_warning_pct`, `monitor_error_rate_critical_pct` | 2, 5 | 1-100 % | The API's 5xx answers for 5 minutes |
+| `monitor_p95_warning_ms`, `monitor_p95_critical_ms` | 500, 1000 | 50-60000 ms | The API's p95 latency for 5 minutes |
+| `monitor_gps_silence_minutes` | 2 | 1-60 min | No GPS point stored while trips are under way (critical) |
+
 ### Driver feedback: `settings.settings`
 
 Admin-to-driver feedback (FMS-158, [driver-feedback.md](driver-feedback.md)), in the category *Driver feedback*. Read with `settings.get(key)`: they are no whole-number setting of `GET /settings`.

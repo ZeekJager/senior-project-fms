@@ -174,3 +174,6 @@ export const feedbackJobs = {
   purge: (now: Date, correlationId: string) => feedbackService.purge({ now, correlationId }),
 };
 export { FEEDBACK_EVENTS } from './domain/feedback';
+
+/** The reports' PDF table writer (FMS-91), for the capacity report (FMS-163). */
+export { renderTablePdf, type PdfTable } from './infrastructure/table-pdf';

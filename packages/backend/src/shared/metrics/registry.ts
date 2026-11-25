@@ -1,4 +1,4 @@
-import { collectDefaultMetrics, Gauge, Histogram, Registry } from 'prom-client';
+import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom-client';
 
 /**
  * The process's metrics (FMS-75, docs/metrics.md), in Prometheus' format. One registry for the API; it is served on
@@ -28,6 +28,31 @@ export const jobDuration = new Histogram({
   buckets: [0.05, 0.25, 1, 5, 15, 60, 300, 900, 3600],
   registers: [metricsRegistry],
 });
+
+/** GPS points stored (FMS-163): their rate is the Resources tab's points per minute, and none during trips is an alert. */
+export const gpsPointsStored = new Counter({
+  name: 'gps_points_stored_total',
+  help: 'GPS points stored in tracking.gps_pings',
+  registers: [metricsRegistry],
+});
+
+// When this instance last stored a point (its start until it has): the silence alert takes the youngest of the instances.
+let lastGpsPointAt = Date.now();
+new Gauge({
+  name: 'gps_last_point_age_seconds',
+  help: 'Seconds since this instance last stored a GPS point (since it started, until it has)',
+  registers: [metricsRegistry],
+  collect() {
+    this.set((Date.now() - lastGpsPointAt) / 1000);
+  },
+});
+
+/** Counts stored GPS points and notes when (FMS-163). */
+export function noteGpsPointsStored(count: number): void {
+  if (count <= 0) return;
+  gpsPointsStored.inc(count);
+  lastGpsPointAt = Date.now();
+}
 
 /** A value read when Prometheus scrapes, not kept up to date by the code. */
 export function scrapedGauge(name: string, help: string, read: () => Promise<number | null> | number | null, labelNames: readonly string[] = []): Gauge {

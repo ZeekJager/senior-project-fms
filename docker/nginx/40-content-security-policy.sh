@@ -7,11 +7,14 @@
 #                    enforce: it blocks. off: no header.
 #   CSP_IMG_SOURCES  where images may come from besides this site, data: and blob: (default: OpenStreetMap's tile server, which the map
 #                    uses). Set it to the host of VITE_MAP_TILE_URL if the build changed it.
+#   CSP_CONNECT_SOURCES  where the page may send requests besides this site (default: none). With error tracking on
+#                    (VITE_SENTRY_DSN, FMS-109), the error tracker's origin, such as https://glitchtip.example.
 set -eu
 
 out=/etc/nginx/snippets/csp.conf
 mode="${CSP_MODE:-report-only}"
 images="${CSP_IMG_SOURCES:-https://tile.openstreetmap.org}"
+connect="${CSP_CONNECT_SOURCES:-}"
 
 case "$mode" in
   report-only) header=Content-Security-Policy-Report-Only ;;
@@ -33,10 +36,16 @@ case "$images" in
     exit 1
     ;;
 esac
+case "$connect" in
+  *[!A-Za-z0-9:/.*_\ -]*)
+    echo "CSP_CONNECT_SOURCES may hold only letters, digits and : / . * _ - and spaces" >&2
+    exit 1
+    ;;
+esac
 
 # Scripts, fonts, workers and connections (the API, and its Socket.IO) only from this site; styles may be inline (React and Leaflet set
 # style attributes); the page may not be framed, nor embed plugins, nor submit a form elsewhere.
-policy="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${images}; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+policy="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${images}; font-src 'self'; connect-src 'self'${connect:+ $connect}; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 printf 'add_header %s "%s" always;\n' "$header" "$policy" >"$out"
 echo "content security policy: $mode"

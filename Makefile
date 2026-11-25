@@ -1,4 +1,4 @@
-.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing
+.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing observability observability-down
 
 # Create .env from .env.example with generated secrets. An existing .env keeps
 # its values and gains any key added to .env.example since (e.g. REDIS_PASSWORD).
@@ -70,3 +70,11 @@ routing: env
 	docker-compose --profile routing-setup run --rm osrm-download
 	docker-compose --profile routing-setup run --rm osrm-prepare
 	docker-compose --profile routing up -d osrm
+
+# The observability stack (FMS-109, FMS-163, docs/observability.md): Prometheus, VictoriaMetrics, Alertmanager, the
+# exporters, Grafana (http://127.0.0.1:3001), Loki and GlitchTip (http://127.0.0.1:8001), on top of the dev stack.
+observability: env
+	docker-compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+
+observability-down:
+	docker-compose -f docker-compose.yml -f docker-compose.observability.yml stop prometheus victoriametrics alertmanager node-exporter cadvisor postgres-exporter-primary postgres-exporter-standby redis-exporter grafana loki promtail glitchtip-db glitchtip-redis glitchtip-web glitchtip-worker

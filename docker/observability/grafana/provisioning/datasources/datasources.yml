@@ -1,0 +1,20 @@
+# Grafana's data sources (FMS-109, docs/observability.md): VictoriaMetrics for 13 months of metrics (it answers
+# Prometheus' query language), Prometheus for the last 15 days and its alerts, Loki for the containers' logs.
+apiVersion: 1
+datasources:
+  - name: VictoriaMetrics
+    uid: victoriametrics
+    type: prometheus
+    access: proxy
+    url: http://victoriametrics:8428
+    isDefault: true
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100

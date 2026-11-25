@@ -60,6 +60,8 @@ export function applyTestEnv(): void {
   setDefault('INTEGRATION_MOCK_TELEMATICS_API_KEY', 'test-api-key-mock-provider');
   // The GPS simulator's provider (FMS-138), which test/integration/telematics.test.ts posts as.
   setDefault('INTEGRATION_FMS_SIMULATOR_WEBHOOK_SECRET', 'test-webhook-secret-for-the-gps-simulator-0001');
+  // Alertmanager's webhook token (FMS-163), which test/integration/monitoring.test.ts sends.
+  setDefault('ALERTMANAGER_WEBHOOK_TOKEN', 'test-alertmanager-webhook-token-0000000000001');
   // Always local disk, in a temp folder: tests never write into the repo or a real bucket.
   process.env.STORAGE_DRIVER = 'local';
   process.env.STORAGE_LOCAL_DIR = TEST_STORAGE_DIR;

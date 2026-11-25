@@ -1,0 +1,69 @@
+# Prometheus (FMS-109, FMS-163, ADR-10, docs/observability.md): scrapes every 15 s, evaluates the alert rules, sends
+# what fires to Alertmanager, and writes every sample to VictoriaMetrics, which keeps 13 months (Prometheus keeps 15
+# days). Nothing here is published outside the Compose network.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: fms
+
+rule_files:
+  - /etc/prometheus/rules/fms.rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+remote_write:
+  - url: http://victoriametrics:8428/api/v1/write
+
+scrape_configs:
+  # The host (node_exporter). `host` is the name a maintenance window and the Resources tab use.
+  - job_name: node
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels: { host: fms-host }
+
+  # Containers (cAdvisor), named by their Compose service; anything not started by Compose is dropped.
+  - job_name: containers
+    static_configs:
+      - targets: ['cadvisor:8080']
+    metric_relabel_configs:
+      - source_labels: [container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [service]
+        regex: ''
+        action: drop
+      - regex: 'container_label_.*'
+        action: labeldrop
+
+  # The API (docs/metrics.md): its internal metrics port, never the public one. Its series carry service="fms-backend".
+  - job_name: backend
+    static_configs:
+      - targets: ['backend:9464']
+
+  # The AI service, with its token (written to a file by the container's entry point).
+  - job_name: ai-service
+    authorization:
+      credentials_file: /prometheus/secrets/ml-token
+    static_configs:
+      - targets: ['ai-service:5000']
+
+  # PostgreSQL through the stable endpoint: 5432 is always the primary, 5433 the standby, whichever server each is.
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter-primary:9187']
+        labels: { role: primary, service: postgres }
+      - targets: ['postgres-exporter-standby:9187']
+        labels: { role: standby, service: postgres-replica }
+
+  - job_name: redis
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels: { service: redis }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+        labels: { service: prometheus }

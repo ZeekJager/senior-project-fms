@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config';
 import { AppError } from '../shared/errors/app-error';
 import { errorBody, toAppError } from '../shared/errors/to-app-error';
+import { captureServerError } from '../shared/observability/error-tracking';
 
 export function notFoundHandler(req: Request, _res: Response, next: NextFunction): void {
   next(new AppError(404, 'NOT_FOUND', `No route for ${req.method} ${req.path}.`));
@@ -22,6 +23,13 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
   if (appErr.status >= 500) {
     // Picked up by the request logger, which logs it with the stack.
     res.err = err instanceof Error ? err : new Error(String(err));
+    // And to error tracking (FMS-109), found again by its request id.
+    captureServerError(err, {
+      requestId: req.correlationId,
+      method: req.method,
+      route: req.route?.path ? `${req.baseUrl}${String(req.route.path)}` : null,
+      userPublicId: req.user?.publicId ?? null,
+    });
   }
   if (appErr.headers) res.set(appErr.headers);
   const stack = config.nodeEnv === 'development' && appErr.status >= 500 && err instanceof Error ? err.stack : undefined;

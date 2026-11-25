@@ -1,0 +1,201 @@
+# promtool test rules fms.rules.test.yml (CI: the observability-rules job). Every alert in fms.rules.yml fires once on
+# series made to pass its line, and none fires on a quiet fleet. The thresholds are the settings' defaults, as the API
+# exports them (fms_alert_threshold).
+rule_files:
+  - fms.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Everything past its critical line.
+  - interval: 1m
+    input_series:
+      - { series: 'fms_alert_threshold{setting="monitor_cpu_warning_pct"}', values: '75x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_cpu_critical_pct"}', values: '90x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_memory_warning_pct"}', values: '80x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_memory_critical_pct"}', values: '90x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_disk_warning_pct"}', values: '75x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_disk_critical_pct"}', values: '90x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_db_connections_warning_pct"}', values: '70x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_db_connections_critical_pct"}', values: '85x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_replica_lag_warning_seconds"}', values: '30x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_replica_lag_critical_seconds"}', values: '60x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_error_rate_warning_pct"}', values: '2x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_error_rate_critical_pct"}', values: '5x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_p95_warning_ms"}', values: '500x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_p95_critical_ms"}', values: '1000x450' }
+      - { series: 'fms_alert_threshold{setting="monitor_gps_silence_minutes"}', values: '2x450' }
+      # h1: 95% CPU, 95% memory, a 95% full disk. h2: a disk losing 1 unit a minute, full within 7 days.
+      - { series: 'node_cpu_seconds_total{host="h1",cpu="0",mode="idle"}', values: '0+3x450' }
+      - { series: 'node_memory_MemAvailable_bytes{host="h1"}', values: '5x450' }
+      - { series: 'node_memory_MemTotal_bytes{host="h1"}', values: '100x450' }
+      - { series: 'node_filesystem_avail_bytes{host="h1",fstype="ext4",mountpoint="/"}', values: '5x450' }
+      - { series: 'node_filesystem_size_bytes{host="h1",fstype="ext4",mountpoint="/"}', values: '100x450' }
+      - { series: 'node_filesystem_avail_bytes{host="h2",fstype="ext4",mountpoint="/"}', values: '1000-1x450' }
+      - { series: 'node_filesystem_size_bytes{host="h2",fstype="ext4",mountpoint="/"}', values: '2000x450' }
+      - { series: 'container_cpu_usage_seconds_total{service="backend"}', values: '0+57x450' }
+      - { series: 'up{job="node",instance="node-exporter:9100"}', values: '0x450' }
+      # The API: 1 of 10 answers 5xx; every request takes 1 to 2 s.
+      - { series: 'http_request_duration_seconds_count{service="fms-backend",status_class="5xx"}', values: '0+60x450' }
+      - { series: 'http_request_duration_seconds_count{service="fms-backend",status_class="2xx"}', values: '0+540x450' }
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="0.5"}', values: '0x450' }
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="1"}', values: '0x450' }
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="2"}', values: '0+600x450' }
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="+Inf"}', values: '0+600x450' }
+      - { series: 'gps_last_point_age_seconds{instance="backend:9464"}', values: '300x450' }
+      - { series: 'trips_under_way{instance="backend:9464"}', values: '3x450' }
+      - { series: 'outbox_oldest_pending_seconds{instance="backend:9464"}', values: '120x450' }
+      - { series: 'outbox_dead_lettered_events{instance="backend:9464"}', values: '2x450' }
+      - { series: 'circuit_breaker_state{provider="sms-gateway"}', values: '2x450' }
+      - { series: 'job_duration_seconds_count{job="backup-scheduler",status="failed"}', values: '0+1x450' }
+      - { series: 'pg_stat_activity_count{role="primary",state="active"}', values: '90x450' }
+      - { series: 'pg_settings_max_connections{role="primary"}', values: '100x450' }
+      - { series: 'replica_lag_seconds{instance="backend:9464"}', values: '120x450' }
+      - { series: 'backup_findings{instance="backend:9464",severity="critical"}', values: '1x450' }
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HostCpuCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, host: h1, metric: host_cpu }
+            exp_annotations: { summary: CPU above its critical line, description: h1 has used 95% CPU for 5 minutes. }
+      - eval_time: 20m
+        alertname: HostCpuWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, host: h1, metric: host_cpu }
+            exp_annotations: { summary: CPU above its warning line, description: h1 has used 95% CPU for 5 minutes. }
+      - eval_time: 20m
+        alertname: HostMemoryCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, host: h1, metric: host_memory }
+            exp_annotations: { summary: Memory above its critical line, description: h1 has had 95% of its memory in use for 5 minutes. }
+      - eval_time: 20m
+        alertname: HostMemoryWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, host: h1, metric: host_memory }
+            exp_annotations: { summary: Memory above its warning line, description: h1 has had 95% of its memory in use for 5 minutes. }
+      - eval_time: 20m
+        alertname: HostDiskCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, host: h1, metric: host_disk }
+            exp_annotations: { summary: Disk above its critical line, description: A disk of h1 is 95% full. }
+      - eval_time: 20m
+        alertname: HostDiskWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, host: h1, metric: host_disk }
+            exp_annotations: { summary: Disk above its warning line, description: A disk of h1 is 95% full. }
+      - eval_time: 60m
+        alertname: HostDiskFullSoon
+        exp_alerts:
+          - exp_labels: { severity: warning, host: h2 }
+            exp_annotations: { summary: Disk to be full within 7 days, description: "At the last 6 hours' rate, a disk of h2 is full within 7 days." }
+      - eval_time: 20m
+        alertname: ServiceCpuCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, service: backend, metric: service_cpu }
+            exp_annotations: { summary: A service's CPU above its critical line, description: backend has used 95% of a CPU for 5 minutes. }
+      - eval_time: 20m
+        alertname: ServiceCpuWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, service: backend, metric: service_cpu }
+            exp_annotations: { summary: A service's CPU above its warning line, description: backend has used 95% of a CPU for 5 minutes. }
+      - eval_time: 20m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: node, instance: node-exporter:9100 }
+            exp_annotations: { summary: A monitored service is not answering, description: node (node-exporter:9100) has not answered Prometheus for 2 minutes. }
+      - eval_time: 20m
+        alertname: ApiErrorRateCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, service: backend, metric: api_errors }
+            exp_annotations: { summary: API server errors above their critical line, description: "10.0% of the API's answers have been 5xx for 5 minutes." }
+      - eval_time: 20m
+        alertname: ApiErrorRateWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, service: backend, metric: api_errors }
+            exp_annotations: { summary: API server errors above their warning line, description: "10.0% of the API's answers have been 5xx for 5 minutes." }
+      - eval_time: 20m
+        alertname: ApiLatencyCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, service: backend, metric: api_latency }
+            exp_annotations: { summary: API p95 latency above its critical line, description: "The API's p95 has been 1950 ms for 5 minutes." }
+      - eval_time: 20m
+        alertname: ApiLatencyWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, service: backend, metric: api_latency }
+            exp_annotations: { summary: API p95 latency above the CFG-3 budget, description: "The API's p95 has been 1950 ms for 5 minutes, above the budget." }
+      - eval_time: 20m
+        alertname: GpsIngestionSilent
+        exp_alerts:
+          - exp_labels: { severity: critical, service: backend }
+            exp_annotations: { summary: No GPS points during trips, description: Trips are under way and no GPS point has been stored for 300 seconds. }
+      - eval_time: 20m
+        alertname: OutboxLagging
+        exp_alerts:
+          - exp_labels: { severity: warning, service: backend }
+            exp_annotations: { summary: Events are waiting in the outbox, description: The oldest event has waited 120 seconds to be delivered. }
+      - eval_time: 20m
+        alertname: OutboxDeadLetters
+        exp_alerts:
+          - exp_labels: { severity: warning, service: backend }
+            exp_annotations: { summary: Events a consumer gave up on, description: "2 events were dead-lettered; someone has to look (docs/events.md)." }
+      - eval_time: 20m
+        alertname: CircuitBreakerOpen
+        exp_alerts:
+          - exp_labels: { severity: warning, provider: sms-gateway }
+            exp_annotations: { summary: "A provider's circuit breaker is open", description: "Calls to sms-gateway have been failing; its breaker has been open for 2 minutes." }
+      - eval_time: 20m
+        alertname: JobFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, service: backend, job: backup-scheduler }
+            exp_annotations: { summary: A scheduled job failed, description: The backup-scheduler job failed in the last 15 minutes (docs/jobs.md). }
+      - eval_time: 20m
+        alertname: DbConnectionsCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, service: postgres, metric: db_connections }
+            exp_annotations: { summary: Database connections above their critical line, description: "90% of the primary's connections are in use." }
+      - eval_time: 20m
+        alertname: DbConnectionsWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, service: postgres, metric: db_connections }
+            exp_annotations: { summary: Database connections above their warning line, description: "90% of the primary's connections are in use." }
+      - eval_time: 20m
+        alertname: ReplicaLagCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, service: postgres-replica, metric: replica_lag }
+            exp_annotations: { summary: The standby is far behind the primary, description: The standby has been 120 seconds behind for 2 minutes. }
+      - eval_time: 20m
+        alertname: ReplicaLagWarning
+        exp_alerts:
+          - exp_labels: { severity: warning, service: postgres-replica, metric: replica_lag }
+            exp_annotations: { summary: The standby is behind the primary, description: The standby has been 120 seconds behind for 2 minutes. }
+      - eval_time: 20m
+        alertname: BackupFailing
+        exp_alerts:
+          - exp_labels: { severity: critical, service: postgres }
+            exp_annotations: { summary: A backup failed or is overdue, description: "The backups report 1 critical finding(s); see Backups (docs/backups.md)." }
+
+  # A quiet fleet, and a threshold raised in the settings: nothing fires.
+  - interval: 1m
+    input_series:
+      - { series: 'fms_alert_threshold{setting="monitor_cpu_warning_pct"}', values: '75x40' }
+      - { series: 'fms_alert_threshold{setting="monitor_cpu_critical_pct"}', values: '90x40' }
+      - { series: 'fms_alert_threshold{setting="monitor_p95_warning_ms"}', values: '2500x40' }
+      - { series: 'fms_alert_threshold{setting="monitor_p95_critical_ms"}', values: '3000x40' }
+      - { series: 'fms_alert_threshold{setting="monitor_gps_silence_minutes"}', values: '2x40' }
+      # 40% CPU.
+      - { series: 'node_cpu_seconds_total{host="h1",cpu="0",mode="idle"}', values: '0+36x40' }
+      # The same 1.95 s p95 as above, under the raised lines.
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="1"}', values: '0x40' }
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="2"}', values: '0+600x40' }
+      - { series: 'http_request_duration_seconds_bucket{service="fms-backend",le="+Inf"}', values: '0+600x40' }
+      # Silent GPS, but no trip under way.
+      - { series: 'gps_last_point_age_seconds{instance="backend:9464"}', values: '900x40' }
+      - { series: 'trips_under_way{instance="backend:9464"}', values: '0x40' }
+      - { series: 'up{job="node",instance="node-exporter:9100"}', values: '1x40' }
+    alert_rule_test:
+      - { eval_time: 30m, alertname: HostCpuWarning, exp_alerts: [] }
+      - { eval_time: 30m, alertname: HostCpuCritical, exp_alerts: [] }
+      - { eval_time: 30m, alertname: ApiLatencyWarning, exp_alerts: [] }
+      - { eval_time: 30m, alertname: ApiLatencyCritical, exp_alerts: [] }
+      - { eval_time: 30m, alertname: GpsIngestionSilent, exp_alerts: [] }
+      - { eval_time: 30m, alertname: TargetDown, exp_alerts: [] }

@@ -10,6 +10,21 @@ import { ACTIVE_STATUSES, type AlertSeverity, type AlertStatus } from '../domain
 export const ESCALATION_GRACE_SECONDS = 5;
 
 /** An alert.alerts row: internal ids (other modules' too), Dates. */
+/** A post to a channel with no recipient (FMS-163), with what it says. */
+export interface ChannelPostRow {
+  id: string;
+  publicId: string;
+  kind: 'opened' | 'resolved';
+  attempts: number;
+  title: string;
+  message: string | null;
+  severity: string;
+  alertStatus: string;
+  entityType: string | null;
+  entityId: string | null;
+  alertType: string;
+}
+
 export interface AlertRow {
   id: string;
   publicId: string;
@@ -186,6 +201,32 @@ export class AlertRepository extends Repository {
   async update(client: PoolClient, ctx: MutationContext, id: string, data: Record<string, unknown>): Promise<AlertRow> {
     await this.mutate(ctx, 'alert.alerts', 'UPDATE', id, data, client);
     return (await this.findById(client, id))!;
+  }
+
+  /** An alert to post to the operations channel (FMS-163), once per kind: a repeat of the same kind changes nothing. */
+  async queueChannelPost(client: PoolClient, ctx: MutationContext, alertId: string, kind: 'opened' | 'resolved'): Promise<void> {
+    const exists = await client.query('SELECT 1 FROM alert.channel_posts WHERE alert_id = $1 AND channel = $2 AND kind = $3', [alertId, 'teams', kind]);
+    if (exists.rowCount) return;
+    await this.mutate(ctx, 'alert.channel_posts', 'INSERT', null, { alert_id: alertId, channel: 'teams', kind }, client);
+  }
+
+  /** Posts due now, oldest first, locked for this sender: with their alert's title, text, severity and subject. */
+  async dueChannelPosts(client: PoolClient, now: Date, limit: number): Promise<ChannelPostRow[]> {
+    const res = await client.query<ChannelPostRow>(
+      `SELECT p.id, p.public_id::text AS "publicId", p.kind, p.attempts, a.title, a.description AS message, a.severity::text AS severity,
+              a.status::text AS "alertStatus", a.entity_type AS "entityType", a.entity_id AS "entityId", a.alert_type AS "alertType"
+         FROM alert.channel_posts p JOIN alert.alerts a ON a.id = p.alert_id
+        WHERE p.status = 'queued' AND p.next_attempt_at <= $1
+        ORDER BY p.next_attempt_at, p.id
+        LIMIT $2
+        FOR UPDATE OF p SKIP LOCKED`,
+      [now, limit],
+    );
+    return res.rows;
+  }
+
+  async markChannelPost(client: PoolClient, ctx: MutationContext, id: string, data: Record<string, unknown>): Promise<void> {
+    await this.mutate(ctx, 'alert.channel_posts', 'UPDATE', id, data, client);
   }
 
   /** One line of an alert's history: who acknowledged or resolved it, when, and why. */

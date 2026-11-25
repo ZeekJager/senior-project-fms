@@ -19,9 +19,13 @@ import { PostgresJobLock } from './shared/jobs/job-lock';
 import { RedisJobLock } from './shared/jobs/redis-job-lock';
 import { startScheduler } from './shared/jobs/scheduler';
 import { logger } from './shared/logging/logger';
+import { initErrorTracking } from './shared/observability/error-tracking';
 
 /** The operating time zone: daily jobs run on Addis Ababa days. */
 const JOBS_TIME_ZONE = 'Africa/Addis_Ababa';
+
+// Error tracking (FMS-109): off without SENTRY_DSN.
+initErrorTracking(config.observability.sentry ? { ...config.observability.sentry, release: process.env.APP_VERSION } : null);
 
 const server = createServer(createApp());
 // Socket.IO on the same server and port, at /api/v1/socket.io (FMS-43).

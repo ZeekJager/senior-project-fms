@@ -440,6 +440,30 @@ jobs:
 
   # FMS-66: the documents a reader starts from (README.md, docs/USER_GUIDE.md, docs/DEFENCE_NOTES.md) pass markdownlint
   # with the repo's rules in .markdownlint-cli2.jsonc, and every screenshot they show exists.
+  # FMS-109, FMS-163 (docs/observability.md): every alert rule fires once on series made to pass its line (promtool test
+  # rules), and the Prometheus, Alertmanager and Compose configurations of the observability stack are valid.
+  observability:
+    name: observability-rules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Alert rules fire as tested
+        run: docker run --rm -v "$PWD/docker/observability/prometheus/rules:/rules" -w /rules --entrypoint promtool prom/prometheus:v2.53.2 test rules fms.rules.test.yml
+      - name: Prometheus and Alertmanager configurations
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/promsecrets && printf x > /tmp/promsecrets/ml-token
+          docker run --rm -v "$PWD/docker/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"             -v "$PWD/docker/observability/prometheus/rules:/etc/prometheus/rules:ro" -v /tmp/promsecrets:/prometheus/secrets:ro             --entrypoint promtool prom/prometheus:v2.53.2 check config /etc/prometheus/prometheus.yml
+          docker run --rm -v "$PWD/docker/observability/alertmanager:/a:ro" --entrypoint amtool prom/alertmanager:v0.27.0 check-config /a/alertmanager.yml
+      - name: The Compose overlay
+        run: |
+          set -euo pipefail
+          node scripts/init-env.mjs
+          docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
+      - name: Grafana's dashboards are JSON
+        run: for f in docker/observability/grafana/dashboards/*.json; do python3 -m json.tool "$f" >/dev/null; done
+
   docs-lint:
     name: docs-lint
     runs-on: ubuntu-24.04

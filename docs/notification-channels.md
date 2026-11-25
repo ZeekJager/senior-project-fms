@@ -15,6 +15,7 @@ The alert engine ([alerts.md](alerts.md)) still decides **who** hears about an a
 The rules are `CHANNELS_BY_SEVERITY` in `alert/domain/delivery.ts`.
 
 - **Escalations count too.** When a critical alert escalates, the next tier gets it on the same channels.
+- **Teams (FMS-163).** A monitoring alert ([observability.md](observability.md#alerts)) is also posted to one Microsoft Teams channel when it opens and when it resolves: a `notification` provider with `configuration.channel = "teams"`, whose Workflows webhook URL is its API key (`INTEGRATION_<CODE>_API_KEY`, never in the database) and must be on Microsoft's hosts. A post has no recipient: it is an `alert.channel_posts` row, sent by the `channel-post-delivery` job with the same attempts and waits as below.
 - **Channels must be on.** A channel is on when an active notification provider delivers it. A channel that is off queues nothing.
 - **Inactive users get nothing.** Neither do users already told about the alert.
 - **A driver's own alerts (FMS-149)** reach them in FMS and by push, whatever the severity, and never by email or SMS: their licence expiring, and the service due of the vehicle they drive next (`PERSONAL_CHANNELS`, [alerts.md](alerts.md#who-is-told)). A push opens `/driver`.
