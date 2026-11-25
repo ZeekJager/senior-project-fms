@@ -60,5 +60,22 @@ answering `502`, the breaker opens, and once it answers again the breaker closes
 
 - `GET /health/ready` takes about a second while Redis is down: it waits for its Redis ping to time out. Other routes
   answer as fast as before (a few milliseconds), so no change was made; a monitor polling readiness should allow 2 s.
+- **Redis down could stall new database connections** (seen twice in CI: readiness `503`, and a `GET /vehicles` with
+  no answer in 5 s). Once the Redis container stops, Docker's DNS no longer knows `redis`, and each lookup of it takes
+  about 4 s to fail. The API's 4 Redis clients (the main one, the Socket.IO adapter's two, the settings subscriber) keep
+  looking it up to reconnect, and Node runs lookups on a pool of 4 threads, so they filled it. Every other lookup waited
+  behind them, among them `db-proxy`'s when the pool opened a new database connection: readiness's `SELECT 1` passed its
+  2 s, and a request that needed a new connection passed the probe's 5 s. A request on an open connection was answered
+  in milliseconds, which is why it failed only now and then. Measured in the API container with the same 4 clients and a
+  lookup of `db-proxy` every 500 ms while Redis was stopped:
+
+  | Thread pool | Worst `db-proxy` lookup | Mean |
+  |---|---|---|
+  | 4 (Node's default) | 11.4 s | 6.7 s |
+  | 16 | 1.2 s | 0.2 s |
+  | 32 | 1 ms | 1 ms |
+
+  Both backend images set `UV_THREADPOOL_SIZE=32` (`packages/backend/Dockerfile` and `Dockerfile.dev`). An API run
+  outside Docker that should survive a Redis outage needs it too. The drill itself is the test.
 - The web app treated only the database's `503` as a passing outage; an API that did not answer (a restart, a proxy's
   `502`) showed the screens' own error states as if final. It now shows *Reconnecting…* for that too (FMS-111).
