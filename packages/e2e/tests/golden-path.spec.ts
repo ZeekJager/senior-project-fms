@@ -23,6 +23,7 @@ interface Ids {
   driver: string
   trip: string
   tripVersion: number
+  startedAt: number
 }
 
 /** A test.step whose failures carry its name, and whose API calls know which step they belong to. */
@@ -141,7 +142,11 @@ test('the golden path: inspection, repair, dispatch, GPS on the map, an alert ac
 
   await step('the technician repairs the truck, and the flag is cleared', async () => {
     const repair = await technician.post<{ id: string }>('/maintenance', { vehicle_id: ids.truck, maintenance_type: 'corrective', description: 'Replace the left tail light lens', labour_hours: 0.5, total_cost_cents: 45_000 }, 201)
-    const done = await technician.put<{ status: string }>(`/maintenance/${repair.data.id}`, { completed_at: new Date().toISOString() })
+    const done = await technician.put<{ status: string }>(`/maintenance/${repair.data.id}`, {
+      completed_at: new Date().toISOString(),
+      // A corrective repair says what failed (FMS-125).
+      failures: [{ component: 'electrical', failure_mode: 'breakage', unplanned: true, detected_by: 'dvir' }],
+    })
     expect(done.data.status).toBe('completed')
     await eventually('the flag cleared', async () => ((await dispatcher.get<{ maintenance_flag: boolean }>(`/vehicles/${ids.truck}`)).data.maintenance_flag ? undefined : true))
   })
@@ -154,12 +159,13 @@ test('the golden path: inspection, repair, dispatch, GPS on the map, an alert ac
   await step('the driver starts the trip', async () => {
     const started = await driver.post<{ status: string }>(`/trips/${ids.trip}/start`, {}, 200)
     expect(started.data.status).toBe('en_route')
+    ids.startedAt = Date.now()
   })
 
   await step('the phone sends its GPS, and the truck is on the dispatcher’s live map', async () => {
-    const now = Date.now()
+    // After the trip began (a ping before it is refused alone) and within the 2 minutes ahead a phone's clock may be.
     // Over 80 km/h for three pings: the speeding rule (FMS-46) flags it.
-    const pings = [-20_000, -10_000, 0].map((offset, i) => ({ recorded_at: new Date(now + offset).toISOString(), lat: AT.lat + i * 0.004, lng: AT.lng + i * 0.004, speed_kmh: 96, heading: 45, accuracy_m: 6 }))
+    const pings = [1_000, 2_000, 3_000].map((offset, i) => ({ recorded_at: new Date(ids.startedAt + offset).toISOString(), lat: AT.lat + i * 0.0002, lng: AT.lng + i * 0.0002, speed_kmh: 96, heading: 45, accuracy_m: 6 }))
     const res = await driver.post<{ accepted: number }>('/tracking/gps-pings', { pings }, 202)
     expect(res.data.accepted).toBe(3)
 
