@@ -18,6 +18,7 @@ import { driverColumns } from './columns'
 import { DriverFormDrawer } from './DriverFormDrawer'
 import { DriverFeedbackDrawer, type FeedbackTarget } from './DriverFeedbackDrawer'
 import { DriverIncidentsDrawer } from './DriverIncidentsDrawer'
+import { DriverAssignmentsDrawer } from './DriverAssignmentsDrawer'
 import { hasActiveFilters, readFilters, writeFilters, type DriverFilters, type SortKey } from './filters'
 import { RetireDriverDialog } from './RetireDriverDialog'
 import type { Driver, LicenseStatus } from './types'
@@ -51,6 +52,7 @@ export function DriversPage() {
   const canUploadDocs = hasPermission('document:write')
   const canDeleteDocs = hasPermission('document:delete')
   const canReadIncidents = hasPermission('incident:read')
+  const canReadAssignments = hasPermission('assignment:read')
   const canReadFeedback = hasPermission('feedback:read')
 
   function update(patch: Partial<DriverFilters>, options: { keepPage?: boolean } = {}) {
@@ -79,6 +81,7 @@ export function DriversPage() {
   const [retiring, setRetiring] = useState<Driver | null>(null)
   const [docsFor, setDocsFor] = useState<Driver | null>(null)
   const [incidentsFor, setIncidentsFor] = useState<Driver | null>(null)
+  const [assignmentsFor, setAssignmentsFor] = useState<Driver | null>(null)
   // FMS-158: a driver's feedback; also opened from a trip or elsewhere with ?feedback=<driver>&give=trip&trip=<trip>.
   const linked = useLinkedFeedback(params, canReadFeedback)
   const [feedbackFor, setFeedbackFor] = useState<FeedbackTarget | null>(null)
@@ -120,6 +123,8 @@ export function DriversPage() {
     onOpenDocuments: setDocsFor,
     canReadIncidents,
     onOpenIncidents: setIncidentsFor,
+    canReadAssignments,
+    onOpenAssignments: setAssignmentsFor,
     canReadFeedback,
     onOpenFeedback: (d) => setFeedbackFor({ driverId: d.id, name: d.full_name }),
   })
@@ -248,6 +253,7 @@ export function DriversPage() {
       />
       <RetireDriverDialog driver={retiring} onClose={() => setRetiring(null)} />
       <DriverIncidentsDrawer driver={incidentsFor} onClose={() => setIncidentsFor(null)} />
+      <DriverAssignmentsDrawer driver={assignmentsFor} onClose={() => setAssignmentsFor(null)} />
       <DriverFeedbackDrawer target={feedbackTarget} onClose={closeFeedback} />
       <DocumentsDrawer
         owner={docsFor && { type: 'driver', id: docsFor.id, label: docsFor.full_name }}

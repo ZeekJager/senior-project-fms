@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { EmptyState, ErrorState, StatusBadge, VehiclePhoto } from '@/components/shared'
 import { Badge, Skeleton, ViewTabs, type ViewOption } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
+import { AssignmentsPanel } from '@/features/assignments'
 import { useDepots } from '@/features/depots'
 import { HealthBadge } from '@/features/health/HealthBadge'
 import { ServiceDueBadge, useVehicleServiceDue } from '@/features/service-due'
@@ -21,7 +22,7 @@ import { ServiceDueSection } from './ServiceDueSection'
 import { TripsSection } from './TripsSection'
 import { WarrantySection } from './WarrantySection'
 
-type Section = 'repairs' | 'service' | 'warranty' | 'incidents' | 'trips' | 'fuel' | 'documents' | 'health'
+type Section = 'repairs' | 'service' | 'warranty' | 'incidents' | 'trips' | 'fuel' | 'documents' | 'health' | 'drivers'
 
 /**
  * S-22 Vehicle history (FMS-136): everything that happened to one vehicle, one section at a time: its repairs
@@ -47,6 +48,8 @@ export function VehicleHistoryPage() {
       { value: 'warranty', label: 'Warranty and recalls', allowed: hasPermission('maintenance:read') },
       // Its incidents, as on each driver's record (FMS-148, BR-9).
       { value: 'incidents', label: 'Incidents', allowed: hasPermission('incident:read') },
+      // Who normally drives it, apart from trips (FMS-77).
+      { value: 'drivers', label: 'Regular drivers', allowed: hasPermission('assignment:read') },
     ]
     return all.filter((s) => s.allowed)
   }, [hasPermission])
@@ -99,6 +102,8 @@ export function VehicleHistoryPage() {
           <TripsSection vehicle={vehicle.data} />
         ) : section === 'fuel' ? (
           <FuelSection vehicle={vehicle.data} />
+        ) : section === 'drivers' ? (
+          <AssignmentsPanel subject={{ kind: 'vehicle', id: vehicle.data.id }} depotId={vehicle.data.depot_id} name={vehicle.data.registration_number} />
         ) : section === 'documents' ? (
           <DocumentsSection vehicle={vehicle.data} />
         ) : (

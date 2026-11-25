@@ -1,5 +1,5 @@
 import { licenceLabel } from '@/lib/licence'
-import { ArrowRight, FileText, MapPin, MessageSquareText, Paperclip, Pencil, RotateCcw, Siren } from 'lucide-react'
+import { ArrowRight, FileText, MapPin, MessageSquareText, Paperclip, Pencil, RotateCcw, Siren, Truck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { StatusText, type Column } from '@/components/shared'
 import { Badge, Button, cn, Skeleton } from '@/components/ui'
@@ -22,6 +22,9 @@ export interface ColumnContext {
   /** feedback:read: the driver's feedback (FMS-158). */
   canReadFeedback: boolean
   onOpenFeedback: (driver: Driver) => void
+  /** assignment:read: the driver's regular vehicles (FMS-77). */
+  canReadAssignments: boolean
+  onOpenAssignments: (driver: Driver) => void
 }
 
 /** Today's attendance that makes a driver a dispatch risk: a warning, not a block (FMS-21). */
@@ -207,17 +210,25 @@ export function driverColumns(ctx: ColumnContext): Column<Driver>[] {
     })
   }
 
-  if (ctx.canWrite || ctx.canReadIncidents || ctx.canReadFeedback) {
+  if (ctx.canWrite || ctx.canReadIncidents || ctx.canReadFeedback || ctx.canReadAssignments) {
+    // Literal classes (Tailwind only generates what it finds written out), by how many actions a row can show.
+    const actions = [ctx.canReadFeedback, ctx.canReadIncidents, ctx.canReadAssignments, ctx.canWrite].filter(Boolean).length
+    const width = (['w-[128px]', 'w-[128px]', 'w-[200px]', 'w-[264px]', 'w-[336px]'] as const)[actions]
     columns.push({
       key: 'actions',
       header: <span className="sr-only">Actions</span>,
-      width: ctx.canReadFeedback ? (ctx.canWrite && ctx.canReadIncidents ? 'w-[264px]' : 'w-[200px]') : ctx.canWrite && ctx.canReadIncidents ? 'w-[168px]' : 'w-[128px]',
+      width,
       align: 'right',
       cell: (d) => (
         <div className="flex justify-end gap-1.5">
           {ctx.canReadFeedback && (
             <Button size="sm" variant="ghost" leadingIcon={<MessageSquareText className="h-3.5 w-3.5" />} aria-label={`Feedback to ${d.full_name}`} onClick={() => ctx.onOpenFeedback(d)}>
               <span className="sr-only sm:not-sr-only">Feedback</span>
+            </Button>
+          )}
+          {ctx.canReadAssignments && (
+            <Button size="sm" variant="ghost" leadingIcon={<Truck className="h-3.5 w-3.5" />} aria-label={`Regular vehicles of ${d.full_name}`} onClick={() => ctx.onOpenAssignments(d)}>
+              <span className="sr-only sm:not-sr-only">Vehicles</span>
             </Button>
           )}
           {ctx.canReadIncidents && (
