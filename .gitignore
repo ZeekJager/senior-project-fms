@@ -31,3 +31,7 @@ packages/ai-service/models/
 
 # OS
 .DS_Store
+
+# Playwright (FMS-63)
+packages/e2e/playwright-report/
+packages/e2e/test-results/
