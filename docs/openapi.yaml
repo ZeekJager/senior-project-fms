@@ -1091,8 +1091,8 @@ paths:
                 vehicle_id: { type: string, format: uuid }
                 assignment_type: { type: string, enum: [primary, temporary], default: primary }
                 start_at: { type: string, format: date-time }
-                end_at: { type: string, format: date-time, nullable: true }
-                notes: { type: string, maxLength: 1000, nullable: true }
+                end_at: { type: [string, 'null'], format: date-time }
+                notes: { type: [string, 'null'], maxLength: 1000 }
       responses:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -9355,19 +9355,18 @@ components:
         status: { type: string, enum: [queued, running, succeeded, failed, expired] }
         database_name: { type: string }
         requested_by:
-          type: object
-          nullable: true
+          type: [object, 'null']
           description: Who pressed Back up now; null for the nightly one.
           properties:
             id: { type: string, format: uuid }
             name: { type: string }
         requested_at: { type: string, format: date-time }
-        started_at: { type: string, format: date-time, nullable: true }
-        finished_at: { type: string, format: date-time, nullable: true }
-        size_bytes: { type: integer, nullable: true }
-        checksum_sha256: { type: string, nullable: true, pattern: '^[0-9a-f]{64}$' }
-        error: { type: string, nullable: true, description: "pg_dump's own words, for a failed backup." }
-        expires_at: { type: string, format: date-time, nullable: true, description: When the file is removed (succeeded), or was (expired). }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        size_bytes: { type: [integer, 'null'] }
+        checksum_sha256: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
+        error: { type: [string, 'null'], description: "pg_dump's own words, for a failed backup." }
+        expires_at: { type: [string, 'null'], format: date-time, description: When the file is removed (succeeded), or was (expired). }
         downloadable: { type: boolean }
     BackupsMeta:
       type: object
@@ -9379,10 +9378,9 @@ components:
         total_pages: { type: integer }
         available: { type: boolean, description: Whether this server can take a backup (pg_dump's credentials are set). }
         retention_days: { type: integer }
-        last_succeeded_at: { type: string, format: date-time, nullable: true }
+        last_succeeded_at: { type: [string, 'null'], format: date-time }
         last_restore_drill:
-          type: object
-          nullable: true
+          type: [object, 'null']
           properties:
             id: { type: string, format: uuid }
             backup_id: { type: string, format: uuid }
@@ -9390,8 +9388,8 @@ components:
             status: { type: string, enum: [succeeded, failed] }
             started_at: { type: string, format: date-time }
             finished_at: { type: string, format: date-time }
-            tables_restored: { type: integer, nullable: true }
-            error: { type: string, nullable: true }
+            tables_restored: { type: [integer, 'null'] }
+            error: { type: [string, 'null'] }
             run_by: { type: string }
         pitr: { $ref: '#/components/schemas/PitrOverview' }
         request_id: { type: string, format: uuid }
@@ -9404,15 +9402,15 @@ components:
       required: [enabled, recoverable_from, recoverable_to, archiving, repositories, last_base_backup_at, last_drill, findings]
       properties:
         enabled: { type: boolean, description: Whether the database archives its WAL. }
-        recoverable_from: { type: string, format: date-time, nullable: true }
-        recoverable_to: { type: string, format: date-time, nullable: true }
+        recoverable_from: { type: [string, 'null'], format: date-time }
+        recoverable_to: { type: [string, 'null'], format: date-time }
         archiving:
           type: object
           required: [last_archived_at, last_failed_at, failing_since]
           properties:
-            last_archived_at: { type: string, format: date-time, nullable: true }
-            last_failed_at: { type: string, format: date-time, nullable: true }
-            failing_since: { type: string, format: date-time, nullable: true, description: 'The last success, while every attempt since has failed.' }
+            last_archived_at: { type: [string, 'null'], format: date-time }
+            last_failed_at: { type: [string, 'null'], format: date-time }
+            failing_since: { type: [string, 'null'], format: date-time, description: 'The last success, while every attempt since has failed.' }
         repositories:
           type: array
           items:
@@ -9422,37 +9420,35 @@ components:
               repo: { type: integer }
               location: { type: string, enum: [local, offsite] }
               status: { type: string, enum: [ok, error] }
-              message: { type: string, nullable: true }
+              message: { type: [string, 'null'] }
               encrypted: { type: boolean }
               base_backups: { type: integer }
-              recoverable_from: { type: string, format: date-time, nullable: true }
-              recoverable_to: { type: string, format: date-time, nullable: true }
+              recoverable_from: { type: [string, 'null'], format: date-time }
+              recoverable_to: { type: [string, 'null'], format: date-time }
               checked_at: { type: string, format: date-time }
-        last_base_backup_at: { type: string, format: date-time, nullable: true }
+        last_base_backup_at: { type: [string, 'null'], format: date-time }
         last_drill:
-          type: object
-          nullable: true
+          type: [object, 'null']
           required: [id, base_backup_label, recovery_target, status, started_at, finished_at, tables_restored, rto_seconds, checks, error, run_by]
           properties:
             id: { type: string, format: uuid }
             base_backup_label: { type: string }
-            recovery_target: { type: string, nullable: true }
+            recovery_target: { type: [string, 'null'] }
             status: { type: string, enum: [succeeded, failed] }
             started_at: { type: string, format: date-time }
             finished_at: { type: string, format: date-time }
-            tables_restored: { type: integer, nullable: true }
-            rto_seconds: { type: integer, nullable: true, description: From the start of the restore to the database opening. }
+            tables_restored: { type: [integer, 'null'] }
+            rto_seconds: { type: [integer, 'null'], description: From the start of the restore to the database opening. }
             checks:
-              type: array
-              nullable: true
+              type: [array, 'null']
               items:
                 type: object
                 properties:
                   table: { type: string }
                   live_rows: { type: integer }
-                  restored_rows: { type: integer, nullable: true }
+                  restored_rows: { type: [integer, 'null'] }
                   match: { type: boolean }
-            error: { type: string, nullable: true }
+            error: { type: [string, 'null'] }
             run_by: { type: string }
         findings:
           type: array
@@ -9464,7 +9460,7 @@ components:
                 type: string
                 enum: [archiving_failing, repository_unreachable, offsite_behind, status_stale, base_backup_missing, drill_failed, drill_overdue]
               severity: { type: string, enum: [critical, high] }
-              repo: { type: integer, nullable: true }
+              repo: { type: [integer, 'null'] }
               since: { type: string, format: date-time }
               message: { type: string }
     BaseBackup:
@@ -9473,17 +9469,17 @@ components:
       required: [id, label, type, triggered_by, repo, location, status, started_at, finished_at, size_bytes, repo_size_bytes, error]
       properties:
         id: { type: string, format: uuid }
-        label: { type: string, nullable: true }
+        label: { type: [string, 'null'] }
         type: { type: string, enum: [full, diff, incr] }
         triggered_by: { type: string, enum: [schedule, first-start, manual] }
         repo: { type: integer, description: 'The repository it went to: 1 beside the database, 2 off site.' }
         location: { type: string, enum: [local, offsite] }
         status: { type: string, enum: [running, succeeded, failed, expired] }
         started_at: { type: string, format: date-time }
-        finished_at: { type: string, format: date-time, nullable: true }
-        size_bytes: { type: integer, nullable: true, description: The database's size when it was taken. }
-        repo_size_bytes: { type: integer, nullable: true, description: What it added to the repository, compressed. }
-        error: { type: string, nullable: true }
+        finished_at: { type: [string, 'null'], format: date-time }
+        size_bytes: { type: [integer, 'null'], description: The database's size when it was taken. }
+        repo_size_bytes: { type: [integer, 'null'], description: What it added to the repository, compressed. }
+        error: { type: [string, 'null'] }
     PhotoUrl:
       type: object
       required: [photo_url]
@@ -12844,7 +12840,7 @@ components:
           required: [id, full_name]
           properties:
             id: { type: string, format: uuid }
-            full_name: { type: string, nullable: true }
+            full_name: { type: [string, 'null'] }
         vehicle:
           type: object
           required: [id, registration_number]
@@ -12854,10 +12850,10 @@ components:
         depot_id: { type: string, format: uuid }
         assignment_type: { type: string, enum: [primary, temporary] }
         start_at: { type: string, format: date-time }
-        end_at: { type: string, format: date-time, nullable: true }
+        end_at: { type: [string, 'null'], format: date-time }
         status: { type: string, enum: [active, ended, cancelled] }
         current: { type: boolean, description: 'Active, started, and not yet at its end.' }
-        notes: { type: string, nullable: true }
+        notes: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
     MeterReading:
       type: object
