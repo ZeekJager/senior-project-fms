@@ -238,6 +238,17 @@ export type AssignmentWarning =
       warning: 'DRIVER_ATTENDANCE';
       field: 'driver_id';
       attendance: 'absent' | 'on_leave' | 'sick';
+    }
+  | {
+      /**
+       * FMS-98: the electric vehicle's estimated range now is below the trip's planned distance. Only ever a warning
+       * (never held for approval): the vehicle may charge before it leaves.
+       */
+      warning: 'EV_RANGE_SHORT';
+      field: 'vehicle_id';
+      range_km: number;
+      trip_km: number;
+      state_of_charge: number;
     };
 
 /** A position in the history order: the trip's start (microseconds, UTC) and id. */

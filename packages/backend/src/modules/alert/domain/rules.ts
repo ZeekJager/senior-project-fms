@@ -528,7 +528,18 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
     }),
     windowMinutes: HOUR,
     title: (_p, n) => `Battery alert on ${vehicleName(n)}`,
-    message: (p) => `${capitalize(humanize(str(p, 'metric') ?? 'battery'))} is past its limit${num(p, 'value') !== null && num(p, 'threshold') !== null ? ` (${num(p, 'value')} against ${num(p, 'threshold')})` : ''}.`,
+    // FMS-98's metrics read as what they mean; any other as before.
+    message: (p) => {
+      const value = num(p, 'value');
+      const threshold = num(p, 'threshold');
+      const metric = str(p, 'metric');
+      if (value !== null && threshold !== null) {
+        if (metric === 'state_of_charge') return `Charge is down to ${value}%, below ${threshold}%.`;
+        if (metric === 'battery_health') return `Battery health is ${value}%, below ${threshold}%: the battery is wearing out.`;
+        if (metric === 'range') return `Range of ${value} km is short of the ${threshold} km left on its trip.`;
+      }
+      return `${capitalize(humanize(metric ?? 'battery'))} is past its limit${value !== null && threshold !== null ? ` (${value} against ${threshold})` : ''}.`;
+    },
     audience: ['dispatcher', 'depot_admin'],
   },
 

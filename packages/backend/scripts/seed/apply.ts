@@ -402,6 +402,10 @@ async function writeEv(api: SeedApi, ev: EvPlan, ids: PublicIds, ctx: MutationCo
   });
   log(`charging stations: ${stations.length} (synthetic)`);
 
+  // Each EV's battery spec (FMS-98): its model's capacity, so its range is estimated from the spec.
+  for (const v of ev.vehicles) await api.call('PUT', `/vehicles/${ids.vehicles[v.vehicle]}/battery-spec`, { usable_capacity_kwh: v.capacityKwh });
+  log(`battery specs: ${ev.vehicles.length}`);
+
   await inParallel(ev.logs, concurrency, async (l) => {
     const { vehicle, ...reading } = l;
     await api.post('/ev/battery-logs', { ...reading, vehicle_id: ids.vehicles[vehicle], source: 'synthetic' });

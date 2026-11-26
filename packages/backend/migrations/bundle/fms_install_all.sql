@@ -4907,3 +4907,35 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 INSERT INTO integration.external_providers (code, name, provider_type, is_active, configuration)
 VALUES ('simulated', 'Simulated charging network', 'ev_charging', FALSE, '{}'::JSONB)
 ON CONFLICT (code) DO NOTHING;
+
+-- ===== 085_ev_range.sql =====
+CREATE TABLE IF NOT EXISTS ev.battery_specs (
+    id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    vehicle_id           BIGINT NOT NULL UNIQUE REFERENCES fleet.vehicles(id)
+                         ON DELETE RESTRICT ON UPDATE CASCADE,
+    usable_capacity_kwh  NUMERIC(8,2) NOT NULL CHECK (usable_capacity_kwh > 0 AND usable_capacity_kwh <= 2000),
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE TRIGGER trg_ev_battery_specs_updated_at
+    BEFORE UPDATE ON ev.battery_specs
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+-- The runtime role, as every ev table (migration 013 granted the ones that existed then).
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        GRANT SELECT, INSERT, UPDATE ON ev.battery_specs TO fms_app;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ev TO fms_app;
+    END IF;
+END $$;
+
+INSERT INTO settings.definitions (key, label, category, description, type, default_value, rules, is_system, storage) VALUES
+    ('ev_low_soc_pct', 'Low charge', 'EV',
+     'A battery reading below this state of charge raises a battery alert for the vehicle.',
+     'integer', '20', '{"min": 5, "max": 60, "unit": "%"}', TRUE, 'settings'),
+    ('ev_battery_health_min_pct', 'Battery health', 'EV',
+     'A battery whose state of health falls below this raises a degradation alert.',
+     'integer', '80', '{"min": 50, "max": 99, "unit": "%"}', TRUE, 'settings')
+ON CONFLICT DO NOTHING;

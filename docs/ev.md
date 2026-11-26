@@ -22,7 +22,8 @@ vehicles in their depots. Stations are shared by every depot.
 | `POST /ev/charging-sessions` | `ev:write` | A session, `planned` or started now (`in_progress`), at a station or not |
 | `PATCH /ev/charging-sessions/{id}` | `ev:write` | Its figures (energy, cost, state of charge at start and end, times, station) and its status |
 | `GET /vehicles/{id}/charging-sessions` | `ev:read` | A vehicle's sessions, newest first |
-| `GET /vehicles/{id}/battery-summary` | `ev:read` | The latest state, the state-of-charge trend and the health (below) |
+| `GET /vehicles/{id}/battery-summary` | `ev:read` | The latest state, the state-of-charge trend, the health and the range (below) |
+| `PUT /vehicles/{id}/battery-spec` | `ev:write` | Its usable battery capacity when new, kWh ([range](#range), FMS-98) |
 
 **Only electric vehicles** (`fuel_type: electric`) take battery logs or charging sessions, or have a battery summary:
 any other is `400`, `not_electric`. A retired vehicle takes neither (`409`, `vehicle_retired`). Money is whole cents.
@@ -56,7 +57,9 @@ planned ──► in_progress ──► completed
 - `soc_trend`: one point per Addis Ababa day with observations, oldest first: average, minimum, maximum and how many;
 - `health`: the battery's state of health now, at the start of the period, and the `change` between them (a negative
   change is wear);
-- `charging`: the sessions completed in the period, the energy they took and what they cost.
+- `charging`: the sessions completed in the period, the energy they took and what they cost;
+- `range`: the range now ([below](#range)), or `null` with `range_gap` saying why; `battery_spec`: the capacity set,
+  or `null`.
 
 ## Audit and events
 
@@ -171,3 +174,55 @@ stored; this module's consumer (`ev.charging-webhooks`) then applies it on the e
 
 The relay delivers within 200 ms when idle ([events.md](events.md)), so a reported session is on the vehicle's
 sessions, and the EV dashboard, within a second or two of the provider's delivery.
+
+## Range
+
+Card FMS-98 (SE-142), architecture §13. `src/modules/ev/domain/range.ts`, in whole numbers:
+
+```text
+range (km) = state of charge × usable capacity × battery health ÷ consumption (Wh/km), rounded down
+```
+
+- **State of charge:** the vehicle's newest battery reading.
+- **Consumption:** its own, the mean of the energy per km (`energy_wh_per_km`) of its readings in the last 30 days,
+  rounded to whole Wh/km. Fewer than 3 such readings and there is no range (`range_gap: no_consumption`).
+- **Usable capacity:** the vehicle's battery spec when new (`PUT /vehicles/{id}/battery-spec`, `ev.battery_specs`,
+  migration 085; audited, `BatterySpecSet`), scaled by its newest battery health. Without a spec, it is estimated from
+  its completed charging sessions of the last 90 days that added at least 20 points: the energy into the battery (92%
+  of the charger's) over the share filled, their median. That already reflects the battery's health, which is not
+  applied again (`capacity_source: sessions`). Neither, and there is no range (`no_capacity`).
+- **Arithmetic:** charge and health in hundredths of a percent, the capacity in Wh: integers throughout, below 2^53.
+
+The figures are demonstrative while the data is synthetic ([below](#synthetic-data)). The seed sets each EV's spec from
+its model's profile.
+
+**Where it shows:**
+
+- `GET /vehicles/{id}/battery-summary`: `range`, `range_gap`, `battery_spec`.
+- **Assignment** (`POST /trips/{id}/assign`, and its approval): an electric vehicle whose range now is below the trip's
+  planned distance is assigned with the warning `EV_RANGE_SHORT` (`range_km`, `trip_km`, `state_of_charge`) in
+  `meta.warnings`. It only warns, whatever the depot's exception policies: the vehicle may charge before it leaves
+  ([assignment-exceptions.md](assignment-exceptions.md)). No estimate, or no planned distance, no warning.
+- **The dispatch console** (S-07): `GET /dispatch/availability` gives each EV its `ev_range`. Its card reads *Range
+  about 120 km · 30%*, amber with *short of the 180 km trip* when it cannot cover the trip being staffed, and the
+  assignment panel says so before the dispatcher assigns.
+
+## Alerts
+
+Each battery reading (`BatteryLogged`, consumer `ev.battery-thresholds`) is checked, and a threshold crossed publishes
+`BatteryThresholdExceeded`. The alert engine's `battery` rule makes it an alert for the dispatchers and depot admins
+(the vehicle and metric, 60-minute window; [alerts.md](alerts.md)).
+
+| Metric | When | Severity | Message |
+|---|---|---|---|
+| `state_of_charge` | Below `ev_low_soc_pct` (20%) | high; critical below half of it | *Charge is down to 18%, below 20%.* |
+| `battery_health` | Below `ev_battery_health_min_pct` (80%) | medium | *Battery health is 79.2%, below 80%: the battery is wearing out.* |
+| `range` | On a trip under way, the range is short of the km left (its latest arrival estimate's, else the planned distance) | high; critical below half | *Range of 200 km is short of the 300 km left on its trip.* |
+
+- **Once.** The charge and health alerts fire when a reading crosses the line, not while the battery stays below it:
+  the reading before was not below. Charging above it and falling again fires again.
+- **Fresh readings only.** A reading recorded more than 6 hours ago raises nothing, so loading history (the
+  generator, a late upload) is no alert storm.
+- **Thresholds** are settings ([settings.md](settings.md)), read at each reading.
+- **Idempotent.** Each event's id is fixed by the reading and the metric, so a redelivered `BatteryLogged` publishes
+  nothing new. The events have no actor.

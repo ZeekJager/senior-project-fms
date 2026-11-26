@@ -32,6 +32,8 @@ export interface PlannedEvVehicle {
   scenario: EvScenario;
   /** Index into SIM_STATIONS: where it usually charges. */
   homeStation: number;
+  /** Its model's usable capacity when new, kWh: its battery spec (FMS-98). */
+  capacityKwh: number;
 }
 
 export interface PlannedBatteryLog {
@@ -109,7 +111,7 @@ export function buildEvPlan(plan: SeedPlan, days = EV_HISTORY_DAYS): EvPlan {
     const scenario: EvScenario = n < EV_SCENARIOS.length ? EV_SCENARIOS[n] : rng.weighted({ normal: 7, fast_degradation: 1, low_charge: 1, unreliable_charging: 1 });
     const usable = SIM_STATIONS.map((s, k) => ({ s, k })).filter(({ s }) => canUse(profile, s));
     const homeStation = rng.pick(usable).k;
-    vehicles.push({ vehicle: i, scenario, homeStation });
+    vehicles.push({ vehicle: i, scenario, homeStation, capacityKwh: profile.capacityKwh });
 
     let health = round(scenario === 'fast_degradation' ? rng.between(93, 97) : rng.between(94, 99), 2);
     const loss = rng.between(...HEALTH_LOSS_PER_DAY[scenario]);

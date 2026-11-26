@@ -63,6 +63,7 @@ const QUERIES: Record<string, string> = {
           FROM tracking.gps_pings p JOIN fleet.vehicles v ON v.id = p.vehicle_id
          GROUP BY v.registration_number ORDER BY v.registration_number`,
   // EV synthetic data (FMS-97, --with-ev): empty without it.
+  ev_specs: 'SELECT v.registration_number, s.usable_capacity_kwh FROM ev.battery_specs s JOIN fleet.vehicles v ON v.id = s.vehicle_id ORDER BY 1',
   ev_stations: 'SELECT external_station_id, name, latitude, longitude, connector_type, power_kw, status, source FROM ev.charging_stations ORDER BY external_station_id',
   ev_battery_logs: `SELECT v.registration_number, l.recorded_at, l.state_of_charge, l.battery_health, l.battery_temperature_c, l.voltage_v, l.current_a,
                            l.estimated_range_km, l.energy_wh_per_km, l.source

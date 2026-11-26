@@ -93,6 +93,19 @@ export interface BoardTripRisk {
 }
 
 /** The trip risk model, as the board asks it; connected by src/modules/index.ts (the analytics module's tripRisk). */
+/** An electric vehicle's range now on the board (FMS-98): the EV module's estimate. */
+export interface BoardEvRange {
+  range_km: number;
+  state_of_charge: number;
+  recorded_at: Date;
+  wh_per_km: number;
+}
+
+/** The EV module's range estimates (FMS-98), by vehicle internal id; vehicles without one are left out. */
+export interface EvRangeProvider {
+  forVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, BoardEvRange>>;
+}
+
 export interface TripRiskProvider {
   forTrip(tripPublicId: string, driverPublicIds: readonly string[], correlationId: string): Promise<{ summary: BoardTripRisk; drivers: Map<string, DriverTripRisk> }>;
 }
@@ -170,6 +183,8 @@ export interface BoardVehicle {
   /** Preventive service due or overdue (FMS-129); null when none is. */
   service_due: ServiceDueSummary | null;
   current_trip: { trip_id: string; end: Date } | null;
+  /** An electric vehicle's range now (FMS-98); null for any other, or without an estimate. */
+  ev_range: BoardEvRange | null;
 }
 
 export interface DispatchBoard {
