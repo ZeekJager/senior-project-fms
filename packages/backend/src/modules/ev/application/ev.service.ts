@@ -15,6 +15,7 @@ import {
   canMove,
   duplicateExternalSession,
   evVehicleMissing,
+  byChargeAscending,
   evVehicleNotFound,
   evVehicleRetired,
   illegalTransition,
@@ -26,6 +27,7 @@ import {
   stationNotFound,
   type BatteryLogView,
   type BatterySummary,
+  type EvFleetVehicle,
   type RecordSource,
   type SessionStatus,
   type SessionView,
@@ -44,6 +46,11 @@ export interface EvVehicles {
   lock(client: PoolClient, publicId: string, scope: Scope): Promise<{ id: string; isActive: boolean; status: string; fuelType: string } | null>;
   idsInScope(db: Queryable, scope: Scope): Promise<string[] | null>;
   refsByIds(db: Queryable, ids: readonly string[]): Promise<Map<string, { publicId: string; registrationNumber: string }>>;
+  /** FMS-99: the scope's electric vehicles in service, by plate. */
+  electricInScope(
+    db: Queryable,
+    scope: Scope,
+  ): Promise<{ id: string; publicId: string; registrationNumber: string; make: string; model: string; depotId: string | null; depotName: string | null }[]>;
 }
 
 export interface BatteryLogCreate {
@@ -379,6 +386,56 @@ export class EvService {
       const vehicle = await vehicles.find(client, vehiclePublicId, depotScope(caller.user));
       if (!vehicle) throw evVehicleMissing();
       const { rows, total } = await ev.sessionsOf(client, vehicle.id, query);
+      return { items: await this.sessionViews(client, rows), total };
+    });
+  }
+
+  /**
+   * GET /ev/fleet (FMS-99): the caller's electric vehicles in service, or one depot's, each with its newest battery
+   * reading and the session charging it now, lowest charge first.
+   */
+  async fleet(caller: Caller, query: { depot_id?: string }): Promise<EvFleetVehicle[]> {
+    const { ev, vehicles } = this.deps;
+    return ev.inTransaction(async (client) => {
+      const all = await vehicles.electricInScope(client, depotScope(caller.user));
+      const list = query.depot_id ? all.filter((v) => v.depotId === query.depot_id) : all;
+      const ids = list.map((v) => v.id);
+      const logs = await ev.latestLogs(client, ids);
+      const sessions = await ev.chargingSessions(client, ids);
+      return list
+        .map((v): EvFleetVehicle => {
+          const log = logs.get(v.id);
+          const session = sessions.get(v.id);
+          return {
+            vehicle_id: v.publicId,
+            registration_number: v.registrationNumber,
+            make: v.make,
+            model: v.model,
+            depot: v.depotId ? { id: v.depotId, name: v.depotName ?? '' } : null,
+            latest: log
+              ? { state_of_charge: log.state_of_charge, battery_health: log.battery_health, estimated_range_km: log.estimated_range_km, recorded_at: log.recorded_at, source: log.source }
+              : null,
+            charging: session ? { id: session.id, station: session.station, started_at: session.started_at, start_soc: session.start_soc, source: session.source } : null,
+          };
+        })
+        .sort(byChargeAscending);
+    });
+  }
+
+  /** GET /ev/charging-sessions (FMS-99): the sessions of the caller's vehicles, or one's, newest first. */
+  async sessions(
+    caller: Caller,
+    query: { vehicle_id?: string; status?: SessionStatus; from?: Date; to?: Date } & Page,
+  ): Promise<{ items: SessionView[]; total: number }> {
+    const { ev, vehicles } = this.deps;
+    return ev.inTransaction(async (client) => {
+      const scope = depotScope(caller.user);
+      let vehicleIds: string[] | null;
+      if (query.vehicle_id) {
+        const vehicle = await vehicles.find(client, query.vehicle_id, scope);
+        vehicleIds = vehicle ? [vehicle.id] : [];
+      } else vehicleIds = await vehicles.idsInScope(client, scope);
+      const { rows, total } = await ev.sessions(client, { ...query, vehicleIds });
       return { items: await this.sessionViews(client, rows), total };
     });
   }

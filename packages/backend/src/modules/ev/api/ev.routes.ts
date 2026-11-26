@@ -56,6 +56,14 @@ const sessionUpdate = z
   .refine((v) => Object.keys(v).length > 0, { message: 'Send at least one field to change.', params: { reason: 'empty_update' } });
 
 const sessionsQuery = z.strictObject({ ...pageQuery, status: z.enum(SESSION_STATUSES).optional() });
+const fleetQuery = z.strictObject({ depot_id: z.uuid().optional() });
+const fleetSessionsQuery = z.strictObject({
+  ...pageQuery,
+  vehicle_id: z.uuid().optional(),
+  status: z.enum(SESSION_STATUSES).optional(),
+  from: instant.optional(),
+  to: instant.optional(),
+});
 const summaryQuery = z.strictObject({ days: z.coerce.number().int().min(1).max(SUMMARY_DAYS_MAX).default(SUMMARY_DAYS_DEFAULT) });
 
 function caller(req: Request): Caller {
@@ -99,6 +107,27 @@ export function evRouter(service: EvService): Router {
       const query = parseInput(stationsQuery, req.query);
       const { rows, total } = await service.stations(query);
       res.json({ data: rows, meta: { ...pageMeta(query, total), request_id: req.correlationId } });
+    }),
+  );
+
+  // FMS-99: the EV dashboard's list, lowest charge first, and the fleet's charging sessions.
+  router.get(
+    '/ev/fleet',
+    authorize('ev:read'),
+    asyncHandler(async (req, res) => {
+      const items = await service.fleet(caller(req), parseInput(fleetQuery, req.query));
+      const charging = items.filter((v) => v.charging !== null).length;
+      res.json({ data: items, meta: { count: items.length, charging_now: charging, request_id: req.correlationId } });
+    }),
+  );
+
+  router.get(
+    '/ev/charging-sessions',
+    authorize('ev:read'),
+    asyncHandler(async (req, res) => {
+      const query = parseInput(fleetSessionsQuery, req.query);
+      const { items, total } = await service.sessions(caller(req), query);
+      res.json({ data: items, meta: { ...pageMeta(query, total), request_id: req.correlationId } });
     }),
   );
 

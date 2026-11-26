@@ -22,7 +22,7 @@ const grants = seededRoles()
 const viewer = (role: string): Viewer => ({ roles: [role], permissions: grants.get(role)! })
 const menu = (role: string) => Object.fromEntries(navSections(viewer(role)).map((s) => [s.portal.name, s.routes.map((r) => r.nav!.label)]))
 
-const FLEET_ALL = ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Recalls', 'Vehicle health', 'Spare parts', 'Routes', 'Fuel reconciliation', 'Reports', 'KPIs', 'Score appeals', 'Availability']
+const FLEET_ALL = ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Recalls', 'Vehicle health', 'Spare parts', 'Routes', 'EV fleet', 'Fuel reconciliation', 'Reports', 'KPIs', 'Score appeals', 'Availability']
 
 describe('menus per role (seeded grants)', () => {
   it('reads all nine roles from the permission matrix', () => {
@@ -43,7 +43,7 @@ describe('menus per role (seeded grants)', () => {
       'compliance_officer',
       { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Attendance', 'Repair log', 'Service programs', 'Recalls', 'Vehicle health', 'Routes', 'Fuel reconciliation', 'Reports', 'KPIs', 'Score appeals', 'Availability'], 'Command center': ['Geofences'], Administration: ['Users & roles', 'Audit log'] },
     ],
-    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Service programs', 'Recalls', 'Vehicle health', 'Routes', 'Reports', 'KPIs', 'Availability'], 'Command center': ['Live map', 'Geofences'], Administration: ['Audit log', 'Depots'] }],
+    ['fleet_owner', { 'Fleet management': ['Dashboard', 'Vehicles', 'Drivers', 'Repair log', 'Service programs', 'Recalls', 'Vehicle health', 'Routes', 'EV fleet', 'Reports', 'KPIs', 'Availability'], 'Command center': ['Live map', 'Geofences'], Administration: ['Audit log', 'Depots'] }],
     ['driver', { Driver: ['My day', 'Check in', 'Inspection', 'Fuel', 'Incident'] }],
   ])('%s sees exactly the screens its permissions open', (role, expected) => {
     expect(menu(role)).toEqual(expected)

@@ -54,6 +54,11 @@ const SAMPLES: Record<string, (w: World) => Record<string, unknown>> = {
   // FMS-151: an assignment held for approval, and the decision. They name the trip, not a driver to send to.
   AssignmentExceptionRequested: (w) => ({ trip_id: w.trip, exception_id: '00000000-0000-4000-8000-000000000151', warnings: ['DRIVER_ATTENDANCE'] }),
   AssignmentExceptionDecided: (w) => ({ trip_id: w.trip, exception_id: '00000000-0000-4000-8000-000000000151', decision: 'refused', reason: 'No' }),
+  // FMS-99: the EV events name only the vehicle; its depot is looked up.
+  ...Object.fromEntries(
+    ['ChargingSessionStarted', 'ChargingSessionCompleted', 'ChargingSessionFailed'].map((t) => [t, (w: World) => ({ charging_session_id: crypto.randomUUID(), vehicle_id: w.vehicle, status: 'in_progress' })]),
+  ),
+  BatteryLogged: (w) => ({ battery_log_id: crypto.randomUUID(), vehicle_id: w.vehicle, state_of_charge: 18, source: 'synthetic', recorded_at: new Date().toISOString() }),
 };
 
 const envelope = (type: string, payload: Record<string, unknown>) => ({
@@ -82,7 +87,7 @@ describe('the forwarded events (FMS-59)', () => {
 
   test("no depot A room, of any role's seeded grants, is a room a depot B event goes to; nor another driver's", async () => {
     const b: World = { depot: 'depot-b', vehicle: 'vehicle-b', driver: 'driver-b', user: 'user-b', trip: 'trip-b' };
-    const lookups = { tripSummary: async () => ({ depot_id: b.depot, driver_id: b.driver }) };
+    const lookups = { tripSummary: async () => ({ depot_id: b.depot, driver_id: b.driver }), vehicleDepot: async () => b.depot };
     const deliveries = (await Promise.all(FORWARDED_TYPES.map((type) => deliveriesFor(envelope(type, SAMPLES[type](b)), lookups)))).flat();
     expect(deliveries.length).toBeGreaterThanOrEqual(FORWARDED_TYPES.length);
     const targeted = new Set(deliveries.flatMap(roomsOf));

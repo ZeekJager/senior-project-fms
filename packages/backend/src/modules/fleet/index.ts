@@ -56,7 +56,7 @@ import type { OpenWorkSummary, ServiceDueSummary, TripRiskProvider } from './dom
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
 import { attendanceCodeKey } from './domain/attendance-code';
-import { depotAttendanceRules, depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope } from './infrastructure/depot.queries';
+import { depotAttendanceRules, depotPublicIdByCode, depotPublicIds, findDepotPublicId, resolveDepotInScope, vehicleDepotPublicId } from './infrastructure/depot.queries';
 import { AttendanceRepository } from './infrastructure/attendance.repository';
 import { availabilityStore } from './infrastructure/availability.repository';
 import { DepotRepository } from './infrastructure/depot.repository';
@@ -490,6 +490,8 @@ export const evRefs = {
     lock: (client: PoolClient, publicId: string, scope: Scope) => vehicleRepository.lockForWrite(client, publicId, scope),
     idsInScope: (db: Queryable, scope: Scope) => vehicleRepository.idsInScope(db, scope),
     refsByIds: (db: Queryable, ids: readonly string[]) => vehicleRepository.refsByIds(db, ids),
+    /** FMS-99: the scope's electric vehicles in service, for the EV dashboard. */
+    electricInScope: (db: Queryable, scope: Scope) => vehicleRepository.electricInScope(db, scope),
   },
 };
 
@@ -634,6 +636,9 @@ export const fleetModule: AppModule = {
 };
 
 /** Depot lookups other modules need; the auth module uses it for /auth/me. */
+/** For the socket (FMS-99): the public id of a vehicle's depot, by the vehicle's public id. */
+export const vehicleDepotOf = (vehiclePublicId: string): Promise<string | null> => vehicleDepotPublicId(pool, vehiclePublicId);
+
 export const depotDirectory: DepotDirectory = {
   publicIdOf: (depotId) => findDepotPublicId(pool, depotId),
   resolveActive: (publicId, db = pool) => resolveDepotInScope(db, publicId, { kind: 'all' }),

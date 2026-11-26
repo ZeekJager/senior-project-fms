@@ -7,6 +7,16 @@ export async function findDepotPublicId(db: Queryable, depotId: string): Promise
   return res.rows[0]?.public_id ?? null;
 }
 
+/** The public id of a vehicle's depot, by the vehicle's public id (FMS-99, the socket's EV events); null without one. */
+export async function vehicleDepotPublicId(db: Queryable, vehiclePublicId: string): Promise<string | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(vehiclePublicId)) return null;
+  const res = await db.query<{ public_id: string }>(
+    'SELECT d.public_id FROM fleet.vehicles v JOIN fleet.depots d ON d.id = v.depot_id WHERE v.public_id = $1::uuid',
+    [vehiclePublicId],
+  );
+  return res.rows[0]?.public_id ?? null;
+}
+
 /** Public ids of depots by internal id, for responses. */
 export async function depotPublicIds(db: Queryable, depotIds: readonly string[]): Promise<Map<string, string>> {
   if (depotIds.length === 0) return new Map();

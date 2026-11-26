@@ -108,6 +108,28 @@ export interface BatterySummary {
   charging: { sessions_completed: number; energy_kwh: number; cost_cents: number };
 }
 
+/**
+ * One electric vehicle on the EV dashboard (FMS-99, GET /ev/fleet): its newest battery reading and the session
+ * charging it now. The list comes lowest charge first, vehicles with no reading last.
+ */
+export interface EvFleetVehicle {
+  vehicle_id: string;
+  registration_number: string;
+  make: string;
+  model: string;
+  depot: { id: string; name: string } | null;
+  latest: { state_of_charge: number; battery_health: number | null; estimated_range_km: number | null; recorded_at: Date; source: RecordSource } | null;
+  charging: { id: string; station: { id: string; name: string } | null; started_at: Date | null; start_soc: number | null; source: RecordSource } | null;
+}
+
+/** Lowest state of charge first; no reading last; then by plate. */
+export function byChargeAscending(a: EvFleetVehicle, b: EvFleetVehicle): number {
+  const sa = a.latest?.state_of_charge ?? Number.POSITIVE_INFINITY;
+  const sb = b.latest?.state_of_charge ?? Number.POSITIVE_INFINITY;
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  return a.registration_number.localeCompare(b.registration_number);
+}
+
 export const notElectric = (field = 'vehicle_id') =>
   new AppError(400, 'VALIDATION_FAILED', 'Only an electric vehicle has a battery to log or charge.', [{ field, reason: 'not_electric' }]);
 

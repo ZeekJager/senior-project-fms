@@ -1186,7 +1186,82 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /ev/fleet:
+    get:
+      tags: [EV]
+      operationId: listEvFleet
+      summary: The electric vehicles with their charge, lowest first (FMS-99)
+      description: >
+        The caller's electric vehicles in service, or one depot's, each with its newest battery reading and the session
+        charging it now, lowest state of charge first and vehicles with no reading last. The EV dashboard (S-40). Needs
+        ev:read, in the caller's depots.
+      parameters:
+        - { name: depot_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The vehicles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EvFleetVehicle' }
+                  meta:
+                    type: object
+                    required: [request_id, count, charging_now]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      count: { type: integer }
+                      charging_now: { type: integer }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /ev/charging-sessions:
+    get:
+      tags: [EV]
+      operationId: listChargingSessions
+      summary: The fleet's charging sessions, newest first (FMS-99)
+      description: >
+        The sessions of the caller's vehicles, or one vehicle's, by status and by when they started (`from` inclusive,
+        `to` exclusive). Needs ev:read, in the caller's depots; a vehicle outside them has none.
+      parameters:
+        - { name: vehicle_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [planned, in_progress, completed, failed, cancelled] } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChargingSession' }
+                  meta:
+                    type: object
+                    required: [request_id, page, page_size, total_items, total_pages]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total_items: { type: integer }
+                      total_pages: { type: integer }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [EV]
       operationId: createChargingSession
@@ -13204,6 +13279,44 @@ components:
             cost_cents: { type: [integer, 'null'], minimum: 0 }
             start_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
             end_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
+    EvFleetVehicle:
+      type: object
+      description: 'FMS-99: an electric vehicle on the EV dashboard, with its newest reading and the session charging it now.'
+      required: [vehicle_id, registration_number, make, model, depot, latest, charging]
+      properties:
+        vehicle_id: { type: string, format: uuid }
+        registration_number: { type: string }
+        make: { type: string }
+        model: { type: string }
+        depot:
+          type: [object, 'null']
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        latest:
+          type: [object, 'null']
+          required: [state_of_charge, battery_health, estimated_range_km, recorded_at, source]
+          properties:
+            state_of_charge: { type: number }
+            battery_health: { type: [number, 'null'] }
+            estimated_range_km: { type: [number, 'null'] }
+            recorded_at: { type: string, format: date-time }
+            source: { type: string, enum: [manual, provider, synthetic] }
+        charging:
+          type: [object, 'null']
+          required: [id, station, started_at, start_soc, source]
+          properties:
+            id: { type: string, format: uuid }
+            station:
+              type: [object, 'null']
+              required: [id, name]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+            started_at: { type: [string, 'null'], format: date-time }
+            start_soc: { type: [number, 'null'] }
+            source: { type: string, enum: [manual, provider, synthetic] }
     BatterySummary:
       type: object
       required: [vehicle_id, registration_number, days, latest, soc_trend, health, charging]

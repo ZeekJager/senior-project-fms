@@ -1,0 +1,20 @@
+/*
+ * Charging stations on a map (FMS-99). Leaflet draws SVG circles; the classes set their colours from the tokens, so
+ * both themes follow. A station in use is filled in the brand colour; an idle one is an outline; one out of service
+ * is muted and dashed.
+ */
+
+.station-dot {
+  stroke: rgb(var(--c-brand));
+  stroke-width: 2;
+  fill: rgb(var(--c-surface));
+  fill-opacity: 1;
+}
+.station-dot--busy {
+  fill: rgb(var(--c-brand));
+}
+.station-dot--down {
+  stroke: rgb(var(--c-ink-subtle));
+  stroke-dasharray: 3 3;
+  fill: rgb(var(--c-surface-sunken));
+}

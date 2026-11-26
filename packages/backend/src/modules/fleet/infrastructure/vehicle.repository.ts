@@ -167,6 +167,17 @@ export interface LiveMapVehicle {
   depotPublicId: string | null;
 }
 
+/** An electric vehicle for the EV dashboard (FMS-99): internal id, public id, plate, make, model and depot. */
+export interface ElectricVehicleRef {
+  id: string;
+  publicId: string;
+  registrationNumber: string;
+  make: string;
+  model: string;
+  depotId: string | null;
+  depotName: string | null;
+}
+
 export class VehicleRepository extends Repository {
   constructor(
     db: Pool,
@@ -320,6 +331,21 @@ export class VehicleRepository extends Repository {
       [publicId, ...clause.params],
     );
     return res.rows[0] ?? null;
+  }
+
+  /** The scope's electric vehicles in service (FMS-99, the EV dashboard), by plate, with their depot. */
+  async electricInScope(db: Queryable, scope: Scope): Promise<ElectricVehicleRef[]> {
+    const clause = scopeClause(scope, 'v.depot_id', 1);
+    const res = await db.query<ElectricVehicleRef>(
+      `SELECT v.id, v.public_id AS "publicId", v.registration_number AS "registrationNumber", v.make, v.model,
+              d.public_id AS "depotId", d.name AS "depotName"
+         FROM fleet.vehicles v
+         LEFT JOIN fleet.depots d ON d.id = v.depot_id
+        WHERE v.fuel_type = 'electric' AND v.is_active AND v.status <> 'retired' AND ${clause.sql}
+        ORDER BY v.registration_number, v.id`,
+      clause.params,
+    );
+    return res.rows;
   }
 
   /** Both ids of a vehicle in the caller's scope (retired included), by either id; null when not visible. */
