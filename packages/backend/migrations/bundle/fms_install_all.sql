@@ -4939,3 +4939,9 @@ INSERT INTO settings.definitions (key, label, category, description, type, defau
      'A battery whose state of health falls below this raises a degradation alert.',
      'integer', '80', '{"min": 50, "max": 99, "unit": "%"}', TRUE, 'settings')
 ON CONFLICT DO NOTHING;
+
+-- ===== 086_ev_failure_components.sql =====
+ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'traction_battery';
+ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'motor_inverter';
+ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'charging_system';
+ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'thermal_management';

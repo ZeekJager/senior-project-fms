@@ -40,6 +40,10 @@ The catalogues are fixed and stored as PostgreSQL enums (`maintenance.failure_co
 | `fuel_system` | Pump, filters, injectors, tank, lines |
 | `exhaust` | Exhaust, after-treatment |
 | `body` | Body, cab, glass, doors, mirrors |
+| `traction_battery` | An electric vehicle's pack: modules, cells, battery management (FMS-134, migration 086) |
+| `motor_inverter` | An electric vehicle's traction motor, inverter and reduction gear |
+| `charging_system` | An electric vehicle's on-board charger, charging inlet and its cable |
+| `thermal_management` | An electric vehicle's battery and motor thermal loop: pump, chiller, heater, coolant lines |
 | `other` | Anything else; say what in `notes` |
 
 | Failure mode | Meaning |

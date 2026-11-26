@@ -1,6 +1,9 @@
 import { AppError } from '../../../shared/errors/app-error';
 
-/** As in maintenance.failure_component, failure_mode and failure_detection (migration 036, docs/maintenance.md). */
+/**
+ * As in maintenance.failure_component, failure_mode and failure_detection (migration 036, docs/maintenance.md). The
+ * last four components are an electric vehicle's (FMS-134, migration 086).
+ */
 export const FAILURE_COMPONENTS = [
   'engine',
   'cooling',
@@ -14,6 +17,10 @@ export const FAILURE_COMPONENTS = [
   'exhaust',
   'body',
   'other',
+  'traction_battery',
+  'motor_inverter',
+  'charging_system',
+  'thermal_management',
 ] as const;
 export const FAILURE_MODES = ['wear', 'leak', 'overheating', 'electrical_fault', 'breakage', 'puncture', 'other'] as const;
 export const FAILURE_DETECTIONS = ['driver_report', 'dvir', 'technician', 'telematics', 'breakdown'] as const;

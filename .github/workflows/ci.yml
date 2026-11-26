@@ -211,6 +211,13 @@ jobs:
           python scripts/generate_training_data.py --out "$RUNNER_TEMP/a.csv"
           python scripts/generate_training_data.py --out "$RUNNER_TEMP/b.csv"
           cmp "$RUNNER_TEMP/a.csv" "$RUNNER_TEMP/b.csv"
+      # The EV predictive maintenance dataset (FMS-134, feature_spec_ev.json): 12,000 rows, checked, the same bytes twice.
+      - name: Generate the EV training dataset twice
+        run: |
+          set -euo pipefail
+          python scripts/generate_ev_training_data.py --out "$RUNNER_TEMP/ev-a.csv"
+          python scripts/generate_ev_training_data.py --out "$RUNNER_TEMP/ev-b.csv"
+          cmp "$RUNNER_TEMP/ev-a.csv" "$RUNNER_TEMP/ev-b.csv"
       # The model, trained on it and graded on the vehicles it has not seen.
       - name: Train and grade the model
         run: |

@@ -1,0 +1,332 @@
+{
+  "spec_version": 1,
+  "description": "The EV predictive maintenance model's inputs and label (FMS-134). One row is one electric vehicle at one scoring time t: its use, faults and age, its traction battery's health, heat, energy use and charging, and how long since each wearing part and fluid an EV has was last changed. No engine oil, fuel filter, belt, gearbox oil or clutch fluid: an EV has none. Every feature is computed by the core from its own tables over a window that ends at t, as for combustion vehicles (feature_spec.json). docs/ml-dataset.md (EV) explains each formula.",
+  "id_columns": [
+    {
+      "name": "vehicle_id",
+      "type": "string",
+      "description": "The vehicle. Synthetic rows use SYN-EV-0001 to SYN-EV-0500; never an input to the model."
+    },
+    {
+      "name": "as_of",
+      "type": "date",
+      "description": "The scoring time t (a date, Addis Ababa). Never an input to the model."
+    }
+  ],
+  "features": [
+    {
+      "name": "mileage_km",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 15000,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": [
+        "trip.trips"
+      ],
+      "formula": "Sum of actual_distance_km of the vehicle's completed trips whose actual_end is in [t - 30 days, t).",
+      "when_missing": "0 (no completed trips in the window)."
+    },
+    {
+      "name": "days_since_last_service",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 730,
+      "decimals": 0,
+      "window_days": null,
+      "sources": [
+        "maintenance.maintenance_records",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from the completed_at of the vehicle's last completed preventive or inspection record before t, to t. Capped at 730.",
+      "when_missing": "Days since fleet.vehicles.created_at (never serviced in the system), capped at 730."
+    },
+    {
+      "name": "num_fault_reports",
+      "type": "int",
+      "unit": "count",
+      "min": 0,
+      "max": 50,
+      "decimals": 0,
+      "window_days": 90,
+      "sources": [
+        "fleet.dvir_reports",
+        "alert.incident_reports"
+      ],
+      "formula": "Number of the vehicle's DVIRs with issues_found = true submitted in [t - 90 days, t), plus its incident reports of type breakdown or tyre that occurred in that window. Capped at 50.",
+      "when_missing": "0."
+    },
+    {
+      "name": "age_years",
+      "type": "float",
+      "unit": "years",
+      "min": 0,
+      "max": 40,
+      "decimals": 1,
+      "window_days": null,
+      "sources": [
+        "fleet.vehicles"
+      ],
+      "formula": "(t - 1 January of model_year) in days / 365.25. Clipped to [0, 40].",
+      "when_missing": "From fleet.vehicles.created_at instead when model_year is null."
+    },
+    {
+      "name": "days_since_coolant_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "coolant",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the coolant (on an EV, the battery and motor thermal loop's): the latest completed_at of its completed maintenance records that used a part whose service_item is coolant (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_brake_pad_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "brake_pads",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the brake pads: the latest completed_at of its completed maintenance records that used a part whose service_item is brake_pads (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_brake_fluid_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "brake_fluid",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the brake fluid: the latest completed_at of its completed maintenance records that used a part whose service_item is brake_fluid (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "km_since_tyre_change",
+      "type": "float",
+      "unit": "km",
+      "min": 0,
+      "max": 500000,
+      "decimals": 1,
+      "window_days": null,
+      "service_item": "tyres",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "trip.trips",
+        "fleet.vehicles"
+      ],
+      "formula": "Sum of actual_distance_km of the completed trips with actual_end after that change and before t. The vehicle's last change of the tyres: the latest completed_at of its completed maintenance records that used a part whose service_item is tyres (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 500000.",
+      "when_missing": "Never changed in the system: fleet.vehicles.odometer_km (the whole life of the vehicle), capped at 500000. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_tyre_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "tyres",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the tyres: the latest completed_at of its completed maintenance records that used a part whose service_item is tyres (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "days_since_battery_change",
+      "type": "int",
+      "unit": "d",
+      "min": 0,
+      "max": 3650,
+      "decimals": 0,
+      "window_days": null,
+      "service_item": "battery",
+      "sources": [
+        "maintenance.maintenance_records",
+        "maintenance.maintenance_parts",
+        "maintenance.inventory_parts",
+        "fleet.vehicles"
+      ],
+      "formula": "Whole days from that change to t. The vehicle's last change of the battery (on an EV, the 12 V auxiliary battery, not the traction pack): the latest completed_at of its completed maintenance records that used a part whose service_item is battery (maintenance.maintenance_parts, maintenance.inventory_parts), before t. Capped at 3650.",
+      "when_missing": "Never changed in the system: days since 1 January of model_year (as if never changed since the vehicle was built; created_at when model_year is null), capped at 3650. Pessimistic on purpose: an unknown history is checked, not trusted."
+    },
+    {
+      "name": "battery_health_pct",
+      "type": "float",
+      "unit": "%",
+      "min": 50,
+      "max": 100,
+      "decimals": 1,
+      "window_days": 90,
+      "sources": [
+        "ev.ev_battery_logs",
+        "fleet.vehicles"
+      ],
+      "formula": "battery_health of the vehicle's newest battery log with battery_health set and recorded_at in [t - 90 days, t): the traction pack's state of health. Clipped to [50, 100].",
+      "when_missing": "No such reading (before FMS-97's battery logs, or a vehicle that never reports health): 100 - 2 x age_years, clipped to [70, 100], the fleet's typical ageing. The model then reads a typical battery for its age, neither failing nor new."
+    },
+    {
+      "name": "battery_health_drop_90d",
+      "type": "float",
+      "unit": "points",
+      "min": 0,
+      "max": 30,
+      "decimals": 1,
+      "window_days": 90,
+      "sources": [
+        "ev.ev_battery_logs"
+      ],
+      "formula": "battery_health of the oldest log with battery_health set in [t - 90 days, t) minus that of the newest: how many points of health the pack lost in 90 days. Negative (a recalibration) counts as 0. Clipped to [0, 30].",
+      "when_missing": "0 (fewer than two readings with health in the window)."
+    },
+    {
+      "name": "high_temp_hours_30d",
+      "type": "float",
+      "unit": "h",
+      "min": 0,
+      "max": 720,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": [
+        "ev.ev_battery_logs"
+      ],
+      "formula": "Time the pack spent hot: over the vehicle's battery logs in [t - 30 days, t) by recorded_at, the sum for each log with battery_temperature_c >= 45 of the hours to the next log, at most 8 per log. Clipped to [0, 720].",
+      "when_missing": "0 (no reading with a temperature in the window)."
+    },
+    {
+      "name": "energy_vs_expected_pct",
+      "type": "float",
+      "unit": "%",
+      "min": -50,
+      "max": 100,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": [
+        "ev.ev_battery_logs",
+        "fleet.vehicles"
+      ],
+      "formula": "100 x (m - e) / e, where m is the mean energy_wh_per_km of the vehicle's logs in [t - 30 days, t) and e the same mean over every electric vehicle of its make and model in that window: how much more energy per km it uses than its kind. Clipped to [-50, 100].",
+      "when_missing": "0 (fewer than 3 readings with energy per km for the vehicle, or its make and model has no other vehicle reporting)."
+    },
+    {
+      "name": "dc_fast_share_pct",
+      "type": "float",
+      "unit": "%",
+      "min": 0,
+      "max": 100,
+      "decimals": 1,
+      "window_days": 30,
+      "sources": [
+        "ev.charging_sessions",
+        "ev.charging_stations"
+      ],
+      "formula": "100 x the energy_kwh of the vehicle's completed charging sessions with ended_at in [t - 30 days, t) at a station with power_kw >= 50 (DC fast), over the energy_kwh of all its completed sessions in the window.",
+      "when_missing": "0 (no completed session with energy in the window)."
+    },
+    {
+      "name": "deep_discharges_30d",
+      "type": "int",
+      "unit": "count",
+      "min": 0,
+      "max": 60,
+      "decimals": 0,
+      "window_days": 30,
+      "sources": [
+        "ev.ev_battery_logs"
+      ],
+      "formula": "Times the pack went below 10% charge: the vehicle's battery logs in [t - 30 days, t) with state_of_charge < 10 whose previous log (in or before the window) had state_of_charge >= 10, or had none. Capped at 60.",
+      "when_missing": "0 (no reading in the window)."
+    },
+    {
+      "name": "failed_charging_sessions_90d",
+      "type": "int",
+      "unit": "count",
+      "min": 0,
+      "max": 50,
+      "decimals": 0,
+      "window_days": 90,
+      "sources": [
+        "ev.charging_sessions"
+      ],
+      "formula": "The vehicle's charging sessions with status failed and COALESCE(started_at, created_at) in [t - 90 days, t). Capped at 50.",
+      "when_missing": "0."
+    }
+  ],
+  "service_items": {
+    "description": "maintenance.service_item (migration 037) that an EV has: what a stocked part renews when a completed repair uses it. battery is the 12 V auxiliary battery.",
+    "values": [
+      "coolant",
+      "brake_pads",
+      "brake_fluid",
+      "tyres",
+      "battery"
+    ]
+  },
+  "target": {
+    "name": "failure_within_30_days",
+    "type": "int",
+    "values": [
+      0,
+      1
+    ],
+    "window_days": 30,
+    "sources": [
+      "maintenance.failure_events"
+    ],
+    "definition": "1 when the vehicle has a failure event (FMS-125) with unplanned = true and occurred_at in [t, t + 30 days); else 0. A failure found at planned work is not a positive: the model predicts breakdowns, not service findings. Training and evaluation only; never an input."
+  },
+  "component": {
+    "name": "failure_component",
+    "type": "string",
+    "sources": [
+      "maintenance.failure_events"
+    ],
+    "definition": "The component of the first such failure, from the FMS-125 catalogue with the EV components added by FMS-134 (migration 086); none when failure_within_30_days is 0. The components an EV can fail in: no engine, fuel system, exhaust or transmission.",
+    "values": [
+      "none",
+      "traction_battery",
+      "motor_inverter",
+      "charging_system",
+      "thermal_management",
+      "brakes",
+      "tyres",
+      "electrical",
+      "suspension",
+      "steering",
+      "body",
+      "other"
+    ]
+  }
+}
