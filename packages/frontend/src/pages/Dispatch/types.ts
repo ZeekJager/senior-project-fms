@@ -147,7 +147,7 @@ export interface TripRiskFactor {
   value: number
 }
 
-/** One driver's predicted chances on one trip (FMS-155): advice for this trip, never a block or a ranking. */
+/** One driver's predicted chances on one trip (FMS-155): advice for this trip, never a block; the console ranks the suitable drivers by them. */
 export interface DriverTripRisk {
   late_probability: number
   safety_event_probability: number

@@ -119,7 +119,7 @@ describe('Dispatcher trip console (S-07)', () => {
     const q = api.boardQueries.find((x) => x.get('exclude_trip_id') === t.id)!
     expect([q.get('depot_id'), q.get('from'), q.get('to')]).toEqual([DEPOT, t.scheduled_start, t.scheduled_end])
 
-    expect(within(drivers()).getByRole('button', { name: 'Abebe Kebede, Available' })).toBeInTheDocument()
+    expect(within(drivers()).getByRole('button', { name: /^Abebe Kebede, Available/ })).toBeInTheDocument()
     expect(within(vehicles()).getByRole('button', { name: 'AA 3-10002, Flagged' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /^Assigned/ }))
@@ -202,7 +202,7 @@ describe('Dispatcher trip console (S-07)', () => {
     const user = userEvent.setup()
     await openConsole()
     await chooseTrip(user)
-    await user.click(await within(drivers()).findByRole('button', { name: 'Abebe Kebede, Available' }))
+    await user.click(await within(drivers()).findByRole('button', { name: /^Abebe Kebede, Available/ }))
     await user.click(within(vehicles()).getByRole('button', { name: 'AA 3-10001, Available' }))
     await user.click(screen.getByRole('button', { name: 'Assign' }))
 
@@ -746,20 +746,60 @@ describe('Predicted trip risk (FMS-155)', () => {
     await openConsole()
     await chooseTrip(user)
 
-    const abebe = await within(drivers()).findByRole('button', { name: 'Abebe Kebede, Available' })
+    const abebe = await within(drivers()).findByRole('button', { name: /^Abebe Kebede, Available/ })
     expect(within(abebe).getByTestId('trip-risk')).toHaveTextContent('18% chance of running late: 10.5 h driven in the last day, 6 h at night')
     expect(within(abebe).getByTestId('trip-risk')).toHaveTextContent('under 1% chance of a safety event')
     expect(within(within(drivers()).getByRole('button', { name: /Sara Haile/ })).queryByTestId('trip-risk')).not.toBeInTheDocument()
     expect(screen.getByText(/Trip risk is a demonstration: the model learnt from generated trips/)).toBeInTheDocument()
   })
 
-  it('too few trips to learn from says how far there is to go; the order of the drivers is unchanged', async () => {
+  it('the suitable drivers come first, best fit first by their chances; choosing a vehicle moves a driver whose licence does not cover it', async () => {
+    const odds = (late: number, safety: number) => ({ late_probability: late, safety_event_probability: safety, factors: { late: [], safety_event: [] } })
+    serve([trip()], {
+      trip_risk: { status: 'ok', reason: null, model_version: 'trip-risk-2026.11', demonstration: false, trips: 4000, drivers: 40, minimum },
+      drivers: [
+        driver({ trip_risk: odds(0.31, 0.06) }),
+        driver({ driver_id: 'd-3', full_name: 'Dawit Bekele', trip_risk: odds(0.09, 0.01) }),
+        driver({ driver_id: 'd-4', full_name: 'Hana Girma', vehicle_types: ['car'], trip_risk: odds(0.05, 0.01) }),
+        absent,
+      ],
+      vehicles: [vehicle()],
+    })
+    const user = userEvent.setup()
+    await openConsole()
+    await chooseTrip(user)
+    await within(drivers()).findByText('Dawit Bekele')
+    // Not alphabetical: the lowest chance of the trip going wrong first.
+    expect(within(drivers()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Hana Girma, Available, ranked 1 of 3',
+      'Dawit Bekele, Available, ranked 2 of 3',
+      'Abebe Kebede, Available, ranked 3 of 3',
+      'Sara Haile, Absent today',
+    ])
+    expect(within(drivers()).getByText('Best fit for this trip')).toBeInTheDocument()
+    expect(within(within(drivers()).getByRole('button', { name: /^Hana Girma/ })).getByText('Best fit')).toBeInTheDocument()
+    expect(within(drivers()).getByText('Other drivers')).toBeInTheDocument()
+
+    // A truck: Hana's licence covers cars only, so she drops below the suitable ones, and says why.
+    await user.click(within(vehicles()).getByRole('button', { name: /^AA 3-10001/ }))
+    expect(within(drivers()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Dawit Bekele, Available, ranked 1 of 2',
+      'Abebe Kebede, Available, ranked 2 of 2',
+      // The others in the old order, state then name: free (but not for a truck) before absent.
+      'Hana Girma, Available',
+      'Sara Haile, Absent today',
+    ])
+    expect(within(drivers()).getByText('Best fit for AA 3-10001')).toBeInTheDocument()
+    expect(within(within(drivers()).getByRole('button', { name: /^Hana Girma/ })).getByText(/Licence does not cover this vehicle: truck/)).toBeInTheDocument()
+  })
+
+  it('too few trips to learn from says how far there is to go; the drivers are still ranked without it', async () => {
     serve([trip()], { trip_risk: { status: 'not_enough_trips', reason: 'no_model', model_version: null, demonstration: false, trips: 412, drivers: 9, minimum } })
     const user = userEvent.setup()
     await openConsole()
     await chooseTrip(user)
     expect(await screen.findByText('Not enough trips yet for a trip risk prediction: 412 of 2,000 completed trips, 9 of 20 drivers.')).toBeInTheDocument()
-    expect(within(drivers()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Abebe Kebede, Available', 'Sara Haile, Absent today'])
+    expect(within(drivers()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Abebe Kebede, Available, ranked 1 of 1', 'Sara Haile, Absent today'])
     expect(within(drivers()).queryByTestId('trip-risk')).not.toBeInTheDocument()
   })
 })
@@ -814,7 +854,7 @@ describe('Driving distance limits (FMS-156)', () => {
     const user = userEvent.setup()
     await openConsole()
     await chooseTrip(user)
-    await user.click(await within(drivers()).findByRole('button', { name: 'Abebe Kebede, Available' }))
+    await user.click(await within(drivers()).findByRole('button', { name: /^Abebe Kebede, Available/ }))
     await user.click(within(vehicles()).getByRole('button', { name: 'AA 3-10001, Available' }))
     await user.click(screen.getByRole('button', { name: 'Assign' }))
 

@@ -1,7 +1,7 @@
 import type { BoardTripRisk, DriverTripRisk, TripRiskFactor } from './types'
 
 // The trip risk model on the console (FMS-155, docs/ml-trip-risk.md): a driver's chance of the trip running late and of a
-// safety event, in words. It informs one trip's choice; it never blocks, sorts or ranks the drivers.
+// safety event, in words. It never blocks an assignment; the console ranks the suitable drivers by it (rankDrivers.ts).
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
