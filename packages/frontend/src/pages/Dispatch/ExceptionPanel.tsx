@@ -24,7 +24,11 @@ function HeldWarning({ reason, recordId, driverName }: { reason: string; recordI
 }
 
 const asDetail = (w: AssignmentWarning): ApiErrorDetail =>
-  w.warning === 'DRIVER_ATTENDANCE' ? { field: w.field, reason: `driver_${w.attendance}` } : { field: w.field, reason: 'previous_trip_overrun', record_id: w.trip_id }
+  w.warning === 'DRIVER_ATTENDANCE'
+    ? { field: w.field, reason: `driver_${w.attendance}` }
+    : w.warning === 'PREVIOUS_TRIP_OVERRUN'
+      ? { field: w.field, reason: 'previous_trip_overrun', record_id: w.trip_id }
+      : { field: w.field, reason: 'ev_range_short' }
 
 /**
  * The assignment raised a warning the depot holds (409 CONFLICT_APPROVAL_REQUIRED): what it is, and a reason to send

@@ -187,6 +187,16 @@ export interface BoardVehicle {
   /** Preventive service due or overdue (FMS-129): a warning, never a block. */
   service_due: ServiceDueSummary | null
   current_trip: { trip_id: string; end: string } | null
+  /** An electric vehicle's range now (FMS-98); null for any other, or without an estimate. Absent from older APIs. */
+  ev_range?: EvRange | null
+}
+
+/** FMS-98: state of charge x usable capacity x battery health / the vehicle's own consumption. */
+export interface EvRange {
+  range_km: number
+  state_of_charge: number
+  recorded_at: string
+  wh_per_km: number
 }
 
 export interface DispatchBoard {
@@ -201,3 +211,4 @@ export interface DispatchBoard {
 export type AssignmentWarning =
   | { warning: 'PREVIOUS_TRIP_OVERRUN'; field: 'driver_id' | 'vehicle_id'; trip_id: string; expected_end: string }
   | { warning: 'DRIVER_ATTENDANCE'; field: 'driver_id'; attendance: 'absent' | 'on_leave' | 'sick' }
+  | { warning: 'EV_RANGE_SHORT'; field: 'vehicle_id'; range_km: number; trip_km: number; state_of_charge: number }

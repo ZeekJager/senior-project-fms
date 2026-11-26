@@ -199,6 +199,8 @@ export interface LiveTrip {
   driverId: string | null;
   actualStart: Date | null;
   scheduledEnd: Date | null;
+  /** The km it was planned to drive (FMS-98's range check before its first arrival estimate). */
+  plannedDistanceKm: number | null;
   /** Its latest arrival estimate (FMS-86), null before the first. */
   eta: LiveTripEta | null;
 }
@@ -218,6 +220,7 @@ export async function liveTripsForVehicles(db: Queryable, vehicleIds: readonly s
     `SELECT DISTINCT ON (t.vehicle_id)
             t.vehicle_id AS "vehicleId", t.public_id AS "tripId", r.name AS "routeName", t.origin, t.destination,
             t.driver_id AS "driverId", t.actual_start AS "actualStart", t.scheduled_end AS "scheduledEnd",
+            t.planned_distance_km::float8 AS "plannedDistanceKm",
             e.computed_at AS "etaUpdatedAt", e.arrival_at AS "arrivalAt", e.remaining_km::float8 AS "remainingKm",
             ns.name AS "nextStopName", ns.eta AS "nextStopEta"
        FROM trip.trips t

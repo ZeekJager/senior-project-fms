@@ -11,6 +11,7 @@ import {
   SESSION_STAGE,
   SESSION_TRANSITIONS,
   SUMMARY_DAYS_DEFAULT,
+  THRESHOLD_FRESH_MS,
   alreadyCharging,
   canMove,
   duplicateExternalSession,
@@ -32,6 +33,18 @@ import {
   type StationView,
 } from '../domain/ev';
 import type { BatteryLogRow, EvRepository, SessionRow } from '../infrastructure/ev.repository';
+import {
+  CAPACITY_DAYS,
+  CONSUMPTION_DAYS,
+  DEFAULT_BATTERY_THRESHOLDS,
+  crossings,
+  estimateRange,
+  rangeShortfall,
+  type BatteryThresholds,
+  type RangeEstimate,
+  type RangeGap,
+  type ThresholdCrossing,
+} from '../domain/range';
 
 export interface Caller {
   user: RequestUser;
@@ -108,10 +121,20 @@ export interface SessionUpdate {
   end_soc?: number | null;
 }
 
+/** A vehicle's trip under way (FMS-98's en-route check): the trip's public id and the km left, if known. */
+export interface EvTripUnderWay {
+  tripId: string;
+  remainingKm: number | null;
+}
+
 export interface EvServiceDeps {
   ev: EvRepository;
   vehicles: EvVehicles;
   events: EventBus;
+  /** The thresholds (settings ev_low_soc_pct, ev_battery_health_min_pct). Absent: the defaults. */
+  thresholds?: () => Promise<BatteryThresholds>;
+  /** The trip each vehicle (internal ids) has under way, from the trip module. Absent: no en-route check. */
+  tripsUnderWay?: (db: Queryable, vehicleIds: readonly string[]) => Promise<Map<string, EvTripUnderWay>>;
   now?: () => Date;
 }
 
@@ -383,6 +406,83 @@ export class EvService {
     });
   }
 
+  /**
+   * Range estimates (FMS-98) for vehicles (internal ids): each one's estimate, or null with why. For the battery
+   * summary, the assignment warning (trip) and the dispatch board (fleet). A vehicle with no battery reading has none.
+   */
+  async ranges(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, { estimate: RangeEstimate | null; gap: RangeGap | null }>> {
+    const now = this.now().getTime();
+    const inputs = await this.deps.ev.rangeInputs(db, vehicleIds, new Date(now - CONSUMPTION_DAYS * DAY_MS), new Date(now - CAPACITY_DAYS * DAY_MS));
+    return new Map([...inputs].map(([id, i]) => [id, estimateRange(i)]));
+  }
+
+  /** PUT /vehicles/{id}/battery-spec: the usable capacity when new, which range estimates scale by health. */
+  async setSpec(caller: Caller, vehiclePublicId: string, usableCapacityKwh: number): Promise<{ vehicle_id: string; usable_capacity_kwh: number; updated_at: Date }> {
+    const { ev } = this.deps;
+    return ev.inTransaction(async (client) => {
+      const vehicle = await this.writableVehicle(client, caller, vehiclePublicId);
+      const existing = await ev.spec(client, vehicle.id);
+      if (!existing) await ev.insertSpec(client, ctxOf(caller), { vehicle_id: vehicle.id, usable_capacity_kwh: usableCapacityKwh });
+      else if (existing.usable_capacity_kwh !== usableCapacityKwh) await ev.updateSpec(client, ctxOf(caller), existing.id, { usable_capacity_kwh: usableCapacityKwh });
+      const spec = (await ev.spec(client, vehicle.id))!;
+      if (!existing || existing.usable_capacity_kwh !== usableCapacityKwh) {
+        await this.deps.events.publish(client, [
+          this.event(caller, EV_EVENTS.specSet, vehiclePublicId, { vehicle_id: vehiclePublicId, usable_capacity_kwh: spec.usable_capacity_kwh, previous_kwh: existing?.usable_capacity_kwh ?? null }),
+        ]);
+      }
+      return { vehicle_id: vehiclePublicId, usable_capacity_kwh: spec.usable_capacity_kwh, updated_at: spec.updated_at };
+    });
+  }
+
+  /**
+   * BatteryLogged's consumer (FMS-98, docs/ev.md#alerts): a fresh reading below the low-charge line, or a battery worn
+   * below the health line, when the reading before was not, publishes BatteryThresholdExceeded; so does a range short
+   * of the km left on the vehicle's trip under way. The alert engine turns them into `battery` alerts. Each event's
+   * id is fixed by the reading and metric, so a redelivery publishes nothing new.
+   */
+  async onBatteryLogged(client: PoolClient, event: { correlation_id: string; payload: Record<string, unknown> }): Promise<ThresholdCrossing[]> {
+    const { ev } = this.deps;
+    const logId = event.payload.battery_log_id as string;
+    const log = await ev.log(client, logId);
+    if (!log || this.now().getTime() - log.recorded_at.getTime() > THRESHOLD_FRESH_MS) return [];
+    const thresholds = (await this.deps.thresholds?.()) ?? DEFAULT_BATTERY_THRESHOLDS;
+    const previous = await ev.previousLog(client, logId);
+    const found = crossings(log, previous, thresholds);
+    let tripId: string | null = null;
+    const trip = (await this.deps.tripsUnderWay?.(client, [log.vehicleId]))?.get(log.vehicleId);
+    if (trip && trip.remainingKm !== null) {
+      const range = (await this.ranges(client, [log.vehicleId])).get(log.vehicleId)?.estimate;
+      const short = range ? rangeShortfall(range.range_km, trip.remainingKm) : null;
+      if (short) {
+        found.push(short);
+        tripId = trip.tripId;
+      }
+    }
+    if (found.length === 0) return [];
+    const vehicle = (await this.deps.vehicles.refsByIds(client, [log.vehicleId])).get(log.vehicleId)!;
+    await this.deps.events.publish(
+      client,
+      found.map((c) =>
+        createEvent(
+          EV_EVENTS.thresholdExceeded,
+          {
+            vehicle_id: vehicle.publicId,
+            trip_id: c.metric === 'range' ? tripId : null,
+            metric: c.metric,
+            value: c.value,
+            threshold: c.threshold,
+            severity: c.severity,
+            battery_log_id: logId,
+            recorded_at: log.recorded_at.toISOString(),
+          },
+          { actor: null, correlationId: event.correlation_id },
+          { id: deterministicEventId(`battery-threshold:${logId}:${c.metric}`), aggregate: aggregateKey('vehicle', vehicle.publicId) },
+        ),
+      ),
+    );
+    return found;
+  }
+
   /** GET /vehicles/{id}/battery-summary: the latest state, the daily SoC trend, the health and its change, recent charging. */
   async summary(caller: Caller, vehiclePublicId: string, days = SUMMARY_DAYS_DEFAULT): Promise<BatterySummary> {
     const { ev, vehicles } = this.deps;
@@ -393,6 +493,8 @@ export class EvService {
       const since = new Date(this.now().getTime() - days * DAY_MS);
       const s = await ev.summary(client, vehicle.id, since);
       const change = s.health.current !== null && s.health.at_start !== null ? Math.round((s.health.current - s.health.at_start) * 100) / 100 : null;
+      const range = (await this.ranges(client, [vehicle.id])).get(vehicle.id);
+      const spec = await ev.spec(client, vehicle.id);
       return {
         vehicle_id: vehicle.publicId,
         registration_number: vehicle.registrationNumber,
@@ -401,6 +503,9 @@ export class EvService {
         soc_trend: s.trend,
         health: { current: s.health.current, at_start: s.health.at_start, change },
         charging: s.charging,
+        range: range?.estimate ?? null,
+        range_gap: range ? range.gap : 'no_reading',
+        battery_spec: spec ? { usable_capacity_kwh: spec.usable_capacity_kwh, updated_at: spec.updated_at } : null,
       };
     });
   }

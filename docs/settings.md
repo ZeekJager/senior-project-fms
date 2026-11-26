@@ -151,6 +151,16 @@ the KPIs' statuses at once.
 | `kpi_vehicles_at_risk_target` | 5 | 0-10,000 | Vehicles below the health alert line |
 | `kpi_amber_band_pct` | 10 | 1-100 | How far past a target, as a share of it, is amber rather than red |
 
+### EV: `settings.settings`
+
+The EV battery alerts' lines (FMS-98, [ev.md](ev.md#alerts)), in the category *EV* (migration 085). A change applies to
+the next battery reading.
+
+| Key | Default | Range | What it changes |
+|---|---|---|---|
+| `ev_low_soc_pct` | 20 | 5-60 | A reading below this state of charge raises a battery alert; below half of it, critical |
+| `ev_battery_health_min_pct` | 80 | 50-99 | A battery whose state of health falls below this raises a degradation alert |
+
 - The expiry setting moves the warnings only. The lists' *expiring soon* marks (licence status, the vehicle list's document filter, the documents panel) stay at 30 days.
 
 ## Taking effect within seconds

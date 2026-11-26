@@ -31,7 +31,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | `IncidentReported` (FMS-38, docs/incidents.md) | `incident` | critical: only a critical incident is an alert | vehicle, or `depot_id` | the incident (24 h) | dispatcher, depot admin |
 | `MonitoringAlertFiring` (FMS-163, [observability.md](observability.md#alerts)): an alert Prometheus fired, through Alertmanager's webhook; `MonitoringAlertResolved` closes it by itself | `monitoring_<rule>` (`monitoring_host_cpu_critical`) | critical, or medium for a warning | fleet-wide | the alert's fingerprint (7 days) | admin; also posted to Teams |
 
-The events from FMS-82 and FMS-96 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
+`BatteryThresholdExceeded` is published since FMS-98 ([ev.md](ev.md#alerts)); its message names the charge, the battery's health or the range for the trip. The events from FMS-82 are not published yet. Their payloads are the contract those cards publish (CONVENTIONS.md, Events), and the engine handles them as soon as they exist.
 
 - **Depot.** An alert belongs to the depot of its vehicle or driver, or the one the event names. Its depot decides who sees it (GET /alerts) and who receives it on the socket. An alert with no depot is seen only by roles that see every depot.
 - **Title and message** name the vehicle by its plate and never a person: `AlertCreated` goes out to sockets with them.

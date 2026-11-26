@@ -283,7 +283,7 @@ export function DispatchPage() {
                   Vehicles <span className="text-xs font-normal text-ink-subtle">{vehicles.filter((v) => v.state === 'idle').length} available</span>
                 </h2>
                 <div className="max-h-[420px] overflow-y-auto overscroll-contain pr-1">
-                  {board.isPending ? <CandidatesSkeleton /> : <VehicleList vehicles={shownVehicles} selectedId={assignable ? vehicleId : null} onSelect={(v) => assignable && choose('vehicle', v.vehicle_id)} />}
+                  {board.isPending ? <CandidatesSkeleton /> : <VehicleList vehicles={shownVehicles} selectedId={assignable ? vehicleId : null} onSelect={(v) => assignable && choose('vehicle', v.vehicle_id)} tripKm={trip?.planned_distance_km ?? null} />}
                 </div>
               </div>
             </div>

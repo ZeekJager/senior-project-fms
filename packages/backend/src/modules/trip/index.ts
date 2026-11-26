@@ -13,7 +13,7 @@ import { TripDistanceService, type MeasureSummary, type TrackLookup } from './ap
 import { EtaService } from './application/eta.service';
 import type { DelayMargins } from './domain/delay';
 import { RouteService, type FleetRefs, type MaintenanceRefs } from './application/route.service';
-import { TripService, type ExceptionPolicyLookup, type PositionLookup } from './application/trip.service';
+import { TripService, type EvRangeLookup, type ExceptionPolicyLookup, type PositionLookup } from './application/trip.service';
 import { DistanceLimitService, type DistanceLimitLookup } from './application/distance-limit.service';
 import { AssignmentExceptionRepository } from './infrastructure/assignment-exception.repository';
 import { userDirectory } from '../auth';
@@ -101,6 +101,16 @@ export function provideDistanceLimits(lookup: DistanceLimitLookup | null): void 
   distanceLimits = lookup;
 }
 
+let evRangeLookup: EvRangeLookup | null = null;
+
+/**
+ * Connects the EV module's range estimates (FMS-98) for the assignment warning: the ev module imports trip. Called once
+ * by src/modules/index.ts. Not connected, no range warning.
+ */
+export function provideEvRange(lookup: EvRangeLookup | null): void {
+  evRangeLookup = lookup;
+}
+
 function fleet(): FleetRefs {
   if (!fleetRefs) throw new Error('trip: no fleet lookups provided; src/modules/index.ts connects the fleet module');
   return fleetRefs;
@@ -146,6 +156,7 @@ const tripService = new TripService({
   events: eventBus,
   overrunGraceMinutes: config.trips.overrunGraceMinutes,
   positions: () => positionLookup,
+  evRange: () => evRangeLookup,
 });
 
 // Live arrival times (FMS-86, docs/eta.md): each announced position of a trip under way, at most every 30 seconds

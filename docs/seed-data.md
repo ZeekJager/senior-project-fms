@@ -25,7 +25,7 @@ docker exec fms_backend npm run seed:reset                      # rebuild the sc
 | `--anchor` | today in Addis Ababa | The dataset's "today". Every date is relative to it: past trips, licence expiries, attendance. It cannot be in the future. |
 | `--reset` | off | Rebuilds the schema first: every migration's Down in reverse, then every Up. |
 | `--reset-only` | off | Rebuilds the schema and stops (`npm run seed:reset`). |
-| `--with-ev` | off | Also 90 days of synthetic battery readings and charging sessions for the seeded EVs, at the simulated network's stations (FMS-97, [ev.md](ev.md#synthetic-data)). |
+| `--with-ev` | off | Also 90 days of synthetic battery readings and charging sessions for the seeded EVs, at the simulated network's stations, and each EV's battery spec (FMS-97, FMS-98, [ev.md](ev.md#synthetic-data)). |
 
 **`--reset` deletes all data in that database**, including the audit log: the audit schema is dropped with the rest. The audit log cannot be truncated, by design, so the reset rebuilds the schema instead. With local document storage (`STORAGE_DRIVER=local`) it also deletes the stored document files, which the rebuilt database no longer references. Files in an S3 bucket are left in place. Without `--reset`, the seed refuses to run on a database that holds any user or vehicle.
 

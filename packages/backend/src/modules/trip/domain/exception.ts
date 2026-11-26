@@ -20,7 +20,9 @@ export const DEFAULT_EXCEPTION_POLICIES: ExceptionPolicies = { attendance: 'warn
 export const EXCEPTION_STATUSES = ['pending', 'approved', 'refused', 'withdrawn'] as const;
 export type ExceptionStatus = (typeof EXCEPTION_STATUSES)[number];
 
-const policyOf = (w: AssignmentWarning, p: ExceptionPolicies): ExceptionPolicy => (w.warning === 'DRIVER_ATTENDANCE' ? p.attendance : p.overrun);
+// The EV range warning (FMS-98) only warns: the vehicle may charge before the trip starts.
+const policyOf = (w: AssignmentWarning, p: ExceptionPolicies): ExceptionPolicy =>
+  w.warning === 'DRIVER_ATTENDANCE' ? p.attendance : w.warning === 'PREVIOUS_TRIP_OVERRUN' ? p.overrun : 'warn';
 
 /** The warnings an assignment raised that the depot holds for approval. */
 export function heldWarnings(warnings: readonly AssignmentWarning[], policies: ExceptionPolicies): AssignmentWarning[] {
@@ -62,7 +64,9 @@ export interface AssignmentExceptionView {
 const detailOf = (w: AssignmentWarning) =>
   w.warning === 'DRIVER_ATTENDANCE'
     ? { field: w.field, reason: `driver_${w.attendance}` }
-    : { field: w.field, reason: 'previous_trip_overrun', record_id: w.trip_id };
+    : w.warning === 'PREVIOUS_TRIP_OVERRUN'
+      ? { field: w.field, reason: 'previous_trip_overrun', record_id: w.trip_id }
+      : { field: w.field, reason: 'ev_range_short' };
 
 /** The assignment raises a warning the depot holds: ask again with a reason, and a fleet manager decides. */
 export const approvalRequired = (held: readonly AssignmentWarning[]) =>

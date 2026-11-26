@@ -52,7 +52,7 @@ import { ExpiryService } from './application/expiry.service';
 import { MeterService, type MeterSources } from './application/meter.service';
 import { DOCUMENT_EVENTS } from './domain/document';
 import { VEHICLE_EVENTS } from './domain/vehicle';
-import type { OpenWorkSummary, ServiceDueSummary, TripRiskProvider } from './domain/dispatch';
+import type { EvRangeProvider, OpenWorkSummary, ServiceDueSummary, TripRiskProvider } from './domain/dispatch';
 import type { DriverEligibility } from './domain/driver';
 import { VehicleService, type Caller } from './application/vehicle.service';
 import { attendanceCodeKey } from './domain/attendance-code';
@@ -101,6 +101,13 @@ let tripRiskProvider: TripRiskProvider | null = null;
 
 export function provideTripRisk(provider: TripRiskProvider | null): void {
   tripRiskProvider = provider;
+}
+
+/** Electric vehicles' range on the board (FMS-98), the EV module's: connected by src/modules/index.ts, as ev imports fleet. */
+let evRangeProvider: EvRangeProvider | null = null;
+
+export function provideDispatchEvRange(provider: EvRangeProvider | null): void {
+  evRangeProvider = provider;
 }
 
 /** Connects the maintenance module's lookup. Called once by src/modules/index.ts: fleet cannot import maintenance, which imports fleet. */
@@ -329,6 +336,7 @@ const dispatchService = new DispatchService({
   maintenance: () => maintenanceLookup,
   inTransaction: (fn) => vehicleRepository.inTransaction(fn),
   tripRisk: () => tripRiskProvider,
+  evRange: () => evRangeProvider,
   distance: tripDistanceLimits.forBoard,
   log: logger,
 });

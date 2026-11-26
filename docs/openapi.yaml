@@ -1323,6 +1323,52 @@ paths:
         '404':
           description: NOT_FOUND.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  /vehicles/{vehicle_id}/battery-spec:
+    put:
+      tags: [EV]
+      operationId: setBatterySpec
+      summary: Set an electric vehicle's battery spec (FMS-98)
+      description: >
+        Its usable capacity when new, kWh, which its range estimates scale by the battery's health. Needs ev:write, the
+        vehicle in the caller's depots; only an electric vehicle (400 `not_electric`). Audited; publishes
+        BatterySpecSet when it changes.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [usable_capacity_kwh]
+              properties:
+                usable_capacity_kwh: { type: number, exclusiveMinimum: 0, maximum: 2000, multipleOf: 0.01 }
+      responses:
+        '200':
+          description: The spec.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required: [vehicle_id, usable_capacity_kwh, updated_at]
+                    properties:
+                      vehicle_id: { type: string, format: uuid }
+                      usable_capacity_kwh: { type: number }
+                      updated_at: { type: string, format: date-time }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (`not_electric`, out of range, or the vehicle not in the caller's depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (`vehicle_retired`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
   /vehicles/{vehicle_id}/battery-summary:
     get:
       tags: [EV]
@@ -1330,8 +1376,8 @@ paths:
       summary: An electric vehicle's battery summary (FMS-96)
       description: >
         The latest observation, the state of charge by Addis Ababa day over `days` (30 by default), the battery health
-        now and at the start of the period with the change, and the sessions completed in it. Needs ev:read; a vehicle
-        that is not electric is 400 `not_electric`.
+        now and at the start of the period with the change, the sessions completed in it, and the range now with the
+        battery spec (FMS-98). Needs ev:read; a vehicle that is not electric is 400 `not_electric`.
       parameters:
         - $ref: '#/components/parameters/VehicleId'
         - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
@@ -11206,6 +11252,17 @@ components:
             warning: { const: DRIVER_ATTENDANCE }
             field: { const: driver_id }
             attendance: { type: string, enum: [absent, on_leave, sick] }
+        - type: object
+          description: >
+            FMS-98: the electric vehicle's estimated range now is below the trip's planned distance. Only ever a
+            warning, whatever the depot's exception policies: the vehicle may charge before it leaves.
+          required: [warning, field, range_km, trip_km, state_of_charge]
+          properties:
+            warning: { const: EV_RANGE_SHORT }
+            field: { const: vehicle_id }
+            range_km: { type: integer }
+            trip_km: { type: integer }
+            state_of_charge: { type: number }
 
     AssignmentException:
       type: object
@@ -11418,6 +11475,18 @@ components:
                   - type: 'null'
                   - $ref: '#/components/schemas/ServiceDueSummary'
               current_trip: { $ref: '#/components/schemas/BoardTrip' }
+              ev_range:
+                description: An electric vehicle's range now (FMS-98); null for any other vehicle, or without an estimate.
+                type: [object, 'null']
+                required: [range_km, state_of_charge, recorded_at, wh_per_km]
+                properties:
+                  range_km: { type: integer }
+                  state_of_charge: { type: number }
+                  recorded_at: { type: string, format: date-time }
+                  wh_per_km: { type: integer }
+                  usable_capacity_kwh: { type: number }
+                  capacity_source: { type: string, enum: [spec, sessions] }
+                  battery_health: { type: [number, 'null'] }
 
     StatusChangeWarning:
       type: object
@@ -13204,9 +13273,21 @@ components:
             cost_cents: { type: [integer, 'null'], minimum: 0 }
             start_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
             end_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
+    EvRange:
+      type: object
+      description: 'FMS-98: range = state of charge x usable capacity x battery health / consumption, in whole km (docs/ev.md#range).'
+      required: [range_km, state_of_charge, recorded_at, wh_per_km, usable_capacity_kwh, capacity_source, battery_health]
+      properties:
+        range_km: { type: integer }
+        state_of_charge: { type: number, description: 'The newest reading''s.' }
+        recorded_at: { type: string, format: date-time, description: The newest reading. }
+        wh_per_km: { type: integer, description: 'The vehicle''s own consumption: the mean of its readings'' energy per km over 30 days.' }
+        usable_capacity_kwh: { type: number }
+        capacity_source: { type: string, enum: [spec, sessions], description: 'The battery spec scaled by health, or estimated from its completed charging sessions.' }
+        battery_health: { type: [number, 'null'] }
     BatterySummary:
       type: object
-      required: [vehicle_id, registration_number, days, latest, soc_trend, health, charging]
+      required: [vehicle_id, registration_number, days, latest, soc_trend, health, charging, range, range_gap, battery_spec]
       properties:
         vehicle_id: { type: string, format: uuid }
         registration_number: { type: string }
@@ -13244,6 +13325,20 @@ components:
             sessions_completed: { type: integer }
             energy_kwh: { type: number }
             cost_cents: { type: integer }
+        range:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/EvRange'
+        range_gap:
+          type: [string, 'null']
+          enum: [no_reading, no_consumption, no_capacity, null]
+          description: Why there is no range (no reading, fewer than 3 readings with energy per km in 30 days, no capacity known); null with one.
+        battery_spec:
+          type: [object, 'null']
+          required: [usable_capacity_kwh, updated_at]
+          properties:
+            usable_capacity_kwh: { type: number }
+            updated_at: { type: string, format: date-time }
     DriverVehicleAssignment:
       type: object
       description: A driver's regular vehicle (FMS-77). The depot is the vehicle's.

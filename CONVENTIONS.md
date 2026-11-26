@@ -230,7 +230,8 @@ Trip events and fleet's availability: the `fleet.trip-assignments` projection (F
 Planned, named here so modules agree on them. The alert engine (FMS-92, docs/alerts.md) already has a rule for each, reading these payload fields (public ids), so an alert follows as soon as the event is published:
 
 - `VehicleFaultDetected` (integration, from telematics; the DVIR one is above).
-- `BatteryThresholdExceeded` (ev, FMS-96): `vehicle_id`, `trip_id`, `metric`, `value`, `threshold`, `severity`.
+- `BatteryThresholdExceeded` (ev, FMS-96, published since FMS-98): `vehicle_id`, `trip_id`, `metric` (`state_of_charge`, `battery_health`, `range`), `value`, `threshold`, `severity`, `battery_log_id`, `recorded_at`.
+- `BatterySpecSet` (ev, FMS-98): `vehicle_id`, `usable_capacity_kwh`, `previous_kwh`.
 
 **Real-time (FMS-43).** The Socket.IO gateway forwards some events to browsers (docs/realtime.md). Each is mapped field by field in `realtime/domain/contract.ts`, and its `depot_id` decides who receives it. To show a new event live, add it to the gateway's map as well.
 
