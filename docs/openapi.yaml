@@ -1128,7 +1128,9 @@ paths:
                 voltage_v: { type: [number, 'null'], minimum: 0, maximum: 2000 }
                 current_a: { type: [number, 'null'], minimum: -2000, maximum: 2000 }
                 estimated_range_km: { type: [number, 'null'], minimum: 0, maximum: 2000 }
+                energy_wh_per_km: { type: [number, 'null'], minimum: 0, maximum: 10000, description: The energy used per km since the previous reading (FMS-97). }
                 recorded_at: { type: string, format: date-time }
+                source: { type: string, enum: [manual, synthetic], default: manual, description: 'synthetic for fabricated data (FMS-97); provider is the charging webhook''s alone.' }
       responses:
         '201':
           description: The battery log.
@@ -1210,6 +1212,7 @@ paths:
                 started_at: { type: string, format: date-time }
                 start_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
                 external_session_id: { type: [string, 'null'], maxLength: 255 }
+                source: { type: string, enum: [manual, synthetic], default: manual, description: 'synthetic for fabricated data (FMS-97); provider is the charging webhook''s alone.' }
       responses:
         '201':
           description: The session.
@@ -1958,6 +1961,11 @@ paths:
         "sha256=<hex>". A timestamp more than 5 minutes from the server clock is refused (a replay). A redelivery
         of the same event id is answered 202 with duplicate true, and nothing is stored twice. The delivery is
         stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer.
+        A provider without an adapter of its own, the simulated network (`simulated`, FMS-97) included, sends the FMS
+        EV charging format: one session event a delivery, with the whole session as the provider sees it. The EV
+        module's consumer creates the session (by `session.session_id`) or moves it forward; a redelivery, a replay
+        or a late delivery changes nothing, so no delivery makes a second session. The simulated network's sessions
+        are stored as synthetic (docs/ev.md#the-charging-webhook).
       security:
         - webhookSignature: []
       parameters:
@@ -1967,7 +1975,10 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, description: "The provider's own format, read by its adapter." }
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/EvChargingDelivery'
+                - { type: object, description: "A provider's own format, read by its own adapter." }
       responses:
         '202': { $ref: '#/components/responses/WebhookAccepted' }
         '400':
@@ -13122,7 +13133,7 @@ components:
         downtime_by_reason: { type: object, description: 'Minutes down in the month for each reason: planned_service, unplanned_repair, breakdown, accident, awaiting_parts, other.', additionalProperties: { type: integer } }
     BatteryLog:
       type: object
-      required: [id, vehicle_id, registration_number, state_of_charge, battery_health, battery_temperature_c, voltage_v, current_a, estimated_range_km, recorded_at]
+      required: [id, vehicle_id, registration_number, state_of_charge, battery_health, battery_temperature_c, voltage_v, current_a, estimated_range_km, energy_wh_per_km, source, recorded_at]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -13133,10 +13144,12 @@ components:
         voltage_v: { type: [number, 'null'] }
         current_a: { type: [number, 'null'] }
         estimated_range_km: { type: [number, 'null'] }
+        energy_wh_per_km: { type: [number, 'null'], description: The energy used per km since the previous reading. }
+        source: { type: string, enum: [manual, provider, synthetic], description: 'Where the record came from: typed in, a charging provider''s webhook, or fabricated (the generator and the simulated charging provider, FMS-97). Screens badge synthetic records.' }
         recorded_at: { type: string, format: date-time }
     ChargingStation:
       type: object
-      required: [id, name, external_station_id, latitude, longitude, connector_type, power_kw, status]
+      required: [id, name, external_station_id, latitude, longitude, connector_type, power_kw, status, source]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -13146,9 +13159,10 @@ components:
         connector_type: { type: [string, 'null'] }
         power_kw: { type: [number, 'null'] }
         status: { type: string }
+        source: { type: string, enum: [manual, provider, synthetic], description: 'Where the record came from: typed in, a charging provider''s webhook, or fabricated (the generator and the simulated charging provider, FMS-97). Screens badge synthetic records.' }
     ChargingSession:
       type: object
-      required: [id, vehicle_id, registration_number, station, status, allowed_transitions, started_at, ended_at, energy_kwh, cost_cents, start_soc, end_soc, external_session_id, created_at, updated_at]
+      required: [id, vehicle_id, registration_number, station, status, allowed_transitions, started_at, ended_at, energy_kwh, cost_cents, start_soc, end_soc, external_session_id, source, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -13168,8 +13182,32 @@ components:
         start_soc: { type: [number, 'null'] }
         end_soc: { type: [number, 'null'] }
         external_session_id: { type: [string, 'null'] }
+        source: { type: string, enum: [manual, provider, synthetic], description: 'Where the record came from: typed in, a charging provider''s webhook, or fabricated (the generator and the simulated charging provider, FMS-97). Screens badge synthetic records.' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    EvChargingDelivery:
+      type: object
+      description: The FMS EV charging webhook format (FMS-97, docs/ev.md#the-charging-webhook).
+      additionalProperties: false
+      required: [event_id, type, occurred_at, session]
+      properties:
+        event_id: { type: string, maxLength: 255, description: "The provider's id for the event: the de-duplication key of a redelivery." }
+        type: { type: string, enum: [session_started, session_completed, session_failed] }
+        occurred_at: { type: string, format: date-time }
+        session:
+          type: object
+          additionalProperties: false
+          required: [session_id, vehicle_id]
+          properties:
+            session_id: { type: string, maxLength: 255, description: "The provider's id for the session: stored as external_session_id." }
+            vehicle_id: { type: string, format: uuid, description: "The vehicle's FMS id." }
+            station_id: { type: [string, 'null'], maxLength: 255, description: "The provider's id for the station (external_station_id); unknown, the session has none." }
+            started_at: { type: [string, 'null'], format: date-time }
+            ended_at: { type: [string, 'null'], format: date-time }
+            energy_kwh: { type: [number, 'null'], minimum: 0, maximum: 10000 }
+            cost_cents: { type: [integer, 'null'], minimum: 0 }
+            start_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
+            end_soc: { type: [number, 'null'], minimum: 0, maximum: 100 }
     BatterySummary:
       type: object
       required: [vehicle_id, registration_number, days, latest, soc_trend, health, charging]

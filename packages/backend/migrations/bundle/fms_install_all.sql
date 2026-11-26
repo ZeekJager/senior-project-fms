@@ -4882,3 +4882,28 @@ END $$;
 
 -- This month and the two after it, and the rows already stored, each moved into its month.
 SELECT count(*) FROM tracking.ensure_gps_partitions(now(), 2);
+
+-- ===== 084_ev_synthetic_data.sql =====
+ALTER TABLE ev.ev_battery_logs
+    ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'manual',
+    ADD COLUMN IF NOT EXISTS energy_wh_per_km NUMERIC(8,2);
+ALTER TABLE ev.charging_sessions ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'manual';
+ALTER TABLE ev.charging_stations ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'manual';
+
+DO $$ BEGIN
+    ALTER TABLE ev.ev_battery_logs ADD CONSTRAINT chk_ev_battery_logs_source CHECK (source IN ('manual', 'provider', 'synthetic'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE ev.ev_battery_logs ADD CONSTRAINT chk_ev_battery_logs_energy
+        CHECK (energy_wh_per_km IS NULL OR energy_wh_per_km BETWEEN 0 AND 10000);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE ev.charging_sessions ADD CONSTRAINT chk_charging_sessions_source CHECK (source IN ('manual', 'provider', 'synthetic'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE ev.charging_stations ADD CONSTRAINT chk_charging_stations_source CHECK (source IN ('manual', 'provider', 'synthetic'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+INSERT INTO integration.external_providers (code, name, provider_type, is_active, configuration)
+VALUES ('simulated', 'Simulated charging network', 'ev_charging', FALSE, '{}'::JSONB)
+ON CONFLICT (code) DO NOTHING;

@@ -299,6 +299,23 @@ jobs:
         env:
           DB_NAME: fms_runner_check
           DB_USER: fms_app
+      # FMS-97: one command loads 90 days of synthetic EV data for the seeded EVs, the same twice with the same seed,
+      # every row marked synthetic (docs/ev.md#synthetic-data).
+      - name: Seed the EV synthetic data twice
+        run: |
+          set -euo pipefail
+          export DB_PASSWORD="$DB_APP_PASSWORD" FMS_SEED_PASSWORD="$DB_APP_PASSWORD"
+          seed() { npm run -s seed -w fms-backend -- --size=small --seed=42 --anchor=2026-10-01 --with-ev --reset | tee -a "$RUNNER_TEMP/seed-ev.log"; }
+          seed
+          seed
+          distinct=$(grep '^fingerprint ' "$RUNNER_TEMP/seed-ev.log" | sort -u | wc -l)
+          if [ "$distinct" != "1" ]; then echo "Two EV runs with the same seed produced different data"; exit 1; fi
+          check=$(psql -d fms_runner_check -At -c "select (select count(distinct vehicle_id) from ev.ev_battery_logs) || '/' || (select count(*) from fleet.vehicles where fuel_type = 'electric') || '/' || (select ((max(recorded_at) - min(recorded_at)) > interval '89 days')::text from ev.ev_battery_logs) || '/' || (select count(*) from ev.ev_battery_logs where source <> 'synthetic') + (select count(*) from ev.charging_sessions where source <> 'synthetic') + (select count(*) from ev.charging_stations where source <> 'synthetic')")
+          ev=${check%%/*}
+          if [ "$ev" = "0" ] || [ "$check" != "$ev/$ev/true/0" ]; then echo "EV data: logged EVs/EVs/90 days/non-synthetic rows = $check"; exit 1; fi
+        env:
+          DB_NAME: fms_runner_check
+          DB_USER: fms_app
 
   docker:
     name: docker-stack

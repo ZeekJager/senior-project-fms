@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { depotScope, type Scope } from '../../../shared/authz/scope';
-import { aggregateKey, createEvent } from '../../../shared/events/domain-event';
+import { aggregateKey, createEvent, deterministicEventId } from '../../../shared/events/domain-event';
 import type { EventBus } from '../../../shared/events/event-bus';
 import type { Page } from '../../../shared/http/pagination';
 import type { MutationContext } from '../../../shared/infrastructure/audited-mutation';
@@ -8,6 +8,7 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { RequestUser } from '../../../types/express';
 import {
   EV_EVENTS,
+  SESSION_STAGE,
   SESSION_TRANSITIONS,
   SUMMARY_DAYS_DEFAULT,
   alreadyCharging,
@@ -25,6 +26,7 @@ import {
   stationNotFound,
   type BatteryLogView,
   type BatterySummary,
+  type RecordSource,
   type SessionStatus,
   type SessionView,
   type StationView,
@@ -52,7 +54,10 @@ export interface BatteryLogCreate {
   voltage_v?: number | null;
   current_a?: number | null;
   estimated_range_km?: number | null;
+  energy_wh_per_km?: number | null;
   recorded_at?: Date;
+  /** manual (the default) or synthetic (the generator, FMS-97). */
+  source?: 'manual' | 'synthetic';
 }
 
 export interface SessionCreate {
@@ -62,7 +67,35 @@ export interface SessionCreate {
   started_at?: Date;
   start_soc?: number | null;
   external_session_id?: string | null;
+  source?: 'manual' | 'synthetic';
 }
+
+/** One session event from a charging provider's webhook (FMS-97), as the integration gateway stored it. */
+export interface ProviderSessionDelivery {
+  /** The provider (internal id) and its code; its stations are its own (ev.charging_stations.provider_id). */
+  providerId: string;
+  providerCode: string;
+  /** The simulated network's deliveries are synthetic; a real provider's are not. */
+  synthetic: boolean;
+  kind: 'session_started' | 'session_completed' | 'session_failed';
+  correlationId: string;
+  session: {
+    session_id: string;
+    vehicle_id: string;
+    station_id?: string | null;
+    started_at?: string | null;
+    ended_at?: string | null;
+    energy_kwh?: number | null;
+    cost_cents?: number | null;
+    start_soc?: number | null;
+    end_soc?: number | null;
+  };
+}
+
+/** What a provider's delivery did: created or moved a session, changed nothing, or was skipped (and why). */
+export type ProviderSessionOutcome =
+  | { result: 'created' | 'updated' | 'unchanged'; sessionId: string }
+  | { result: 'skipped'; reason: 'vehicle_unknown' | 'not_electric' | 'vehicle_retired' | 'session_final' | 'session_behind' };
 
 export interface SessionUpdate {
   status?: SessionStatus;
@@ -140,6 +173,8 @@ export class EvService {
         voltage_v: input.voltage_v ?? null,
         current_a: input.current_a ?? null,
         estimated_range_km: input.estimated_range_km ?? null,
+        energy_wh_per_km: input.energy_wh_per_km ?? null,
+        source: input.source ?? 'manual',
         recorded_at: input.recorded_at ?? this.now(),
       });
       const [view] = await this.logViews(client, [(await ev.log(client, id))!]);
@@ -150,6 +185,7 @@ export class EvService {
           state_of_charge: view.state_of_charge,
           battery_health: view.battery_health,
           estimated_range_km: view.estimated_range_km,
+          source: view.source,
           recorded_at: view.recorded_at.toISOString(),
         }),
       ]);
@@ -199,6 +235,7 @@ export class EvService {
         started_at: status === 'in_progress' ? (input.started_at ?? this.now()) : (input.started_at ?? null),
         start_soc: input.start_soc ?? null,
         external_session_id: input.external_session_id ?? null,
+        source: input.source ?? 'manual',
       });
       const [view] = await this.sessionViews(client, [(await ev.session(client, id))!]);
       if (status === 'in_progress') await this.deps.events.publish(client, [this.sessionEvent(caller, EV_EVENTS.sessionStarted, view)]);
@@ -206,8 +243,9 @@ export class EvService {
     });
   }
 
-  private sessionEvent(caller: Caller, type: string, view: SessionView) {
-    return this.event(caller, type, view.vehicle_id, {
+  /** A session event: a caller's change, or (no actor, a fixed id) a provider's delivery. */
+  private sessionEvent(by: Caller | { system: true; correlationId: string; id: string }, type: string, view: SessionView) {
+    const payload = {
       charging_session_id: view.id,
       vehicle_id: view.vehicle_id,
       station_id: view.station?.id ?? null,
@@ -218,7 +256,77 @@ export class EvService {
       cost_cents: view.cost_cents,
       start_soc: view.start_soc,
       end_soc: view.end_soc,
-    });
+      source: view.source,
+    };
+    if ('user' in by) return this.event(by, type, view.vehicle_id, payload);
+    return createEvent(type, payload, { actor: null, correlationId: by.correlationId }, { id: by.id, aggregate: aggregateKey('vehicle', view.vehicle_id) });
+  }
+
+  /**
+   * A charging provider's session event (FMS-97, docs/ev.md#the-charging-webhook), on the transaction of the
+   * IntegrationWebhookReceived consumer. The session is the provider's (`external_session_id`): the first delivery
+   * creates it, a later one moves it forward and fills in its figures. A redelivery, a replay under a new event id,
+   * or a delivery that arrives after a later one changes nothing, so no delivery makes a second session. Audited with
+   * no user, as the webhook's receipt is; its event has no actor and an id fixed by the session and the status.
+   */
+  async applyProviderSession(client: PoolClient, delivery: ProviderSessionDelivery): Promise<ProviderSessionOutcome> {
+    const { ev, vehicles } = this.deps;
+    const s = delivery.session;
+    const ctx: MutationContext = { userId: null, correlationId: delivery.correlationId };
+    const target: SessionStatus = delivery.kind === 'session_started' ? 'in_progress' : delivery.kind === 'session_completed' ? 'completed' : 'failed';
+
+    const vehicle = await vehicles.lock(client, s.vehicle_id, { kind: 'all' });
+    if (!vehicle) return { result: 'skipped', reason: 'vehicle_unknown' };
+    if (vehicle.fuelType !== 'electric') return { result: 'skipped', reason: 'not_electric' };
+    const stationId = s.station_id ? await ev.providerStationId(client, delivery.providerId, s.station_id) : null;
+    const at = (value: string | null | undefined) => (value ? new Date(value) : null);
+    const figures: Record<string, unknown> = {};
+    for (const key of ['energy_kwh', 'cost_cents', 'start_soc', 'end_soc'] as const) if (s[key] !== undefined && s[key] !== null) figures[key] = s[key];
+
+    const existing = await ev.lockExternalSession(client, s.session_id);
+    let id: string;
+    if (!existing) {
+      if (!vehicle.isActive || vehicle.status === 'retired') return { result: 'skipped', reason: 'vehicle_retired' };
+      const endedAt = target === 'in_progress' ? null : (at(s.ended_at) ?? this.now());
+      const startedAt = at(s.started_at) ?? (target === 'in_progress' ? this.now() : endedAt);
+      id = await ev.insertSession(client, ctx, {
+        vehicle_id: vehicle.id,
+        station_id: stationId,
+        status: target,
+        started_at: startedAt && endedAt && endedAt < startedAt ? endedAt : startedAt,
+        ended_at: endedAt,
+        external_session_id: s.session_id,
+        source: delivery.synthetic ? 'synthetic' : ('provider' satisfies RecordSource),
+        ...figures,
+      });
+    } else {
+      id = existing.id;
+      if (existing.status === target) {
+        // The same news again (a replay under a new event id): only figures the provider has filled in since.
+        const filled = Object.fromEntries(Object.entries(figures).filter(([key]) => existing[key as 'energy_kwh'] === null));
+        if (Object.keys(filled).length === 0) return { result: 'unchanged', sessionId: id };
+        await ev.updateSession(client, ctx, existing.internalId, filled);
+        return { result: 'updated', sessionId: id };
+      }
+      if (SESSION_STAGE[target] <= SESSION_STAGE[existing.status]) {
+        return { result: 'skipped', reason: SESSION_STAGE[existing.status] === 2 ? 'session_final' : 'session_behind' };
+      }
+      const data: Record<string, unknown> = { status: target, ...figures };
+      if (stationId && !existing.station) data.station_id = stationId;
+      const startedAt = existing.started_at ?? at(s.started_at) ?? this.now();
+      if (!existing.started_at) data.started_at = startedAt;
+      if (target !== 'in_progress') {
+        const endedAt = at(s.ended_at) ?? this.now();
+        data.ended_at = endedAt < startedAt ? startedAt : endedAt;
+      }
+      await ev.updateSession(client, ctx, existing.internalId, data);
+    }
+
+    const [view] = await this.sessionViews(client, [(await ev.session(client, id))!]);
+    const type = target === 'in_progress' ? EV_EVENTS.sessionStarted : target === 'completed' ? EV_EVENTS.sessionCompleted : EV_EVENTS.sessionFailed;
+    const eventId = deterministicEventId(`ev-session:${delivery.providerCode}:${s.session_id}:${target}`);
+    await this.deps.events.publish(client, [this.sessionEvent({ system: true, correlationId: delivery.correlationId, id: eventId }, type, view)]);
+    return { result: existing ? 'updated' : 'created', sessionId: id };
   }
 
   /**

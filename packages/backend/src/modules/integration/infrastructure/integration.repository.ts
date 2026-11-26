@@ -245,18 +245,20 @@ export class IntegrationRepository extends Repository {
     db: Queryable,
     syncLogPublicId: string,
   ): Promise<{
+    providerId: string;
     providerCode: string;
     providerType: ProviderType;
     eventId: string | null;
     metadata: SyncMetadata;
   } | null> {
     const res = await db.query<{
+      providerId: string;
       providerCode: string;
       providerType: ProviderType;
       eventId: string | null;
       metadata: SyncMetadata;
     }>(
-      `SELECT p.code AS "providerCode", p.provider_type AS "providerType", s.external_reference AS "eventId", s.metadata
+      `SELECT p.id AS "providerId", p.code AS "providerCode", p.provider_type AS "providerType", s.external_reference AS "eventId", s.metadata
          FROM integration.sync_logs s
          JOIN integration.external_providers p ON p.id = s.provider_id
         WHERE s.public_id = $1 AND s.direction = 'inbound'`,

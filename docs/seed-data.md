@@ -25,6 +25,7 @@ docker exec fms_backend npm run seed:reset                      # rebuild the sc
 | `--anchor` | today in Addis Ababa | The dataset's "today". Every date is relative to it: past trips, licence expiries, attendance. It cannot be in the future. |
 | `--reset` | off | Rebuilds the schema first: every migration's Down in reverse, then every Up. |
 | `--reset-only` | off | Rebuilds the schema and stops (`npm run seed:reset`). |
+| `--with-ev` | off | Also 90 days of synthetic battery readings and charging sessions for the seeded EVs, at the simulated network's stations (FMS-97, [ev.md](ev.md#synthetic-data)). |
 
 **`--reset` deletes all data in that database**, including the audit log: the audit schema is dropped with the rest. The audit log cannot be truncated, by design, so the reset rebuilds the schema instead. With local document storage (`STORAGE_DRIVER=local`) it also deletes the stored document files, which the rebuilt database no longer references. Files in an S3 bucket are left in place. Without `--reset`, the seed refuses to run on a database that holds any user or vehicle.
 
@@ -116,4 +117,5 @@ GPS pings enter it per vehicle (count, first and last time, sums of position, sp
 
 - `scripts/seed/plan.test.ts` (unit): same plan for the same inputs; the budget counts; every role and trip status; unique keys; no double booking; licence and odometer rules; registration dates and the service history (every item renewed on most vehicles, no work before a vehicle joined, odometers that only go up); opening stock covering every repair; two documents per vehicle with amber and red ones; the placeholder PDF; the production guard.
 - `test/integration/seed.test.ts`: the small profile on the test database, audited (vehicle documents included), then a second run with the same fingerprint.
-- CI (`migrations-ci` job): the budget profile twice on a fresh database, `200/300/1000` rows, equal fingerprints, and a refused run with `NODE_ENV=production`.
+- CI (`migrations-ci` job): the budget profile twice on a fresh database, `200/300/1000` rows, equal fingerprints, and a refused run with `NODE_ENV=production`; then the small profile `--with-ev` twice, equal fingerprints, 90 days for every EV and every EV row synthetic.
+- `scripts/seed/ev.test.ts` (unit): the EV data (FMS-97) is the same for the same seed and anchor and leaves the rest of the plan alone; three readings a day for 90 days per EV; every scenario in every profile; the degradation scenario's falling health, the low-charge one's dips below 15%, failed sessions retried elsewhere, no overlapping sessions.

@@ -21,6 +21,15 @@ export const SESSION_TRANSITIONS: Readonly<Record<SessionStatus, readonly Sessio
 export const isFinal = (status: SessionStatus) => SESSION_TRANSITIONS[status].length === 0;
 export const canMove = (from: SessionStatus, to: SessionStatus) => SESSION_TRANSITIONS[from].includes(to);
 
+/**
+ * Where a record came from (ev.*.source, migration 084): typed through the API, a charging provider's webhook, or
+ * fabricated (the generator and the simulated charging provider, FMS-97: there is no real EV data source, decision
+ * D-06). The screens badge synthetic records. A caller may write manual or synthetic; provider is the webhook's.
+ */
+export const RECORD_SOURCES = ['manual', 'provider', 'synthetic'] as const;
+export type RecordSource = (typeof RECORD_SOURCES)[number];
+export const WRITABLE_SOURCES = ['manual', 'synthetic'] as const;
+
 /** Days the battery summary's trend covers by default, and at most. */
 export const SUMMARY_DAYS_DEFAULT = 30;
 export const SUMMARY_DAYS_MAX = 365;
@@ -36,6 +45,9 @@ export const EV_EVENTS = {
   sessionFailed: 'ChargingSessionFailed',
 } as const;
 
+/** How far along its life a status is: a provider's delivery only ever moves a session forward (FMS-97). */
+export const SESSION_STAGE: Readonly<Record<SessionStatus, number>> = { planned: 0, in_progress: 1, completed: 2, failed: 2, cancelled: 2 };
+
 export interface BatteryLogView {
   id: string;
   vehicle_id: string;
@@ -46,6 +58,8 @@ export interface BatteryLogView {
   voltage_v: number | null;
   current_a: number | null;
   estimated_range_km: number | null;
+  energy_wh_per_km: number | null;
+  source: RecordSource;
   recorded_at: Date;
 }
 
@@ -58,6 +72,7 @@ export interface StationView {
   connector_type: string | null;
   power_kw: number | null;
   status: string;
+  source: RecordSource;
 }
 
 export interface SessionView {
@@ -74,6 +89,7 @@ export interface SessionView {
   start_soc: number | null;
   end_soc: number | null;
   external_session_id: string | null;
+  source: RecordSource;
   created_at: Date;
   updated_at: Date;
 }

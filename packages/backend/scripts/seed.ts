@@ -6,6 +6,7 @@
  *   npm run seed -- --size=budget --reset        # rebuild the schema, then 200 vehicles, 300 drivers, 1,000 trips
  *   npm run seed -- --size=fleet500 --reset      # 500 vehicles, 750 drivers, 2,500 trips: the load suite's fleet500 (FMS-152)
  *   npm run seed -- --seed=7 --anchor=2026-10-01 # another dataset; the same seed and anchor give the same data
+ *   npm run seed -- --with-ev                    # also 90 days of synthetic EV battery and charging data (FMS-97)
  *   npm run seed:reset                           # rebuild the schema only
  *
  * The password of the accounts that can sign in comes from FMS_SEED_PASSWORD,
@@ -26,7 +27,7 @@ import { applyMigrations, revertMigrations } from './lib/migrations';
 import { runSeed } from './seed/apply';
 import { PROFILES, type ProfileName } from './seed/plan';
 
-const USAGE = 'Usage: npm run seed -- [--size=small|budget|fleet500] [--seed=<integer>] [--anchor=YYYY-MM-DD] [--reset | --reset-only]';
+const USAGE = 'Usage: npm run seed -- [--size=small|budget|fleet500] [--seed=<integer>] [--anchor=YYYY-MM-DD] [--with-ev] [--reset | --reset-only]';
 const DEFAULT_SEED = 20261007;
 
 function generatePassword(): string {
@@ -46,6 +47,7 @@ function options() {
       anchor: { type: 'string' },
       reset: { type: 'boolean', default: false },
       'reset-only': { type: 'boolean', default: false },
+      'with-ev': { type: 'boolean', default: false },
     },
   });
   if (!(values.size in PROFILES)) throw new Error(`--size must be ${Object.keys(PROFILES).join(', ')}. ${USAGE}`);
@@ -54,7 +56,7 @@ function options() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(anchor) || Number.isNaN(Date.parse(anchor))) throw new Error(`--anchor must be a date, YYYY-MM-DD. ${USAGE}`);
   // Hire dates and attendance cannot be in the future (API rules), so neither can the anchor.
   if (anchor > today()) throw new Error('--anchor cannot be in the future.');
-  return { size: values.size as ProfileName, seed: Number(values.seed), anchor, reset: values.reset || values['reset-only'], seedAfter: !values['reset-only'] };
+  return { size: values.size as ProfileName, seed: Number(values.seed), anchor, reset: values.reset || values['reset-only'], seedAfter: !values['reset-only'], withEv: values['with-ev'] };
 }
 
 async function reset(): Promise<void> {
@@ -89,8 +91,8 @@ async function main(): Promise<void> {
   const password = process.env.FMS_SEED_PASSWORD || generatePassword();
   const started = Date.now();
   try {
-    const summary = await runSeed({ profile: opts.size, seed: opts.seed, anchor: opts.anchor, password, log: (line) => console.log(`  ${line}`) });
-    console.log(`✔ Seeded the ${opts.size} profile (seed ${opts.seed}, anchor ${opts.anchor}) in ${Math.round((Date.now() - started) / 1000)} s.`);
+    const summary = await runSeed({ profile: opts.size, seed: opts.seed, anchor: opts.anchor, password, withEv: opts.withEv, log: (line) => console.log(`  ${line}`) });
+    console.log(`✔ Seeded the ${opts.size} profile${opts.withEv ? ' with EV data' : ''} (seed ${opts.seed}, anchor ${opts.anchor}) in ${Math.round((Date.now() - started) / 1000)} s.`);
     console.table(summary.counts);
     console.log('Accounts that can sign in:');
     for (const login of summary.logins) console.log(`  ${login.role.padEnd(20)} ${login.email}`);

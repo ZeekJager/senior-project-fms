@@ -7,6 +7,7 @@ import { recordAuditEntry } from '../../src/shared/infrastructure/audit-log';
 import { auditedMutation, type MutationContext } from '../../src/shared/infrastructure/audited-mutation';
 import { withTransaction } from '../../src/shared/infrastructure/transaction';
 import { SeedApi } from './api-client';
+import { buildEvPlan, type EvPlan } from './ev';
 import { fingerprint } from './fingerprint';
 import { assertNotProduction } from './guard';
 import { placeholderPdf } from './pdf';
@@ -24,6 +25,10 @@ export interface SeedOptions {
   anchor: string;
   /** Password of every account that can sign in (the seed admin and one user per role). */
   password: string;
+  /** Also 90 days of synthetic EV battery readings and charging sessions for the seeded EVs (FMS-97, `--with-ev`). */
+  withEv?: boolean;
+  /** EV API calls in flight at once (default 8). The integration test's database runs on one connection: 1. */
+  evConcurrency?: number;
   log?: (line: string) => void;
 }
 
@@ -75,6 +80,7 @@ export async function runSeed(options: SeedOptions): Promise<SeedSummary> {
     await writeDirect(plan, ids, { userId: String(admin.id), correlationId: randomUUID() }, log);
     // Trips and the rest were written without events: rebuild every read model from its source.
     for (const [table, result] of Object.entries(await rebuildReadModels())) log(`${table}: ${JSON.stringify(result)}`);
+    if (options.withEv) await writeEv(api, buildEvPlan(plan), ids, { userId: String(admin.id), correlationId: randomUUID() }, options.evConcurrency ?? EV_CONCURRENCY, log);
   } finally {
     await api.close();
   }
@@ -354,6 +360,72 @@ async function writeDirect(plan: SeedPlan, ids: PublicIds, ctx: MutationContext,
   });
 }
 
+/** The simulated charging network's provider code (migration 084). */
+const SIMULATED_PROVIDER = 'simulated';
+/** EV API calls in flight at once by default: the readings in any order, each vehicle's sessions one after another. */
+const EV_CONCURRENCY = 8;
+
+async function inParallel<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+/**
+ * The EV synthetic data (FMS-97, docs/ev.md#synthetic-data). The stations are the simulated network's (its
+ * provider, migration 084): there is no station API, so they are inserted with auditedMutation. The readings and
+ * sessions go through the EV API, marked synthetic, so its rules, audit and events apply: a session starts, then
+ * completes or fails.
+ */
+async function writeEv(api: SeedApi, ev: EvPlan, ids: PublicIds, ctx: MutationContext, concurrency: number, log: (line: string) => void): Promise<void> {
+  const provider = await pool.query<{ id: string }>('SELECT id FROM integration.external_providers WHERE code = $1', [SIMULATED_PROVIDER]);
+  if (!provider.rows[0]) throw new Error(`No '${SIMULATED_PROVIDER}' charging provider: run the migrations (084) first.`);
+  const stations = await withTransaction(pool, async (client) => {
+    const out: string[] = [];
+    for (const s of ev.stations) {
+      const row = await auditedMutation(client, ctx, 'ev.charging_stations', 'INSERT', null, {
+        provider_id: provider.rows[0].id,
+        external_station_id: s.external_station_id,
+        name: s.name,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        connector_type: s.connector_type,
+        power_kw: s.power_kw,
+        status: 'available',
+        source: 'synthetic',
+      });
+      out.push(row.public_id as string);
+    }
+    return out;
+  });
+  log(`charging stations: ${stations.length} (synthetic)`);
+
+  await inParallel(ev.logs, concurrency, async (l) => {
+    const { vehicle, ...reading } = l;
+    await api.post('/ev/battery-logs', { ...reading, vehicle_id: ids.vehicles[vehicle], source: 'synthetic' });
+  });
+  log(`battery logs: ${ev.logs.length} (synthetic, ${ev.vehicles.length} EVs over 90 days)`);
+
+  const byVehicle = [...new Set(ev.sessions.map((s) => s.vehicle))].map((v) => ev.sessions.filter((s) => s.vehicle === v));
+  await inParallel(byVehicle, concurrency, async (list) => {
+    for (const s of list) {
+      const { data } = await api.post<{ id: string }>('/ev/charging-sessions', {
+        vehicle_id: ids.vehicles[s.vehicle],
+        station_id: stations[s.station],
+        status: 'in_progress',
+        started_at: s.started_at,
+        start_soc: s.start_soc,
+        external_session_id: s.external_session_id,
+        source: 'synthetic',
+      });
+      await api.patch(`/ev/charging-sessions/${data.id}`, { status: s.status, ended_at: s.ended_at, end_soc: s.end_soc, energy_kwh: s.energy_kwh, cost_cents: s.cost_cents });
+    }
+  });
+  log(`charging sessions: ${ev.sessions.length} (synthetic; ${ev.sessions.filter((s) => s.status === 'failed').length} failed)`);
+}
+
 /** What the seed wrote; the expiring documents are counted from `anchor` (YYYY-MM-DD), the dataset's today. */
 async function countRows(anchor: string): Promise<Record<string, number>> {
   const res = await pool.query<Record<string, number>>(`
@@ -375,7 +447,10 @@ async function countRows(anchor: string): Promise<Record<string, number>> {
            (SELECT count(*) FROM fleet.driver_attendance)::int AS attendance,
            (SELECT count(*) FROM document.documents WHERE owner_type = 'vehicle' AND deleted_at IS NULL)::int AS vehicle_documents,
            (SELECT count(*) FROM document.documents WHERE expires_on - $1::date BETWEEN 8 AND 30)::int AS documents_expiring_amber,
-           (SELECT count(*) FROM document.documents WHERE expires_on - $1::date BETWEEN 0 AND 7)::int AS documents_expiring_red`,
+           (SELECT count(*) FROM document.documents WHERE expires_on - $1::date BETWEEN 0 AND 7)::int AS documents_expiring_red,
+           (SELECT count(*) FROM ev.charging_stations)::int AS charging_stations,
+           (SELECT count(*) FROM ev.ev_battery_logs)::int AS battery_logs,
+           (SELECT count(*) FROM ev.charging_sessions)::int AS charging_sessions`,
     [anchor],
   );
   return res.rows[0];

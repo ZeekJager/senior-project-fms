@@ -3,7 +3,7 @@ import { limitOffset, type Page } from '../../../shared/http/pagination';
 import type { MutationContext, Row } from '../../../shared/infrastructure/audited-mutation';
 import type { Queryable } from '../../../shared/infrastructure/queryable';
 import { Repository } from '../../../shared/infrastructure/repository';
-import type { SessionStatus, StationView } from '../domain/ev';
+import type { RecordSource, SessionStatus, StationView } from '../domain/ev';
 
 /** A row as stored, with the vehicle's internal id: the service turns it into public ids and a plate. */
 export interface BatteryLogRow {
@@ -15,6 +15,8 @@ export interface BatteryLogRow {
   voltage_v: number | null;
   current_a: number | null;
   estimated_range_km: number | null;
+  energy_wh_per_km: number | null;
+  source: RecordSource;
   recorded_at: Date;
 }
 
@@ -31,6 +33,7 @@ export interface SessionRow {
   start_soc: number | null;
   end_soc: number | null;
   external_session_id: string | null;
+  source: RecordSource;
   created_at: Date;
   updated_at: Date;
 }
@@ -38,14 +41,15 @@ export interface SessionRow {
 const LOG_SQL = `
   SELECT l.public_id AS id, l.vehicle_id AS "vehicleId", l.state_of_charge::float8 AS state_of_charge,
          l.battery_health::float8 AS battery_health, l.battery_temperature_c::float8 AS battery_temperature_c,
-         l.voltage_v::float8 AS voltage_v, l.current_a::float8 AS current_a, l.estimated_range_km::float8 AS estimated_range_km, l.recorded_at
+         l.voltage_v::float8 AS voltage_v, l.current_a::float8 AS current_a, l.estimated_range_km::float8 AS estimated_range_km,
+         l.energy_wh_per_km::float8 AS energy_wh_per_km, l.source, l.recorded_at
     FROM ev.ev_battery_logs l`;
 
 const SESSION_SQL = `
   SELECT s.id AS "internalId", s.public_id AS id, s.vehicle_id AS "vehicleId",
          CASE WHEN st.id IS NULL THEN NULL ELSE json_build_object('id', st.public_id, 'name', st.name) END AS station,
          s.status, s.started_at, s.ended_at, s.energy_kwh::float8 AS energy_kwh, s.cost_cents, s.start_soc::float8 AS start_soc,
-         s.end_soc::float8 AS end_soc, s.external_session_id, s.created_at, s.updated_at
+         s.end_soc::float8 AS end_soc, s.external_session_id, s.source, s.created_at, s.updated_at
     FROM ev.charging_sessions s
     LEFT JOIN ev.charging_stations st ON st.id = s.station_id`;
 
@@ -102,7 +106,7 @@ export class EvRepository extends Repository {
     const { limit, offset } = limitOffset(filter);
     const rows = await db.query<StationView>(
       `SELECT public_id AS id, name, external_station_id, latitude::float8 AS latitude, longitude::float8 AS longitude, connector_type,
-              power_kw::float8 AS power_kw, status
+              power_kw::float8 AS power_kw, status, source
          FROM ev.charging_stations WHERE ${where.join(' AND ')} ORDER BY name, id LIMIT ${limit} OFFSET ${offset}`,
       params,
     );
@@ -134,6 +138,21 @@ export class EvRepository extends Repository {
       [vehicleId, except],
     );
     return res.rows[0]?.id ?? null;
+  }
+
+  /** A provider's station (FMS-97) by its own id: internal id, or null when the provider has no such station. */
+  async providerStationId(db: Queryable, providerId: string, externalStationId: string): Promise<string | null> {
+    const res = await db.query<{ id: string }>('SELECT id FROM ev.charging_stations WHERE provider_id = $1 AND external_station_id = $2', [providerId, externalStationId]);
+    return res.rows[0]?.id ?? null;
+  }
+
+  /**
+   * A provider's session by its id, locked (FMS-97). The transaction first takes an advisory lock on the id, so two
+   * deliveries of a session not yet stored (its start and its end, arriving together) cannot both insert it.
+   */
+  async lockExternalSession(client: PoolClient, externalId: string): Promise<SessionRow | null> {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('ev.charging_sessions:' || $1, 0))", [externalId]);
+    return (await client.query<SessionRow>(`${SESSION_SQL} WHERE s.external_session_id = $1 FOR UPDATE OF s`, [externalId])).rows[0] ?? null;
   }
 
   async externalSessionTaken(db: Queryable, externalId: string): Promise<boolean> {
