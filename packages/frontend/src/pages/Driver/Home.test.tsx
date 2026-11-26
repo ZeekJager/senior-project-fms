@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/test/auth'
 import { server } from '@/test/msw/server'
 import { operatingToday, type DriverTrip } from './api'
+import { goOffline } from '@/test/network'
 
 const driver = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read', 'dvir:write'])
 const VEHICLE = 'v0000000-0000-4000-8000-000000000001'
@@ -205,7 +206,7 @@ describe('Driver Home (S-11)', () => {
     )
     renderApp('/driver')
     await screen.findByRole('heading', { name: 'My day', level: 1 })
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     const c = await card()
     expect(c).toHaveTextContent('Addis Ababa - Adama')
     expect(await screen.findByText(/Saved on this phone at 07:12/)).toBeInTheDocument()
@@ -224,7 +225,7 @@ describe('Driver Home (S-11)', () => {
     signedInAs(driver)
     renderApp('/driver')
     await screen.findByRole('heading', { name: 'My day', level: 1 })
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     expect(await screen.findByRole('heading', { name: 'No signal' })).toBeInTheDocument()
   })
 })

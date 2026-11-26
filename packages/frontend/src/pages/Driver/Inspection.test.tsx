@@ -7,6 +7,7 @@ import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/t
 import { server } from '@/test/msw/server'
 import type { DriverTrip } from './api'
 import { CHECKLISTS } from './checklist'
+import { goOffline } from '@/test/network'
 
 const driver = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read', 'dvir:write'])
 const VEHICLE = 'v0000000-0000-4000-8000-000000000001'
@@ -111,7 +112,7 @@ describe('Driver vehicle inspection (FMS-37, S-12)', () => {
     const posts = serve(state)
     await open(`/driver/dvir?trip=${TRIP}&type=pre_trip`)
     await screen.findByText('AA 3-10001')
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     const user = userEvent.setup()
     await answerAll(user)
     expect(submitButton()).toHaveTextContent('Save inspection')
