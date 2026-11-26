@@ -3,9 +3,9 @@
 Card: FMS-55 (SE-91). Code:
 
 - `packages/backend/src/modules/maintenance/application/scoring.service.ts`: the run;
-- `domain/scoring.ts`: the 19 formulas, caps, risk levels and when a risk event is raised;
+- `domain/scoring.ts`: the 19 formulas, the EV model's 17 (FMS-135), caps, risk levels and when a risk event is raised;
 - `infrastructure/scoring.repository.ts`, `ml-service.client.ts`;
-- the reads in other modules: `fleet/infrastructure/scoring.queries.ts`, `trip/infrastructure/trip-usage.queries.ts`, and one query each in fuel and alert;
+- the reads in other modules: `fleet/infrastructure/scoring.queries.ts`, `trip/infrastructure/trip-usage.queries.ts`, `ev/infrastructure/ev.repository.ts` (`scoringFacts`), and one query each in fuel and alert;
 - migration 040.
 
 Architecture §23 (predictive maintenance), Scenario C, §28.3 (timeouts, retries, circuit breaking).
@@ -16,16 +16,16 @@ Every night the job gives each vehicle a health score, so screens show the risk 
 
 The job `maintenance-scoring` runs daily at 02:00 (Addis Ababa), after `engine-hours` (01:00) has read yesterday's engine hours ([jobs.md](jobs.md)).
 
-1. **The model.** `mlRegistry.checkServing` asks the ML service which model it serves (`GET /model`) and registers it if it is new ([ml-model-registry.md](ml-model-registry.md)). Scoring goes ahead only with the active model, trained on the core's feature spec.
-2. **The vehicles.** Every vehicle in service: `is_active`, status `active`, `inactive` or `maintenance`. Retired vehicles are not scored.
-3. **The inputs.** The 19 inputs of `feature_spec.json`, for every vehicle at once, one query per source.
-4. **The ML service.** Batches of 100 to `POST /internal/ml/predict-maintenance/batch` (api-contract §10.3).
+1. **The vehicles.** Every vehicle in service: `is_active`, status `active`, `inactive` or `maintenance`. Retired vehicles are not scored. They are split by fuel type: electric vehicles go to the EV model (FMS-135), every other one to the combustion model. Each group is scored on its own, so a model that may not score leaves the other's vehicles to it.
+2. **The model.** `mlRegistry.checkServing` asks the ML service which model of that name it serves (`GET /model`, or `GET /model?name=predictive-maintenance-ev`) and registers it if it is new ([ml-model-registry.md](ml-model-registry.md)). A group is scored only with its model's active version, trained on the core's spec for it (`feature_spec.json`, `feature_spec_ev.json`).
+3. **The inputs.** The 19 inputs of `feature_spec.json` for combustion vehicles, the 17 of `feature_spec_ev.json` for EVs, for every vehicle of the group at once, one query per source.
+4. **The ML service.** Batches of 100 to `POST /internal/ml/predict-maintenance/batch` (api-contract §10.3), with `?model=predictive-maintenance-ev` for EVs.
 5. **Each batch** is stored in one transaction:
    - the prediction;
    - the vehicle's health score;
    - a risk event where the score fell below the alert line (75 unless changed, [settings.md](settings.md)).
 
-The run's result goes into the job history. It holds counts: `vehicles`, `scored`, `already_scored`, `skipped`, `risk_events`, `batches_failed`, `model_version`, `blocked`, `duration_ms`.
+The run's result goes into the job history. It holds counts: `vehicles`, `scored`, `already_scored`, `skipped`, `risk_events`, `batches_failed`, `model_version`, `blocked`, `duration_ms`; and for the EVs `ev_vehicles`, `ev_model_version`, `ev_blocked` and `skipped_no_model` (EVs left with their last score because no EV model may score them).
 
 ## The scoring time
 
@@ -49,7 +49,23 @@ The formulas are `FEATURE_FORMULAS` in `domain/scoring.ts`, one per input, as th
 
 - **Engine hours** are the meter's increase over the window once the meter was read at or before `t - 30 d` and again after it. Until then, and for vehicles without an ignition-reporting device, they are driving hours. This follows the spec's formula.
 - **Caps and rounding.** Each input is capped to the spec's range and rounded to its decimals: whole days, one decimal for kilometres. The ML service refuses anything outside the spec rather than clipping it, so the extractor clips.
-- **The extractor's spec.** The extractor implements spec version 2. Its hash is pinned in `EXTRACTOR_SPEC_HASH`. If `feature_spec.json` changes and the extractor is not updated with it, the run fails before scoring anything, and the job history gives the reason. This is a deployment error, not an outage. The unit test also checks that the formulas cover exactly the spec's inputs, in order.
+- **The extractor's spec.** The extractor implements spec version 2. Its hash is pinned in `EXTRACTOR_SPEC_HASH`, and the EV spec's in `EV_EXTRACTOR_SPEC_HASH`. If `feature_spec.json` changes and the extractor is not updated with it, the run fails before scoring anything, and the job history gives the reason. This is a deployment error, not an outage. The unit test also checks that the formulas cover exactly the spec's inputs, in order.
+
+### An EV's inputs (FMS-135)
+
+`EV_FEATURE_FORMULAS` implement `feature_spec_ev.json` ([ml-dataset.md](ml-dataset.md#ev)). The shared inputs (mileage, days since service, fault reports, age, coolant, brake pads and fluid, tyres, the 12 V battery) are the combustion formulas. The EV's own come from the EV module's tables, read through `evScoring.facts` (provided to maintenance at start-up, `modules/index.ts`):
+
+| Input | From |
+|---|---|
+| `battery_health_pct` | the newest `ev.ev_battery_logs` health in `[t - 90 d, t)`; without one, a typical pack for its age: `100 - 2 x age`, between 70 and 100 |
+| `battery_health_drop_90d` | the oldest reading in `[t - 90 d, t)` less the newest, with at least two readings; never below 0 |
+| `high_temp_hours_30d` | in `[t - 30 d, t)`, each reading at 45 °C or more counts the time until the next reading, at most 8 hours |
+| `energy_vs_expected_pct` | the vehicle's mean Wh/km over 30 days against its make and model's, with at least 3 readings and another vehicle of its kind reporting |
+| `dc_fast_share_pct` | the share of the energy of sessions completed in 30 days taken at stations of 50 kW or more |
+| `deep_discharges_30d` | each time the charge fell below 10% in 30 days |
+| `failed_charging_sessions_90d` | `failed` sessions in 90 days |
+
+Without battery logs or sessions each reads its fallback, as the spec says (a typical pack, then zeros).
 
 ## Calling the ML service
 
@@ -100,11 +116,12 @@ The run still finishes in every case below, except the last.
 | What | The run | Seen as |
 |---|---|---|
 | The ML service cannot be reached, or `GET /model` fails | Skips every vehicle | `blocked: ml_unavailable`; an error is logged (`maintenance.scoring_skipped`) |
-| The served model is not active, was trained on other inputs, or its artefact differs | Skips every vehicle | `blocked: not_active` (or the other reason); the registry's `ml_scoring_blocked` alert for administrators |
+| The served model is not active, was trained on other inputs, or its artefact differs | Skips that model's vehicles | `blocked: not_active` (or the other reason; `ev_blocked` for the EV model); the registry's `ml_scoring_blocked` alert for administrators |
+| The ML service serves no EV model | Skips the EVs; the others are scored | `ev_blocked: no_model`, `skipped_no_model`; logged as info (`maintenance.scoring_no_ev_model`), no alert |
 | A batch fails after its retries | Skips that batch's vehicles; the others are scored | `batches_failed`; an error per batch (`maintenance.scoring_batch_failed`) |
 | The breaker opens during the run | The remaining batches fail at once without calling the service | the same |
 | A batch comes back from another model | Not stored | the same |
-| `feature_spec.json` is not the spec the extractor implements | Fails | `job.failed`; the scheduler retries it, up to 5 attempts that day |
+| `feature_spec.json` or `feature_spec_ev.json` is not the spec the extractor implements | Fails | `job.failed`; the scheduler retries it, up to 5 attempts that day |
 
 Vehicles that were skipped keep their last score. The health score screen (FMS-56) shows a score older than 25 hours as stale.
 
@@ -114,14 +131,17 @@ The card's budget is 200 vehicles in under 90 seconds. The integration test scor
 
 ## On the seeded fleet
 
-The budget seed (200 vehicles, [seed-data.md](seed-data.md#service-history)), scored by `pm-2026.10` through the real service:
+The budget seed with its EV data (200 vehicles, `--with-ev`, [seed-data.md](seed-data.md#service-history)), scored through the real service: combustion vehicles by `pm-2026.11`, EVs by `pm-ev-2026.11` (FMS-135). The run took 2.5 s.
 
 | | Vehicles | Average health score | Below 75 | High risk |
 |---|---|---|---|---|
-| Combustion | 184 | 86 | 21 (11%) | 0 |
-| Electric | 16 | 47 | 14 | 6 |
+| Combustion | 184 | 86 | 20 (10.9%) | 0 |
+| Electric | 16 | 83 | 4 (25.0%) | 0 |
 
-The model scores electric vehicles low. The spec has no notion of an engine that needs no oil, so an electric vehicle's oil, fuel filter, belt, gearbox oil and clutch fluid count as never changed, and the synthetic fleet it was trained on has no electric vehicles. Scoring them properly needs a change to the spec (FMS-52).
+- **Before FMS-135** the combustion model scored the EVs too: an average of 47, 14 of 16 below 75 and 6 high risk, because an EV's oil, fuel filter, belt, gearbox oil and clutch fluid counted as never changed.
+- **The four EVs below 75** (66 and 67) are the seed's `unreliable_charging` EVs ([ev.md](ev.md)): 6 to 32 failed charging sessions in 90 days, the inputs named first in their factors. The seed plants that scenario on purpose, and this seed drew four. Every other EV scores 78 to 95.
+- **The gap** to the combustion vehicles' share is 14 points, above the card's 10. It comes from those planted EVs, not from a bias against EVs: without them the share is 0 of 12.
+- **The seed's EV service.** The seed first gave EVs no periodic service, only their parts, so they read a median of 190 days since service, against 42 to 51 for combustion vehicles, and 7 of 16 fell below 75. EVs now get their own service every 6 months ([seed-data.md](seed-data.md#service-history)).
 
 ## Feedback from technicians (FMS-128)
 

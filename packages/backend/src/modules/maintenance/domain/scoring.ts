@@ -29,6 +29,20 @@ export const PREDICTION_EVENTS = { riskDetected: 'MaintenanceRiskDetected' } as 
  */
 export const EXTRACTOR_SPEC_HASH = 'b81af7ff0446aaf63946fcb12fae3a4b0cccaeecbc1a94d04d2b035a048e2f10';
 
+/** The hash of feature_spec_ev.json (spec version 1, FMS-134) that EV_FEATURE_FORMULAS implement (FMS-135). */
+export const EV_EXTRACTOR_SPEC_HASH = 'e19b1ce3486fb2a2100a320b7dc1327f4b007fcb9397a2487fbff30d974dc428';
+
+/** The EV inputs' windows (feature_spec_ev.json), in days, ending at t. */
+export const EV_WINDOW_DAYS = { health: 90, use: 30, failedSessions: 90 } as const;
+/** A pack this hot or hotter counts toward high_temp_hours_30d, for at most this many hours a reading. */
+export const EV_HOT_C = 45;
+export const EV_HOT_HOURS_PER_READING = 8;
+/** Below this state of charge a reading is a deep discharge; at a station of this power or more a session is DC fast. */
+export const EV_DEEP_SOC = 10;
+export const EV_DC_FAST_KW = 50;
+/** Fewer readings with energy per km in the window, and the vehicle's energy is not judged. */
+export const EV_MIN_ENERGY_READINGS = 3;
+
 /** Incidents that count as fault reports (num_fault_reports). */
 export const FAULT_INCIDENT_TYPES = ['breakdown', 'tyre'] as const;
 
@@ -112,7 +126,34 @@ export interface VehicleFacts {
   lastServiceAt: Date | null;
   /** Each item's last change before t, and the kilometres of completed trips since. Absent: never changed in the system. */
   items: Partial<Record<ServiceItem, { changedAt: Date; kmSince: number }>>;
+  /** An electric vehicle's battery and charging (FMS-135), from the EV module; absent for any other. */
+  ev?: EvFacts;
 }
+
+/** What an EV's own inputs are computed from (feature_spec_ev.json), each over its window ending at t. */
+export interface EvFacts {
+  /** The newest and the oldest battery_health of the readings with one in [t - 90 d, t), and how many there were. */
+  newestHealth: number | null;
+  oldestHealth: number | null;
+  healthReadings: number;
+  /** Hours the pack was at 45 C or more in [t - 30 d, t): each hot reading to the next, at most 8. */
+  hotHours: number;
+  /** energy_wh_per_km of its readings in [t - 30 d, t): the sum and how many. */
+  energySumWhPerKm: number;
+  energyReadings: number;
+  /** The mean energy_wh_per_km of every EV of its make and model in the window, when another of them reports; else null. */
+  kindMeanWhPerKm: number | null;
+  /** Energy of its completed sessions ended in [t - 30 d, t), kWh: all, and at DC fast stations (50 kW and more). */
+  sessionEnergyKwh: number;
+  dcFastEnergyKwh: number;
+  /** Readings in [t - 30 d, t) below 10% charge whose previous reading was not. */
+  deepDischarges: number;
+  /** Sessions that failed, started in [t - 90 d, t). */
+  failedSessions: number;
+}
+
+/** No reading with health: a typical pack for its age (feature_spec_ev.json's fallback). */
+const typicalHealth = (ageYears: number) => Math.min(100, Math.max(70, 100 - 2 * ageYears));
 
 const DAY_MS = 86_400_000;
 /** Addis Ababa has no daylight saving time: its days start at 00:00+03:00. */
@@ -161,6 +202,57 @@ export const FEATURE_FORMULAS: Record<string, (f: VehicleFacts, t: Date) => numb
   km_since_belt_change: kmSince('belts'),
 };
 
+/** The EV's facts, or none: a vehicle scored by the EV model always has them; an empty set reads every fallback. */
+const evOf = (f: VehicleFacts): EvFacts =>
+  f.ev ?? {
+    newestHealth: null,
+    oldestHealth: null,
+    healthReadings: 0,
+    hotHours: 0,
+    energySumWhPerKm: 0,
+    energyReadings: 0,
+    kindMeanWhPerKm: null,
+    sessionEnergyKwh: 0,
+    dcFastEnergyKwh: 0,
+    deepDischarges: 0,
+    failedSessions: 0,
+  };
+
+/**
+ * The EV model's inputs (feature_spec_ev.json, FMS-134/135): the shared ones exactly as for combustion vehicles,
+ * then the battery's and charging's, each with the spec's fallback when its source has nothing.
+ */
+export const EV_FEATURE_FORMULAS: Record<string, (f: VehicleFacts, t: Date) => number> = {
+  mileage_km: FEATURE_FORMULAS.mileage_km,
+  days_since_last_service: FEATURE_FORMULAS.days_since_last_service,
+  num_fault_reports: FEATURE_FORMULAS.num_fault_reports,
+  age_years: FEATURE_FORMULAS.age_years,
+  days_since_coolant_change: FEATURE_FORMULAS.days_since_coolant_change,
+  km_since_brake_pad_change: FEATURE_FORMULAS.km_since_brake_pad_change,
+  days_since_brake_fluid_change: FEATURE_FORMULAS.days_since_brake_fluid_change,
+  km_since_tyre_change: FEATURE_FORMULAS.km_since_tyre_change,
+  days_since_tyre_change: FEATURE_FORMULAS.days_since_tyre_change,
+  days_since_battery_change: FEATURE_FORMULAS.days_since_battery_change,
+  battery_health_pct: (f, t) => evOf(f).newestHealth ?? typicalHealth(FEATURE_FORMULAS.age_years(f, t)),
+  battery_health_drop_90d: (f) => {
+    const ev = evOf(f);
+    if (ev.healthReadings < 2 || ev.newestHealth === null || ev.oldestHealth === null) return 0;
+    return Math.max(0, ev.oldestHealth - ev.newestHealth);
+  },
+  high_temp_hours_30d: (f) => evOf(f).hotHours,
+  energy_vs_expected_pct: (f) => {
+    const ev = evOf(f);
+    if (ev.energyReadings < EV_MIN_ENERGY_READINGS || ev.kindMeanWhPerKm === null || ev.kindMeanWhPerKm <= 0) return 0;
+    return (100 * (ev.energySumWhPerKm / ev.energyReadings - ev.kindMeanWhPerKm)) / ev.kindMeanWhPerKm;
+  },
+  dc_fast_share_pct: (f) => {
+    const ev = evOf(f);
+    return ev.sessionEnergyKwh > 0 ? (100 * ev.dcFastEnergyKwh) / ev.sessionEnergyKwh : 0;
+  },
+  deep_discharges_30d: (f) => evOf(f).deepDischarges,
+  failed_charging_sessions_90d: (f) => evOf(f).failedSessions,
+};
+
 /** Capped to the spec's range and rounded to its decimals: the ML service refuses anything outside it. */
 function fit(input: FeatureInput, value: number): number {
   const capped = Math.min(input.max, Math.max(input.min, value));
@@ -168,11 +260,19 @@ function fit(input: FeatureInput, value: number): number {
   return Math.round(capped * scale) / scale;
 }
 
-/** The vehicle's inputs at t, in the spec's order. Throws for an input the extractor has no formula for. */
-export function computeFeatures(inputs: readonly FeatureInput[], facts: VehicleFacts, t: Date): Record<string, number> {
+/**
+ * The vehicle's inputs at t, in the spec's order, by the formulas of its model: FEATURE_FORMULAS (combustion) by
+ * default, EV_FEATURE_FORMULAS for the EV model. Throws for an input the extractor has no formula for.
+ */
+export function computeFeatures(
+  inputs: readonly FeatureInput[],
+  facts: VehicleFacts,
+  t: Date,
+  formulas: Record<string, (f: VehicleFacts, t: Date) => number> = FEATURE_FORMULAS,
+): Record<string, number> {
   const features: Record<string, number> = {};
   for (const input of inputs) {
-    const formula = FEATURE_FORMULAS[input.name];
+    const formula = formulas[input.name];
     if (!formula) throw new Error(`The feature extractor has no formula for '${input.name}'`);
     features[input.name] = fit(input, formula(facts, t));
   }

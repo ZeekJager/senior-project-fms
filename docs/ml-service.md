@@ -14,10 +14,11 @@ The model (FMS-53, [ml-model.md](ml-model.md)) runs behind an internal HTTP API,
 
 | Endpoint | Token | Does |
 |---|---|---|
-| `GET /health` | No | `{status: "ok", model_version, load_seconds}`. The service only starts with a model, so a running service has one |
-| `GET /model` | Yes | The model serving now: version, inputs, feature spec version and hash, artefact checksum, training data, metrics. The registry (FMS-127) records it, and the core refuses to score when its own spec hash differs |
-| `POST /internal/ml/predict-maintenance` | Yes | One vehicle |
-| `POST /internal/ml/predict-maintenance/batch` | Yes | 1 to 500 vehicles, answered in the same order |
+| `GET /health` | No | `{status: "ok", model_version, ev_model_version, trip_risk_model_version, load_seconds}`. The service only starts with a model, so a running service has one |
+| `GET /model` | Yes | The model serving now: name, version, inputs, feature spec version and hash, artefact checksum, training data, metrics. The registry (FMS-127) records it, and the core refuses to score when its own spec hash differs. `?name=predictive-maintenance-ev` asks for the EV model (FMS-135): `404 NOT_FOUND` when the service has none, or for a name it does not know |
+| `GET /models` | Yes | Every predictive maintenance model the service serves (the combustion one, and the EV one when loaded), each as `GET /model` describes it |
+| `POST /internal/ml/predict-maintenance` | Yes | One vehicle (combustion) |
+| `POST /internal/ml/predict-maintenance/batch` | Yes | 1 to 500 vehicles, answered in the same order. `?model=predictive-maintenance-ev` scores EVs with the EV model, on the EV spec's inputs |
 | `GET /models/trip-risk` | Yes | The trip risk model serving now (FMS-155, [ml-trip-risk.md](ml-trip-risk.md)), for the registry; `404` without one |
 | `POST /internal/ml/predict-trip-risk` | Yes | 1 to 200 drivers on one trip: each one's chance of running late and of a safety event, with the two inputs raising each most |
 
@@ -27,7 +28,7 @@ A prediction carries:
 - `health_score`: `round((1 - p) * 100)`;
 - `risk_level`;
 - `prediction_horizon_days`: 30;
-- `model_version`;
+- `model_name` (`predictive-maintenance` or `predictive-maintenance-ev`) and `model_version`;
 - `factors`.
 
 **Risk levels** come from the health score, so they agree with the core's alert line (a risk event below 75):
@@ -48,7 +49,7 @@ A prediction carries:
 
 ## Inputs
 
-The request's `features` must be exactly the inputs of `feature_spec.json`. The service builds its validation from that file:
+The request's `features` must be exactly the inputs of `feature_spec.json`, or of `feature_spec_ev.json` for the EV model. The service builds its validation from that file:
 
 - every input is required;
 - each must be within the spec's `min` and `max`;
@@ -57,7 +58,7 @@ The request's `features` must be exactly the inputs of `feature_spec.json`. The 
 
 A request that breaks any of these is `422 VALIDATION_FAILED`, naming each field (`features.mileage_km`, `items.3.features.age_years`) with a reason: `required`, `out_of_range`, `not_allowed`, `too_few`, `too_many`, `invalid_json` or `invalid`. Errors use the core's envelope (`error.code`, `error.message`, `error.details`, `meta.request_id`).
 
-The service refuses rather than clips. The core's extractor caps every input as the spec says, so a value outside its range is a bug to see, not to hide.
+Each model refuses the other's inputs: an EV's battery inputs sent to the combustion model, or an oil change sent to the EV model, are unknown inputs (`not_allowed`), and the inputs it lacks are `required`. The service refuses rather than clips. The core's extractor caps every input as the spec says, so a value outside its range is a bug to see, not to hide.
 
 ## Security
 
@@ -78,6 +79,7 @@ ML_SERVICE_TOKEN=<32+ characters> uvicorn app:create_app --factory --port 5000
 - `ML_MODELS_DIR` is the folder of model versions (default `./models`).
 - `ML_MODEL_VERSION` picks one; by default the newest version there serves (`pm-2026.10.2` after `pm-2026.10`).
 - The trip risk model is optional: `ML_TRIP_RISK_MODEL_VERSION`, or the newest `tr-*` folder there. Without one the service starts all the same and its trip risk endpoints answer `404`; a trip risk folder that fails its checksum or spec stops it, as the maintenance model's does.
+- The EV model is optional too (FMS-135): `ML_EV_MODEL_VERSION`, or the newest `pm-ev-*` folder there. A `pm-ev-*` folder is never taken for the combustion model. Without one, `GET /model?name=predictive-maintenance-ev` and the EV batch answer `404`, and the core leaves the EVs' last scores alone; an EV folder that fails its checksum or spec stops the service.
 - The model is loaded once, at start-up. A missing model, a checksum or spec mismatch, or a short token stops the service from starting, with the reason.
 
 **In Docker** (`make dev`), the image trains its model when it is built: the seeded dataset, then `train.py`, into `/opt/models`, outside the source volume. A build trains a model graded like any other: `train.py` writes nothing when the model misses a criterion, and the build fails. The container answers its health check within about 3 s of starting.

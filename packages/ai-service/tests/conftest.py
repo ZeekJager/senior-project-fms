@@ -39,3 +39,21 @@ def trip_trained(tmp_path_factory):
     folder = root / "models" / TRIP_RISK_VERSION
     metadata, metrics = artefact.read(folder)
     return {"root": root, "data": data, "folder": folder, "metadata": metadata, "metrics": metrics}
+
+
+EV_VERSION = "pm-ev-2026.11"
+
+
+@pytest.fixture(scope="session")
+def ev_trained(tmp_path_factory):
+    """The EV predictive maintenance model (FMS-135) train.py --spec ev makes from the generated EV dataset."""
+    from ml.ev.dataset import generate as generate_ev
+    from ml.ev.dataset import to_csv as ev_to_csv
+
+    root = tmp_path_factory.mktemp("ev-model")
+    data = root / "ev_training_data.csv"
+    ev_to_csv(generate_ev(), data)
+    assert train_cli.main(["--spec", "ev", "--data", str(data), "--out", str(root / "models"), "--version", EV_VERSION]) == 0
+    folder = root / "models" / EV_VERSION
+    metadata, metrics = artefact.read(folder)
+    return {"root": root, "data": data, "folder": folder, "metadata": metadata, "metrics": metrics}

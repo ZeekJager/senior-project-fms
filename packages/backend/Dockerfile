@@ -48,6 +48,7 @@ COPY packages/backend/migrations ./migrations
 COPY packages/backend/assets ./assets
 COPY packages/ai-service/feature_spec.json /app/packages/ai-service/feature_spec.json
 COPY packages/ai-service/trip_risk_spec.json /app/packages/ai-service/trip_risk_spec.json
+COPY packages/ai-service/feature_spec_ev.json /app/packages/ai-service/feature_spec_ev.json
 # Uploaded documents when STORAGE_DRIVER=local: mount a volume here (or use S3).
 RUN mkdir -p storage && chown -R node:node storage
 USER node

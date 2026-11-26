@@ -130,6 +130,8 @@ const appSchema = z
     ML_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec.json'),
     // The trip risk model's (FMS-155, docs/ml-trip-risk.md), the same way.
     ML_TRIP_RISK_SPEC_PATH: z.string().trim().min(1).default('../ai-service/trip_risk_spec.json'),
+    // The EV predictive maintenance model's (FMS-135), read the same way.
+    ML_EV_FEATURE_SPEC_PATH: z.string().trim().min(1).default('../ai-service/feature_spec_ev.json'),
     // Database backups (FMS-144, docs/backups.md): pg_dump needs a role that may read every table, which fms_app may
     // not. BACKUP_DB_USER/PASSWORD, else the schema owner's DB_ADMIN_USER/PASSWORD; neither set, backups are off.
     BACKUP_DB_USER: z.string().trim().min(1).optional(),
@@ -254,6 +256,7 @@ export interface MlConfig {
   featureSpecPath: string;
   /** The trip risk model's spec (FMS-155). */
   tripRiskSpecPath: string;
+  evFeatureSpecPath: string;
 }
 
 /** Provider secrets (FMS-85), by provider code. Never stored in the database, never returned by the API. */
@@ -413,6 +416,7 @@ export function loadAppConfig(env: Env): AppConfig {
       service: e.ML_SERVICE_URL ? { url: e.ML_SERVICE_URL.replace(/\/+$/, ''), token: e.ML_SERVICE_TOKEN! } : null,
       featureSpecPath: e.ML_FEATURE_SPEC_PATH,
       tripRiskSpecPath: e.ML_TRIP_RISK_SPEC_PATH,
+      evFeatureSpecPath: e.ML_EV_FEATURE_SPEC_PATH,
     },
     routing: e.ROUTING_URL ? { url: e.ROUTING_URL.replace(/\/+$/, '') } : null,
     app: { publicUrl: e.APP_PUBLIC_URL ? e.APP_PUBLIC_URL.replace(/\/+$/, '') : null },

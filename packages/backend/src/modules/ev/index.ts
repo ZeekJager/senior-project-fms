@@ -15,8 +15,9 @@ import { EV_EVENTS } from './domain/ev';
 import { DEFAULT_BATTERY_THRESHOLDS, type RangeEstimate } from './domain/range';
 
 // EV fleet management (FMS-96, architecture §13, docs/ev.md): battery state, charging sessions and stations.
+const repository = new EvRepository(pool);
 const service = new EvService({
-  ev: new EvRepository(pool),
+  ev: repository,
   vehicles: evRefs.vehicles,
   events: eventBus,
   // The low-charge and battery-health lines (FMS-98): settings, read at each reading so a change applies at once.
@@ -73,5 +74,14 @@ export const evRange = {
     return out;
   },
 };
+/**
+ * For the nightly scoring (FMS-135, maintenance): each EV's battery and charging facts as of t, by internal vehicle id,
+ * from which the EV model's inputs are computed (feature_spec_ev.json).
+ */
+export const evScoring = {
+  facts: (db: Queryable, vehicleIds: readonly string[], t: Date, rules: { hotC: number; hotHoursPerReading: number; deepSoc: number; dcFastKw: number }) =>
+    repository.scoringFacts(db, vehicleIds, t, rules),
+};
+export type { EvScoringRow } from './infrastructure/ev.repository';
 export type { RangeEstimate } from './domain/range';
 export { EV_EVENTS } from './domain/ev';

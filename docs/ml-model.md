@@ -110,6 +110,21 @@ The health score is read as a probability, and the core alerts below 75, a 25% c
 
 **Opening a model.** Use only `ml.artefact.load`. A joblib file is a pickle, and opening it runs code, so `load` first checks the file against its checksum. It also refuses a model whose `feature_spec_hash` or features differ from this code's `feature_spec.json`. Load only folders built by `train.py` from this repository.
 
+## The EV model (FMS-135)
+
+Electric vehicles have their own model, `predictive-maintenance-ev`. It is trained the same way on the EV dataset ([ml-dataset.md](ml-dataset.md#ev)) and its 17 inputs (`feature_spec_ev.json`: no oil, fuel filter, belt, gearbox oil or clutch fluid; the pack's health and its drop, heat, energy per km, DC fast charging, deep discharges and failed charging sessions).
+
+```
+python scripts/generate_ev_training_data.py               # data/ev_training_data.csv
+python scripts/train.py --spec ev                         # models/pm-ev-<year.month>/
+python scripts/evaluate.py models/pm-ev-2026.11           # the kind is read from the model's name
+```
+
+- **One kind per model.** `ml/model.py` describes each kind (`COMBUSTION`, `EV`): its name, spec, examples, version pattern (`pm-…`, `pm-ev-…`), default data file and generator. `train.py --spec ev` takes the EV data and spec by default, and refuses a version of the other kind.
+- **The same criteria**: ROC-AUC at least 0.75 on vehicles it has not seen, the high-risk example below 30, the healthy one above 85, the file under 50 MB. Its examples are an EV's: a worn, hot pack (76%, 4 points lost in 90 days, 220 hot hours) with 6 failed charging sessions, 4 fault reports and 150 days since service; and a new, cool pack (97%, nothing lost) recently serviced.
+- **Its grades** on the seeded EV dataset (seed 134): ROC-AUC 0.800; the high-risk example scores 0, the healthy one 97.
+- **Its folder** is `models/pm-ev-<year>.<month>/`, with the same files. `metadata.json` names it `predictive-maintenance-ev` and holds the EV spec's hash. `ml.artefact.load` refuses an EV model where a combustion model is expected, and the other way round.
+
 ## Tests and CI
 
 `tests/test_model.py` trains once on the generated dataset and checks:
@@ -124,4 +139,6 @@ The health score is read as a probability, and the core alerts below 75, a 25% c
 - that a tampered model, a model for other inputs, and other data are refused;
 - that a version is never reused, a malformed version or bad data is refused, and a model that misses a criterion is not written.
 
-The `ai-service-ci` job also trains a model on the generated dataset and grades it with `evaluate.py`. `joblib` is pinned at 1.6.0.
+`tests/test_ev_model.py` trains the EV model once and checks its grading on unseen vehicles, that `evaluate.py` grades it again on its own spec, that `train.py` refuses the wrong spec, data or version, and that a model loads only as its own kind (the service's side is in [ml-service.md](ml-service.md#tests)).
+
+The `ai-service-ci` job also trains a model on the generated dataset and grades it with `evaluate.py`, then does the same for the EV model. `joblib` is pinned at 1.6.0.

@@ -9,6 +9,10 @@ Reads ML_SERVICE_TOKEN (required, at least 32 characters), ML_MODELS_DIR
 
 The trip risk model (FMS-155, docs/ml-trip-risk.md) is optional: the newest tr-* folder
 in ML_MODELS_DIR, or ML_TRIP_RISK_MODEL_VERSION. Without one, its endpoints say so.
+
+The EV predictive maintenance model (FMS-135) is optional the same way: the newest pm-ev-*
+folder, or ML_EV_MODEL_VERSION. GET /model?name= and the batch's ?model= choose between the
+two; without the parameter, the combustion model, as before.
 """
 
 from __future__ import annotations
@@ -25,10 +29,13 @@ from typing import Any, Mapping
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest, multiprocess
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, create_model
 
 from ml import artefact, error_tracking
+from ml.ev.spec import load_spec as load_ev_spec
+from ml.model import COMBUSTION, EV, Kind
 from ml.serving import Predictor
 from ml.spec import load_spec
 from ml.trip_risk import serving as trip_risk
@@ -54,6 +61,7 @@ class Settings:
     models_dir: Path
     model_version: str | None = None
     trip_risk_version: str | None = None
+    ev_model_version: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Settings":
@@ -63,17 +71,33 @@ class Settings:
             Path(env.get("ML_MODELS_DIR") or ROOT / "models"),
             env.get("ML_MODEL_VERSION") or None,
             env.get("ML_TRIP_RISK_MODEL_VERSION") or None,
+            env.get("ML_EV_MODEL_VERSION") or None,
         )
+
+
+def _newest(models_dir: Path, kind: Kind) -> Path | None:
+    """The newest folder of a kind in ML_MODELS_DIR (pm-2026.10.2 after pm-2026.10); None without one."""
+    if not models_dir.is_dir():
+        return None
+    versions = [p for p in models_dir.iterdir() if p.is_dir() and kind.version.match(p.name)]
+    return max(versions, key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.name))) if versions else None
+
+
+def ev_model_folder(settings: Settings) -> Path | None:
+    """ML_EV_MODEL_VERSION's folder, or the newest pm-ev-* one (FMS-135); None: the service runs without an EV model."""
+    if settings.ev_model_version:
+        return settings.models_dir / settings.ev_model_version
+    return _newest(settings.models_dir, EV)
 
 
 def model_folder(settings: Settings) -> Path:
     """ML_MODEL_VERSION's folder, or the newest version in ML_MODELS_DIR (pm-2026.10.2 after pm-2026.10)."""
     if settings.model_version:
         return settings.models_dir / settings.model_version
-    versions = [p for p in settings.models_dir.glob("pm-*") if p.is_dir() and artefact.VERSION.match(p.name)] if settings.models_dir.is_dir() else []
-    if not versions:
+    newest = _newest(settings.models_dir, COMBUSTION)
+    if newest is None:
         raise RuntimeError(f"no model in {settings.models_dir}: run scripts/train.py, or set ML_MODELS_DIR")
-    return max(versions, key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.name)))
+    return newest
 
 
 # The request bodies, from feature_spec.json: every input required, within its range, nothing else.
@@ -95,6 +119,26 @@ class PredictRequest(BaseModel):
 class BatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     items: list[PredictRequest] = Field(min_length=1, max_length=MAX_BATCH)
+
+
+# The EV model's (feature_spec_ev.json, FMS-135), the same way: an EV's inputs never pass for a combustion vehicle's.
+EvFeatures = create_model(
+    "EvFeatures",
+    __config__=ConfigDict(extra="forbid"),
+    **{f["name"]: (int if f["type"] == "int" else float, Field(ge=f["min"], le=f["max"], strict=True)) for f in load_ev_spec()["features"]},
+)
+
+
+class EvPredictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    vehicle_id: uuid.UUID
+    as_of: AwareDatetime
+    features: EvFeatures  # type: ignore[valid-type]
+
+
+class EvBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[EvPredictRequest] = Field(min_length=1, max_length=MAX_BATCH)
 
 
 # The trip risk inputs (trip_risk_spec.json), the same way: every input required, within its range, nothing else.
@@ -193,6 +237,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     started = time.perf_counter()
     predictor = Predictor.load(folder)
     _, metrics = artefact.read(folder)
+    # Optional (FMS-135), but a folder that is there must be usable, as the trip risk model's.
+    ev_folder = ev_model_folder(settings)
+    ev_predictor = Predictor.load(ev_folder, EV) if ev_folder else None
+    ev_metrics = artefact.read(ev_folder)[1] if ev_folder else None
     # Optional, but a folder that is there must be usable: a tampered or mismatched one stops the service as the other does.
     trip_folder = settings.models_dir / settings.trip_risk_version if settings.trip_risk_version else trip_risk.newest(settings.models_dir)
     trip_predictor = trip_risk.TripRiskPredictor.load(trip_folder) if trip_folder else None
@@ -204,6 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # No interactive docs: the API is internal, and documented in docs/api-contract.md §10.3.
     app = FastAPI(title="FMS predictive maintenance", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.predictor = predictor
+    app.state.ev_predictor = ev_predictor
     app.state.trip_predictor = trip_predictor
     service_metrics = ServiceMetrics(predictor.version, load_seconds)
     app.state.metrics = service_metrics
@@ -257,12 +306,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not hmac.compare_digest(sent.encode(), settings.token.encode()):
             raise ServiceError(401, "AUTH_TOKEN_INVALID", f"A valid {AUTH_HEADER} or bearer token is required.")
 
-    def meta(request: Request) -> dict[str, Any]:
-        return {"request_id": request.state.request_id, "model_version": predictor.version}
+    def meta(request: Request, served: Predictor | None = None) -> dict[str, Any]:
+        served = served or predictor
+        return {"request_id": request.state.request_id, "model_name": served.name, "model_version": served.version}
 
-    def predictions(items: list[PredictRequest]) -> list[dict[str, Any]]:
+    def maintenance_model(name: str | None) -> tuple[Predictor, dict[str, Any]]:
+        """The model a request names (FMS-135): the combustion model by default, the EV model when the service has one."""
+        if name in (None, "", COMBUSTION.name):
+            return predictor, metrics
+        if name == EV.name:
+            if ev_predictor is None:
+                raise ServiceError(404, "NOT_FOUND", "No EV predictive maintenance model is loaded.")
+            return ev_predictor, ev_metrics  # type: ignore[return-value]
+        raise ServiceError(404, "NOT_FOUND", f"No model named {name!r}.", [{"field": "model", "reason": "unknown_model"}])
+
+    def predictions(items: list[Any], served: Predictor | None = None) -> list[dict[str, Any]]:
+        served = served or predictor
         with service_metrics.prediction.time():
-            out = predictor.predict([item.features.model_dump() for item in items])
+            out = served.predict([item.features.model_dump() for item in items])
         service_metrics.vehicles.inc(len(items))
         return [{"vehicle_id": str(item.vehicle_id), "as_of": item.as_of.isoformat(), **p} for item, p in zip(items, out)]
 
@@ -272,6 +333,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "status": "ok",
             "model_version": predictor.version,
+            "ev_model_version": ev_predictor.version if ev_predictor else None,
             "trip_risk_model_version": trip_predictor.version if trip_predictor else None,
             "load_seconds": load_seconds,
         }
@@ -282,16 +344,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(service_metrics.render(), media_type=CONTENT_TYPE_LATEST, headers={"Cache-Control": "no-store"})
 
     @app.get("/model", dependencies=[Depends(authorized)])
-    def model_info(request: Request) -> dict[str, Any]:
-        return {"data": predictor.describe(metrics), "meta": {"request_id": request.state.request_id}}
+    def model_info(request: Request, name: str | None = None) -> dict[str, Any]:
+        """The model of that name serving now (FMS-135): the combustion model without one; 404 for an EV model the service lacks."""
+        served, served_metrics = maintenance_model(name)
+        return {"data": served.describe(served_metrics), "meta": {"request_id": request.state.request_id}}
+
+    @app.get("/models", dependencies=[Depends(authorized)])
+    def models_info(request: Request) -> dict[str, Any]:
+        """Every predictive maintenance model the service serves, by name (FMS-135)."""
+        served = [(predictor, metrics)] + ([(ev_predictor, ev_metrics)] if ev_predictor else [])
+        return {"data": [p.describe(m) for p, m in served], "meta": {"request_id": request.state.request_id}}
 
     @app.post("/internal/ml/predict-maintenance", dependencies=[Depends(authorized)])
     def predict(body: PredictRequest, request: Request) -> dict[str, Any]:
         return {"data": predictions([body])[0], "meta": meta(request)}
 
     @app.post("/internal/ml/predict-maintenance/batch", dependencies=[Depends(authorized)])
-    def predict_batch(body: BatchRequest, request: Request) -> dict[str, Any]:
-        return {"data": predictions(body.items), "meta": meta(request)}
+    async def predict_batch(request: Request, model: str | None = None) -> dict[str, Any]:
+        """
+        A batch for the model named (FMS-135): the combustion model's inputs without `model`, the EV model's with
+        model=predictive-maintenance-ev. Inputs of the other spec are refused as any invalid body (422).
+        """
+        served, _ = maintenance_model(model)
+        schema = EvBatchRequest if served is ev_predictor and served is not None else BatchRequest
+        try:
+            raw = await request.json()
+        except ValueError as e:
+            raise RequestValidationError([{"loc": ("body",), "type": "json_invalid", "msg": str(e)}]) from e
+        try:
+            body = schema.model_validate(raw)
+        except ValidationError as e:
+            raise RequestValidationError(e.errors()) from e
+        return {"data": predictions(body.items, served), "meta": meta(request, served)}
 
     def trip_model() -> trip_risk.TripRiskPredictor:
         if trip_predictor is None:

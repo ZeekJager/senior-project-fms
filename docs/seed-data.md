@@ -48,7 +48,7 @@ Counts that depend on the random draws are given for the default seed (20261007)
 | Fuel logs: one after each completed trip of a combustion vehicle, about 3% suspiciously high | 40 (27–43) | 526 (455–526) |
 | Maintenance records: mostly completed, some open or scheduled, with parts used | 20 | 150 |
 | GPS pings: a track for every completed trip, one every five minutes (below) | 6,184 | 70,800 |
-| Service history: completed preventive work since each vehicle joined the fleet (below) | 147 (143–158) | 1,305 (1,282–1,310) |
+| Service history: completed preventive work since each vehicle joined the fleet (below) | 153 (149–164) | 1,332 (1,309–1,337) |
 | Spare parts: one shared catalogue; one low and one out of stock | 19 | 19 |
 | Attendance | 3 days | the anchor day |
 | Vehicle documents: an insurance certificate and a registration for every vehicle (one-page PDFs) | 48 | 400 |
@@ -64,7 +64,7 @@ The vehicle documents do the same for document expiry: about 12% expire within 3
 The predictive model (FMS-55, [ml-scoring.md](ml-scoring.md)) reads when each wearing part and fluid was last renewed. Without that history, the spec counts an item as never changed since the vehicle was built, so a seeded fleet looked worn out. Each vehicle therefore gets a believable history (`SERVICE_SCHEDULE` in `scripts/seed/catalog.ts`).
 
 - **When it joined the fleet.** Each vehicle's `created_at` is 4 to 6 years before the anchor, or a few weeks after 1 January of its model year when it is younger. The API registers vehicles today, so the seed sets the date afterwards, audited.
-- **The last time each item was done.** Seven kinds of planned work, each on a share of its usual interval before the anchor. Most work is on time (5% to 95% of the interval), and one in twenty is overdue (110% to 180%).
+- **The last time each item was done.** Eight kinds of planned work, each on a share of its usual interval before the anchor. Most work is on time (5% to 95% of the interval), and one in twenty is overdue (110% to 180%).
 
   | Work | Interval |
   |---|---|
@@ -75,9 +75,10 @@ The predictive model (FMS-55, [ml-scoring.md](ml-scoring.md)) reads when each we
   | Tyres, 4 of the vehicle's size | 4 years |
   | 12 V battery | 4 years |
   | Drive belt, gearbox oil and clutch fluid | 3 years |
+  | EV service: high-voltage battery, cooling and brakes inspected (electric vehicles only, labour only) | 6 months |
 
 - **Before it joined.** Work due before the vehicle joined the fleet is its original part, never changed in the system.
-- **Electric vehicles** get no oil, fuel filter, belt, gearbox oil or clutch fluid work.
+- **Electric vehicles** get no oil, fuel filter, belt, gearbox oil or clutch fluid work. They get their own scheduled service instead (FMS-135), every 6 months as the EV model's training fleet is, so the EV model reads a service gap like the ones it learned from.
 - **Records.** Each is a completed `preventive` record through the API, with its parts. It is drawn after everything else, so the rest of the plan is the same as before.
 - **Odometer.** A repair reads the odometer the vehicle had that day. During the seeded trips that is its base reading plus the trips by then. Before them, the odometer runs back at the vehicle's average rate since it was built, so its readings only go up and none is suspect.
 - **Stock.** The opening stock covers the history: what is left on the shelf is the stock drawn for the catalogue. Brake fluid, clutch fluid and gearbox oil are stocked parts now.

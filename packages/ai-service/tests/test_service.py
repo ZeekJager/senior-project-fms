@@ -45,7 +45,7 @@ def test_a_prediction_has_the_score_probability_risk_level_and_model_version(cli
     res = client.post("/internal/ml/predict-maintenance", json=body(example(trained, "high_risk"), "6f0f2b4e-6a1c-4c3e-9a55-3c2d4f9b8e11"), headers=AUTH)
     assert res.status_code == 200
     data = res.json()["data"]
-    assert set(data) == {"vehicle_id", "as_of", "failure_probability", "health_score", "risk_level", "prediction_horizon_days", "model_version", "factors"}
+    assert set(data) == {"vehicle_id", "as_of", "failure_probability", "health_score", "risk_level", "prediction_horizon_days", "model_name", "model_version", "factors"}
     assert data["vehicle_id"] == "6f0f2b4e-6a1c-4c3e-9a55-3c2d4f9b8e11"
     assert data["model_version"] == "pm-2026.10" and data["prediction_horizon_days"] == 30
     assert data["health_score"] == round((1 - data["failure_probability"]) * 100)

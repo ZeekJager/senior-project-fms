@@ -55,6 +55,20 @@ const SESSION_SQL = `
     FROM ev.charging_sessions s
     LEFT JOIN ev.charging_stations st ON st.id = s.station_id`;
 
+/** An EV's raw facts for the predictive maintenance model (FMS-135); the maintenance module computes the inputs from them. */
+export interface EvScoringRow {
+  newestHealth: number | null;
+  oldestHealth: number | null;
+  healthReadings: number;
+  hotHours: number;
+  energySumWhPerKm: number;
+  energyReadings: number;
+  sessionEnergyKwh: number;
+  dcFastEnergyKwh: number;
+  deepDischarges: number;
+  failedSessions: number;
+}
+
 /** `vehicleIds` null means every vehicle (an unscoped caller); an empty list, none. */
 function vehicleFilter(column: string, vehicleIds: readonly string[] | null, params: unknown[]): string {
   if (vehicleIds === null) return 'TRUE';
@@ -295,6 +309,93 @@ export class EvRepository extends Repository {
   }
 
   /** The reading before this one of the same vehicle (FMS-98's thresholds cross once), or null. */
+  /**
+   * The EV predictive maintenance model's facts (feature_spec_ev.json, FMS-135) for these vehicles as of t, by internal
+   * vehicle id: health in [t - 90 d, t), heat, energy per km and deep discharges in [t - 30 d, t), charging energy by
+   * station power in [t - 30 d, t), failed sessions in [t - 90 d, t). Vehicles with nothing are absent.
+   */
+  async scoringFacts(
+    db: Queryable,
+    vehicleIds: readonly string[],
+    t: Date,
+    rules: { hotC: number; hotHoursPerReading: number; deepSoc: number; dcFastKw: number },
+  ): Promise<Map<string, EvScoringRow>> {
+    const out = new Map<string, EvScoringRow>();
+    if (vehicleIds.length === 0) return out;
+    const blank = (): EvScoringRow => ({
+      newestHealth: null,
+      oldestHealth: null,
+      healthReadings: 0,
+      hotHours: 0,
+      energySumWhPerKm: 0,
+      energyReadings: 0,
+      sessionEnergyKwh: 0,
+      dcFastEnergyKwh: 0,
+      deepDischarges: 0,
+      failedSessions: 0,
+    });
+    const row = (id: string) => out.get(id) ?? out.set(id, blank()).get(id)!;
+    const ids = [vehicleIds];
+
+    const health = await db.query<{ vehicleId: string; newest: number; oldest: number; readings: number }>(
+      `SELECT vehicle_id AS "vehicleId",
+              (array_agg(battery_health::float8 ORDER BY recorded_at DESC, id DESC))[1] AS newest,
+              (array_agg(battery_health::float8 ORDER BY recorded_at, id))[1] AS oldest,
+              count(*)::int AS readings
+         FROM ev.ev_battery_logs
+        WHERE vehicle_id = ANY($1::bigint[]) AND battery_health IS NOT NULL
+          AND recorded_at >= $2::timestamptz - interval '90 days' AND recorded_at < $2
+        GROUP BY vehicle_id`,
+      [...ids, t],
+    );
+    for (const r of health.rows) Object.assign(row(r.vehicleId), { newestHealth: r.newest, oldestHealth: r.oldest, healthReadings: r.readings });
+
+    // Each reading to the next (or to t), at most the cap, counted when the pack was hot; energy per km; deep discharges
+    // (below the line, the reading before not), the reading before taken from the whole history.
+    const use = await db.query<{ vehicleId: string; hotHours: number; energySum: number; energyReadings: number; deep: number }>(
+      `WITH logs AS (
+         SELECT vehicle_id, recorded_at, battery_temperature_c::float8 AS temp, energy_wh_per_km::float8 AS wh, state_of_charge::float8 AS soc,
+                LEAD(recorded_at) OVER w AS next_at, LAG(state_of_charge::float8) OVER w AS prev_soc
+           FROM ev.ev_battery_logs
+          WHERE vehicle_id = ANY($1::bigint[]) AND recorded_at < $2
+         WINDOW w AS (PARTITION BY vehicle_id ORDER BY recorded_at, id)
+       )
+       SELECT vehicle_id AS "vehicleId",
+              COALESCE(SUM(LEAST($3::float8, EXTRACT(EPOCH FROM (COALESCE(next_at, $2::timestamptz) - recorded_at)) / 3600.0)) FILTER (WHERE temp >= $4), 0)::float8 AS "hotHours",
+              COALESCE(SUM(wh), 0)::float8 AS "energySum",
+              count(wh)::int AS "energyReadings",
+              count(*) FILTER (WHERE soc < $5 AND (prev_soc IS NULL OR prev_soc >= $5))::int AS deep
+         FROM logs
+        WHERE recorded_at >= $2::timestamptz - interval '30 days'
+        GROUP BY vehicle_id`,
+      [...ids, t, rules.hotHoursPerReading, rules.hotC, rules.deepSoc],
+    );
+    for (const r of use.rows) Object.assign(row(r.vehicleId), { hotHours: r.hotHours, energySumWhPerKm: r.energySum, energyReadings: r.energyReadings, deepDischarges: r.deep });
+
+    const charging = await db.query<{ vehicleId: string; energy: number; fast: number }>(
+      `SELECT s.vehicle_id AS "vehicleId", COALESCE(SUM(s.energy_kwh), 0)::float8 AS energy,
+              COALESCE(SUM(s.energy_kwh) FILTER (WHERE st.power_kw >= $3), 0)::float8 AS fast
+         FROM ev.charging_sessions s
+         LEFT JOIN ev.charging_stations st ON st.id = s.station_id
+        WHERE s.vehicle_id = ANY($1::bigint[]) AND s.status = 'completed' AND s.energy_kwh IS NOT NULL
+          AND s.ended_at >= $2::timestamptz - interval '30 days' AND s.ended_at < $2
+        GROUP BY s.vehicle_id`,
+      [...ids, t, rules.dcFastKw],
+    );
+    for (const r of charging.rows) Object.assign(row(r.vehicleId), { sessionEnergyKwh: r.energy, dcFastEnergyKwh: r.fast });
+
+    const failed = await db.query<{ vehicleId: string; failed: number }>(
+      `SELECT vehicle_id AS "vehicleId", count(*)::int AS failed
+         FROM ev.charging_sessions
+        WHERE vehicle_id = ANY($1::bigint[]) AND status = 'failed'
+          AND COALESCE(started_at, created_at) >= $2::timestamptz - interval '90 days' AND COALESCE(started_at, created_at) < $2
+        GROUP BY vehicle_id`,
+      [...ids, t],
+    );
+    for (const r of failed.rows) row(r.vehicleId).failedSessions = r.failed;
+    return out;
+  }
+
   async previousLog(db: Queryable, publicId: string): Promise<{ vehicleId: string; state_of_charge: number; battery_health: number | null } | null> {
     const res = await db.query<{ vehicleId: string; state_of_charge: number; battery_health: number | null }>(
       `SELECT p.vehicle_id AS "vehicleId", p.state_of_charge::float8 AS state_of_charge, p.battery_health::float8 AS battery_health

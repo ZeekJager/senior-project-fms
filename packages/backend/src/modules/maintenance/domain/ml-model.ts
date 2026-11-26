@@ -16,9 +16,14 @@ export type ScoringBlockedReason = (typeof SCORING_BLOCKED_REASONS)[number];
 
 export const ML_MODEL_EVENTS = { scoringBlocked: 'MlScoringBlocked' } as const;
 
-/** The models the registry holds, by name: the nightly maintenance scoring's (FMS-55), and the trip risk model (FMS-155). */
+/**
+ * The models the registry holds, by name: the nightly maintenance scoring's (FMS-55), the EV one (FMS-135: every
+ * electric vehicle, on feature_spec_ev.json), and the trip risk model (FMS-155). One active model per name.
+ */
 export const MAINTENANCE_MODEL = 'predictive-maintenance';
+export const EV_MAINTENANCE_MODEL = 'predictive-maintenance-ev';
 export const TRIP_RISK_MODEL = 'trip-risk';
+export type MaintenanceModelName = typeof MAINTENANCE_MODEL | typeof EV_MAINTENANCE_MODEL;
 
 /**
  * Why the dispatch console may not ask the trip risk model (FMS-155): no ML service configured; the service serves none;
@@ -96,10 +101,14 @@ export interface MlModelView {
   feedback: ModelFeedbackStats;
 }
 
-/** The scoring job's answer: score with this model, or do not score, and why. */
+/**
+ * The scoring job's answer: score with this model, or do not score, and why. `no_model` (the EV model only, FMS-135):
+ * the ML service serves no model of that name, so its vehicles are skipped and keep their last score.
+ */
 export type ScoringCheck =
   | { ok: true; model: RegisteredModel; registered: boolean }
-  | { ok: false; reason: ScoringBlockedReason; model: RegisteredModel; registered: boolean };
+  | { ok: false; reason: ScoringBlockedReason; model: RegisteredModel; registered: boolean }
+  | { ok: false; reason: 'no_model'; model: null; registered: false };
 
 /** Code points, as Python compares strings (sort_keys). */
 function byCodePoint(a: string, b: string): number {

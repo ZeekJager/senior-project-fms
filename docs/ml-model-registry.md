@@ -81,6 +81,14 @@ The registry holds a second model by name, `trip-risk` ([ml-trip-risk.md](ml-tri
 
 `npm run ml:model -- activate tr-2026.11 --name trip-risk --by admin@example.com` activates one. `list` shows each model's name, and marks a demonstration (trained on generated data, `demonstration: true`).
 
+## The EV model (FMS-135)
+
+`predictive-maintenance-ev` ([ml-model.md](ml-model.md#the-ev-model-fms-135)) is registered by the nightly scoring, as the combustion model is, and activated the same way (`npm run ml:model -- activate pm-ev-2026.11 --name predictive-maintenance-ev --by admin@example.com`). Each model has its own active version: activating or rolling back one leaves the other as it is.
+
+- **Its own spec.** Its hash is checked against `feature_spec_ev.json` (`ML_EV_FEATURE_SPEC_PATH`, by default `../ai-service/feature_spec_ev.json`; `docker-compose.yml` mounts it read-only beside `feature_spec.json`). A model of that name trained on other inputs cannot be activated (`feature_spec_mismatch`).
+- **Asked by name.** `checkServing(context, 'predictive-maintenance-ev')` calls `GET /model?name=predictive-maintenance-ev`.
+- **No model is no alert.** A service without an EV model (`404`, or an older service that answers with the combustion model) is `no_model`: nothing is registered, no `MlScoringBlocked` is published, and the EVs keep their last score. An EV model that is served but not active, or mismatched, blocks the EVs alone, with the alert as above.
+
 ## Predictions
 
 `maintenance.maintenance_predictions (model_name, model_version)` is a foreign key to the registry. A prediction naming a version the registry does not hold cannot be stored, so every score is traceable to its model. The nightly scoring stores each one with the model `checkServing` allowed.

@@ -12,6 +12,11 @@ export interface ScoringVehicle {
   fuelEfficiencyMlPerKm: number | null;
   /** Its health score from the last scoring, which the new one is compared with for a risk event. */
   healthScore: number | null;
+  /** Which model scores it (FMS-135): an electric vehicle the EV model, any other the combustion model. */
+  fuelType: string;
+  /** Its make and model: an EV's energy per km is judged against those of its kind. */
+  make: string;
+  model: string;
 }
 
 /** Every vehicle in service (not retired), in id order. */
@@ -19,7 +24,7 @@ export async function vehiclesToScore(db: Queryable): Promise<ScoringVehicle[]> 
   const res = await db.query<ScoringVehicle>(
     `SELECT id, public_id AS "publicId", created_at AS "createdAt", model_year AS "modelYear",
             odometer_km::float8 AS "odometerKm", fuel_efficiency_ml_per_km AS "fuelEfficiencyMlPerKm",
-            health_score AS "healthScore"
+            health_score AS "healthScore", fuel_type::text AS "fuelType", make, model
        FROM fleet.vehicles
       WHERE is_active AND status <> 'retired'
       ORDER BY id`,

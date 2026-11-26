@@ -28,9 +28,14 @@ const predictionSchema = z.object({
   health_score: z.number().int().min(0).max(100),
   risk_level: z.enum(RISK_LEVELS),
   prediction_horizon_days: z.number().int().positive(),
+  /** Which model made it (FMS-135); absent from a service older than the EV model. */
+  model_name: z.string().min(1).optional(),
   model_version: z.string().min(1),
   factors: z.array(z.string().min(1)).max(3),
 });
+
+/** The service's own query for a model by name: the combustion model has none, so an older service is asked as before. */
+const byName = (key: 'name' | 'model', model: string | undefined) => (model && model !== 'predictive-maintenance' ? `?${key}=${encodeURIComponent(model)}` : '');
 
 /** One answer of POST /internal/ml/predict-trip-risk (FMS-155, docs/ml-trip-risk.md). */
 const factorSchema = z.object({ feature: z.string().min(1), value: z.number() });
@@ -76,10 +81,13 @@ export class MlServiceError extends Error {
 }
 
 export interface MlServiceClient {
-  /** The model the service serves now. Throws MlServiceError when it cannot say. */
-  servedModel(correlationId: string): Promise<ServedModel>;
-  /** One prediction per request, in the same order. Throws MlServiceError when the batch cannot be scored. */
-  predictBatch(items: readonly PredictRequest[], correlationId: string): Promise<MlPrediction[]>;
+  /**
+   * The model of that name the service serves now (FMS-135): the combustion model by default. Throws MlServiceError
+   * when it cannot say; with status 404 when it serves no model of that name.
+   */
+  servedModel(correlationId: string, model?: string): Promise<ServedModel>;
+  /** One prediction per request, in the same order, by the model named (the combustion one by default). Throws MlServiceError when the batch cannot be scored. */
+  predictBatch(items: readonly PredictRequest[], correlationId: string, model?: string): Promise<MlPrediction[]>;
   /** The trip risk model the service serves (FMS-155), or null when it runs without one. Throws MlServiceError otherwise. */
   servedTripRiskModel(correlationId: string): Promise<ServedModel | null>;
   /** One prediction per driver, in the same order. Throws MlServiceError when they cannot be scored. */
@@ -102,8 +110,9 @@ export class HttpMlServiceClient implements MlServiceClient {
     private readonly gateway: (correlationId: string) => GatewayClient,
   ) {}
 
-  async servedModel(correlationId: string): Promise<ServedModel> {
-    return this.described(await this.call(correlationId, { method: 'GET', path: '/model' }), 'GET /model');
+  async servedModel(correlationId: string, model?: string): Promise<ServedModel> {
+    const path = `/model${byName('name', model)}`;
+    return this.described(await this.call(correlationId, { method: 'GET', path }), `GET ${path}`);
   }
 
   async servedTripRiskModel(correlationId: string): Promise<ServedModel | null> {
@@ -155,8 +164,8 @@ export class HttpMlServiceClient implements MlServiceClient {
     };
   }
 
-  async predictBatch(items: readonly PredictRequest[], correlationId: string): Promise<MlPrediction[]> {
-    const path = '/internal/ml/predict-maintenance/batch';
+  async predictBatch(items: readonly PredictRequest[], correlationId: string, model?: string): Promise<MlPrediction[]> {
+    const path = `/internal/ml/predict-maintenance/batch${byName('model', model)}`;
     // A prediction changes nothing on the service, so a retried batch is safe.
     const body = await this.call(correlationId, { method: 'POST', path, body: { items }, idempotent: true });
     const parsed = z.array(predictionSchema).safeParse((body as { data?: unknown } | null)?.data);
@@ -165,6 +174,10 @@ export class HttpMlServiceClient implements MlServiceClient {
     if (predictions.length !== items.length || predictions.some((p, i) => p.vehicle_id !== items[i].vehicle_id)) {
       throw new MlServiceError(`POST ${path} answered for other vehicles than it was asked`);
     }
+    // A model named in the answer must be the one asked: an EV is never scored by the combustion model (FMS-135).
+    const asked = model ?? 'predictive-maintenance';
+    const other = predictions.find((p) => p.model_name !== undefined && p.model_name !== asked);
+    if (other) throw new MlServiceError(`POST ${path} answered with the model ${other.model_name}, not ${asked}`);
     return predictions.map((p) => ({
       vehicleId: p.vehicle_id,
       failureProbability: p.failure_probability,
