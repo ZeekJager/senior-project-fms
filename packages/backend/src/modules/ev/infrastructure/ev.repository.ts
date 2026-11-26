@@ -38,11 +38,13 @@ export interface SessionRow {
   updated_at: Date;
 }
 
-const LOG_SQL = `
-  SELECT l.public_id AS id, l.vehicle_id AS "vehicleId", l.state_of_charge::float8 AS state_of_charge,
+const LOG_COLUMNS = `l.public_id AS id, l.vehicle_id AS "vehicleId", l.state_of_charge::float8 AS state_of_charge,
          l.battery_health::float8 AS battery_health, l.battery_temperature_c::float8 AS battery_temperature_c,
          l.voltage_v::float8 AS voltage_v, l.current_a::float8 AS current_a, l.estimated_range_km::float8 AS estimated_range_km,
-         l.energy_wh_per_km::float8 AS energy_wh_per_km, l.source, l.recorded_at
+         l.energy_wh_per_km::float8 AS energy_wh_per_km, l.source, l.recorded_at`;
+
+const LOG_SQL = `
+  SELECT ${LOG_COLUMNS}
     FROM ev.ev_battery_logs l`;
 
 const SESSION_SQL = `
@@ -157,6 +159,58 @@ export class EvRepository extends Repository {
 
   async externalSessionTaken(db: Queryable, externalId: string): Promise<boolean> {
     return (await db.query('SELECT 1 FROM ev.charging_sessions WHERE external_session_id = $1', [externalId])).rowCount !== 0;
+  }
+
+  /** Each vehicle's newest battery reading (FMS-99, the EV dashboard), by internal vehicle id. */
+  async latestLogs(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, BatteryLogRow>> {
+    if (vehicleIds.length === 0) return new Map();
+    const rows = await db.query<BatteryLogRow>(
+      `SELECT DISTINCT ON (l.vehicle_id) ${LOG_COLUMNS} FROM ev.ev_battery_logs l
+        WHERE l.vehicle_id = ANY($1::bigint[])
+        ORDER BY l.vehicle_id, l.recorded_at DESC, l.id DESC`,
+      [vehicleIds],
+    );
+    return new Map(rows.rows.map((r) => [r.vehicleId, r]));
+  }
+
+  /** The sessions charging now (`in_progress`) of these vehicles (FMS-99), by internal vehicle id: one each at most. */
+  async chargingSessions(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, SessionRow>> {
+    if (vehicleIds.length === 0) return new Map();
+    const rows = await db.query<SessionRow>(
+      `${SESSION_SQL} WHERE s.vehicle_id = ANY($1::bigint[]) AND s.status = 'in_progress' ORDER BY s.started_at DESC NULLS LAST, s.id DESC`,
+      [vehicleIds],
+    );
+    const byVehicle = new Map<string, SessionRow>();
+    for (const row of rows.rows) if (!byVehicle.has(row.vehicleId)) byVehicle.set(row.vehicleId, row);
+    return byVehicle;
+  }
+
+  /** The sessions of the scope's vehicles (FMS-99, GET /ev/charging-sessions), newest first. */
+  async sessions(
+    db: Queryable,
+    filter: { vehicleIds: readonly string[] | null; status?: SessionStatus; from?: Date; to?: Date } & Page,
+  ): Promise<{ rows: SessionRow[]; total: number }> {
+    const params: unknown[] = [];
+    const where = [vehicleFilter('s.vehicle_id', filter.vehicleIds, params)];
+    if (filter.status) {
+      params.push(filter.status);
+      where.push(`s.status = $${params.length}::ev.charging_status`);
+    }
+    if (filter.from) {
+      params.push(filter.from);
+      where.push(`COALESCE(s.started_at, s.created_at) >= $${params.length}`);
+    }
+    if (filter.to) {
+      params.push(filter.to);
+      where.push(`COALESCE(s.started_at, s.created_at) < $${params.length}`);
+    }
+    const { limit, offset } = limitOffset(filter);
+    const rows = await db.query<SessionRow>(
+      `${SESSION_SQL} WHERE ${where.join(' AND ')} ORDER BY COALESCE(s.started_at, s.created_at) DESC, s.id DESC LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    );
+    const count = await db.query<{ total: number }>(`SELECT count(*)::int AS total FROM ev.charging_sessions s WHERE ${where.join(' AND ')}`, params);
+    return { rows: rows.rows, total: count.rows[0].total };
   }
 
   async sessionsOf(db: Queryable, vehicleId: string, filter: { status?: SessionStatus } & Page): Promise<{ rows: SessionRow[]; total: number }> {

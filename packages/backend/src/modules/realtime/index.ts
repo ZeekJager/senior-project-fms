@@ -11,7 +11,7 @@ import { eventChannel } from '../../shared/events/event-bus';
 import { logger } from '../../shared/logging/logger';
 import type { RequestUser } from '../../types/express';
 import { ACCESS_COOKIE, authenticateAccessToken, depotScope, ownDriverScope } from '../auth';
-import { depotDirectory, tripRefs } from '../fleet';
+import { depotDirectory, tripRefs, vehicleDepotOf } from '../fleet';
 import { legacyLocationIngest } from '../integration';
 import { tripLookups } from '../trip';
 import { RealtimeGateway, type LocationIngest } from './application/gateway';
@@ -76,7 +76,7 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions 
   const gateway = new RealtimeGateway(io, {
     authenticate: authenticateAccessToken,
     identify,
-    lookups: { tripSummary: (tripId) => tripLookups.summary(pool, tripId) },
+    lookups: { tripSummary: (tripId) => tripLookups.summary(pool, tripId), vehicleDepot: vehicleDepotOf },
     accessCookie: ACCESS_COOKIE,
     allowedOrigins: options.allowedOrigins ?? config.realtime.allowedOrigins,
     legacyLocation: options.legacyLocation ?? { enabled: config.realtime.legacyLocation, ingest: legacyLocationIngest },

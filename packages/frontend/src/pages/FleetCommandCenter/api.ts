@@ -33,13 +33,14 @@ const REFRESH_GAP_MS = 5_000
 
 export const trackingKeys = { current: (depotId: string) => ['tracking', 'current', depotId] as const }
 
-/** GET /tracking/vehicles/current, for one depot or (empty) every depot in scope. */
-export function useLiveSnapshot(depotId: string) {
+/** GET /tracking/vehicles/current, for one depot or (empty) every depot in scope; `enabled` false for a viewer without tracking:read. */
+export function useLiveSnapshot(depotId: string, enabled = true) {
   const { api } = useAuth()
   return useQuery({
     queryKey: trackingKeys.current(depotId),
     queryFn: () => api.request<VehicleLocation[]>(`/tracking/vehicles/current${depotId ? `?depot_id=${encodeURIComponent(depotId)}` : ''}`),
     refetchInterval: POLL_MS,
+    enabled,
   })
 }
 

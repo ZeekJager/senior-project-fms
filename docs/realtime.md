@@ -43,6 +43,7 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 | `alerts` | `alert:read` | all depots, or their depot | no |
 | `trips` | `trip:read` | all depots, or their depot | their own trips only |
 | `incidents` | `incident:read` | all depots, or their depot | the incidents they reported (`reported_by_driver_id`) |
+| `ev` | `ev:read` | all depots, or their depot | no (drivers lack the permission) |
 
 "All depots" means the depot-unscoped roles: admin, fleet manager, fleet owner and compliance officer. A depot-scoped user with no depot joins no depot rooms. Every socket also joins `user:<public id>`, which is used to close it and to send that user something meant for them alone: `notifications.unread` (below) goes only to that room, so no channel permission, depot or role reaches it.
 
@@ -59,6 +60,9 @@ At the handshake the socket joins one room per channel it may read. The rooms fo
 | `TelemetryFlagRaised`, `TelemetryFlagResolved` (published since FMS-46, docs/telemetry-rules.md; geofences and route deviation since FMS-90) | `vehicle.flag.changed` | tracking | `flag_id`, `vehicle_id`, `trip_id`, `flag_type`, `geofence_id` (a fence's flag only), `severity`, `observed_at`, `resolved_at` (null while it lasts), `change` (`raised` or `resolved`). Never the driver. The live map re-reads its snapshot on it. |
 | `IncidentReported` (published since FMS-38, docs/incidents.md) | `incident.created` | incidents | `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `latitude`, `longitude`, `occurred_at`. It goes to the incident's depot and to the driver who reported it. |
 | `IncidentUpdated` (FMS-89, docs/incidents.md) | `incident.updated` | incidents | `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `previous_status`, `assigned_to`, `resolved_at`, `updated_at`, `changes`. Never the notes. To the incident's depot and the driver who reported it. The command center applies it to its incidents panel. |
+
+| `ChargingSessionStarted`, `ChargingSessionCompleted`, `ChargingSessionFailed` (FMS-96, FMS-99, [ev.md](ev.md#the-ev-dashboard)) | `ev.charging-session.updated` | ev | `charging_session_id`, `vehicle_id`, `station_id`, `status`, `started_at`, `ended_at`, `energy_kwh`, `cost_cents`, `start_soc`, `end_soc`, `source`, `change` (the event). The event names only the vehicle: its depot is looked up (`vehicleDepot`). The EV dashboard re-reads on it. |
+| `BatteryLogged` (FMS-96, FMS-99) | `ev.battery.logged` | ev | `battery_log_id`, `vehicle_id`, `state_of_charge`, `battery_health`, `estimated_range_km`, `source`, `recorded_at`, `change`. The vehicle's depot is looked up. |
 
 - The events marked with a card are not published yet. Their payloads are the contract those cards must meet, `depot_id` included: it decides who receives the event.
 - Payloads are picked field by field. A new field on a domain event is not forwarded until it is added here.

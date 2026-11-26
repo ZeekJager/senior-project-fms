@@ -222,6 +222,35 @@ describe('event mapping (api-contract §11.2)', () => {
     expect(FORWARDED_TYPES).toContain('TripEtaUpdated');
   });
 
+  it('EV events go to the ev channel of the vehicle’s depot, with the session or reading picked field by field (FMS-99)', async () => {
+    const lookups = { ...noTrips, vehicleDepot: async (id: string) => (id === 'v1' ? DEPOT_A : null) };
+    const started = await deliveriesFor(
+      envelope('ChargingSessionStarted', { charging_session_id: 's1', vehicle_id: 'v1', station_id: 'st1', status: 'in_progress', start_soc: 14, source: 'synthetic', external_session_id: 'x' }),
+      lookups,
+    );
+    expect(started).toEqual([
+      {
+        event: 'ev.charging-session.updated',
+        channel: 'ev',
+        depotId: DEPOT_A,
+        payload: { charging_session_id: 's1', vehicle_id: 'v1', station_id: 'st1', status: 'in_progress', start_soc: 14, source: 'synthetic', change: 'ChargingSessionStarted' },
+      },
+    ]);
+    for (const type of ['ChargingSessionCompleted', 'ChargingSessionFailed']) {
+      expect((await deliveriesFor(envelope(type, { charging_session_id: 's1', vehicle_id: 'v1' }), lookups))[0]).toMatchObject({ event: 'ev.charging-session.updated', payload: { change: type } });
+    }
+    const logged = await deliveriesFor(envelope('BatteryLogged', { battery_log_id: 'b1', vehicle_id: 'v1', state_of_charge: 18, source: 'manual', recorded_at: 't' }), lookups);
+    expect(logged).toEqual([
+      { event: 'ev.battery.logged', channel: 'ev', depotId: DEPOT_A, payload: { battery_log_id: 'b1', vehicle_id: 'v1', state_of_charge: 18, source: 'manual', recorded_at: 't', change: 'BatteryLogged' } },
+    ]);
+    expect(roomsOf(logged[0])).toEqual(['ev:all', `ev:depot:${DEPOT_A}`]);
+    // Without the lookup, or without a depot, only the readers of every depot; without a vehicle, nothing.
+    expect(roomsOf((await deliveriesFor(envelope('BatteryLogged', { vehicle_id: 'v1' }), noTrips))[0])).toEqual(['ev:all']);
+    expect(await deliveriesFor(envelope('BatteryLogged', { state_of_charge: 5 }), lookups)).toEqual([]);
+    expect(roomsFor(identity({ permissions: ['ev:read'], depots: { kind: 'depot', depotId: DEPOT_B } }))).toEqual(['user:u1', `ev:depot:${DEPOT_B}`]);
+    expect(roomsFor(identity({ permissions: ['ev:read'], depots: { kind: 'depot', depotId: DEPOT_B }, driver: { driverId: 'd1' } }))).toEqual(['user:u1', `ev:depot:${DEPOT_B}`]);
+  });
+
   it('anything else is not forwarded; account events close sessions instead', async () => {
     expect(await deliveriesFor(envelope('FuelLogged', { fuel_log_id: 'f1' }), noTrips)).toEqual([]);
     expect(FORWARDED_TYPES).not.toContain('FuelLogged');

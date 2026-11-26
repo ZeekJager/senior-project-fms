@@ -1,4 +1,4 @@
-import { Activity, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, BatteryCharging, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -11,6 +11,7 @@ import { InventoryPage } from '@/pages/Inventory'
 import { MaintenancePage } from '@/pages/Maintenance'
 import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
+import { EvFleetPage } from '@/pages/EvFleet'
 import { AppealsPage } from '@/pages/Appeals'
 import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFeedbackItem, DriverFeedbackList, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNewAppeal, DriverScore } from '@/pages/Driver'
 import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
@@ -147,6 +148,14 @@ export const portals: Portal[] = [
         element: <RoutesPage />,
         permission: { all: ['route:read', 'depot:read'] },
         nav: { label: 'Routes', icon: Waypoints },
+      },
+      {
+        // S-40 (FMS-99): battery and charging across the EVs, lowest charge first, live. ev:read: admin, fleet manager,
+        // depot admin, fleet owner.
+        path: '/ev',
+        element: <EvFleetPage />,
+        permission: 'ev:read',
+        nav: { label: 'EV fleet', icon: BatteryCharging },
       },
       {
         // S-15 (FMS-42). The anomalies need fuel-anomaly:read (admin, fleet manager, depot admin, finance clerk,

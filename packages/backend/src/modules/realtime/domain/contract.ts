@@ -18,6 +18,10 @@ export const SOCKET_EVENTS = {
   incidentUpdated: 'incident.updated',
   tripUpdated: 'trip.updated',
   flagChanged: 'vehicle.flag.changed',
+  /** A charging session started, finished or failed (FMS-99): the EV dashboard's active sessions follow it. */
+  evSessionUpdated: 'ev.charging-session.updated',
+  /** A battery reading was recorded (FMS-99): the EV dashboard's state of charge follows it. */
+  evBatteryLogged: 'ev.battery.logged',
   /** Legacy alias of vehicle.location.updated. */
   legacyPosition: 'vehicle_position',
   /** Legacy alias of alert.created. */
@@ -38,6 +42,8 @@ export const CHANNELS = {
   alerts: { permission: 'alert:read', driverOwn: false },
   trips: { permission: 'trip:read', driverOwn: true },
   incidents: { permission: 'incident:read', driverOwn: true },
+  /** The EV dashboard (FMS-99): battery readings and charging sessions, in depot scope. */
+  ev: { permission: 'ev:read', driverOwn: false },
 } as const;
 
 export type Channel = keyof typeof CHANNELS;
@@ -118,6 +124,11 @@ export interface EventEnvelope {
 export interface ForwardLookups {
   /** The trip as `trip.updated` sends it (the trip module's TripSummary); who gets it follows its depot and driver. */
   tripSummary(tripId: string): Promise<{ depot_id: string | null; driver_id: string | null } | null>;
+  /**
+   * The public id of a vehicle's depot (FMS-99), for events that name only the vehicle; null for a vehicle with none.
+   * Without the lookup, such an event reaches only the readers of every depot.
+   */
+  vehicleDepot?(vehicleId: string): Promise<string | null>;
 }
 
 type Forwarder = (event: EventEnvelope, lookups: ForwardLookups) => Promise<Delivery[]> | Delivery[];
@@ -154,7 +165,26 @@ const tripUpdated: Forwarder = async (event, lookups) => {
   return [{ event: SOCKET_EVENTS.tripUpdated, channel: 'trips', depotId: summary.depot_id, driverIds, payload: { ...summary, change: event.type } }];
 };
 
+/** The EV events (FMS-96, FMS-99): to the `ev` channel, in the vehicle's depot. */
+const SESSION_FIELDS = ['charging_session_id', 'vehicle_id', 'station_id', 'status', 'started_at', 'ended_at', 'energy_kwh', 'cost_cents', 'start_soc', 'end_soc', 'source'] as const;
+const BATTERY_FIELDS = ['battery_log_id', 'vehicle_id', 'state_of_charge', 'battery_health', 'estimated_range_km', 'source', 'recorded_at'] as const;
+
+function evForwarder(socketEvent: string, fields: readonly string[]): Forwarder {
+  return async (e, lookups) => {
+    const vehicleId = str(e.payload.vehicle_id);
+    if (!vehicleId) return [];
+    const depotId = lookups.vehicleDepot ? await lookups.vehicleDepot(vehicleId) : null;
+    return [{ event: socketEvent, channel: 'ev', depotId, payload: { ...pick(e.payload, fields), change: e.type } }];
+  };
+}
+
+const evSession = evForwarder(SOCKET_EVENTS.evSessionUpdated, SESSION_FIELDS);
+
 const FORWARDERS: Record<string, Forwarder> = {
+  ChargingSessionStarted: evSession,
+  ChargingSessionCompleted: evSession,
+  ChargingSessionFailed: evSession,
+  BatteryLogged: evForwarder(SOCKET_EVENTS.evBatteryLogged, BATTERY_FIELDS),
   VehicleStatusChanged: (e) => [
     {
       event: SOCKET_EVENTS.statusChanged,

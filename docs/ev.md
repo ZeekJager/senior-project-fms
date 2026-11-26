@@ -24,6 +24,8 @@ vehicles in their depots. Stations are shared by every depot.
 | `GET /vehicles/{id}/charging-sessions` | `ev:read` | A vehicle's sessions, newest first |
 | `GET /vehicles/{id}/battery-summary` | `ev:read` | The latest state, the state-of-charge trend, the health and the range (below) |
 | `PUT /vehicles/{id}/battery-spec` | `ev:write` | Its usable battery capacity when new, kWh ([range](#range), FMS-98) |
+| `GET /ev/fleet` | `ev:read` | The electric vehicles in service, or one depot's (`depot_id`), lowest charge first, each with its newest reading and the session charging it now ([the EV dashboard](#the-ev-dashboard), FMS-99) |
+| `GET /ev/charging-sessions` | `ev:read` | The fleet's sessions newest first, by `status`, `vehicle_id` and start (`from`, `to`) (FMS-99) |
 
 **Only electric vehicles** (`fuel_type: electric`) take battery logs or charging sessions, or have a battery summary:
 any other is `400`, `not_electric`. A retired vehicle takes neither (`409`, `vehicle_retired`). Money is whole cents.
@@ -226,3 +228,26 @@ Each battery reading (`BatteryLogged`, consumer `ev.battery-thresholds`) is chec
 - **Thresholds** are settings ([settings.md](settings.md)), read at each reading.
 - **Idempotent.** Each event's id is fixed by the reading and the metric, so a redelivered `BatteryLogged` publishes
   nothing new. The events have no actor.
+
+## The EV dashboard
+
+Card FMS-99 (SE-143), screen S-40 at `/ev` (*EV fleet* in the menu), for everyone with `ev:read`: administrators,
+fleet managers, depot admins and fleet owners.
+
+- **The list,** lowest charge first (`GET /ev/fleet`): plate, make and model, depot, the charge as a bar, the
+  battery's health, and what it is doing now: *Charging*, *Low* (below the low line, 20% by default, amber) or
+  *Critical* (below half of it, red), else *Ready*. Vehicles with no reading come last; a reading over a day old is
+  amber. The figures above it count the EVs, those charging now, those low and those with no reading.
+- **Charging now:** each session under way, longest first, with its station, the charge it started at and how long
+  it has charged.
+- **Charging stations:** the network on the map (`StationLayer` on `FleetMap`): filled where an EV charges now,
+  dashed out of service, the name, power and connector on hover. With `tracking:read` the EVs' positions are on it
+  too. The live map (S-16) draws the stations for those with `ev:read`.
+- **Session history** (`GET /ev/charging-sessions`): every session newest first, filtered to *Charging*,
+  *Completed* or *Failed*, with station, start, charge, energy and cost.
+- **Live.** The socket's `ev.charging-session.updated` and `ev.battery.logged` ([realtime.md](realtime.md)) make the
+  screen read the list and the sessions again; without the socket it reads them every 30 seconds.
+- **Synthetic data.** Every synthetic reading and session carries the *Synthetic data* badge, and the title once
+  when any of them is ([below](#synthetic-data)).
+- **The low line** is the battery alert's `ev_low_soc_pct` setting (20% by default, [alerts](#alerts)); critical is below
+  half of it.

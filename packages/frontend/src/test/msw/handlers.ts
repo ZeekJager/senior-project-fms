@@ -11,6 +11,7 @@ const UNITS = {
   driver_score_weight_dvir: 'weight',
   appeal_window_days: 'days',
   appeal_review_working_days: 'days',
+  ev_low_soc_pct: 'percent',
 } as const
 const RANGES = {
   fuel_variance_threshold_pct: [1, 100],
@@ -22,6 +23,7 @@ const RANGES = {
   driver_score_weight_dvir: [0, 100],
   appeal_window_days: [1, 365],
   appeal_review_working_days: [1, 30],
+  ev_low_soc_pct: [5, 60],
 } as const
 
 /** GET /settings with every setting at its default. */

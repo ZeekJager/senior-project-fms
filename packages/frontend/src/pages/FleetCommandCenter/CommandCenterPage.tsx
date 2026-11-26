@@ -3,12 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { FleetMap, useNow, type FleetMapVehicle } from '@/components/FleetMap'
 import { GeofenceLayer } from '@/components/GeofenceLayer'
+import { StationLayer } from '@/components/StationLayer'
 import type { LatLng } from '@/components/TripMap'
 import { Card, FilterSelect, useToast, ViewTabs } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
 import { useGeofences } from '@/features/geofences'
 import { useRealtimeEvent, useRealtimeStatus } from '@/lib/realtime/context'
+import { useChargingStations } from '@/pages/EvFleet/api'
 import { useRoute, useTrack, type TrackPoint } from '@/pages/VehicleHistory/api'
 import { AlertsPanel } from './AlertsPanel'
 import { POLL_MS, useAlertAction, useFocusDriver, useLiveFleet, useLiveOverview, useOverview, useTripRouteId, type Names } from './api'
@@ -66,6 +68,9 @@ export function CommandCenterPage() {
 
   // The depot's geofences (FMS-90), drawn under the vehicles.
   const geofences = useGeofences(depotId)
+  // The charging network (FMS-99), for those who read EV data: drawn with the fences, under the vehicles.
+  const canSeeStations = hasPermission('ev:read')
+  const stations = useChargingStations(canSeeStations)
 
   // The overview (FMS-89): counters, alerts and incidents, kept live by the socket.
   const overview = useOverview(depotId)
@@ -241,6 +246,7 @@ export function CommandCenterPage() {
           className="h-[55vh] min-h-[360px] shadow-soft lg:h-full"
         >
           <GeofenceLayer geofences={geofences.data ?? []} />
+          {canSeeStations && <StationLayer stations={stations.data ?? []} />}
           {focusDriverId && <FocusLayers focusKey={focusDriverId} vehicle={shownOnMap[0] ?? null} planned={planned} track={trackLine} />}
         </FleetMap>
 
