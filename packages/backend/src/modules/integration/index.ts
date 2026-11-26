@@ -41,6 +41,7 @@ import { TRACKING_EVENTS, type PingInput } from './domain/gps';
 import type { LocationState } from './domain/location-rules';
 import { INTEGRATION_EVENTS, type CircuitState } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
+import { fmsEvChargingAdapter } from './infrastructure/fms-ev-charging.adapter';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
 import { GeofenceRepository } from './infrastructure/geofence.repository';
 import { IntegrationRepository } from './infrastructure/integration.repository';
@@ -62,6 +63,9 @@ const service = new IntegrationService({ repo, registry, events: eventBus, log: 
 registry.registerForType('telematics', fmsTelematicsAdapter);
 // Notification providers (FMS-93): SMTP email, the FMS SMS format, or Web Push, by their configuration.channel.
 registry.registerForType('notification', (code) => notificationAdapter(code));
+// EV charging providers without an adapter of their own speak the FMS EV charging format (FMS-97), the simulated
+// network included; the EV module consumes their deliveries (docs/ev.md#the-charging-webhook).
+registry.registerForType('ev_charging', fmsEvChargingAdapter);
 const notifications = new NotificationGateway({ repo, registry, log: logger });
 
 const devices = new DeviceRepository(pool);
@@ -339,6 +343,7 @@ export const webhookDeliveries = {
     const row = await repo.delivery(db, syncLogId);
     if (!row) return null;
     return {
+      provider_id: row.providerId,
       provider_code: row.providerCode,
       provider_type: row.providerType,
       event_id: row.eventId,
@@ -375,6 +380,8 @@ export { MAX_PINGS_PER_BATCH, TRACKING_EVENTS, type PingInput } from './domain/g
 export { GEOFENCE_EVENTS } from './domain/geofence';
 export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-map';
 export { fmsTelematicsAdapter } from './infrastructure/fms-telematics.adapter';
+export { fmsEvChargingAdapter, SIMULATED_CHARGING_PROVIDER } from './infrastructure/fms-ev-charging.adapter';
+export { EV_SESSION_KINDS, evChargingDelivery, type EvChargingDelivery, type EvProviderSession, type EvSessionKind } from './domain/ev-charging-schema';
 export { REPLAY_WINDOW_MS, SIGNATURE_HEADER, TIMESTAMP_HEADER, signWebhook } from './domain/webhook-signature';
 export { mockProviderAdapter } from './infrastructure/mock-provider';
 export { notificationAdapter, type NotificationAdapterOptions } from './infrastructure/notification.adapter';

@@ -190,6 +190,7 @@ describe('POST /webhooks/telematics/{provider}', () => {
       payload: { sync_log_id: res.body.data.id, provider_id: row.public_id, provider_code: CODE, provider_type: 'telematics', event_id: 'evt-1', kind: 'position' },
     });
     expect(await webhookDeliveries.find(pool, res.body.data.id)).toEqual({
+      provider_id: String(row.id),
       provider_code: CODE,
       provider_type: 'telematics',
       event_id: 'evt-1',

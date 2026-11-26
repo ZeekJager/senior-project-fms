@@ -62,6 +62,15 @@ const QUERIES: Record<string, string> = {
                sum(p.latitude) AS lat, sum(p.longitude) AS lng, sum(p.speed_kmh) AS speed, sum(p.heading_degrees) AS heading
           FROM tracking.gps_pings p JOIN fleet.vehicles v ON v.id = p.vehicle_id
          GROUP BY v.registration_number ORDER BY v.registration_number`,
+  // EV synthetic data (FMS-97, --with-ev): empty without it.
+  ev_stations: 'SELECT external_station_id, name, latitude, longitude, connector_type, power_kw, status, source FROM ev.charging_stations ORDER BY external_station_id',
+  ev_battery_logs: `SELECT v.registration_number, l.recorded_at, l.state_of_charge, l.battery_health, l.battery_temperature_c, l.voltage_v, l.current_a,
+                           l.estimated_range_km, l.energy_wh_per_km, l.source
+                      FROM ev.ev_battery_logs l JOIN fleet.vehicles v ON v.id = l.vehicle_id ORDER BY v.registration_number, l.recorded_at`,
+  ev_sessions: `SELECT s.external_session_id, v.registration_number, st.external_station_id, s.status, s.started_at, s.ended_at, s.energy_kwh, s.cost_cents,
+                       s.start_soc, s.end_soc, s.source
+                  FROM ev.charging_sessions s JOIN fleet.vehicles v ON v.id = s.vehicle_id LEFT JOIN ev.charging_stations st ON st.id = s.station_id
+                 ORDER BY s.external_session_id NULLS LAST, v.registration_number, s.started_at`,
 };
 
 /** SHA-256 (hex) over every query's rows, in a fixed order. */

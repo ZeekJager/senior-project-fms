@@ -6,7 +6,7 @@ import { pageMeta, pageQuery } from '../../../shared/http/pagination';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
 import type { Caller, EvService } from '../application/ev.service';
-import { SESSION_STATUSES, SUMMARY_DAYS_DEFAULT, SUMMARY_DAYS_MAX, evVehicleMissing, sessionNotFound } from '../domain/ev';
+import { SESSION_STATUSES, SUMMARY_DAYS_DEFAULT, SUMMARY_DAYS_MAX, WRITABLE_SOURCES, evVehicleMissing, sessionNotFound } from '../domain/ev';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const instant = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
@@ -21,7 +21,10 @@ const batteryLogBody = z.strictObject({
   voltage_v: optional(z.number().min(0).max(2000)),
   current_a: optional(z.number().min(-2000).max(2000)),
   estimated_range_km: optional(z.number().min(0).max(2000)),
+  energy_wh_per_km: optional(z.number().min(0).max(10_000)),
   recorded_at: instant.optional(),
+  // Synthetic records (FMS-97) say so; provider is the charging webhook's alone.
+  source: z.enum(WRITABLE_SOURCES).optional(),
 });
 
 const logsQuery = z.strictObject({ ...pageQuery, vehicle_id: z.uuid().optional(), from: instant.optional(), to: instant.optional() });
@@ -34,6 +37,7 @@ const sessionCreate = z.strictObject({
   started_at: instant.optional(),
   start_soc: optional(percent),
   external_session_id: optional(z.string().trim().min(1).max(255)),
+  source: z.enum(WRITABLE_SOURCES).optional(),
 });
 
 const sessionUpdate = z

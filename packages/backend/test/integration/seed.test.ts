@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { runSeed, SEED_ADMIN_EMAIL } from '../../scripts/seed/apply';
+import { buildEvPlan } from '../../scripts/seed/ev';
 import { buildPlan } from '../../scripts/seed/plan';
 import { tripTrack } from '../../scripts/seed/tracks';
 import { pool } from '../../src/db';
@@ -70,6 +71,35 @@ describe('seed generator', () => {
     const summary = await runSeed(OPTIONS);
     expect(fingerprints).toHaveLength(1);
     expect(summary.fingerprint).toBe(fingerprints[0]);
+  });
+
+  // FMS-97 (docs/ev.md#synthetic-data): one command loads 90 days of EV data for the seeded EVs, through the EV API,
+  // every record marked synthetic. Its sameness across runs is the plan's (scripts/seed/ev.test.ts) and CI's.
+  test('--with-ev adds 90 days of synthetic battery and charging data for every seeded EV, through the API', { timeout: 240_000 }, async () => {
+    // One call at a time: the test database is one connection (test/support/transactional-pool.ts).
+    const summary = await runSeed({ ...OPTIONS, withEv: true, evConcurrency: 1 });
+    const ev = buildEvPlan(buildPlan(OPTIONS.profile, OPTIONS.seed, OPTIONS.anchor));
+    expect(summary.counts).toMatchObject({ charging_stations: ev.stations.length, battery_logs: ev.logs.length, charging_sessions: ev.sessions.length });
+    expect(summary.fingerprint).not.toBe(fingerprints[0]);
+
+    const check = await pool.query<{ evs: number; logged: number; days: number; not_synthetic: number; statuses: string[]; audited: number }>(
+      `SELECT (SELECT count(*) FROM fleet.vehicles WHERE fuel_type = 'electric')::int AS evs,
+              (SELECT count(DISTINCT vehicle_id) FROM ev.ev_battery_logs)::int AS logged,
+              (SELECT extract(day FROM max(recorded_at) - min(recorded_at)) FROM ev.ev_battery_logs)::int AS days,
+              ((SELECT count(*) FROM ev.ev_battery_logs WHERE source <> 'synthetic') + (SELECT count(*) FROM ev.charging_sessions WHERE source <> 'synthetic')
+                + (SELECT count(*) FROM ev.charging_stations WHERE source <> 'synthetic'))::int AS not_synthetic,
+              array(SELECT DISTINCT status::text FROM ev.charging_sessions ORDER BY 1) AS statuses,
+              (SELECT count(*) FROM audit.audit_logs WHERE entity_type = 'ev.ev_battery_logs' AND action = 'INSERT')::int AS audited`,
+    );
+    expect(check.rows[0]).toMatchObject({ logged: check.rows[0].evs, days: 89, not_synthetic: 0, statuses: ['completed', 'failed'], audited: ev.logs.length });
+    // The degrading EV's battery summary shows the wear (FMS-96's endpoint, on the generated data).
+    const degrading = ev.vehicles.find((v) => v.scenario === 'fast_degradation')!;
+    const health = await pool.query<{ first: number; last: number }>(
+      `SELECT (array_agg(battery_health::float8 ORDER BY recorded_at))[1] AS first, (array_agg(battery_health::float8 ORDER BY recorded_at DESC))[1] AS last
+         FROM ev.ev_battery_logs l JOIN fleet.vehicles v ON v.id = l.vehicle_id WHERE v.registration_number = $1`,
+      [buildPlan(OPTIONS.profile, OPTIONS.seed, OPTIONS.anchor).vehicles[degrading.vehicle].registration_number],
+    );
+    expect(health.rows[0].first - health.rows[0].last).toBeGreaterThan(7);
   });
 });
 
