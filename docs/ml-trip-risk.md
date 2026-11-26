@@ -13,7 +13,7 @@ When a dispatcher chooses a trip on the console (S-07), each driver free for it 
 The predictions are learnt from the fleet's completed trips. A model makes them only once it has beaten hand-written rules on drivers it has not seen. They are advice for one trip:
 
 - they never block an assignment;
-- they never reorder or rank the drivers;
+- they rank the drivers who can take the trip, best fit first ([Ranking on the console](#ranking-on-the-console)); every driver stays selectable;
 - drivers never see them.
 
 ## Code
@@ -218,6 +218,29 @@ The inputs are checked against the spec: each required, in range, and nothing el
 - **The inputs** are read from the replica, as of the trip's scheduled start. A driver's trip under way now has no end yet: it counts as ending at its scheduled end (or now, if that has passed), and as under way at the trip's start only if it is expected to run past it.
 - **Failure:** the model is asked outside the board's transaction, and a failure leaves the board as it was.
 
+## Ranking on the console
+
+The drivers for a chosen trip are listed **best fit first**, not by name (`pages/Dispatch/rankDrivers.ts`).
+
+**Suitable for the trip** come first, under *Best fit for this trip*, or *Best fit for AA 3-10001* once a vehicle is chosen:
+
+- free now or finishing a trip (`idle`, `near_end`), with nothing that blocks them for its window;
+- once a vehicle is chosen: their licence covers its type (the driver's `vehicle_types`). Choosing another vehicle ranks them again.
+
+**Their order**, each key deciding only where the ones before it are equal:
+
+1. the lower chance of the trip running late **or** of a safety event: the two chances added, to the percentage point, so a difference too small to mean anything does not decide;
+2. fewer warnings (late at work, near a distance limit, FMS-156);
+3. free now before finishing a trip;
+4. more load-weighted km left in the tighter of the day and the week (FMS-156);
+5. the name.
+
+Without the model's chances (`not_enough_trips`, `off`, `unavailable`, or no `tracking:read`), the order starts at 2.
+
+- **Shown as:** the place before the name (`1.`), *Best fit* on the first, and the place in the row's accessible name ("Abebe Kebede, Available, ranked 1 of 3").
+- **The others** follow under *Other drivers*, in the old order (state, then name): on a trip, absent, blocked for the window, or with a licence that does not cover the chosen vehicle, which the row says ("Licence does not cover this vehicle: truck").
+- **Advice, not a rule.** Every driver stays selectable. The API is the last word on what can be assigned, and an absent driver is a warning, not a block.
+
 ## Training on the fleet's trips
 
 ```
@@ -280,15 +303,18 @@ npm run ml:model -w fms-backend -- activate tr-2026.12 --name trip-risk --by adm
 
 - a driver's chances and factors in words;
 - the demonstration note;
-- "Not enough trips yet" with the drivers' order unchanged.
+- "Not enough trips yet", with the drivers still ranked by the other keys;
+- the ranking: the lowest chances first rather than the name, *Best fit* on the first, and a driver whose licence does not cover the chosen vehicle moved under *Other drivers* with the reason.
+
+`rankDrivers.test.ts` checks each key of the order and each reason a driver is not suitable.
 
 **CI:** `ai-service-ci` generates the trips twice and compares them byte for byte, then trains and re-grades the model.
 
 ## Not covered
 
 - **FMS-154's fit.** The console's "fit for this trip" (FMS-154) is not built yet. Until it is:
-  - the chances show on their own;
+  - the chances, with the licence, attendance and distance limits, decide the ranking on their own;
   - the rules the model must beat are the driver's own past rates.
 
-  When it lands, the late chance becomes one reason in a driver's fit, and the fit's rules become the baseline.
+  When it lands, the late chance becomes one reason in a driver's fit, the fit's rules become the baseline, and the ranking orders by the fit.
 - **Unknown.** Whether the fleet will have 2,000 measured trips across 20 drivers before the project ends. Until then the console shows the demonstration, labelled as such, once an administrator activates it, or "Not enough trips yet".

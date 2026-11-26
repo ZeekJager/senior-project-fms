@@ -1,21 +1,19 @@
 import { licenceText } from '@/lib/licence'
-import { Activity, CalendarClock, Check, Clock, FlaskConical, Gauge, Truck, UserRound, Wrench } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Activity, CalendarClock, Check, Clock, FlaskConical, Gauge, Sparkles, Truck, UserRound, Wrench } from 'lucide-react'
+import { Fragment, type ReactNode } from 'react'
 import { Badge, cn, Skeleton } from '@/components/ui'
 import { driverLook, formatTime, reasonText, VEHICLE_TYPE_LABELS, vehicleLook } from './format'
 import { distanceLine } from './distance'
+import { rankDrivers, UNSUITABLE_TEXT } from './rankDrivers'
 import { lateLine, safetyLine, tripRiskNote } from './tripRisk'
-import type { AvailabilityResult, BoardDriver, BoardTripRisk, BoardVehicle, DriverState, VehicleState } from './types'
+import type { AvailabilityResult, BoardDriver, BoardTripRisk, BoardVehicle, VehicleState } from './types'
 
 // The right panel: the depot's drivers and vehicles, with the card's colours.
 // Every one stays selectable: the API is the last word on what can be
 // assigned, and an absent driver is a warning, not a block.
 
-const DRIVER_ORDER: DriverState[] = ['idle', 'near_end', 'absent', 'unavailable', 'en_route']
 const VEHICLE_ORDER: VehicleState[] = ['idle', 'unavailable', 'en_route', 'flagged']
 
-export const sortDrivers = (drivers: BoardDriver[]) =>
-  [...drivers].sort((a, b) => DRIVER_ORDER.indexOf(a.state) - DRIVER_ORDER.indexOf(b.state) || a.full_name.localeCompare(b.full_name))
 export const sortVehicles = (vehicles: BoardVehicle[]) =>
   [...vehicles].sort((a, b) => VEHICLE_ORDER.indexOf(a.state) - VEHICLE_ORDER.indexOf(b.state) || a.registration_number.localeCompare(b.registration_number))
 
@@ -25,7 +23,28 @@ function reasonsLine(availability: AvailabilityResult, hide: string[]): string |
   return shown.length > 0 ? [...new Set(shown.map(reasonText))].join(' · ') : null
 }
 
-function Row({ selected, onSelect, label, icon, title, subtitle, badge, detail }: { selected: boolean; onSelect: () => void; label: string; icon: ReactNode; title: string; subtitle: string; badge: ReactNode; detail: ReactNode }) {
+function Row({
+  selected,
+  onSelect,
+  label,
+  icon,
+  title,
+  subtitle,
+  badge,
+  detail,
+  rank,
+}: {
+  selected: boolean
+  onSelect: () => void
+  label: string
+  icon: ReactNode
+  title: string
+  subtitle: string
+  badge: ReactNode
+  detail: ReactNode
+  /** The driver's place among the suitable ones (1: the best fit). */
+  rank?: number | null
+}) {
   return (
     <li>
       <button
@@ -51,7 +70,17 @@ function Row({ selected, onSelect, label, icon, title, subtitle, badge, detail }
         <span className="min-w-0 flex-1">
           <span className="flex items-start justify-between gap-2">
             <span className="min-w-0">
-              <span className="block truncate text-sm font-medium text-ink">{title}</span>
+              <span className="flex min-w-0 items-baseline gap-1.5">
+                {rank != null && <span className="tabular shrink-0 text-xs font-semibold text-ink-subtle">{rank}.</span>}
+                <span className="truncate text-sm font-medium text-ink">{title}</span>
+                {rank === 1 && (
+                  <span className="shrink-0">
+                    <Badge tone="brand" icon={<Sparkles aria-hidden="true" />}>
+                      Best fit
+                    </Badge>
+                  </span>
+                )}
+              </span>
               <span className="block truncate text-xs text-ink-muted">{subtitle}</span>
             </span>
             {badge}
@@ -94,39 +123,67 @@ function TripRiskNote({ risk }: { risk: BoardTripRisk | null | undefined }) {
   )
 }
 
+/** A group's heading inside the list: the suitable drivers, then the others. */
+function GroupHeading({ children }: { children: ReactNode }) {
+  return (
+    <li role="presentation" className="px-1 pb-0.5 pt-2 text-xs font-semibold uppercase tracking-wider text-ink-subtle first:pt-0">
+      {children}
+    </li>
+  )
+}
+
 export function DriverList({
   drivers,
   selectedId,
   onSelect,
   tripRisk,
+  vehicle = null,
 }: {
   drivers: BoardDriver[]
   selectedId: string | null
   onSelect: (d: BoardDriver) => void
   /** The board's trip risk (FMS-155), with a chosen trip and tracking:read. */
   tripRisk?: BoardTripRisk | null
+  /** The vehicle chosen for the trip: only drivers whose licence covers it are suitable. */
+  vehicle?: BoardVehicle | null
 }) {
+  const ranked = rankDrivers(drivers, vehicle)
+  const suitable = ranked.filter((r) => r.rank !== null).length
+  const firstOther = ranked.findIndex((r) => r.rank === null)
   return (
     <>
       <TripRiskNote risk={tripRisk} />
       <ul className="space-y-1" aria-label="Drivers">
-        {sortDrivers(drivers).map((d) => {
+        {ranked.length > 0 && (
+          <GroupHeading>
+            {suitable === 0 ? 'No driver suitable' : `Best fit ${vehicle ? `for ${vehicle.registration_number}` : 'for this trip'}`}
+            {suitable > 0 && <span className="ml-1 font-normal normal-case tracking-normal">· {suitable}</span>}
+          </GroupHeading>
+        )}
+        {ranked.map(({ driver: d, rank, unsuitable }, i) => {
           const look = driverLook(d)
           // The distance limit (FMS-156) has its own line, with the numbers.
           const reasons = reasonsLine(d.availability, ['driver_absent', 'driver_on_leave', 'driver_sick', 'distance_limit', 'distance_limit_near'])
           const distance = distanceLine(d.distance)
           return (
+            <Fragment key={d.driver_id}>
+            {i === firstOther && i > 0 && <GroupHeading>Other drivers</GroupHeading>}
             <Row
-              key={d.driver_id}
               selected={d.driver_id === selectedId}
               onSelect={() => onSelect(d)}
-              label={`${d.full_name}, ${look.label}`}
+              label={`${d.full_name}, ${look.label}${rank !== null ? `, ranked ${rank} of ${suitable}` : ''}`}
               icon={<UserRound />}
               title={d.full_name}
+              rank={rank}
               subtitle={d.license_categories.length > 0 ? `Licence ${licenceText(d.license_categories)}` : 'No licence class on file'}
               badge={<StateBadge {...look} />}
               detail={
                 <>
+                  {unsuitable === 'licence' && vehicle && (
+                    <Detail>
+                      {UNSUITABLE_TEXT.licence}: {(VEHICLE_TYPE_LABELS[vehicle.vehicle_type] ?? vehicle.vehicle_type).toLowerCase()}
+                    </Detail>
+                  )}
                   {d.current_trip && <Detail icon={<Clock />}>On a trip until {formatTime(d.current_trip.end)}</Detail>}
                   {reasons && <Detail>{reasons}</Detail>}
                   {distance && (
@@ -155,6 +212,7 @@ export function DriverList({
     </>
             }
           />
+            </Fragment>
         )
       })}
     </ul>
