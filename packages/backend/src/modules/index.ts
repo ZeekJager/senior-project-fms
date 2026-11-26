@@ -1,14 +1,14 @@
 import { config } from '../config';
 import type { AppModule } from '../shared/module';
 import { authModule, provideDepotDirectory } from './auth';
-import { depotDirectory, fleetModule, provideMaintenanceLookup, provideMeterSources, provideTripRisk, provideWarrantyExpiry, tripRefs } from './fleet';
-import { provideDistanceLimits, provideExceptionPolicies, provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripDelayMargins, provideTripPositions, provideTripTrack, ROUTING_TIMEOUT_MS, tripModule } from './trip';
+import { depotDirectory, fleetModule, provideDispatchEvRange, provideMaintenanceLookup, provideMeterSources, provideTripRisk, provideWarrantyExpiry, tripRefs } from './fleet';
+import { provideDistanceLimits, provideEvRange, provideExceptionPolicies, provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripDelayMargins, provideTripPositions, provideTripTrack, ROUTING_TIMEOUT_MS, tripModule } from './trip';
 import { fuelMeterReadings, fuelModule } from './fuel';
 import { maintenanceModule, maintenanceRefs, warrantyRefs } from './maintenance';
 import { alertModule } from './alert';
 import { analyticsModule, tripRisk } from './analytics';
 import { commandCenterModule } from './command-center';
-import { evModule } from './ev';
+import { evModule, evRange } from './ev';
 import { ignitionTime, integrationGateway, integrationModule, trackingLookups } from './integration';
 import { auditModule } from './audit';
 import { settingsModule } from './settings';
@@ -38,6 +38,9 @@ provideExceptionPolicies(trackingLookups.exceptionPolicies);
 provideDistanceLimits(trackingLookups.distanceLimits);
 // The trip risk model on the dispatch board (FMS-155): analytics reads its inputs and asks the model; fleet shows it.
 provideTripRisk(tripRisk);
+// EV range (FMS-98): the assignment's range warning and the dispatch board's range, from the EV module.
+provideEvRange(evRange);
+provideDispatchEvRange(evRange);
 // Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
 provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
 // Road routing (FMS-84): OSRM through the integration gateway (timeouts, a retry, its circuit breaker).

@@ -3,8 +3,8 @@ import type { ChargingSession, EvFleetVehicle, SessionStatus } from './api'
 // What the EV dashboard (S-40, FMS-99) says about a battery and a session, apart from the page so it is tested alone.
 
 /**
- * Below this state of charge an EV is low: the line of the battery alert (ev_low_soc_pct, FMS-98, 20 by default).
- * Below half of it, critical.
+ * Below this state of charge an EV is low: the default of the battery alert's line (ev_low_soc_pct, FMS-98), which the
+ * dashboard reads (useSetting). Below half of it, critical.
  */
 export const LOW_SOC_PCT = 20
 

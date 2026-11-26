@@ -1,4 +1,5 @@
 import { AppError } from '../../../shared/errors/app-error';
+import type { RangeEstimate, RangeGap } from './range';
 
 /**
  * EV fleet management (FMS-96, architecture §13, docs/ev.md): electric vehicles' battery state, their charging sessions
@@ -43,7 +44,14 @@ export const EV_EVENTS = {
   sessionCompleted: 'ChargingSessionCompleted',
   /** A session stopped without charging fully (the charger, the connector, the vehicle). */
   sessionFailed: 'ChargingSessionFailed',
+  /** A battery past a limit (FMS-98): low charge, worn battery, or too little range for the trip under way. */
+  thresholdExceeded: 'BatteryThresholdExceeded',
+  /** A vehicle's battery spec was set or changed (FMS-98). */
+  specSet: 'BatterySpecSet',
 } as const;
+
+/** A reading older than this raises no threshold alert: history (the generator's, a late upload) is not news. */
+export const THRESHOLD_FRESH_MS = 6 * 3_600_000;
 
 /** How far along its life a status is: a provider's delivery only ever moves a session forward (FMS-97). */
 export const SESSION_STAGE: Readonly<Record<SessionStatus, number>> = { planned: 0, in_progress: 1, completed: 2, failed: 2, cancelled: 2 };
@@ -106,6 +114,11 @@ export interface BatterySummary {
   health: { current: number | null; at_start: number | null; change: number | null };
   /** Sessions completed in the period: how many, the energy taken and what it cost. */
   charging: { sessions_completed: number; energy_kwh: number; cost_cents: number };
+  /** The range now (FMS-98), or null with why. */
+  range: RangeEstimate | null;
+  range_gap: RangeGap | null;
+  /** The battery spec: usable capacity when new, kWh, or null when not set. */
+  battery_spec: { usable_capacity_kwh: number; updated_at: Date } | null;
 }
 
 /**

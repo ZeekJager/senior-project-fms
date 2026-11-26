@@ -229,6 +229,84 @@ export class EvRepository extends Repository {
     return { rows: rows.rows, total: count.rows[0].total };
   }
 
+  /** A vehicle's battery spec (FMS-98): its id and usable capacity when new, or null. */
+  async spec(db: Queryable, vehicleId: string): Promise<{ id: string; usable_capacity_kwh: number; updated_at: Date } | null> {
+    const res = await db.query<{ id: string; usable_capacity_kwh: number; updated_at: Date }>(
+      'SELECT id, usable_capacity_kwh::float8 AS usable_capacity_kwh, updated_at FROM ev.battery_specs WHERE vehicle_id = $1',
+      [vehicleId],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async insertSpec(client: PoolClient, ctx: MutationContext, data: Row): Promise<void> {
+    await this.mutate(ctx, 'ev.battery_specs', 'INSERT', null, data, client);
+  }
+
+  async updateSpec(client: PoolClient, ctx: MutationContext, id: string, data: Row): Promise<void> {
+    await this.mutate(ctx, 'ev.battery_specs', 'UPDATE', id, data, client);
+  }
+
+  /**
+   * What a range estimate (FMS-98) reads for each vehicle (internal ids): the newest reading, the newest health, the
+   * energy figures of the readings since `consumptionSince`, the spec, and the completed sessions since `sessionsSince`.
+   */
+  async rangeInputs(db: Queryable, vehicleIds: readonly string[], consumptionSince: Date, sessionsSince: Date) {
+    type Inputs = {
+      latest: { state_of_charge: number; battery_health: number | null; recorded_at: Date } | null;
+      health: number | null;
+      readingsWhPerKm: number[];
+      specKwh: number | null;
+      sessions: { energy_kwh: number; start_soc: number; end_soc: number }[];
+    };
+    const out = new Map<string, Inputs>(vehicleIds.map((id) => [id, { latest: null, health: null, readingsWhPerKm: [], specKwh: null, sessions: [] }]));
+    if (vehicleIds.length === 0) return out;
+    const latest = await db.query<{ vehicle_id: string; state_of_charge: number; battery_health: number | null; recorded_at: Date; health: number | null }>(
+      `SELECT DISTINCT ON (l.vehicle_id) l.vehicle_id, l.state_of_charge::float8 AS state_of_charge, l.battery_health::float8 AS battery_health, l.recorded_at,
+              (SELECT h.battery_health::float8 FROM ev.ev_battery_logs h WHERE h.vehicle_id = l.vehicle_id AND h.battery_health IS NOT NULL
+                ORDER BY h.recorded_at DESC, h.id DESC LIMIT 1) AS health
+         FROM ev.ev_battery_logs l WHERE l.vehicle_id = ANY($1::bigint[]) ORDER BY l.vehicle_id, l.recorded_at DESC, l.id DESC`,
+      [vehicleIds],
+    );
+    for (const r of latest.rows) {
+      const v = out.get(r.vehicle_id)!;
+      v.latest = { state_of_charge: r.state_of_charge, battery_health: r.battery_health, recorded_at: r.recorded_at };
+      v.health = r.health;
+    }
+    const energy = await db.query<{ vehicle_id: string; wh: number }>(
+      `SELECT vehicle_id, energy_wh_per_km::float8 AS wh FROM ev.ev_battery_logs
+        WHERE vehicle_id = ANY($1::bigint[]) AND recorded_at >= $2 AND energy_wh_per_km IS NOT NULL`,
+      [vehicleIds, consumptionSince],
+    );
+    for (const r of energy.rows) out.get(r.vehicle_id)!.readingsWhPerKm.push(r.wh);
+    const specs = await db.query<{ vehicle_id: string; kwh: number }>(
+      'SELECT vehicle_id, usable_capacity_kwh::float8 AS kwh FROM ev.battery_specs WHERE vehicle_id = ANY($1::bigint[])',
+      [vehicleIds],
+    );
+    for (const r of specs.rows) out.get(r.vehicle_id)!.specKwh = r.kwh;
+    const sessions = await db.query<{ vehicle_id: string; energy_kwh: number; start_soc: number; end_soc: number }>(
+      `SELECT vehicle_id, energy_kwh::float8 AS energy_kwh, start_soc::float8 AS start_soc, end_soc::float8 AS end_soc
+         FROM ev.charging_sessions
+        WHERE vehicle_id = ANY($1::bigint[]) AND status = 'completed' AND COALESCE(ended_at, updated_at) >= $2
+          AND energy_kwh IS NOT NULL AND start_soc IS NOT NULL AND end_soc IS NOT NULL`,
+      [vehicleIds, sessionsSince],
+    );
+    for (const r of sessions.rows) out.get(r.vehicle_id)!.sessions.push(r);
+    return out;
+  }
+
+  /** The reading before this one of the same vehicle (FMS-98's thresholds cross once), or null. */
+  async previousLog(db: Queryable, publicId: string): Promise<{ vehicleId: string; state_of_charge: number; battery_health: number | null } | null> {
+    const res = await db.query<{ vehicleId: string; state_of_charge: number; battery_health: number | null }>(
+      `SELECT p.vehicle_id AS "vehicleId", p.state_of_charge::float8 AS state_of_charge, p.battery_health::float8 AS battery_health
+         FROM ev.ev_battery_logs l
+         JOIN ev.ev_battery_logs p ON p.vehicle_id = l.vehicle_id AND (p.recorded_at, p.id) < (l.recorded_at, l.id)
+        WHERE l.public_id = $1
+        ORDER BY p.recorded_at DESC, p.id DESC LIMIT 1`,
+      [publicId],
+    );
+    return res.rows[0] ?? null;
+  }
+
   /** The summary's figures for one vehicle over [since, now): daily SoC (Addis Ababa days), health, charging. */
   async summary(db: Queryable, vehicleId: string, since: Date) {
     const latest = await db.query<{ state_of_charge: number; battery_health: number | null; estimated_range_km: number | null; recorded_at: Date }>(

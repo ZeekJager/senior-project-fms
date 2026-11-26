@@ -1,5 +1,5 @@
 import { licenceText } from '@/lib/licence'
-import { AlertCircle, AlertTriangle, CalendarClock, CheckCircle2, Clock, Navigation, Truck, UserRound, Wrench } from 'lucide-react'
+import { AlertCircle, AlertTriangle, BatteryLow, CalendarClock, CheckCircle2, Clock, Navigation, Truck, UserRound, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button, Card, cn } from '@/components/ui'
 import type { ServiceDueSummary } from '@/features/service-due'
@@ -96,6 +96,11 @@ export function AssignmentPanel({ trip, driver, vehicle, busy, error, warnings, 
       <div className="space-y-2">
         {error == null && vehicle?.open_work && <WorkOrder work={vehicle.open_work} />}
         {error == null && vehicle?.service_due && <ServiceWarning registration={vehicle.registration_number} due={vehicle.service_due} />}
+        {error == null && !warnings && vehicle && rangeShort(vehicle, trip.planned_distance_km) && (
+          <Note tone="warning" icon={<BatteryLow />}>
+            {vehicle.registration_number} has about {vehicle.ev_range!.range_km} km of charge ({vehicle.ev_range!.state_of_charge}%) for a {Math.ceil(trip.planned_distance_km!)} km trip. You can still assign it; plan a charge first.
+          </Note>
+        )}
         {error == null && licenceGap && (
           <Note tone="warning" icon={<AlertTriangle />}>
             {driver.full_name}’s licence ({licenceText(driver.license_categories) || 'none'}) does not cover a {(VEHICLE_TYPE_LABELS[vehicle.vehicle_type] ?? vehicle.vehicle_type).toLowerCase()}.
@@ -179,8 +184,14 @@ export function UnderWayPanel({ trip, driverName, plate, onChangeTimes }: UnderW
   )
 }
 
-function warningText(w: AssignmentWarning, driver: BoardDriver | null): string {
+/** FMS-98: an electric vehicle whose range now is below the trip's planned distance. */
+export function rangeShort(vehicle: BoardVehicle, tripKm: number | null): boolean {
+  return vehicle.ev_range != null && tripKm != null && tripKm > 0 && vehicle.ev_range.range_km < tripKm
+}
+
+export function warningText(w: AssignmentWarning, driver: BoardDriver | null): string {
   if (w.warning === 'DRIVER_ATTENDANCE') return `${driver?.full_name ?? 'The driver'} is marked ${w.attendance === 'on_leave' ? 'on leave' : w.attendance} that day.`
+  if (w.warning === 'EV_RANGE_SHORT') return `The vehicle has about ${w.range_km} km of charge (${w.state_of_charge}%) for a ${w.trip_km} km trip: plan a charge before it leaves.`
   return `The ${w.field === 'driver_id' ? 'driver' : 'vehicle'} is still on a trip expected to end ${formatDay(w.expected_end)} at ${formatTime(w.expected_end)}.`
 }
 

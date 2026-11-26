@@ -14,6 +14,7 @@ Assignment (FMS-31, [api-contract.md](api-contract.md) §7.2) has two kinds of r
 | The vehicle or driver is from another depot, retired or out of service | refuses | Never |
 | `DRIVER_ATTENDANCE`: the driver is marked absent, on leave or sick on the trip's day | warns | Per depot |
 | `PREVIOUS_TRIP_OVERRUN`: a trip of the driver or vehicle still under way runs into this one | warns | Per depot |
+| `EV_RANGE_SHORT`: the electric vehicle's range now is below the trip's planned distance (FMS-98, [ev.md](ev.md#range)) | warns | Never: it only warns, whatever the depot's policies |
 
 Nobody can approve a rule that refuses, at any level.
 

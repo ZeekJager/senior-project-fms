@@ -1,5 +1,5 @@
 import { licenceText } from '@/lib/licence'
-import { Activity, CalendarClock, Check, Clock, FlaskConical, Gauge, Sparkles, Truck, UserRound, Wrench } from 'lucide-react'
+import { Activity, BatteryCharging, BatteryLow, CalendarClock, Check, Clock, FlaskConical, Gauge, Sparkles, Truck, UserRound, Wrench } from 'lucide-react'
 import { Fragment, type ReactNode } from 'react'
 import { Badge, cn, Skeleton } from '@/components/ui'
 import { driverLook, formatTime, reasonText, VEHICLE_TYPE_LABELS, vehicleLook } from './format'
@@ -220,7 +220,30 @@ export function DriverList({
   )
 }
 
-export function VehicleList({ vehicles, selectedId, onSelect }: { vehicles: BoardVehicle[]; selectedId: string | null; onSelect: (v: BoardVehicle) => void }) {
+/** An EV's range on its card (FMS-98): amber when it is short of the trip being staffed. */
+export function RangeLine({ range, tripKm }: { range: NonNullable<BoardVehicle['ev_range']>; tripKm: number | null }) {
+  const short = tripKm != null && tripKm > 0 && range.range_km < tripKm
+  return (
+    <span className={cn('mt-1 flex items-center gap-1 text-xs font-medium [&_svg]:h-3.5 [&_svg]:w-3.5', short ? 'text-warning' : 'text-ink-muted')}>
+      {short ? <BatteryLow aria-hidden="true" /> : <BatteryCharging aria-hidden="true" />}
+      Range about {range.range_km} km · {range.state_of_charge}%
+      {short && <span> · short of the {Math.ceil(tripKm!)} km trip</span>}
+    </span>
+  )
+}
+
+export function VehicleList({
+  vehicles,
+  selectedId,
+  onSelect,
+  tripKm = null,
+}: {
+  vehicles: BoardVehicle[]
+  selectedId: string | null
+  onSelect: (v: BoardVehicle) => void
+  /** The planned distance of the trip being staffed, for the EV range line (FMS-98). */
+  tripKm?: number | null
+}) {
   return (
     <ul className="space-y-1" aria-label="Vehicles">
       {sortVehicles(vehicles).map((v) => {
@@ -245,6 +268,7 @@ export function VehicleList({ vehicles, selectedId, onSelect }: { vehicles: Boar
                     {v.service_due.status === 'overdue' ? 'Service overdue' : 'Service due'}: {v.service_due.programs.map((p) => p.name).join(', ')}
                   </span>
                 )}
+                {v.ev_range && <RangeLine range={v.ev_range} tripKm={tripKm} />}
                 {v.current_trip && <Detail icon={<Clock />}>On a trip until {formatTime(v.current_trip.end)}</Detail>}
                 {reasons && <Detail>{reasons}</Detail>}
               </>

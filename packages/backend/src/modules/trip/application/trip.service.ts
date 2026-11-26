@@ -182,6 +182,11 @@ const NO_EXCEPTIONS: ExceptionStore = {
   update: () => Promise.reject(new Error('trip: no exception store')),
 };
 
+/** The EV module's range estimates (FMS-98): each vehicle (internal id) that has one. */
+export interface EvRangeLookup {
+  forVehicles(db: Queryable, vehicleIds: readonly string[]): Promise<Map<string, { range_km: number; state_of_charge: number }>>;
+}
+
 export interface TripServiceDeps {
   trips: Pick<
     TripRepository,
@@ -219,6 +224,11 @@ export interface TripServiceDeps {
   policies?: () => ExceptionPolicyLookup | null;
   /** Names of who asked and who decided (FMS-151). Absent (unit tests): none. */
   users?: UserNames;
+  /**
+   * Each electric vehicle's range now (FMS-98, internal ids): the EV module's, connected by src/modules/index.ts (it
+   * imports trip). Null when not connected: no range warning.
+   */
+  evRange?: () => EvRangeLookup | null;
   /** The fleet and maintenance modules' lookups, connected by src/modules/index.ts. */
   fleet: () => FleetRefs;
   maintenance: () => MaintenanceRefs;
@@ -730,6 +740,7 @@ export class TripService {
       ...availability.warnings,
       ...(await this.overruns(client, 'driver_id', driver.id, row.id, start)),
       ...(await this.overruns(client, 'vehicle_id', vehicle.id, row.id, start)),
+      ...(await this.rangeWarning(client, vehicle.id, row.plannedDistanceKm)),
     ];
     return { driver, vehicle, start, end, warnings };
   }
@@ -1081,6 +1092,18 @@ export class TripService {
       }
     }
     return warnings;
+  }
+
+  /**
+   * FMS-98: an electric vehicle whose estimated range now is below the trip's planned distance. A warning only; no range
+   * estimate (not electric, no readings) or no planned distance, none.
+   */
+  private async rangeWarning(db: Queryable, vehicleId: string, tripKm: number | null): Promise<AssignmentWarning[]> {
+    const lookup = this.deps.evRange?.();
+    if (!lookup || tripKm === null || tripKm <= 0) return [];
+    const range = (await lookup.forVehicles(db, [vehicleId])).get(vehicleId);
+    if (!range || range.range_km >= tripKm) return [];
+    return [{ warning: 'EV_RANGE_SHORT', field: 'vehicle_id', range_km: range.range_km, trip_km: Math.ceil(tripKm), state_of_charge: range.state_of_charge }];
   }
 
   /** Staff: their depots' trips (via the route). A driver (and nothing else): the trips they drive. */

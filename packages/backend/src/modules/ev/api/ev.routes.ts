@@ -56,6 +56,9 @@ const sessionUpdate = z
   .refine((v) => Object.keys(v).length > 0, { message: 'Send at least one field to change.', params: { reason: 'empty_update' } });
 
 const sessionsQuery = z.strictObject({ ...pageQuery, status: z.enum(SESSION_STATUSES).optional() });
+// The usable capacity when new, kWh (FMS-98): a car's 50 to a bus's 350; whole tenths of a kWh are plenty.
+const specBody = z.strictObject({ usable_capacity_kwh: z.number().gt(0).max(2000).multipleOf(0.01) });
+
 const fleetQuery = z.strictObject({ depot_id: z.uuid().optional() });
 const fleetSessionsQuery = z.strictObject({
   ...pageQuery,
@@ -157,6 +160,16 @@ export function evRouter(service: EvService): Router {
       const query = parseInput(sessionsQuery, req.query);
       const { items, total } = await service.sessionsOf(caller(req), id(req, 'vehicleId', evVehicleMissing), query);
       res.json({ data: items, meta: { ...pageMeta(query, total), request_id: req.correlationId } });
+    }),
+  );
+
+  router.put(
+    '/vehicles/:vehicleId/battery-spec',
+    authorize('ev:write'),
+    asyncHandler(async (req, res) => {
+      const { usable_capacity_kwh } = parseInput(specBody, req.body);
+      const spec = await service.setSpec(caller(req), id(req, 'vehicleId', evVehicleMissing), usable_capacity_kwh);
+      res.json({ data: spec, meta: { request_id: req.correlationId } });
     }),
   );
 

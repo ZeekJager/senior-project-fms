@@ -16,6 +16,8 @@ export type SettingKey =
   // Score appeals (FMS-159): the appeal window and the review deadline in working days.
   | 'appeal_window_days'
   | 'appeal_review_working_days'
+  // The EV battery alert's low-charge line (FMS-98); the EV dashboard marks low charge by it (FMS-99).
+  | 'ev_low_soc_pct'
 
 /** A setting as GET /settings returns it. */
 export interface Setting {
@@ -42,6 +44,7 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   driver_score_weight_dvir: 10,
   appeal_window_days: 30,
   appeal_review_working_days: 5,
+  ev_low_soc_pct: 20,
 }
 
 export const settingsKey = ['settings'] as const

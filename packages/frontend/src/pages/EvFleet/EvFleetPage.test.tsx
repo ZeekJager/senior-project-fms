@@ -9,6 +9,7 @@ import { createQueryClient } from '@/lib/query'
 import { RealtimeContext, type RealtimeHandler, type RealtimeValue } from '@/lib/realtime/context'
 import { AppRouter } from '@/router/AppRouter'
 import { currentUser, envelope, LocationProbe, signedInAs, testApi } from '@/test/auth'
+import { DEFAULT_SETTINGS } from '@/test/msw/handlers'
 import { server } from '@/test/msw/server'
 import type { ChargingSession, EvFleetVehicle } from './api'
 import { ago, chargeLevel, duration, fleetFigures, lowestFirst, socSpan } from './describe'
@@ -116,6 +117,16 @@ describe('S-40 EV fleet (FMS-99)', () => {
     expect(within(rows[3]).getByText('No reading')).toBeInTheDocument()
     const figures = screen.getByText('Low charge').closest('div')!
     expect(within(figures).getByText('2')).toBeInTheDocument()
+  })
+
+  it('the low line is the battery alert’s setting: at 30%, an EV at 25% is low', async () => {
+    serve({ fleet: [ev('AA 3-20001', 25), ev('AA 3-20002', 40)], sessions: [] })
+    server.use(http.get('/api/v1/settings', () => envelope(DEFAULT_SETTINGS.map((s) => (s.key === 'ev_low_soc_pct' ? { ...s, value: 30, is_default: false } : s)))))
+    signedInAs(manager)
+    open()
+    const list = await screen.findByRole('table', { name: /lowest charge first/ })
+    await waitFor(() => expect(within(within(list).getAllByRole('row')[1]).getByText('Low')).toBeInTheDocument())
+    expect(screen.getByText('below 30% at the last reading')).toBeInTheDocument()
   })
 
   it('the sessions charging now update live when the socket says a session started', async () => {

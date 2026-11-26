@@ -7,17 +7,18 @@ import { Badge, cn, FilterSelect, Skeleton, ViewTabs } from '@/components/ui'
 import { StationLayer } from '@/components/StationLayer'
 import { useAuth } from '@/context/AuthContext'
 import { useDepots } from '@/features/depots'
+import { useSetting } from '@/features/settings'
 import { useRealtimeStatus } from '@/lib/realtime/context'
 import { useLiveSnapshot } from '@/pages/FleetCommandCenter/api'
 import { toMapVehicle } from '@/pages/FleetCommandCenter/liveFleet'
 import { useChargingSessions, useChargingStations, useEvFleet, useLiveEv, type ChargingSession, type EvFleetVehicle, type SessionStatus } from './api'
-import { LEVEL_TONE, LOW_SOC_PCT, STALE_READING_MS, STATUS_LABELS, STATUS_TONE, ago, chargeLevel, duration, fleetFigures, percent, socSpan, when } from './describe'
+import { LEVEL_TONE, STALE_READING_MS, STATUS_LABELS, STATUS_TONE, ago, chargeLevel, duration, fleetFigures, percent, socSpan, when } from './describe'
 
 type SessionView = '' | 'in_progress' | 'completed' | 'failed'
 
 /** The charge as a bar and a figure, in the level's tone: what a dispatcher reads first. */
-function ChargeBar({ vehicle }: { vehicle: EvFleetVehicle }) {
-  const level = chargeLevel(vehicle)
+function ChargeBar({ vehicle, line }: { vehicle: EvFleetVehicle; line: number }) {
+  const level = chargeLevel(vehicle, line)
   if (!vehicle.latest) return <span className="text-sm text-ink-subtle">No reading</span>
   const soc = vehicle.latest.state_of_charge
   const bar = { critical: 'bg-danger', low: 'bg-warning', ok: 'bg-success', unknown: 'bg-line-strong' }[level]
@@ -32,12 +33,12 @@ function ChargeBar({ vehicle }: { vehicle: EvFleetVehicle }) {
 }
 
 /** The EVs' figures: how many, charging now, low, without a reading. */
-function Figures({ vehicles }: { vehicles: EvFleetVehicle[] | undefined }) {
-  const f = vehicles ? fleetFigures(vehicles) : undefined
+function Figures({ vehicles, line }: { vehicles: EvFleetVehicle[] | undefined; line: number }) {
+  const f = vehicles ? fleetFigures(vehicles, line) : undefined
   const items = [
     { label: 'Electric vehicles', value: f?.total, note: 'in service in your depots', tone: undefined },
     { label: 'Charging now', value: f?.charging, note: 'sessions under way', tone: f?.charging ? 'text-brand-ink' : undefined },
-    { label: 'Low charge', value: f?.low, note: `below ${LOW_SOC_PCT}% at the last reading`, tone: f?.low ? 'text-warning' : undefined },
+    { label: 'Low charge', value: f?.low, note: `below ${line}% at the last reading`, tone: f?.low ? 'text-warning' : undefined },
     { label: 'No reading', value: f?.unknown, note: 'never reported a battery state', tone: undefined },
   ]
   return (
@@ -107,6 +108,8 @@ export function EvFleetPage() {
   const canTrack = hasPermission('tracking:read')
   const live = useRealtimeStatus() === 'live'
   const now = useNow(30_000)
+  // The battery alert's low line (FMS-98), so the list and the alerts agree.
+  const line = useSetting('ev_low_soc_pct')
 
   const [params, setParams] = useSearchParams()
   const depotId = params.get('depot') ?? ''
@@ -165,7 +168,7 @@ export function EvFleetPage() {
         </span>
       ),
     },
-    { key: 'charge', header: 'Charge', width: 'w-[22%]', cell: (v) => <ChargeBar vehicle={v} /> },
+    { key: 'charge', header: 'Charge', width: 'w-[22%]', cell: (v) => <ChargeBar vehicle={v} line={line} /> },
     {
       key: 'health',
       header: 'Health',
@@ -185,7 +188,7 @@ export function EvFleetPage() {
               Charging
             </Badge>
           )
-        const level = chargeLevel(v)
+        const level = chargeLevel(v, line)
         if (level === 'critical' || level === 'low')
           return (
             <Badge tone={LEVEL_TONE[level]} icon={level === 'critical' ? <BatteryWarning aria-hidden="true" /> : <BatteryLow aria-hidden="true" />}>
@@ -273,7 +276,7 @@ export function EvFleetPage() {
         </div>
       </header>
 
-      <Figures vehicles={vehicles} />
+      <Figures vehicles={vehicles} line={line} />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <DataTable
@@ -281,7 +284,7 @@ export function EvFleetPage() {
           tableId="ev-fleet"
           rowHeight="stacked"
           rowLabel={(v) => v.registration_number}
-          rowClassName={(v) => (chargeLevel(v) === 'critical' && !v.charging ? 'bg-danger-soft/25' : undefined)}
+          rowClassName={(v) => (chargeLevel(v, line) === 'critical' && !v.charging ? 'bg-danger-soft/25' : undefined)}
           columns={columns}
           data={vehicles ?? []}
           rowKey={(v) => v.vehicle_id}

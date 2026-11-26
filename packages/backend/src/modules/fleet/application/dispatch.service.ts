@@ -14,6 +14,7 @@ import {
   type DistanceProvider,
   type DispatchBoard,
   type DriverTripRisk,
+  type EvRangeProvider,
   type OpenWorkSummary,
   type ServiceDueSummary,
   type TripRiskProvider,
@@ -39,6 +40,8 @@ export interface DispatchServiceDeps {
   inTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
   /** The trip risk model (FMS-155), connected by src/modules/index.ts; null when it is not. */
   tripRisk?: () => TripRiskProvider | null;
+  /** Electric vehicles' range now (FMS-98), the EV module's, connected by src/modules/index.ts; null when it is not. */
+  evRange?: () => EvRangeProvider | null;
   /** The driving distance limits (FMS-156): the trip module's. Absent (unit tests): not shown. */
   distance?: DistanceProvider;
   log?: { warn(obj: object, msg: string): void };
@@ -92,6 +95,7 @@ export class DispatchService {
       const flagged = vehicles.filter((v) => v.maintenanceFlag).map((v) => v.id);
       const openWork = flagged.length > 0 ? ((await this.deps.maintenance()?.openRecordSummaries(client, flagged)) ?? new Map()) : new Map<string, OpenWorkSummary>();
       const serviceDue = (await this.deps.maintenance()?.serviceDueSummaries(client, vehicles.map((v) => v.id))) ?? new Map<string, ServiceDueSummary>();
+      const ranges = (await this.deps.evRange?.()?.forVehicles(client, vehicles.map((v) => v.id))) ?? new Map();
       const trip = (t: { tripId: string; end: Date } | undefined) => (t ? { trip_id: t.tripId, end: t.end } : null);
       // FMS-156: with the trip being staffed, each driver's distance in its day and week, on this transaction.
       const distances = query.excludeTripId && this.deps.distance ? await this.deps.distance(client, query.excludeTripId, drivers.map((d) => d.id)) : null;
@@ -133,6 +137,7 @@ export class DispatchService {
             open_work: openWork.get(v.id) ?? null,
             service_due: serviceDue.get(v.id) ?? null,
             current_trip: trip(underWay ?? undefined),
+            ev_range: ranges.get(v.id) ?? null,
           };
         }),
       };
