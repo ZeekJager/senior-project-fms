@@ -36,6 +36,9 @@ FROM ${NODE_IMAGE} AS runtime
 # pg_dump and pg_restore for database backups (FMS-144): the server's major version, 16.
 RUN apk add --no-cache postgresql16-client && apk upgrade --no-cache
 ENV NODE_ENV=production PORT=3000 STORAGE_LOCAL_DIR=/app/packages/backend/storage
+# 32 threads for DNS lookups and the like (docs/resilience.md#found-while-drilling): while Redis is down, its 4 clients'
+# reconnect lookups take about 4 s each and would fill Node's default 4, stalling every new database connection.
+ENV UV_THREADPOOL_SIZE=32
 WORKDIR /app/packages/backend
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY packages/backend/package.json ./

@@ -107,6 +107,24 @@ npm run simulate:gps -- --via device                                  # each veh
 - **Now.** The live map reads the current positions ([live-map.md](live-map.md)), and so does a trip's live state (`GET /trips/{id}/live`).
 - **History.** `GET /vehicles/{id}/tracking` (FMS-136, api-contract §11.1) gives the stored pings oldest first, at most 30 days per request, and audits every page (FMS-95, [trip-stops.md](trip-stops.md)).
 
-## Not yet
+## Partitions
 
-- **Old pings:** `tracking.gps_pings` keeps its default partition; monthly partitions and a retention job come with the data volume.
+`tracking.gps_pings` is partitioned by `recorded_at`, one partition a calendar month in UTC
+(`tracking.gps_pings_y2026m11`), with a default partition for anything outside every month (FMS-110, migration 083). A
+query for a period reads only its months, and an old month is dropped whole instead of deleted row by row.
+
+- **Made ahead.** The `gps-partitions` job (02:50) makes this month and the next two, so next month's partition exists
+  from the first of this month, well before the 25th. A month of failed runs still leaves one month ahead.
+- **The default partition.** Pings outside every month (a phone's clock far off, or pings stored before 083) land there.
+  The job gives every month that has rows there a partition of its own and moves them into it, so the default partition
+  stays empty. While it does, only inserts into the default partition wait; the monthly partitions keep taking pings.
+- **Dropped by retention.** The `tracking-retention` job (03:20) first detaches and drops every month that ended before
+  its cutoff (`GPS_PING_RETENTION_DAYS`,
+  [driver-data-protection.md](driver-data-protection.md#retention-of-location-data)), then deletes what is left of the
+  month the cutoff falls in.
+- **Who may.** Only a table's owner may add or drop its partitions. The runtime role calls
+  `tracking.ensure_gps_partitions` and `tracking.drop_gps_partitions_before`, which run as the schema owner
+  (`SECURITY DEFINER`) and do nothing else; a cutoff in the future is refused.
+- **Watched.** `gps_partition_days_ahead` (days to the end of the last month) and `gps_default_partition_rows` are on
+  `/metrics` ([metrics.md](metrics.md)); `GpsPartitionMissing` warns when the months reach less than 10 days ahead for
+  an hour ([observability.md](observability.md)).

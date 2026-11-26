@@ -134,3 +134,99 @@ export function schemaProblems(): { name: string; problem: string }[] {
   }
   return problems;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Closed schemas (FMS-100): a response may carry only the fields the spec names.
+
+type Json = Record<string, unknown>;
+
+/** Schemas used as a member of an allOf or oneOf: their properties are counted by the composing schema, which is closed. */
+function compositionMembers(node: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(node)) node.forEach((n) => compositionMembers(n, found));
+  else if (node && typeof node === 'object') {
+    const o = node as Json;
+    for (const key of ['allOf', 'oneOf', 'anyOf']) {
+      for (const member of (o[key] as Json[] | undefined) ?? []) {
+        if (typeof member.$ref === 'string') found.add(member.$ref.split('/').pop()!);
+      }
+    }
+    Object.values(o).forEach((v) => compositionMembers(v, found));
+  }
+  return found;
+}
+
+/** An object the spec describes field by field. `type: object` alone is a free-form map, open on purpose. */
+const isObjectSchema = (o: Json) => 'properties' in o || 'allOf' in o || 'oneOf' in o || 'anyOf' in o;
+
+/**
+ * The schema with every object closed: `unevaluatedProperties: false` (JSON Schema 2020-12), which, unlike
+ * additionalProperties, counts the properties an allOf or oneOf member names. A member of a composition is left open
+ * (its composing schema closes it); so is a schema that already says what else it allows.
+ */
+export function closeSchema(node: unknown, composed = false): unknown {
+  if (Array.isArray(node)) return node.map((n) => closeSchema(n, composed));
+  if (!node || typeof node !== 'object') return node;
+  const o = { ...(node as Json) };
+  for (const key of ['properties', 'patternProperties', '$defs']) {
+    if (o[key] && typeof o[key] === 'object') o[key] = Object.fromEntries(Object.entries(o[key] as Json).map(([k, v]) => [k, closeSchema(v)]));
+  }
+  for (const key of ['items', 'not']) if (o[key] && typeof o[key] === 'object') o[key] = closeSchema(o[key]);
+  if (o.additionalProperties && typeof o.additionalProperties === 'object') o.additionalProperties = closeSchema(o.additionalProperties);
+  for (const key of ['allOf', 'oneOf', 'anyOf']) if (Array.isArray(o[key])) o[key] = (o[key] as unknown[]).map((m) => closeSchema(m, true));
+  if (!composed && typeof o.$ref !== 'string' && isObjectSchema(o) && !('additionalProperties' in o) && !('unevaluatedProperties' in o)) {
+    o.unevaluatedProperties = false;
+  }
+  return o;
+}
+
+const members = compositionMembers(spec);
+const closedComponents = {
+  ...spec.components,
+  schemas: Object.fromEntries(Object.entries(spec.components.schemas).map(([name, schema]) => [name, closeSchema(schema, members.has(name))])),
+};
+const strictAjv = new Ajv2020({ strict: false, allErrors: true });
+addFormats(strictAjv);
+strictAjv.addFormat('binary', true);
+const strictCompiled = new Map<string, ReturnType<typeof strictAjv.compile>>();
+
+/**
+ * Answers any route may give whatever the operation lists (api-contract §3: no session, no permission, a body too large,
+ * rate limited, a failure): when the operation does not list one, its body must still be the error envelope.
+ */
+export const CROSS_CUTTING_STATUSES = [401, 403, 413, 429, 500, 503];
+
+/** As responseProblems, with every object closed: a field the spec does not name is a problem. */
+export function strictResponseProblems(path: string, method: Method, status: number, body: unknown): string | null {
+  const op = (spec.paths[path]?.[method] ?? null) as OperationObject | null;
+  if (!op) return `${method.toUpperCase()} ${path} is not in the spec`;
+  let listed = op.responses?.[String(status)];
+  if (!listed && CROSS_CUTTING_STATUSES.includes(status)) listed = { content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } } as ResponseObject;
+  if (!listed) return `${method.toUpperCase()} ${path} lists no ${status} response`;
+  const schema = resolve(listed).content?.['application/json']?.schema;
+  // No JSON body (a file, an image, a 204): the status is all there is to check.
+  if (!schema || body === undefined) return null;
+  const key = `${method} ${path} ${status}`;
+  let validate = strictCompiled.get(key);
+  if (!validate) {
+    validate = strictAjv.compile({ ...(closeSchema(schema) as object), components: closedComponents });
+    strictCompiled.set(key, validate);
+  }
+  return validate(body) ? null : JSON.stringify(validate.errors?.slice(0, 5));
+}
+
+/** The spec operation a request path (`/api/v1/trips/<uuid>?x=1`) is, preferring literal segments over parameters. */
+const matchers = operations
+  .map((o) => {
+    const segments = o.path.split('/').filter(Boolean);
+    // Literal segments are letters, digits, '-', '_' and '.': only the dot needs escaping.
+    const regex = new RegExp(`^/${segments.map((s) => (s.startsWith('{') ? '[^/]+' : s.replace(/\./g, '\\.'))).join('/')}$`);
+    return { op: o, regex, literals: segments.filter((s) => !s.startsWith('{')).length };
+  })
+  .sort((a, b) => b.literals - a.literals);
+
+export function operationFor(method: string, url: string): Operation | null {
+  const full = new URL(url, 'http://local').pathname;
+  return (
+    matchers.find((m) => m.op.method === method.toLowerCase() && full.startsWith(`${m.op.base}/`) && m.regex.test(full.slice(m.op.base.length)))?.op ?? null
+  );
+}

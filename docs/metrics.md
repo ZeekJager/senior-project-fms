@@ -36,6 +36,7 @@ paths with ids, no query strings, no users.
 | `socket_connections` | gauge | Open Socket.IO connections on this instance (FMS-43) |
 | `gps_points_stored_total`, `gps_last_point_age_seconds` | counter, gauge | GPS points stored, and seconds since this instance stored one (FMS-163: points per minute, and the silence alert) |
 | `trips_under_way` | gauge | Trips en route now, fleet-wide (FMS-163) |
+| `gps_partition_days_ahead`, `gps_default_partition_rows` | gauge | Days to the end of the last monthly GPS partition, and pings outside every month (FMS-110, [gps-ingestion.md](gps-ingestion.md#partitions)) |
 | `backup_findings{severity}` | gauge | The backups' findings by severity (FMS-108): a critical one is an alert |
 | `fms_alert_threshold{setting}` | gauge | Each monitoring threshold from the settings (FMS-163): the alert rules compare against it |
 | `job_duration_seconds{job,status}` | histogram | Each scheduled job run, `succeeded` or `failed` |

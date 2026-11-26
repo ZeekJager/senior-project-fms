@@ -44,3 +44,69 @@ All screens must handle 5 states: Loading (Skeleton), Empty, Error (Boundary), S
 | S-29 | Notification settings | `/notification-settings` (from the account card) | Every signed-in user | How alerts reach the user (FMS-93, [notification-channels.md](notification-channels.md)): by severity, the channels that are on (in FMS always; critical by email, SMS and push; high by push), their email address and phone number (or how to get one added), and push for this browser: turn it on (asks the browser's permission and registers the service worker), send a test, turn it off; says when push is blocked, not set up on the server, or not supported. Push stays on after sign-out; the screen tells whether this browser's subscription is the user's. |
 
 **Photos (docs/photos.md).** People show their photo, or their initials on a colour of their own, wherever they are listed: Users and Roles (S-20), Drivers (S-05), the header and the account card. Vehicles show theirs, or their type's icon, in the vehicle list (S-04) and the Vehicle History header (S-22). Everyone sets their own from the account card (*Your photo*); an admin sets anyone's in the user's edit panel, whoever manages drivers a driver's in the driver's edit panel, and whoever edits vehicles a vehicle's in the vehicle's edit panel. A picture is cropped (a square for people, 4:3 for vehicles) and shrunk in the browser before it is sent.
+
+## State audit (FMS-64)
+
+Every screen of the route table (`src/router/routes.tsx`), opened by a user allowed to, under three simulated API
+conditions: **loading** (nothing has answered yet), **empty** (every list empty) and **error** (every request answered
+`500` with a request id). The success state of each screen is its own test file's. Run:
+`npx vitest run src/test/screen-states.audit.test.tsx` (`SCREEN_AUDIT_OUT=<file>` writes the results table).
+
+- **Loading:** pass when the page shows a skeleton, a spinner, a status or "Loading".
+- **Empty:** pass when the page shows anything; a blank page area fails the test.
+- **Error:** pass when the page shows the failure with the request id support asks for; *no request id* when it says
+  it failed without one; *not shown* when nothing on the page says the data failed to load.
+- **The card's bar, no blank page:** met. No screen leaves its page area empty in any of the three conditions, and the
+  audit test fails if one ever does. A render error anywhere is caught by `ErrorBoundary`, which shows the error code
+  and the request id with a copy button (tested in the same file).
+
+Audited 25 November 2026:
+
+| ID | Screen | Route | Loading | Empty | Error | Finding |
+|---|---|---|---|---|---|---|
+| S-18 | Analytics Dashboard | `/dashboard` | pass | pass | pass | |
+| S-04 | Vehicle Dashboard | `/vehicles` | pass | pass | pass | |
+| S-22 | Vehicle History | `/vehicles/{id}` | pass | pass | pass | |
+| S-05 | Driver Dashboard | `/drivers` | pass | pass | pass | |
+| S-06 | Attendance UI | `/attendance` | pass | pass | pass | |
+| S-24 | Check-in code | `/attendance/qr` | pass | pass | **fail** | Not shown: the code area stays empty, with no error or reconnecting notice |
+| S-08 | Technician Repair Log | `/maintenance` | pass | pass | pass | |
+| S-23 | Service Programs | `/service-programs` | pass | pass | pass | |
+| S-35 | Recalls | `/recalls` | pass | pass | pass | |
+| S-19 | Predictive Maintenance UI | `/predictive-maintenance` | pass | pass | pass | The inventory's route (`/maintenance/ai-health`) is out of date |
+| S-09 | Spare Parts Console | `/inventory` | pass | pass | pass | |
+| S-21 | Routes | `/routes` | pass | pass | pass | |
+| S-15 | Fuel Reconciliation | `/fuel-reconciliation` | pass | pass | pass | |
+| S-28 | Reports | `/reports` | pass | pass | pass | |
+| S-39 | KPIs | `/analytics/kpis` | pass | pass | **fail** | No request id; at times only the period and filters show |
+| S-36 | Score appeals | `/appeals` | pass | pass | pass | |
+| S-33 | Fleet availability | `/availability` | pass | pass | pass | |
+| S-07 | Dispatcher Trip Console | `/dispatch` | pass | pass | **fail** | Not shown: a failed load looks like no trips and "0 available" drivers and vehicles |
+| S-16 | Fleet Command Center | `/command-center` | pass | pass | **fail** | No request id |
+| S-32 | Geofences | `/geofences` | pass | pass | **fail** | No request id |
+| S-20 | Users and Roles | `/users` | pass | pass | pass | |
+| S-10 | Audit Log UI | `/audit` | pass | pass | pass | |
+| S-26 | Depots | `/depots` | pass | pass | pass | |
+| S-27 | Settings | `/settings` | pass | pass | pass | |
+| S-29 | Notification settings | `/notification-settings` | pass | pass | pass | |
+| S-30 | Backups | `/backups` | pass | pass | pass | |
+| S-31 | System health | `/system-health` | pass | pass | pass | |
+| S-34 | Telematics | `/telematics` | pass | pass | pass | |
+| S-11 | Driver Mobile Home | `/driver` | pass | pass | **fail** | Not shown: *Checking…* stays and the trip area is missing |
+| S-25 | Driver check-in | `/driver/check-in` | pass | pass | **fail** | Not shown |
+| S-12 | Driver DVIR Form | `/driver/dvir` | **fail** | pass | **fail** | Only the heading while loading and after a failure |
+| S-14 | Driver Fuel Entry | `/driver/fuel` | **fail** | pass | **fail** | Only the heading while loading and after a failure |
+| S-13 | Driver Incident Form | `/driver/incident` | **fail** | pass | **fail** | Only the heading while loading and after a failure |
+| — | My score | `/driver/score` | pass | pass | **fail** | No request id: the month shows without figures or a message. Not in this inventory |
+| S-37 | Driver appeals | `/driver/appeals` | pass | pass | **fail** | No request id |
+| S-37 | New appeal | `/driver/appeals/new` | pass | pass | **fail** | No request id |
+| S-37 | An appeal | `/driver/appeals/{id}` | pass | pass | **fail** | No request id |
+| S-38 | My feedback | `/driver/feedback` | **fail** | pass | **fail** | No loading indicator; a failure is not shown |
+| S-38 | A feedback item | `/driver/feedback/{id}` | pass | pass | **fail** | No request id |
+| S-01, S-01a | Login, Set Password | `/login`, `/set-password` | — | — | — | Public, outside the route table: covered by their own tests |
+| S-17 | Notification Inbox | (panel) | — | — | — | A panel, not a route: covered by its own tests |
+
+Summary: 39 screens. Loading passes on 35, empty on 39, error on 23. The 16 error findings and 4 loading findings
+are not fixed here (the card says so): each is to become its own bug card. The driver screens
+account for most of them: on the phone a failed load usually means no signal, which the offline banner covers when the
+service worker answers, but not when the API answers with an error.

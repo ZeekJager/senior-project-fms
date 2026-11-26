@@ -8,6 +8,7 @@ import { Client } from 'pg';
 import { loadMigrationConfig } from '../../src/config/schema';
 import { applyMigrations } from '../../scripts/lib/migrations';
 import { applyTestEnv, TEST_DB_NAME, TEST_STORAGE_DIR } from './test-env';
+import { reportContractCoverage, resetContractRecords } from './contract-coverage';
 
 // Every table the migrations create, excluding schema_migrations.
 const COUNT_ROWS_SQL = `
@@ -62,7 +63,12 @@ export default async function setup(): Promise<() => Promise<void>> {
     await db.end();
   }
 
+  // FMS-100: each test file records the operations it called (contract-hook.ts); the report is made after the run.
+  resetContractRecords();
+
   return async () => {
+    const coverage = reportContractCoverage('contract-coverage.json');
+    console.log(`API contract: ${coverage.called} of ${coverage.total} operations called by the integration tests (contract-coverage.json).`);
     await rm(TEST_STORAGE_DIR, { recursive: true, force: true });
     const check = connect(TEST_DB_NAME);
     await check.connect();

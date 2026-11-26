@@ -49,4 +49,30 @@ describe('Reconnecting banner (FMS-162)', () => {
     await act(() => api.request('/ping').catch(() => undefined))
     expect(await screen.findByText(/kept on this phone and sent when it is back/)).toBeInTheDocument()
   })
+
+  it('says the server is not answering while the API is restarting, on a staff screen (FMS-111)', async () => {
+    const api = testApi()
+    signedInAs(currentUser(['admin'], ['audit:read']))
+    renderApp('/dashboard', { api })
+    await screen.findByRole('navigation', { name: 'Main' })
+
+    server.use(http.get('/api/v1/ping', () => new HttpResponse('Bad Gateway', { status: 502, headers: { 'Content-Type': 'text/plain' } })))
+    await act(() => api.request('/ping').catch(() => undefined))
+    expect(await screen.findByText('Reconnecting…')).toBeInTheDocument()
+    expect(screen.getByText(/The server is not answering: it may be restarting/)).toBeInTheDocument()
+
+    server.use(http.get('/api/v1/ping', () => envelope({ ok: true })))
+    await act(() => api.request('/ping'))
+    await waitFor(() => expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument())
+  })
+
+  it('tells a driver the phone keeps what they do while the server is not answering', async () => {
+    const api = testApi()
+    signedInAs(currentUser(['driver'], ['trip:execute']))
+    renderApp('/driver', { api })
+    await screen.findByRole('button', { name: 'Account' })
+    server.use(http.get('/api/v1/ping', () => HttpResponse.error()))
+    await act(() => api.request('/ping').catch(() => undefined))
+    expect(await screen.findByText(/The server is not answering\. Your location and anything you submit are kept on this phone/)).toBeInTheDocument()
+  })
 })

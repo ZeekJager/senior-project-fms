@@ -199,3 +199,22 @@ tests:
       - { eval_time: 30m, alertname: ApiLatencyCritical, exp_alerts: [] }
       - { eval_time: 30m, alertname: GpsIngestionSilent, exp_alerts: [] }
       - { eval_time: 30m, alertname: TargetDown, exp_alerts: [] }
+
+  # FMS-110: the GPS months reach 6 days ahead (only this month's exists on the 25th): GpsPartitionMissing after an hour.
+  - interval: 1m
+    input_series:
+      - { series: 'gps_partition_days_ahead{instance="backend:9464"}', values: '6x90' }
+    alert_rule_test:
+      - { eval_time: 30m, alertname: GpsPartitionMissing, exp_alerts: [] }
+      - eval_time: 75m
+        alertname: GpsPartitionMissing
+        exp_alerts:
+          - exp_labels: { severity: warning, service: postgres }
+            exp_annotations: { summary: Next month's GPS partition is missing, description: "The GPS partitions reach 6 days ahead; see the gps-partitions job (docs/gps-ingestion.md#partitions)." }
+
+  # Two months ahead, as the job keeps them: nothing fires.
+  - interval: 1m
+    input_series:
+      - { series: 'gps_partition_days_ahead{instance="backend:9464"}', values: '67x90' }
+    alert_rule_test:
+      - { eval_time: 80m, alertname: GpsPartitionMissing, exp_alerts: [] }

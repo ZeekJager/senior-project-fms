@@ -4,11 +4,16 @@ dist/
 coverage/
 # Load test reports and the API log of each run (FMS-61); CI keeps them as artifacts.
 load-report/
+# The API contract coverage of the integration tests (FMS-100); CI keeps it as an artifact.
+contract-coverage.json
 # Uploaded documents in local development (FMS-17)
 packages/backend/storage/
 .env
 .env.*
 !.env.example
+# The production stack's secrets and extra backend settings (docker-compose.prod.yml, docs/deployment.md).
+/prod.env
+/api.env
 # The off-site backup repository's credentials (docker/postgres/offsite.env.example).
 docker/postgres/offsite.env
 # scripts/backup/pitr-restore.sh's passphrases while it runs (removed on exit).
@@ -28,3 +33,7 @@ packages/ai-service/models/
 
 # OS
 .DS_Store
+
+# Playwright (FMS-63)
+packages/e2e/playwright-report/
+packages/e2e/test-results/

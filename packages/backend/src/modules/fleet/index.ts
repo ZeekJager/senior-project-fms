@@ -27,6 +27,7 @@ import {
   vehicleHasActiveTrip,
   vehicleOnActiveTripSql,
 } from '../trip';
+import { assignmentRouter } from './api/assignment.routes';
 import { attendanceRouter } from './api/attendance.routes';
 import { depotRouter } from './api/depot.routes';
 import { dispatchRouter } from './api/dispatch.routes';
@@ -44,7 +45,9 @@ import { DocumentService } from './application/document.service';
 import { DocumentUrlSigner } from './application/document-url';
 import { DowntimeService, type DowntimeProblemLookup, type DowntimeSourceLookup } from './application/downtime.service';
 import { DriverService } from './application/driver.service';
+import { AssignmentService } from './application/assignment.service';
 import { DvirService } from './application/dvir.service';
+import { AssignmentRepository } from './infrastructure/assignment.repository';
 import { ExpiryService } from './application/expiry.service';
 import { MeterService, type MeterSources } from './application/meter.service';
 import { DOCUMENT_EVENTS } from './domain/document';
@@ -298,6 +301,14 @@ const attendanceService = new AttendanceService({
 
 // An inspection that finds issues sets the maintenance flag inside its own transaction (FMS-36),
 // so its VehicleFaultDetected event, like the maintenance ones above, drops the cached vehicle.
+// FMS-77: a driver's regular vehicle (docs/driver-vehicle-assignments.md).
+const assignmentService = new AssignmentService({
+  assignments: new AssignmentRepository(pool),
+  vehicles: vehicleRepository,
+  drivers: driverRepository,
+  events: eventBus,
+});
+
 const dvirService = new DvirService({
   reports: new DvirRepository(pool),
   vehicles: vehicleRepository,
@@ -328,6 +339,7 @@ router.use(dispatchRouter(dispatchService));
 router.use(attendanceRouter(attendanceService));
 router.use(vehicleRouter(vehicleService));
 router.use(driverRouter(driverService));
+router.use(assignmentRouter(assignmentService));
 router.use(photoRouter(photoService));
 router.use(documentRouter(documentService));
 router.use(dvirRouter(dvirService));

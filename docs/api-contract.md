@@ -368,9 +368,11 @@ Vehicle downtime (FMS-131, [downtime.md](downtime.md)):
 | `PATCH /drivers/{driver_id}` | Update driver | `driver:write` | `DriverUpdate` -> `Driver` |
 | `DELETE /drivers/{driver_id}` | Retire driver | `driver:delete` | `204`. Soft retire; preserve historical references; `409 CONFLICT_DRIVER_IN_USE` if in use |
 | `POST /drivers/{driver_id}/reinstate` | Reinstate a retired driver | `driver:write` | `Driver`; history kept; reinstating an active driver changes nothing |
-| `POST /driver-vehicle-assignments` | Create driver/vehicle assignment | `assignment:write` | `driver_id,vehicle_id,start_at,end_at` -> `Assignment` |
-| `GET /vehicles/{vehicle_id}/assignments` | Assignment history | `assignment:read` | `Assignment[]` |
-| `GET /drivers/{driver_id}/assignments` | Driver assignment history | `assignment:read` | `Assignment[]` |
+| `POST /driver-vehicle-assignments` | A driver's regular vehicle (FMS-77) | `assignment:write` | `driver_id,vehicle_id,assignment_type?,start_at?,end_at?,notes?` -> `DriverVehicleAssignment`; one `primary` per driver and per vehicle at a time (`409 CONFLICT_DRIVER_IN_USE` / `CONFLICT_VEHICLE_IN_USE`, `record_id` = the assignment in the way); `temporary` needs `end_at`; same depot (`409 CONFLICT_DEPOT_MISMATCH`); `Idempotency-Key` |
+| `GET /driver-vehicle-assignments/{assignment_id}` | One assignment | `assignment:read` | `DriverVehicleAssignment` |
+| `POST /driver-vehicle-assignments/{assignment_id}/end` | End it, now or at a past `end_at` | `assignment:write` | `{end_at?,notes?}` -> `DriverVehicleAssignment`; `409 CONFLICT_INVALID_STATE_TRANSITION` if already ended |
+| `GET /vehicles/{vehicle_id}/assignments` | A vehicle's assignment history, newest first | `assignment:read` | paged `DriverVehicleAssignment[]` |
+| `GET /drivers/{driver_id}/assignments` | A driver's assignment history, newest first | `assignment:read` | paged `DriverVehicleAssignment[]` |
 | `GET /attendance` | The day's roster | `attendance:read` | `date` (default `today`), `depot_id`, `driver_id`, `status`, `search` -> paged `RosterEntry[]` |
 | `POST /attendance` | Record attendance | `attendance:write` | `driver_id,date,status`; 409 duplicate; `Idempotency-Key` |
 | `GET /attendance/{attendance_id}` | Attendance detail | `attendance:read` | `Attendance` |

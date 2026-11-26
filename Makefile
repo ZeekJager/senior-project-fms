@@ -1,4 +1,4 @@
-.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing observability observability-down
+.PHONY: dev dev-bg env down clean logs db-shell backend-shell frontend-shell ai-shell migrate seed routing observability observability-down prod
 
 # Create .env from .env.example with generated secrets. An existing .env keeps
 # its values and gains any key added to .env.example since (e.g. REDIS_PASSWORD).
@@ -78,3 +78,7 @@ observability: env
 
 observability-down:
 	docker-compose -f docker-compose.yml -f docker-compose.observability.yml stop prometheus victoriametrics alertmanager node-exporter cadvisor postgres-exporter-primary postgres-exporter-standby redis-exporter grafana loki promtail glitchtip-db glitchtip-redis glitchtip-web glitchtip-worker
+
+# The production stack behind Caddy: TLS, two API instances (FMS-106, docs/deployment.md). Needs prod.env.
+prod:
+	docker compose -f docker-compose.prod.yml --env-file prod.env up -d

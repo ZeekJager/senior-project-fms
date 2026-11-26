@@ -31,9 +31,11 @@ export default defineConfig({
         target: apiProxyTarget,
         ws: true,
       },
+      // The browser's Host is kept here too: the CSRF check (FMS-103) compares
+      // a cookie-carrying write's Origin with the Host, so a rewritten Host
+      // refused every one, the silent refresh after a reload included.
       '/api': {
         target: apiProxyTarget,
-        changeOrigin: true,
       },
     },
   }
