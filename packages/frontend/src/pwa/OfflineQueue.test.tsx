@@ -12,6 +12,7 @@ import { currentUser, envelope, errorEnvelope, renderApp, signedInAs, testApi } 
 import { server } from '@/test/msw/server'
 import { OfflineQueueProvider, useOfflineQueue, type SubmitResult } from './OfflineQueue'
 import { PendingSubmissions } from './PendingSubmissions'
+import { goOffline } from '@/test/network'
 
 const driver = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read', 'dvir:write'])
 const ME = driver.user.id
@@ -115,7 +116,7 @@ describe('offline queue in the driver app (FMS-81)', () => {
     const { records } = serveReports(state)
     renderQueue()
     const user = userEvent.setup()
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     await submitOne(user, 'queued')
     await user.click(screen.getByRole('button', { name: 'Submit' }))
     await user.click(screen.getByRole('button', { name: 'Submit' }))
@@ -194,7 +195,7 @@ describe('offline queue in the driver app (FMS-81)', () => {
     serveReports({ up: false })
     renderQueue()
     const user = userEvent.setup()
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     await user.click(await screen.findByRole('button', { name: '2 waiting to send' }))
     const list = screen.getByRole('dialog', { name: 'Waiting to send' })
     expect(within(list).getAllByRole('listitem').map((li) => li.querySelector('p')?.textContent)).toEqual(['Pre-trip inspection 1', 'Pre-trip inspection 2'])

@@ -7,6 +7,7 @@ import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/t
 import { server } from '@/test/msw/server'
 import type { DriverTrip } from './api'
 import { checkFillUp, fuelLogBody } from './fuelLog'
+import { goOffline } from '@/test/network'
 
 const driver = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read', 'fuel:write', 'fuel:read'])
 const VEHICLE = 'v0000000-0000-4000-8000-000000000001'
@@ -114,7 +115,7 @@ describe('Driver fuel entry (FMS-40, S-14)', () => {
     const state = { trips: [trip()], up: false }
     const posts = serve(state)
     await open()
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     const user = userEvent.setup()
     await fill(user, { litres: '40', total: '4920', odometer: '123500' })
     expect(submitButton()).toHaveTextContent('Save fuel log')

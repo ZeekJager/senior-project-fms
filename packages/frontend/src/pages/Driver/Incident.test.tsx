@@ -7,6 +7,7 @@ import { currentUser, envelope, errorEnvelope, renderApp, signedInAs } from '@/t
 import { server } from '@/test/msw/server'
 import type { DriverTrip } from './api'
 import { checkIncident, EMPTY_INCIDENT, incidentBody } from './incidentReport'
+import { goOffline } from '@/test/network'
 
 const driver = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read', 'incident:write', 'incident:read'])
 const VEHICLE = 'v0000000-0000-4000-8000-000000000001'
@@ -116,7 +117,7 @@ describe('Driver incident report (FMS-38, S-13)', () => {
     const state = { trips: [trip()], up: false }
     const posts = serve(state)
     await open()
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     const user = userEvent.setup()
     await user.click(screen.getByRole('radio', { name: /^Serious/ }))
     await user.type(describeIt(), 'Rocks on the road after Mojo.')

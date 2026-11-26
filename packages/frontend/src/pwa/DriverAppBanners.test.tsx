@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { currentUser, renderApp, signedInAs } from '@/test/auth'
 import { linkDriverManifest, registerDriverServiceWorker, shareSessionWithWorker } from './useDriverPwa'
+import { goOffline } from '@/test/network'
 
 const driver = currentUser(['driver'], ['trip:execute', 'trip:read', 'vehicle:read'])
 const dispatcher = currentUser(['dispatcher'], ['trip:assign', 'trip:read', 'depot:read'])
@@ -53,7 +54,7 @@ describe('driver app shell (FMS-34)', () => {
   it('shows "You are offline" while the phone has no signal, and hides it when it is back', async () => {
     await openDriverPortal()
     expect(screen.queryByText('You are offline.')).not.toBeInTheDocument()
-    act(() => void window.dispatchEvent(new Event('offline')))
+    await goOffline()
     expect(await screen.findByText('You are offline.')).toBeInTheDocument()
     act(() => void window.dispatchEvent(new Event('online')))
     await waitFor(() => expect(screen.queryByText('You are offline.')).not.toBeInTheDocument())
