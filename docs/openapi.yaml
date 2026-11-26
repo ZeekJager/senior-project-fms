@@ -5654,7 +5654,7 @@ paths:
               required: [outcome]
               properties:
                 outcome: { $ref: '#/components/schemas/PredictionOutcome' }
-                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null], description: Only for a confirmed issue. }
+                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, traction_battery, motor_inverter, charging_system, thermal_management, null], description: Only for a confirmed issue. }
                 failure_event_id: { type: [string, 'null'], format: uuid, description: The failure record the issue led to; only for a confirmed issue. }
                 comment: { type: [string, 'null'], maxLength: 1000, description: Trimmed. }
       responses:
@@ -5702,7 +5702,7 @@ paths:
               minProperties: 1
               properties:
                 outcome: { $ref: '#/components/schemas/PredictionOutcome' }
-                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null] }
+                component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, traction_battery, motor_inverter, charging_system, thermal_management, null] }
                 failure_event_id: { type: [string, 'null'], format: uuid }
                 comment: { type: [string, 'null'], maxLength: 1000 }
       responses:
@@ -12632,7 +12632,7 @@ components:
 
     FailureComponent:
       type: string
-      enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other]
+      enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, traction_battery, motor_inverter, charging_system, thermal_management]
 
     FailureInput:
       type: object
@@ -12768,7 +12768,7 @@ components:
     WarrantyComponent:
       type: [string, 'null']
       description: 'A component of the failure catalogue (FMS-125); null: the whole vehicle.'
-      enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null]
+      enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, traction_battery, motor_inverter, charging_system, thermal_management, null]
 
     Warranty:
       type: object
@@ -13089,7 +13089,7 @@ components:
         id: { type: string, format: uuid }
         prediction_id: { type: string, format: uuid }
         outcome: { $ref: '#/components/schemas/PredictionOutcome' }
-        component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, null], description: What was found; confirmed issues only. }
+        component: { type: [string, 'null'], enum: [engine, cooling, brakes, tyres, transmission, electrical, suspension, steering, fuel_system, exhaust, body, other, traction_battery, motor_inverter, charging_system, thermal_management, null], description: What was found; confirmed issues only. }
         failure_event_id: { type: [string, 'null'], format: uuid, description: The failure record (FMS-125) the confirmed issue led to. }
         comment: { type: [string, 'null'] }
         recorded_by: { type: [string, 'null'], format: uuid, description: The user who gave it. }

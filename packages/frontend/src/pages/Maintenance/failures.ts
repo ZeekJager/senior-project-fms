@@ -1,7 +1,7 @@
 // What failed on a repair (FMS-125): the catalogues in docs/maintenance.md, labelled for the workshop,
 // and the check the repair log runs before anything is sent.
 
-export const FAILURE_COMPONENTS = ['engine', 'cooling', 'brakes', 'tyres', 'transmission', 'electrical', 'suspension', 'steering', 'fuel_system', 'exhaust', 'body', 'other'] as const
+export const FAILURE_COMPONENTS = ['engine', 'cooling', 'brakes', 'tyres', 'transmission', 'electrical', 'suspension', 'steering', 'fuel_system', 'exhaust', 'body', 'other', 'traction_battery', 'motor_inverter', 'charging_system', 'thermal_management'] as const
 export const FAILURE_MODES = ['wear', 'leak', 'overheating', 'electrical_fault', 'breakage', 'puncture', 'other'] as const
 export const FAILURE_DETECTIONS = ['technician', 'driver_report', 'dvir', 'telematics', 'breakdown'] as const
 
@@ -22,6 +22,11 @@ export const COMPONENT_LABELS: Record<FailureComponent, string> = {
   exhaust: 'Exhaust',
   body: 'Body and cab',
   other: 'Other',
+  // An electric vehicle's (FMS-134).
+  traction_battery: 'Traction battery',
+  motor_inverter: 'Motor and inverter',
+  charging_system: 'Charging system',
+  thermal_management: 'Thermal management',
 }
 
 export const MODE_LABELS: Record<FailureMode, string> = {

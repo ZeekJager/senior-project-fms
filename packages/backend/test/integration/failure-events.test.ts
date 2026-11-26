@@ -249,3 +249,22 @@ describe('GET /failure-events', () => {
     expect((await api.get('/failure-events', await signIn(['dispatcher'], depot))).status).toBe(403);
   });
 });
+
+describe('the EV failure components (FMS-134)', () => {
+  test('an electric vehicle’s traction battery, motor and inverter, charging system and thermal loop are recorded and filtered on', async () => {
+    const depot = await createDepot();
+    const tech = await signIn(['technician'], depot);
+    const ev = await createVehicle({ depot, fuel_type: 'electric', vehicle_type: 'van' });
+    const id = (await api.post('/maintenance', repair(ev, { description: 'Pack module replaced' }), tech)).body.data.id;
+    for (const component of ['traction_battery', 'motor_inverter', 'charging_system', 'thermal_management']) {
+      const res = await api.post(`/maintenance-records/${id}/failures`, { component, failure_mode: 'electrical_fault', unplanned: true, detected_by: 'breakdown' }, tech);
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(res.body.data.component).toBe(component);
+    }
+    const battery = await api.get(`/failure-events?vehicle_id=${ev.public_id}&component=traction_battery`, tech);
+    expect(battery.status).toBe(200);
+    expect(battery.body.data.map((f: { component: string }) => f.component)).toEqual(['traction_battery']);
+    const [event] = (await publishedEvents('FailureRecorded')).filter((e) => e.payload.component === 'traction_battery');
+    expect(event.payload).toMatchObject({ component: 'traction_battery', unplanned: true });
+  });
+});

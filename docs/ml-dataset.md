@@ -186,3 +186,76 @@ CI also generates the dataset twice and compares the files.
 The backend's part history is covered by `test/integration/service-items.test.ts`.
 
 Python 3.12 is used in Docker and CI. The pins are `pandas` 2.3.3, `numpy` 2.3.4 and `scikit-learn` 1.7.2, with `pytest` 8.4.2 for development.
+
+## EV
+
+Card FMS-134 (SE-178). Code: `packages/ai-service/feature_spec_ev.json`, `ml/ev/` and
+`scripts/generate_ev_training_data.py`; the EV failure components in migration 086.
+
+The combustion model scores an EV badly: its oil, fuel filter, belt, gearbox oil and clutch fluid always count as
+never changed, so most EVs score below 75. EVs get a spec, a dataset and (FMS-135) a model of their own. Scoring is
+unchanged until then.
+
+### The EV spec
+
+`feature_spec_ev.json` (spec version 1) has the same format as `feature_spec.json` and is hashed the same way
+(`ml.ev.spec.spec_hash()`, pinned in its test). Its 17 inputs:
+
+- **Shared with combustion vehicles,** defined identically: `mileage_km`, `days_since_last_service`,
+  `num_fault_reports`, `age_years`, `days_since_coolant_change` (on an EV, the battery and motor thermal loop's),
+  `km_since_brake_pad_change`, `days_since_brake_fluid_change`, `km_since_tyre_change`, `days_since_tyre_change` and
+  `days_since_battery_change` (the 12 V auxiliary battery).
+- **The EV's own,** from `ev.ev_battery_logs`, `ev.charging_sessions` and `ev.charging_stations`:
+
+| Input | What it is | Window | When missing |
+|---|---|---|---|
+| `battery_health_pct` | The newest state of health of the traction pack, 50 to 100 | 90 days | 100 - 2 x `age_years`, clipped to 70 to 100: a typical pack for its age |
+| `battery_health_drop_90d` | Points of health lost: the oldest reading in the window minus the newest, never negative | 90 days | 0 |
+| `high_temp_hours_30d` | Hours the pack ran at 45 °C or more: for each hot reading, the hours to the next one, at most 8 | 30 days | 0 |
+| `energy_vs_expected_pct` | Its mean energy per km against the mean of EVs of its make and model, in % | 30 days | 0 (fewer than 3 readings) |
+| `dc_fast_share_pct` | The share of its charged energy taken at stations of 50 kW or more | 30 days | 0 |
+| `deep_discharges_30d` | Times the charge went below 10%, each dip counted once | 30 days | 0 |
+| `failed_charging_sessions_90d` | Its sessions that failed | 90 days | 0 |
+
+No input reads engine oil, the air or fuel filter, belts, gearbox oil or clutch fluid: an EV has none. Until battery
+logs exist for a vehicle (FMS-97), its EV inputs read their fallbacks: a typical pack for its age, no heat, no fast
+charging, no deep discharges and no failed charging. The model then judges it on the shared inputs.
+
+**The label** is the combustion label: `failure_within_30_days`, an unplanned failure event (FMS-125) in the next 30
+days. **The components** an EV fails in are the catalogue's, with four added (migration 086, `docs/maintenance.md`):
+`traction_battery`, `motor_inverter`, `charging_system` and `thermal_management`, besides `brakes`, `tyres`,
+`electrical`, `suspension`, `steering`, `body` and `other`.
+
+### The EV dataset
+
+`python scripts/generate_ev_training_data.py` writes `data/ev_training_data.csv`: 500 EVs (`SYN-EV-0001` to
+`SYN-EV-0500`) by 24 months, 12,000 rows, seed 134, checked before it is written (`ml.checks.problems` with the EV
+spec). The file is never committed. Each EV has a model (a car, van, bus or truck, with its own energy per km), and
+its own driving, heat, fast charging, deep discharges, charging reliability, upkeep and a hidden frailty. Month by
+month:
+
+- the pack ages with time, distance (cycles), heat, fast charging and deep discharges, at the EV's own rate;
+- a worn pack runs warmer and uses more energy per km;
+- regenerative braking makes the pads last twice as long; the tyres wear faster (EVs are heavy);
+- the failure probability rises with a degraded, fast-degrading or hot pack, failed charging, deep discharges,
+  overdue parts and service and reported faults, and the failed component follows its cause;
+- a failed traction battery gets modules replaced and recovers most of its health, a failed thermal loop new coolant.
+
+About 22% of rows are positive. Degraded packs (below 82%) fail more than twice as often as healthy ones (92% and
+above), hot ones more than three times as often as cool ones, and a Random Forest ranks risk on vehicles it has not
+seen with a ROC-AUC near 0.79.
+
+### EV tests and CI
+
+`tests/test_ev_dataset.py` covers:
+
+- the spec: the inputs in order, each with its sources, formula, window, range and fallback; the shared inputs as
+  for combustion vehicles; no combustion-only input; the label and the EV components; the pinned hash;
+- the dataset: 12,000 checked rows at 15 to 25% positive; the same bytes for the same seed and other data for
+  another; the signal (degraded and hot packs fail more, and in their own components); labels that are not a rule on
+  the inputs; packs that age and are restored by a battery repair;
+- a Random Forest reaching a ROC-AUC of 0.75 to 0.90 on unseen vehicles;
+- every quality check on the EV spec, and the script refusing data that fails them.
+
+CI (`ai-service-ci`) generates the EV dataset twice and compares the files. The backend's EV components are covered
+by `test/integration/failure-events.test.ts`.

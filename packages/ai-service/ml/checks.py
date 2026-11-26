@@ -1,21 +1,32 @@
-"""Data quality checks on a training dataset (FMS-52): the shape, ranges and balance feature_spec.json promises."""
+"""
+Data quality checks on a training dataset (FMS-52): the shape, ranges and balance its feature spec promises.
+feature_spec.json by default; the EV spec (feature_spec_ev.json, FMS-134) is checked the same way.
+"""
 
 from __future__ import annotations
 
 import pandas as pd
 
-from .spec import columns, component_name, load_spec, target_name
+from typing import Any
+
+from .spec import load_spec
 
 POSITIVE_RATE = (0.15, 0.25)
 
 
-def problems(df: pd.DataFrame, rows: int | None = None, months: int | None = None) -> list[str]:
+def _columns(spec: dict[str, Any]) -> list[str]:
+    return [*(c["name"] for c in spec["id_columns"]), *(f["name"] for f in spec["features"]), spec["target"]["name"], spec["component"]["name"]]
+
+
+def problems(df: pd.DataFrame, rows: int | None = None, months: int | None = None, spec: dict[str, Any] | None = None) -> list[str]:
     """Everything wrong with the dataset, one line each; an empty list when it is fit to train on."""
-    spec = load_spec()
+    spec = spec or load_spec()
+    expected = _columns(spec)
+    target_name, component_name = spec["target"]["name"], spec["component"]["name"]
     found: list[str] = []
 
-    if list(df.columns) != columns():
-        return [f"columns are {list(df.columns)}, expected {columns()}"]
+    if list(df.columns) != expected:
+        return [f"columns are {list(df.columns)}, expected {expected}"]
     if rows is not None and len(df) != rows:
         found.append(f"{len(df)} rows, expected {rows}")
     nulls = df.isna().sum()
@@ -37,16 +48,16 @@ def problems(df: pd.DataFrame, rows: int | None = None, months: int | None = Non
         if (col.round(f["decimals"]) != col).any():
             found.append(f"{f['name']}: more than {f['decimals']} decimals")
 
-    target, component = df[target_name()], df[component_name()]
+    target, component = df[target_name], df[component_name]
     if not target.isin(spec["target"]["values"]).all():
-        found.append(f"{target_name()}: values other than {spec['target']['values']}")
+        found.append(f"{target_name}: values other than {spec['target']['values']}")
     rate = target.mean()
     if not POSITIVE_RATE[0] <= rate <= POSITIVE_RATE[1]:
-        found.append(f"{target_name()}: positive rate {rate:.3f} outside {POSITIVE_RATE}")
+        found.append(f"{target_name}: positive rate {rate:.3f} outside {POSITIVE_RATE}")
     if not component.isin(spec["component"]["values"]).all():
-        found.append(f"{component_name()}: values outside the FMS-125 catalogue")
+        found.append(f"{component_name}: values outside the FMS-125 catalogue")
     if ((target == 1) != (component != "none")).any():
-        found.append(f"{component_name()}: must be none exactly when {target_name()} is 0")
+        found.append(f"{component_name}: must be none exactly when {target_name} is 0")
 
     if df.duplicated(["vehicle_id", "as_of"]).any():
         found.append("a vehicle has two rows for one as_of")
