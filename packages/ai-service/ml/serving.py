@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from ml import artefact
-from ml.model import forest, health_score
+from ml.model import COMBUSTION, Kind, forest, health_score
 
 PREDICTION_HORIZON_DAYS = 30
 
@@ -43,15 +43,22 @@ class Predictor:
         self.metadata = metadata
         self.features: list[str] = metadata["features"]
         self.version: str = metadata["model_version"]
+        # predictive-maintenance or predictive-maintenance-ev (FMS-135): every prediction names it.
+        self.name: str = metadata["name"]
         medians = metadata.get("feature_medians") or {}
         self.medians = pd.Series({name: float(medians[name]) for name in self.features}) if len(medians) == len(self.features) else None
         # Small batches are faster on one thread than spread over many.
         forest(model).n_jobs = 1
 
     @classmethod
-    def load(cls, folder: Path) -> "Predictor":
-        """Through ml.artefact.load: the checksum and the feature spec are checked before anything is unpickled."""
-        model, metadata = artefact.load(folder)
+    def load(cls, folder: Path, kind: Kind = COMBUSTION) -> "Predictor":
+        """
+        Through ml.artefact.load: the checksum and the kind's feature spec are checked before anything is
+        unpickled, so an EV model is never served as the combustion model, nor the other way round.
+        """
+        model, metadata = artefact.load(folder, kind.spec.spec_hash(), kind.feature_names())
+        if metadata.get("name") != kind.name:
+            raise artefact.ArtefactError(f"{folder.name} is the model {metadata.get('name')!r}, not {kind.name!r}")
         return cls(model, metadata)
 
     def predict(self, rows: list[dict[str, float]]) -> list[dict[str, Any]]:
@@ -65,6 +72,7 @@ class Predictor:
                 "health_score": int(score),
                 "risk_level": risk_level(int(score)),
                 "prediction_horizon_days": PREDICTION_HORIZON_DAYS,
+                "model_name": self.name,
                 "model_version": self.version,
                 "factors": f,
             }

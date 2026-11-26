@@ -164,6 +164,11 @@ describe('buildPlan', () => {
     const serviced = combustion.filter(({ i }) => history.some((m) => m.vehicle === i && m.description.startsWith('Scheduled service') && Date.parse(m.completed_at!) > anchor - 120 * DAY));
     expect(serviced.length / combustion.length).toBeGreaterThan(0.8);
     expect(serviced.length).toBeLessThan(combustion.length);
+    // An EV has no oil service but its own, every 6 months (FMS-135), so the EV model reads a service gap like its training fleet's.
+    const electric = budget.vehicles.map((v, i) => ({ v, i })).filter(({ v }) => v.fuel_type === 'electric');
+    const evServiced = electric.filter(({ i }) => history.some((m) => m.vehicle === i && m.description.startsWith('Scheduled service: high-voltage') && Date.parse(m.completed_at!) > anchor - 180 * DAY));
+    expect(evServiced.length / electric.length).toBeGreaterThan(0.8);
+    expect(history.some((m) => budget.vehicles[m.vehicle].fuel_type !== 'electric' && m.description.startsWith('Scheduled service: high-voltage'))).toBe(false);
   });
 
   test("each vehicle's repairs read an odometer that only goes up over time (none is a suspect reading)", () => {

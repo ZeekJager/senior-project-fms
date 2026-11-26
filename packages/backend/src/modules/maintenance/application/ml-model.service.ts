@@ -5,7 +5,10 @@ import type { Queryable } from '../../../shared/infrastructure/queryable';
 import type { JobContext } from '../../../shared/jobs/job';
 import {
   beatsRules,
+  EV_MAINTENANCE_MODEL,
   isDemonstration,
+  MAINTENANCE_MODEL,
+  type MaintenanceModelName,
   ML_MODEL_EVENTS,
   mlModelFeaturesMismatch,
   mlModelNotBetterThanRules,
@@ -46,6 +49,8 @@ export interface MlModelServiceDeps {
   spec: () => FeatureSpec;
   /** The trip risk model's (trip_risk_spec.json, FMS-155). */
   tripRiskSpec: () => FeatureSpec;
+  /** The EV predictive maintenance model's (feature_spec_ev.json, FMS-135). */
+  evSpec: () => FeatureSpec;
   users: { findByIds(db: Queryable, ids: readonly string[]): Promise<{ id: string; publicId: string }[]> };
   /** The feedback on each version's high-risk predictions (FMS-128), for the precision figure. */
   feedback: Pick<PredictionFeedbackRepository, 'countsFor'>;
@@ -68,7 +73,8 @@ export class MlModelService {
 
   /** The spec a model of this name must have been trained on. */
   private specFor(name: string): FeatureSpec {
-    return name === TRIP_RISK_MODEL ? this.deps.tripRiskSpec() : this.deps.spec();
+    if (name === TRIP_RISK_MODEL) return this.deps.tripRiskSpec();
+    return name === EV_MAINTENANCE_MODEL ? this.deps.evSpec() : this.deps.spec();
   }
 
   /**
@@ -108,17 +114,28 @@ export class MlModelService {
    * first sight. Scoring may go ahead only when that model is active and was trained on the core's
    * feature spec. Otherwise the reason is logged and MlScoringBlocked raises an alert for administrators.
    * Throws MlServiceError when the service is not configured or cannot say what it serves.
+   *
+   * Per model name (FMS-135): the combustion model by default, or the EV model, each checked against its own spec. A
+   * service that serves no EV model (404, or an older one that answers with the combustion model) is `no_model`:
+   * the EVs are skipped, with no alert, until one is served and activated.
    */
-  async checkServing(context: JobContext): Promise<ScoringCheck> {
+  async checkServing(context: JobContext, name: MaintenanceModelName = MAINTENANCE_MODEL): Promise<ScoringCheck> {
     const client = this.deps.client();
     if (!client) throw new MlServiceError('ML_SERVICE_URL is not set');
-    const served = await client.servedModel(context.correlationId);
+    let served: ServedModel;
+    try {
+      served = await client.servedModel(context.correlationId, name === MAINTENANCE_MODEL ? undefined : name);
+    } catch (err) {
+      if (name === EV_MAINTENANCE_MODEL && err instanceof MlServiceError && err.status === 404) return { ok: false, reason: 'no_model', model: null, registered: false };
+      throw err;
+    }
+    if (name === EV_MAINTENANCE_MODEL && served.name !== EV_MAINTENANCE_MODEL) return { ok: false, reason: 'no_model', model: null, registered: false };
     const ctx: MutationContext = { userId: null, correlationId: context.correlationId };
     const { row, registered } = await this.register(ctx, served);
     const model = registeredModel(row);
 
     // The registry keeps what a version was when first seen; a version served with another artefact was reused.
-    const expected = this.deps.spec().hash;
+    const expected = this.specFor(served.name).hash;
     const reason: ScoringBlockedReason | null =
       row.featureSpecHash !== expected || served.featureSpecHash !== expected
         ? 'feature_spec_mismatch'

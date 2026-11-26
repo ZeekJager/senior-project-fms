@@ -193,14 +193,17 @@ export const TYRE_FOR: Readonly<Record<SeedVehicleType, string>> = { car: 'TYR-1
  * reads (feature_spec.json), grouped as a workshop does it, with the interval it is usually done at.
  * The seed gives each vehicle the last time each was done, so its health score has a history to read.
  */
-export const SERVICE_SCHEDULE: readonly { description: string; parts: string[]; intervalDays: number; hours: number; combustionOnly: boolean }[] = [
-  { description: 'Scheduled service: engine oil and filters', parts: ['OIL-15W40-5', 'FLT-OIL-200', 'FLT-AIR-310'], intervalDays: 120, hours: 2, combustionOnly: true },
-  { description: 'Fuel filter replaced at its interval', parts: ['FLT-FUEL-115'], intervalDays: 365, hours: 1, combustionOnly: true },
-  { description: 'Coolant and brake fluid changed', parts: ['CLN-50-5L', 'FLD-BRK-DOT4'], intervalDays: 730, hours: 1.5, combustionOnly: false },
-  { description: 'Brake pads replaced at the wear limit', parts: ['BRK-PAD-F40', 'BRK-PAD-R40'], intervalDays: 540, hours: 2, combustionOnly: false },
-  { description: 'Tyres replaced at the tread limit', parts: ['TYRES'], intervalDays: 1460, hours: 2, combustionOnly: false },
-  { description: 'Battery replaced at the end of its service life', parts: ['BAT-12V-100'], intervalDays: 1460, hours: 0.5, combustionOnly: false },
-  { description: 'Drive belt, gearbox oil and clutch fluid changed', parts: ['BLT-ALT-06', 'OIL-GBX-75W90', 'FLD-CLT-1L'], intervalDays: 1095, hours: 3, combustionOnly: true },
+export const SERVICE_SCHEDULE: readonly { description: string; parts: string[]; intervalDays: number; hours: number; only?: 'combustion' | 'electric' }[] = [
+  { description: 'Scheduled service: engine oil and filters', parts: ['OIL-15W40-5', 'FLT-OIL-200', 'FLT-AIR-310'], intervalDays: 120, hours: 2, only: 'combustion' },
+  { description: 'Fuel filter replaced at its interval', parts: ['FLT-FUEL-115'], intervalDays: 365, hours: 1, only: 'combustion' },
+  { description: 'Coolant and brake fluid changed', parts: ['CLN-50-5L', 'FLD-BRK-DOT4'], intervalDays: 730, hours: 1.5 },
+  { description: 'Brake pads replaced at the wear limit', parts: ['BRK-PAD-F40', 'BRK-PAD-R40'], intervalDays: 540, hours: 2 },
+  { description: 'Tyres replaced at the tread limit', parts: ['TYRES'], intervalDays: 1460, hours: 2 },
+  { description: 'Battery replaced at the end of its service life', parts: ['BAT-12V-100'], intervalDays: 1460, hours: 0.5 },
+  { description: 'Drive belt, gearbox oil and clutch fluid changed', parts: ['BLT-ALT-06', 'OIL-GBX-75W90', 'FLD-CLT-1L'], intervalDays: 1095, hours: 3, only: 'combustion' },
+  // An EV has no oil to change, but is still serviced (FMS-135): the pack, its cooling, the brakes and the high-voltage
+  // wiring inspected every 6 months, as the EV model's training fleet is (every 60 to 200 days, ml/ev/dataset.py).
+  { description: 'Scheduled service: high-voltage battery, cooling and brakes inspected', parts: [], intervalDays: 180, hours: 1.5, only: 'electric' },
 ];
 
 export const WORKSHOPS: readonly string[] = ['Depot workshop', 'Moenco service centre', 'Nyala Motors workshop', 'Roadside repair'];

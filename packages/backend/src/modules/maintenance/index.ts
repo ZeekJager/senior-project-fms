@@ -26,7 +26,8 @@ import { MaintenanceService } from './application/maintenance.service';
 import { MlModelService } from './application/ml-model.service';
 import { PredictionFeedbackService } from './application/prediction-feedback.service';
 import { PredictionService } from './application/prediction.service';
-import { ScoringService } from './application/scoring.service';
+import { ScoringService, type ScoringSources } from './application/scoring.service';
+import type { MaintenanceModelName } from './domain/ml-model';
 import { ServiceProgramService } from './application/service-program.service';
 import { WarrantyService } from './application/warranty.service';
 import { FailureRepository } from './infrastructure/failure.repository';
@@ -105,6 +106,17 @@ const inventoryService = new InventoryService({
 const featureSpec = featureSpecLoader(config.ml.featureSpecPath);
 // The trip risk model's (FMS-155): its own spec, shared with the ML service the same way.
 const tripRiskSpec = featureSpecLoader(config.ml.tripRiskSpecPath);
+// The EV predictive maintenance model's (FMS-135): feature_spec_ev.json, the same way.
+const evFeatureSpec = featureSpecLoader(config.ml.evFeatureSpecPath);
+
+/**
+ * The EVs' battery and charging facts for the nightly scoring (FMS-135), from the EV module, which depends on modules
+ * this one is a dependency of: provided at start-up (modules/index.ts). Until then every EV input reads its fallback.
+ */
+let evScoringFacts: ScoringSources['evFacts'] = null;
+export function provideEvScoringFacts(read: NonNullable<ScoringSources['evFacts']>): void {
+  evScoringFacts = read;
+}
 
 /**
  * The ML service (FMS-54) through the integration gateway: timeouts, retries and its circuit breaker.
@@ -125,6 +137,7 @@ const mlModelService = new MlModelService({
   client: mlClient,
   spec: featureSpec,
   tripRiskSpec,
+  evSpec: evFeatureSpec,
   users: userDirectory,
   feedback: feedbackRepository,
   events: eventBus,
@@ -140,6 +153,7 @@ const scoringService = new ScoringService({
   registry: mlModelService,
   client: mlClient,
   spec: featureSpec,
+  evSpec: evFeatureSpec,
   sources: {
     vehicles: scoringRefs.vehicles,
     tripUsage: completedTripUsage,
@@ -149,6 +163,7 @@ const scoringService = new ScoringService({
     faultIncidents: incidentLookup.countsByVehicle,
     fuelLoggedMl: fuelUsage.loggedMl,
     setHealthScore: scoringRefs.setHealthScore,
+    evFacts: (db, ids, t, rules) => (evScoringFacts ? evScoringFacts(db, ids, t, rules) : Promise.resolve(new Map())),
   },
   events: eventBus,
   log: logger,
@@ -235,9 +250,12 @@ export const serviceDueJob = {
  * sight (FMS-127). Score only when `ok`, and store each prediction with that model's name and version.
  */
 export const mlRegistry = {
-  checkServing: (context: JobContext) => mlModelService.checkServing(context),
+  /** The combustion model by default; the EV model (FMS-135) by name, checked against its own spec. */
+  checkServing: (context: JobContext, name?: MaintenanceModelName) => mlModelService.checkServing(context, name),
   /** The feature spec the extractor implements: input names in order, version and hash. */
   featureSpec,
+  /** The EV model's (feature_spec_ev.json, FMS-135). */
+  evFeatureSpec,
 };
 
 /**
@@ -268,7 +286,7 @@ export const mlModelAdmin = {
 export { FAILURE_COMPONENTS, FAILURE_EVENTS, FAILURE_MODES } from './domain/failure';
 export { INVENTORY_EVENTS, SERVICE_ITEMS, type ServiceItem } from './domain/inventory';
 export { MAINTENANCE_EVENTS } from './domain/maintenance';
-export { MAINTENANCE_MODEL, ML_MODEL_EVENTS, TRIP_RISK_MODEL, type MlModelView, type ScoringCheck, type TripRiskCheck } from './domain/ml-model';
+export { EV_MAINTENANCE_MODEL, MAINTENANCE_MODEL, ML_MODEL_EVENTS, TRIP_RISK_MODEL, type MlModelView, type ScoringCheck, type TripRiskCheck } from './domain/ml-model';
 export type { TripRiskPrediction, TripRiskRequest } from './infrastructure/ml-service.client';
 export type { FeatureSpec } from './infrastructure/feature-spec';
 export { PREDICTION_FEEDBACK_EVENTS, PREDICTION_OUTCOMES } from './domain/prediction-feedback';

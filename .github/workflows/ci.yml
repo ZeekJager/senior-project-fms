@@ -218,6 +218,12 @@ jobs:
           python scripts/generate_ev_training_data.py --out "$RUNNER_TEMP/ev-a.csv"
           python scripts/generate_ev_training_data.py --out "$RUNNER_TEMP/ev-b.csv"
           cmp "$RUNNER_TEMP/ev-a.csv" "$RUNNER_TEMP/ev-b.csv"
+      # The EV model (FMS-135), trained on it and graded on the EVs it has not seen.
+      - name: Train and grade the EV model
+        run: |
+          set -euo pipefail
+          python scripts/train.py --spec ev --data "$RUNNER_TEMP/ev-a.csv" --out "$RUNNER_TEMP/models" --version pm-ev-0000.00
+          python scripts/evaluate.py "$RUNNER_TEMP/models/pm-ev-0000.00" --data "$RUNNER_TEMP/ev-a.csv"
       # The model, trained on it and graded on the vehicles it has not seen.
       - name: Train and grade the model
         run: |

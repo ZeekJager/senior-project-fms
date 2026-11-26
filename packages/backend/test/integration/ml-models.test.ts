@@ -182,14 +182,14 @@ describe('a model scores only once an administrator activates it', () => {
     const { model } = await mlRegistry.checkServing(job());
 
     const { cookie: manager } = await signIn(['fleet_manager']);
-    expect((await api.post(`/ml-models/${model.publicId}/activate`, manager)).status).toBe(403);
+    expect((await api.post(`/ml-models/${model!.publicId}/activate`, manager)).status).toBe(403);
 
-    const activated = await api.post(`/ml-models/${model.publicId}/activate`, admin);
+    const activated = await api.post(`/ml-models/${model!.publicId}/activate`, admin);
     expect(activated.status).toBe(200);
     expect(activated.body.data).toMatchObject({ version: older, status: 'active', activated_by: adminUser.public_id, retired_at: null });
     expect(activated.body.data.activated_at).toBeTruthy();
     // Again: nothing changes.
-    expect((await api.post(`/ml-models/${model.publicId}/activate`, admin)).body.data).toEqual(activated.body.data);
+    expect((await api.post(`/ml-models/${model!.publicId}/activate`, admin)).body.data).toEqual(activated.body.data);
 
     expect(await mlRegistry.checkServing(job())).toMatchObject({ ok: true, model: { version: older, status: 'active' } });
 
@@ -197,14 +197,14 @@ describe('a model scores only once an administrator activates it', () => {
     serving = servedModel(newer, { artefact_sha256: 'c'.repeat(64) });
     const next = await mlRegistry.checkServing(job());
     expect(next).toMatchObject({ ok: false, reason: 'not_active', registered: true });
-    expect((await api.post(`/ml-models/${next.model.publicId}/activate`, admin)).body.data.status).toBe('active');
+    expect((await api.post(`/ml-models/${next.model!.publicId}/activate`, admin)).body.data.status).toBe('active');
     expect(await mlRegistry.checkServing(job())).toMatchObject({ ok: true, model: { version: newer } });
     const byVersion = Object.fromEntries((await registry()).map((r) => [r.version, r]));
     expect(byVersion[older]).toMatchObject({ status: 'retired' });
     expect(byVersion[older].retired_at).toBeTruthy();
 
     // Rollback: the older is active again, the newer retired; the service still serving the newer is told not to score.
-    expect((await api.post(`/ml-models/${model.publicId}/activate`, admin)).body.data).toMatchObject({ status: 'active', retired_at: null });
+    expect((await api.post(`/ml-models/${model!.publicId}/activate`, admin)).body.data).toMatchObject({ status: 'active', retired_at: null });
     expect(await mlRegistry.checkServing(job())).toMatchObject({ ok: false, reason: 'not_active', model: { version: newer, status: 'retired' } });
     expect((await registry()).filter((r) => r.status === 'active').map((r) => r.version)).toEqual([older]);
   });
@@ -252,7 +252,7 @@ describe('a model trained on other inputs than the core computes never scores', 
     serving = servedModel(v);
     const { cookie } = await signIn(['admin']);
     const { model } = await mlRegistry.checkServing(job());
-    await api.post(`/ml-models/${model.publicId}/activate`, cookie);
+    await api.post(`/ml-models/${model!.publicId}/activate`, cookie);
     serving = servedModel(v, { artefact_sha256: 'd'.repeat(64) });
     expect(await mlRegistry.checkServing(job())).toMatchObject({ ok: false, reason: 'artefact_mismatch', model: { status: 'active' } });
     expect((await registry())[0].artefact_sha256).toBe('a'.repeat(64));

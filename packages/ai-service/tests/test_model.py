@@ -135,7 +135,7 @@ def test_train_refuses_a_taken_or_malformed_version_and_bad_data(trained, tmp_pa
 
 def test_a_model_missing_its_criteria_is_not_written(trained, tmp_path, monkeypatch, capsys):
     fitted, _ = artefact.load(trained["folder"])
-    monkeypatch.setattr(train_cli, "fit", lambda train: fitted)
+    monkeypatch.setattr(train_cli, "fit", lambda train, kind=None: fitted)
     monkeypatch.setattr(model, "MIN_ROC_AUC", 0.99)
     assert train_cli.main(["--data", str(trained["data"]), "--out", str(tmp_path), "--version", "pm-2026.11"]) == 1
     assert "ROC-AUC" in capsys.readouterr().err

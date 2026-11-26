@@ -650,7 +650,7 @@ export function buildPlan(profileName: ProfileName, seed: number, anchor: string
     const registered = Math.min(Math.max(built + rng.int(0, 60) * DAY, at(-rng.int(4 * 365, 6 * 365), 10)), at(-60, 10));
     v.registered_at = iso(registered);
     for (const service of SERVICE_SCHEDULE) {
-      if (service.combustionOnly && v.fuel_type === 'electric') continue;
+      if (service.only && service.only !== (v.fuel_type === 'electric' ? 'electric' : 'combustion')) continue;
       const share = rng.chance(0.05) ? rng.between(1.1, 1.8) : rng.between(0.05, 0.95);
       const completedAt = at(-Math.max(1, Math.round(service.intervalDays * share)), rng.int(9, 16));
       if (completedAt <= registered) continue;

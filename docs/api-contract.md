@@ -783,10 +783,11 @@ The predictive maintenance service (FMS-54, [ml-service.md](ml-service.md)) is r
 
 | Method + path | Purpose | Request / response |
 |---|---|---|
-| `GET /health` | Liveness, no token | `{ status: "ok", model_version, trip_risk_model_version, load_seconds }` |
-| `GET /model` | The model serving now (for the registry, FMS-127) | `name`, `model_version`, `trained_at`, `algorithm`, `features`, `feature_spec_version`, `feature_spec_hash`, `artefact_sha256`, `training_data`, `metrics`, `health_score`, `risk_levels`, `prediction_horizon_days` |
+| `GET /health` | Liveness, no token | `{ status: "ok", model_version, ev_model_version, trip_risk_model_version, load_seconds }` |
+| `GET /models` | Every predictive maintenance model serving now (FMS-135) | `[Model]`, each as `GET /model` |
+| `GET /model` | The model serving now (for the registry, FMS-127); `?name=predictive-maintenance-ev` for the EV model (FMS-135), `404 NOT_FOUND` without one or for an unknown name | `name`, `model_version`, `trained_at`, `algorithm`, `features`, `feature_spec_version`, `feature_spec_hash`, `artefact_sha256`, `training_data`, `metrics`, `health_score`, `risk_levels`, `prediction_horizon_days` |
 | `POST /internal/ml/predict-maintenance` | One vehicle | `PredictRequest` -> `Prediction` |
-| `POST /internal/ml/predict-maintenance/batch` | 1 to 500 vehicles (the nightly scoring) | `{ items: PredictRequest[] }` -> `Prediction[]`, in the same order |
+| `POST /internal/ml/predict-maintenance/batch` | 1 to 500 vehicles (the nightly scoring); `?model=predictive-maintenance-ev` for EVs (FMS-135), on `feature_spec_ev.json`'s inputs | `{ items: PredictRequest[] }` -> `Prediction[]`, in the same order |
 | `GET /models/trip-risk` | The trip risk model serving now (FMS-155), for the registry | As `GET /model`, with `demonstration` and `minimum`; `metrics` holds each label's model and rules grades, per depot, and `decision`. `404 NOT_FOUND` when the service runs without one |
 | `POST /internal/ml/predict-trip-risk` | 1 to 200 drivers on one trip (the dispatch board) | `{ items: [{ trip_id, driver_id, features }] }` -> `[{ trip_id, driver_id, late_probability, safety_event_probability, factors: { late, safety_event }, model_version, demonstration }]`, in the same order; `features` exactly `trip_risk_spec.json`'s inputs; `404` without a model |
 
@@ -815,14 +816,15 @@ X-Internal-Token: <ML_SERVICE_TOKEN>
     "health_score": 19,
     "risk_level": "high",
     "prediction_horizon_days": 30,
+    "model_name": "predictive-maintenance",
     "model_version": "pm-2026.10",
     "factors": ["num_fault_reports", "days_since_last_service", "days_since_oil_change"]
   },
-  "meta": { "request_id": "uuid", "model_version": "pm-2026.10" }
+  "meta": { "request_id": "uuid", "model_name": "predictive-maintenance", "model_version": "pm-2026.10" }
 }
 ```
 
-- **`PredictRequest`:** `vehicle_id` (UUID), `as_of` (an instant with offset) and `features`: every input of `packages/ai-service/feature_spec.json` (the 19 of spec version 2), each within its range, integers where the spec says `int`, and nothing else.
+- **`PredictRequest`:** `vehicle_id` (UUID), `as_of` (an instant with offset) and `features`: every input of `packages/ai-service/feature_spec.json` (the 19 of spec version 2), or of `feature_spec_ev.json` (17) for the EV model, each within its range, integers where the spec says `int`, and nothing else.
 - **`Prediction`:** `failure_probability` (an unplanned failure in the next 30 days), `health_score` (`round((1 - p) * 100)`), `risk_level` (`low` at 75 and above, `medium` 41 to 74, `high` at 40 and below: the core raises a risk event below 75), `prediction_horizon_days` (30), `model_version`, and `factors`: up to 3 inputs that raise this vehicle's risk most (each, put back to the training rows' typical value, lowers the probability by at least 0.01), largest first. The model predicts no failure category (FMS-53).
 - **Errors:** the core's envelope (§3.4). A missing, out-of-range, mistyped or unknown input, a missing `vehicle_id` or `as_of`, or a batch of 0 or more than 500 is `422 VALIDATION_FAILED`, each problem named: `{ field: "features.mileage_km", reason: "required" }`; in a batch, `items.3.features.age_years`. Reasons: `required`, `out_of_range`, `not_allowed`, `too_few`, `too_many`, `invalid_json`, `invalid`.
 - **Correlation:** `X-Request-Id` is echoed (one is made when none is sent) and returned as `meta.request_id`.

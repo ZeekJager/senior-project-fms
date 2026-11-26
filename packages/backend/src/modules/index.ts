@@ -4,11 +4,11 @@ import { authModule, provideDepotDirectory } from './auth';
 import { depotDirectory, fleetModule, provideDispatchEvRange, provideMaintenanceLookup, provideMeterSources, provideTripRisk, provideWarrantyExpiry, tripRefs } from './fleet';
 import { provideDistanceLimits, provideEvRange, provideExceptionPolicies, provideFleetRefs, provideMaintenanceRefs, provideRoutingClient, provideTripDelayMargins, provideTripPositions, provideTripTrack, ROUTING_TIMEOUT_MS, tripModule } from './trip';
 import { fuelMeterReadings, fuelModule } from './fuel';
-import { maintenanceModule, maintenanceRefs, warrantyRefs } from './maintenance';
+import { maintenanceModule, maintenanceRefs, provideEvScoringFacts, warrantyRefs } from './maintenance';
 import { alertModule } from './alert';
 import { analyticsModule, tripRisk } from './analytics';
 import { commandCenterModule } from './command-center';
-import { evModule, evRange } from './ev';
+import { evModule, evRange, evScoring } from './ev';
 import { ignitionTime, integrationGateway, integrationModule, trackingLookups } from './integration';
 import { auditModule } from './audit';
 import { settingsModule } from './settings';
@@ -40,6 +40,8 @@ provideDistanceLimits(trackingLookups.distanceLimits);
 provideTripRisk(tripRisk);
 // EV range (FMS-98): the assignment's range warning and the dispatch board's range, from the EV module.
 provideEvRange(evRange);
+// The EVs' battery and charging for the nightly scoring's EV model (FMS-135).
+provideEvScoringFacts(evScoring.facts);
 provideDispatchEvRange(evRange);
 // Meter readings (FMS-126) are made from fuel logs, completed repairs and devices' ignition time.
 provideMeterSources({ fuelLogs: fuelMeterReadings.odometers, repairs: maintenanceRefs.completedOdometers, ignitionSeconds: ignitionTime.seconds });
