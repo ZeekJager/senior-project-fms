@@ -1087,6 +1087,8 @@ Incident and alert `severity` is one of `low`, `medium`, `high`, `critical`. The
 | `GET /vehicles/{vehicle_id}/charging-sessions` | Vehicle charging history | `ev:read` | Paged `ChargingSession[]` |
 | `GET /vehicles/{vehicle_id}/battery-summary` | Battery health summary | `ev:read` | `BatterySummary` |
 
+- **EV (FMS-96, [ev.md](ev.md)):** only an electric vehicle takes battery logs or charging sessions, or has a battery summary (`400`, `not_electric`). A session goes `planned` → `in_progress` or `cancelled`, `in_progress` → `completed` or `failed`; any other move, or a change to a final session, is `409 CONFLICT_INVALID_STATE_TRANSITION` with `allowed_transitions`; a vehicle charges in one session at a time (`409 CONFLICT_VEHICLE_IN_USE`, `already_charging`). The summary has the latest observation, the state of charge by day, the battery health now and at the start of the period with its change, and the period's completed sessions. Events: `BatteryLogged`, `ChargingSessionStarted`, `ChargingSessionCompleted`, `ChargingSessionFailed`.
+
 ## 14. Analytics API
 
 ### 14.1 Analytics endpoints

@@ -176,6 +176,10 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
       [ids.vehicles],
     );
   }
+  // A charging session (FMS-96) on the vehicle the samples name.
+  if (await none('ev.charging_sessions WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.vehicles])) {
+    await pool.query("INSERT INTO ev.charging_sessions (vehicle_id, status) VALUES ((SELECT MIN(x) FROM unnest($1::bigint[]) x), 'planned')", [ids.vehicles]);
+  }
   // A driver's regular vehicle (FMS-77): the first driver and vehicle of the samples.
   if (await none('fleet.driver_vehicle_assignments WHERE vehicle_id = ANY($1::bigint[])', [ids.vehicles])) {
     await pool.query(
@@ -244,6 +248,7 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     programId: await one('SELECT public_id::text AS id FROM maintenance.service_programs WHERE depot_id = $1 ORDER BY id', [depotId]),
     geofenceId: await one('SELECT public_id::text AS id FROM tracking.geofences WHERE depot_id = $1 ORDER BY id', [depotId]),
     warrantyId: await byVehicle('maintenance.warranties'),
+    sessionId: await byVehicle('ev.charging_sessions'),
     assignmentId: await byVehicle('fleet.driver_vehicle_assignments'),
     appealId: await one('SELECT public_id::text AS id FROM analytics.score_appeals WHERE depot_id = $1 ORDER BY id', [depotId]),
     attachmentId: await one('SELECT t.public_id::text AS id FROM analytics.appeal_attachments t JOIN analytics.score_appeals a ON a.id = t.appeal_id WHERE a.depot_id = $1 ORDER BY t.id', [depotId]),
