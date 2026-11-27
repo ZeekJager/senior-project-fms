@@ -55,6 +55,9 @@ instead of DNS records and open ports: [Behind a Cloudflare Tunnel](#behind-a-cl
 
 ### 2. Release
 
+Before a release reaches production: UAT signed off by every role, the release checklist green and a go/no-go
+decision ([release.md](release.md), FMS-112).
+
 1. Merge to `master` and wait for CI to go green ([ci.md](ci.md)).
 2. Tag it: `git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0`.
 3. Note the short hash, `git rev-parse --short=7 v1.0.0`: that is `FMS_IMAGE_TAG`.
@@ -201,7 +204,7 @@ they read it: `docker compose --env-file prod.env up -d --wait --force-recreate 
 
 ### 11. Monitoring
 
-- An external uptime check on `https://<domain>/` and `https://<domain>/api/v1/health/ready`.
+- An external uptime check on `https://<domain>/` and `https://<domain>/health/ready`.
 - A disk alert at 80% on the server: PostgreSQL, the backups and the map all live there.
 - `SENTRY_DSN` in `api.env` for the API's errors ([observability.md](observability.md)).
 - Optional: the metrics and dashboards of `docker-compose.observability.yml`.
@@ -215,7 +218,7 @@ A release:
 3. Set `FMS_IMAGE_TAG` to the new hash in `prod.env`.
 4. `docker compose --env-file prod.env up -d --wait`. `migrate` runs the new migrations first, then the services
    whose image changed are recreated.
-5. Verify: phase 10's first four rows.
+5. Verify: phase 10's first four rows, and `sh scripts/deploy/release-check.sh` with no FAIL ([release.md](release.md)).
 
 A rollback is the same with the previous tag: set `FMS_IMAGE_TAG` back and run `up -d --wait`. The previous images
 are still on the server. If the release ran a migration the old code does not expect, restore the backup of step
