@@ -10,6 +10,10 @@
 	# HTTP/1.1 and HTTP/2 over TCP: no UDP port to open, and nothing the browsers need.
 	servers {
 		protocols h1 h2
+		# The proxies in front of Caddy whose X-Forwarded-For is kept (and appended to) rather than replaced.
+		# None by default: Caddy faces the browsers. A Cloudflare Tunnel (docker-compose.tunnel.yml) names its
+		# connector here, so the API sees each visitor's own address and not the connector's.
+		trusted_proxies static {$FMS_TRUSTED_PROXIES:127.0.0.1/32}
 	}
 }
 

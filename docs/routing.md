@@ -15,6 +15,7 @@ make routing        # once: downloads the map (about 130 MB, checked against Geo
 - **Shared map.** The prepared map lives in the `fms_osrm_data` volume (1-2 GB), shared by every checkout. `make routing` creates it as an external volume, so `make clean` (`down -v`) keeps it. To refresh the map, run `docker volume rm fms_osrm_data`, then `make routing`.
 - **Connecting.** The backend in Docker reaches OSRM at `http://osrm:5000`, which `docker-compose.yml` sets as `ROUTING_URL`. Set `ROUTING_URL=` (empty) in `.env` to switch routing off.
 - **Outside Docker.** An API run outside Docker uses `ROUTING_URL=http://127.0.0.1:5050`. The host port is `OSRM_HOST_PORT`, bound to 127.0.0.1 only.
+- **In production.** `docker-compose.routing.yml` runs the same OSRM beside the production stack, on its internal network only, with the map built once outside it (FMS-164, [deployment.md](deployment.md#road-routing-in-production)).
 
 ## Behaviour
 
