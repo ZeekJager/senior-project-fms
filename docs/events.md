@@ -88,6 +88,7 @@ Today's consumers:
 
 | Consumer | Reacts to | Does |
 |---|---|---|
+| `integration.telematics-diagnostics` | `IntegrationWebhookReceived` (telematics, with `diagnostics`) | A delivery's diagnostic trouble codes become `tracking.diagnostic_codes` rows; a new code publishes `VehicleFaultDetected`, a clear `VehicleFaultCleared` (FMS-132, docs/diagnostic-codes.md) |
 | `fleet.vehicle-cache` | `MaintenanceRecordOpened`, `MaintenanceRecordUpdated`, `MaintenanceRecordCompleted`, `VehicleFaultDetected`, `TripAssigned`, `TripCancelled`, `TripStarted`, `TripCompleted` | Drops the cached vehicle (FMS-72), and on `TripAssigned` the one it replaced (`previous_vehicle_id`), so its flag and current trip show at once |
 | `fleet.driver-accounts` | `UserAccountChanged` | Refreshes fleet's copy of the driver's account, on `tx` |
 | `fleet.document-expiry` | `DocumentUploaded` | Raises `DocumentExpiring` at once for a document already inside the 30-day window, on `tx` |

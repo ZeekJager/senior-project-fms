@@ -2013,7 +2013,9 @@ paths:
         "<X-FMS-Timestamp>.<raw body>" with the provider's secret (INTEGRATION_<CODE>_WEBHOOK_SECRET), sent as
         "sha256=<hex>". A timestamp more than 5 minutes from the server clock is refused (a replay). A redelivery
         of the same event id is answered 202 with duplicate true, and nothing is stored twice. The delivery is
-        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer.
+        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer. A provider
+        without an adapter of its own speaks the FMS telematics format (TelematicsDelivery): positions, diagnostic
+        trouble codes (FMS-132, docs/diagnostic-codes.md), or both.
       security:
         - webhookSignature: []
       parameters:
@@ -2023,11 +2025,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, description: "The provider's own format, read by its adapter." }
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/TelematicsDelivery'
+                - { type: object, description: "A provider's own format, read by the adapter registered for its code." }
       responses:
         '202': { $ref: '#/components/responses/WebhookAccepted' }
         '400':
-          description: VALIDATION_FAILED (the adapter cannot read the body; details name the field). Recorded as a failed sync log.
+          description: >
+            VALIDATION_FAILED (the adapter cannot read the body; details name the field: `positions` required when
+            neither list is given, `diagnostics.0.code` for a code that is not OBD-II). Recorded as a failed sync log.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/WebhookRefused' }
         '404':
@@ -2291,6 +2298,40 @@ paths:
                   meta: { $ref: '#/components/schemas/Meta' }
         '400':
           description: VALIDATION_FAILED (an unknown flag type, a time without offset, limit out of range, to before from, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vehicles/{vehicle_id}/diagnostic-codes:
+    get:
+      tags: [Tracking]
+      operationId: listVehicleDiagnosticCodes
+      summary: A vehicle's diagnostic trouble codes (FMS-132)
+      description: >
+        The engine fault codes the vehicle's telematics reported (docs/diagnostic-codes.md): active ones first,
+        then by when they were last seen. A code is one row while it is active (its repeats counted in
+        occurrences) and closes when the provider clears it; reported again later, it is a new row. Needs
+        tracking:read, in the caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: status, in: query, schema: { type: string, enum: [active, cleared, all], default: all } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: The codes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiagnosticCode' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown status, limit out of range, or an unknown query parameter).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -11744,6 +11785,78 @@ components:
         ignition_on: { type: [boolean, 'null'] }
         odometer_km: { type: [number, 'null'], minimum: 0 }
 
+    TelematicsDelivery:
+      type: object
+      description: >
+        The FMS telematics webhook format (docs/telematics.md, docs/diagnostic-codes.md). Devices are named by the
+        provider's identifier, linked to vehicles in the device registry. At least one of the two lists.
+      additionalProperties: false
+      required: [event_id]
+      properties:
+        event_id: { type: string, minLength: 1, maxLength: 255, description: "The provider's id for the delivery: a redelivery is a duplicate." }
+        positions:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [device_id, recorded_at, lat, lng, speed_kmh]
+            properties:
+              device_id: { type: string, minLength: 1, maxLength: 255 }
+              recorded_at: { type: string, format: date-time }
+              lat: { type: number, minimum: -90, maximum: 90 }
+              lng: { type: number, minimum: -180, maximum: 180 }
+              speed_kmh: { type: number, minimum: 0 }
+              heading: { type: [number, 'null'], minimum: 0, maximum: 360 }
+              accuracy_m: { type: [number, 'null'], minimum: 0 }
+              altitude_m: { type: [number, 'null'] }
+              ignition_on: { type: [boolean, 'null'] }
+              odometer_km: { type: [number, 'null'], minimum: 0 }
+        diagnostics:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { $ref: '#/components/schemas/TelematicsDiagnostic' }
+    TelematicsDiagnostic:
+      description: One diagnostic trouble code (FMS-132), OBD-II by its code or J1939 by SPN and FMI.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [device_id, protocol, code, status, observed_at]
+          properties:
+            device_id: { type: string, minLength: 1, maxLength: 255 }
+            protocol: { type: string, enum: [obd2] }
+            code: { type: string, pattern: '^[PCBU][0-3][0-9A-F]{3}$', example: P0217 }
+            status: { type: string, enum: [active, cleared] }
+            observed_at: { type: string, format: date-time }
+        - type: object
+          additionalProperties: false
+          required: [device_id, protocol, spn, fmi, status, observed_at]
+          properties:
+            device_id: { type: string, minLength: 1, maxLength: 255 }
+            protocol: { type: string, enum: [j1939] }
+            spn: { type: integer, minimum: 0, maximum: 524287, example: 110 }
+            fmi: { type: integer, minimum: 0, maximum: 31, example: 0 }
+            status: { type: string, enum: [active, cleared] }
+            observed_at: { type: string, format: date-time }
+    DiagnosticCode:
+      type: object
+      required: [id, vehicle_id, protocol, code, spn, fmi, description, severity, status, first_seen_at, last_seen_at, occurrences, cleared_at, provider]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        protocol: { type: string, enum: [obd2, j1939] }
+        code: { type: string, description: 'The OBD-II code, or SPN-FMI for J1939 (110-0).', example: P0217 }
+        spn: { type: [integer, 'null'] }
+        fmi: { type: [integer, 'null'] }
+        description: { type: [string, 'null'], description: 'From the generic code dictionary; null for a code it does not name.' }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [active, cleared] }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        occurrences: { type: integer, minimum: 1 }
+        cleared_at: { type: [string, 'null'], format: date-time }
+        provider: { type: [string, 'null'], description: "The telematics provider's code." }
     TelemetryFlag:
       type: object
       description: A flag of the telemetry rules (FMS-46) or of the geofence and route deviation rules (FMS-90).
