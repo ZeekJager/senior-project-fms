@@ -254,9 +254,13 @@ the internet, and the DNS record is Cloudflare's, not the server's. The domain's
 2. Give the tunnel a public hostname (published application route): the site's host name, service **HTTPS**,
    URL `caddy:443`. Under its TLS settings set **Origin Server Name** to the host name and turn **No TLS Verify** on:
    Caddy's certificate is from its own authority, on the stack's own network.
-3. In `prod.env`: `FMS_DOMAIN` is that host name and `FMS_TLS_ISSUER=internal`. Let's Encrypt cannot reach Caddy
+3. In the domain's **SSL/TLS, Edge Certificates** settings: turn **Always Use HTTPS** on and set **Minimum TLS
+   Version** to **1.2**. Through the tunnel, Cloudflare answers the visitor, not Caddy: without the first, a plain
+   `http://` request is served unencrypted instead of redirected; without the second, Cloudflare still accepts
+   TLS 1.0 and 1.1, and SSL Labs grades the site B. Both apply to the whole zone.
+4. In `prod.env`: `FMS_DOMAIN` is that host name and `FMS_TLS_ISSUER=internal`. Let's Encrypt cannot reach Caddy
    through the tunnel, and does not need to: browsers see Cloudflare's certificate.
-4. Start it with the tunnel's file as well:
+5. Start it with the tunnel's file as well:
 
    ```sh
    docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml --env-file prod.env up -d --wait
