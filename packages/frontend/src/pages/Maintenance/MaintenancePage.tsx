@@ -32,7 +32,7 @@ function readFilters(params: URLSearchParams): PageFilters {
   const due = params.get('due')
   const page = Number.parseInt(params.get('page') ?? '', 10)
   return {
-    view: view === 'completed' || view === 'all' || view === 'service' ? view : 'open',
+    view: view === 'completed' || view === 'all' || view === 'service' || view === 'requested' ? view : 'open',
     vehicleId: params.get('vehicle') ?? '',
     page: Number.isInteger(page) && page > 0 ? page : 1,
     due: due === 'overdue' || due === 'due' ? due : 'attention',
@@ -133,11 +133,15 @@ export function MaintenancePage() {
     value: filters.view,
     options: [
       { value: 'open', label: 'Open work', count: workshop.counts.open, isLoading: workshop.isLoading },
+      { value: 'requested', label: 'Requests', count: workshop.counts.requested, isLoading: workshop.isLoading, hint: 'Work orders asked for and not started; some wait for approval' },
       { value: 'completed', label: 'Completed', count: workshop.counts.completed, isLoading: workshop.isLoading },
       {
         value: 'all',
         label: 'All',
-        count: workshop.counts.open === undefined || workshop.counts.completed === undefined ? undefined : workshop.counts.open + workshop.counts.completed,
+        count:
+          workshop.counts.open === undefined || workshop.counts.completed === undefined || workshop.counts.requested === undefined
+            ? undefined
+            : workshop.counts.open + workshop.counts.completed + workshop.counts.requested,
         isLoading: workshop.isLoading,
       },
       ...(canSeeDue
@@ -239,8 +243,14 @@ export function MaintenancePage() {
           emptyState={
             <EmptyState
               icon={filters.vehicleId ? <Search /> : <ClipboardCheck />}
-              heading={filters.view === 'open' ? 'No open work' : 'No repairs logged yet'}
-              description={filters.view === 'open' ? 'Every job card is closed. New repairs appear here until they are completed.' : 'Logged repairs appear here with their parts and costs.'}
+              heading={filters.view === 'open' ? 'No open work' : filters.view === 'requested' ? 'No requests waiting' : 'No repairs logged yet'}
+              description={
+                filters.view === 'open'
+                  ? 'Every job card is closed. New repairs appear here until they are completed.'
+                  : filters.view === 'requested'
+                    ? 'Work orders asked for and not started appear here, with the ones waiting for approval.'
+                    : 'Logged repairs appear here with their parts and costs.'
+              }
               action={
                 canWrite && (
                   <Button leadingIcon={<Plus className="h-4 w-4" />} onClick={() => setLogging(true)}>

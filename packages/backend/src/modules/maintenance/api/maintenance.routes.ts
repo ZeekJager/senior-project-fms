@@ -70,7 +70,8 @@ const createBody = rejectFractionalMoney(
       })
       .optional(),
     maintenance_type: z.enum(MAINTENANCE_TYPES).optional(),
-    status: z.enum(['scheduled', 'open', 'in_progress']).optional(),
+    // requested (FMS-130): a work order asked for and not started.
+    status: z.enum(['requested', 'scheduled', 'open', 'in_progress']).optional(),
     priority: z.enum(MAINTENANCE_PRIORITIES).optional(),
     scheduled_at: instant.nullable().optional(),
     odometer_km: odometer.nullable().optional(),

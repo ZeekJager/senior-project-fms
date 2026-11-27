@@ -1,4 +1,4 @@
-import { Activity, BatteryCharging, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Store, BatteryCharging, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -24,6 +24,7 @@ import { ReportsPage } from '@/pages/Reports'
 import { KpisPage } from '@/pages/Kpis'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
+import { VendorsPage } from '@/pages/Vendors'
 import { SettingsPage } from '@/pages/Settings'
 import { SystemHealthPage } from '@/pages/SystemHealth'
 import { TelematicsPage } from '@/pages/Telematics'
@@ -109,6 +110,13 @@ export const portals: Portal[] = [
         element: <MaintenancePage />,
         permission: 'maintenance:read',
         nav: { label: 'Repair log', icon: Wrench },
+      },
+      {
+        // Vendors (FMS-130, docs/work-orders.md). Read with maintenance:read; added, edited and retired with vendor:write.
+        path: '/maintenance/vendors',
+        element: <VendorsPage />,
+        permission: 'maintenance:read',
+        nav: { label: 'Vendors', icon: Store },
       },
       {
         // S-23 (FMS-129). Read with maintenance:read; defined with service-program:write (admin, fleet manager, depot admin).

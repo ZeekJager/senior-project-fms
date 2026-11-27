@@ -176,6 +176,20 @@ async function fillGaps(depotId: string, ids: Ids): Promise<void> {
       [ids.vehicles],
     );
   }
+  // A work order's vendor, task and labour entry (FMS-130): a depot B vendor, and a task and an entry on the record the samples name.
+  if (await none('maintenance.vendors WHERE depot_id = $1', [depotId])) {
+    await pool.query("INSERT INTO maintenance.vendors (name, vendor_type, depot_id) VALUES ('Depot B workshop', 'workshop', $1)", [depotId]);
+  }
+  const record = '(SELECT id FROM maintenance.maintenance_records WHERE vehicle_id = ANY($1::bigint[]) ORDER BY id LIMIT 1)';
+  if (await none(`maintenance.work_order_tasks WHERE maintenance_record_id = ${record}`, [ids.vehicles])) {
+    await pool.query(`INSERT INTO maintenance.work_order_tasks (maintenance_record_id, description) SELECT ${record}, 'Depot B task' WHERE ${record} IS NOT NULL`, [ids.vehicles]);
+  }
+  if (await none(`maintenance.labour_entries WHERE maintenance_record_id = ${record}`, [ids.vehicles])) {
+    await pool.query(
+      `INSERT INTO maintenance.labour_entries (maintenance_record_id, technician_id, work_date, hours, rate_cents) SELECT ${record}, $2, '2026-11-02', 1.5, 30000 WHERE ${record} IS NOT NULL`,
+      [ids.vehicles, user],
+    );
+  }
   // A charging session (FMS-96) on the vehicle the samples name.
   if (await none('ev.charging_sessions WHERE vehicle_id = (SELECT MIN(x) FROM unnest($1::bigint[]) x)', [ids.vehicles])) {
     await pool.query("INSERT INTO ev.charging_sessions (vehicle_id, status) VALUES ((SELECT MIN(x) FROM unnest($1::bigint[]) x), 'planned')", [ids.vehicles]);
@@ -248,6 +262,9 @@ async function samples(depotId: string, ids: Ids): Promise<Record<string, string
     programId: await one('SELECT public_id::text AS id FROM maintenance.service_programs WHERE depot_id = $1 ORDER BY id', [depotId]),
     geofenceId: await one('SELECT public_id::text AS id FROM tracking.geofences WHERE depot_id = $1 ORDER BY id', [depotId]),
     warrantyId: await byVehicle('maintenance.warranties'),
+    vendorId: await one('SELECT public_id::text AS id FROM maintenance.vendors WHERE depot_id = $1 ORDER BY id', [depotId]),
+    taskId: await one('SELECT public_id::text AS id FROM maintenance.work_order_tasks WHERE maintenance_record_id = (SELECT id FROM maintenance.maintenance_records WHERE vehicle_id = ANY($1::bigint[]) ORDER BY id LIMIT 1) ORDER BY id', [ids.vehicles]),
+    entryId: await one('SELECT public_id::text AS id FROM maintenance.labour_entries WHERE maintenance_record_id = (SELECT id FROM maintenance.maintenance_records WHERE vehicle_id = ANY($1::bigint[]) ORDER BY id LIMIT 1) ORDER BY id', [ids.vehicles]),
     sessionId: await byVehicle('ev.charging_sessions'),
     assignmentId: await byVehicle('fleet.driver_vehicle_assignments'),
     appealId: await one('SELECT public_id::text AS id FROM analytics.score_appeals WHERE depot_id = $1 ORDER BY id', [depotId]),
