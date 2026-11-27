@@ -1,0 +1,83 @@
+# Road routing in production (FMS-164, docs/deployment.md#road-routing-in-production, docs/routing.md): OSRM
+# beside the production stack. With it, routes saved with both ends are measured by road, trips under way get
+# arrival times, and a route's stops can be put in order (FMS-84, FMS-86).
+#
+#   COMPOSE_FILE=docker-compose.prod.yml:docker-compose.routing.yml   (in prod.env, so every command uses both)
+#
+# The prepared map lives in the external volume fms_osrm_data (1-2 GB). It is built once, outside the stack,
+# by the two routing-setup steps below, which are the only ones here with a route out:
+#
+#   docker compose --env-file prod.env --profile routing-setup run --rm osrm-download
+#   docker compose --env-file prod.env --profile routing-setup run --rm osrm-prepare
+#
+# OSRM itself is on the internal data network only: no published port, no route out, the map read-only.
+
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    restart: unless-stopped
+    command: ["osrm-routed", "--algorithm", "mld", "--max-viaroute-size", "30", "/data/ethiopia-latest.osrm"]
+    volumes:
+      - osrm_data:/data:ro
+    healthcheck:
+      # The image has no curl or wget: a route request through bash's /dev/tcp, between two points in Addis Ababa.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /route/v1/driving/38.7578,9.0108;38.7469,9.0300 HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks: [data]
+
+  api-1:
+    environment:
+      ROUTING_URL: http://osrm:5000
+
+  api-2:
+    environment:
+      ROUTING_URL: http://osrm:5000
+
+  # One-off: the Ethiopia extract from Geofabrik, checked against its MD5. Skips what is already there.
+  osrm-download:
+    image: curlimages/curl:8.10.1
+    profiles: [routing-setup]
+    user: "0:0"
+    volumes:
+      - osrm_data:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        cd /data
+        if [ -f ethiopia-latest.osrm.mldgr ]; then echo "map already prepared"; exit 0; fi
+        if [ -f ethiopia-latest.osm.pbf.md5 ] && md5sum -c ethiopia-latest.osm.pbf.md5 >/dev/null 2>&1; then echo "map already downloaded"; exit 0; fi
+        curl -fsSL --retry 3 -o ethiopia-latest.osm.pbf https://download.geofabrik.de/africa/ethiopia-latest.osm.pbf
+        curl -fsSL --retry 3 -o ethiopia-latest.osm.pbf.md5 https://download.geofabrik.de/africa/ethiopia-latest.osm.pbf.md5
+        md5sum -c ethiopia-latest.osm.pbf.md5
+    networks: [routing_setup]
+
+  # One-off: OSRM's car graph (MLD) from the extract, a few minutes and about 2 GB of memory.
+  osrm-prepare:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles: [routing-setup]
+    volumes:
+      - osrm_data:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        cd /data
+        if [ -f ethiopia-latest.osrm.mldgr ]; then echo "road graph already built"; exit 0; fi
+        osrm-extract -p /opt/car.lua ethiopia-latest.osm.pbf
+        osrm-partition ethiopia-latest.osrm
+        osrm-customize ethiopia-latest.osrm
+    networks: [routing_setup]
+
+networks:
+  # The setup steps' own network, with a route out for the download; nothing of the stack is on it.
+  routing_setup: {}
+
+volumes:
+  # External, so `down -v` never deletes the map. Created once: docker volume create fms_osrm_data
+  osrm_data:
+    name: fms_osrm_data
+    external: true

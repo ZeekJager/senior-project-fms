@@ -1,0 +1,43 @@
+# The production stack reached through a Cloudflare Tunnel (docs/deployment.md#behind-a-cloudflare-tunnel):
+# for a server with no public IP or no open ports, such as a machine at home. cloudflared dials out to
+# Cloudflare, which serves the site's HTTPS and forwards each request down the tunnel to Caddy.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml --env-file prod.env up -d --wait
+#
+# prod.env adds CLOUDFLARE_TUNNEL_TOKEN (the tunnel's token, from Cloudflare's dashboard). The tunnel's
+# public hostname points at https://caddy:443, with Origin Server Name set to FMS_DOMAIN.
+#
+# The visitor's address: Cloudflare puts it in X-Forwarded-For, Caddy keeps it because the connector is
+# a trusted proxy (its fixed address below), and the API trusts two hops (Caddy and the connector).
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2025.11.1
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?is not set - the tunnel's token from Cloudflare's dashboard}"
+    depends_on:
+      caddy:
+        condition: service_started
+    networks:
+      edge:
+        ipv4_address: 172.30.0.250
+
+  caddy:
+    environment:
+      FMS_TRUSTED_PROXIES: 172.30.0.250/32
+
+  api-1:
+    environment:
+      TRUST_PROXY: "2"
+
+  api-2:
+    environment:
+      TRUST_PROXY: "2"
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
