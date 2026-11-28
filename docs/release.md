@@ -26,6 +26,11 @@ The seed prints one account per role, and they all share `FMS_SEED_PASSWORD`. Gi
 role, and never production credentials. Test on the devices people will use: drivers on an Android phone in Chrome,
 office roles on a laptop.
 
+Steps hand work from one role to the next (D3 to T1, D6 to P6, P4 to M2, D9 to M4), so every tester must be in the same
+depot. Use a driver account of the office testers' depot: the admin issues it a setup link from **Users & roles**
+(*Create new invitation link*). Before the dispatcher's P4, the admin sets **Settings** › *Driver marked absent* to
+*Needs a fleet manager's approval*, and sets it back after M2.
+
 Each tester runs their role's script below, in order. Every step has an expected result. A step that does not give it is
 a **defect**. Record it with the step number, what happened, a screenshot and its severity:
 
@@ -58,7 +63,7 @@ a **defect**. Record it with the step number, what happened, a screenshot and it
 | P1 | Open the **Dispatch console** | Today's trips by status; available drivers and vehicles of your depot only |
 | P2 | **Create a trip** from a route, for later today | It appears as *Scheduled* |
 | P3 | **Assign** a driver and a vehicle | Assigned; the driver sees it on **My day** |
-| P4 | Try to assign a driver whose licence has expired, or a flagged vehicle | Refused, saying why; an exception can be requested |
+| P4 | Try to assign a driver whose licence has expired. Then assign the driver A1 marked *On leave* to a trip today, and request the exception with a reason | The first is refused, saying why: a safety rule has no exception. The second is held, and the request waits for a fleet manager |
 | P5 | **Live map**: follow D4's trip | Its position moves; the speeding and idling flags show on the vehicle |
 | P6 | Open D6's incident and assign it to yourself | It shows *Assigned*; the driver's report is unchanged |
 | P7 | Change the URL to another depot's trip | *Not found*: another depot's data is never shown |
@@ -90,7 +95,7 @@ a **defect**. Record it with the step number, what happened, a screenshot and it
 | # | Step | Expected |
 |---|---|---|
 | M1 | **Dashboard** | The KPI band, utilisation and cost charts for every depot |
-| M2 | **Approve exceptions**: approve P4's request | The assignment goes through; the approval is audited |
+| M2 | **Dispatch**: open P4's held trip, then **Approve and assign** with a note | The assignment goes through; the approval is audited |
 | M3 | **Feedback to drivers**: send one from a template | The driver sees it under **Feedback** |
 | M4 | **Score appeals**: decide D9's appeal | The driver sees the decision |
 | M5 | **Reports**: export the utilisation report as Excel and PDF | Both files open and match the screen |
