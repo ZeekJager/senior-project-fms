@@ -1,5 +1,6 @@
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import { Check, CheckCircle2, KeyRound, Truck, XCircle } from 'lucide-react'
+import { Check, CheckCircle2, KeyRound, XCircle } from 'lucide-react'
+import { BrandMark } from '@/components/BrandMark'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Button, cn, TextField } from '@/components/ui'
@@ -80,9 +81,7 @@ export function SetPasswordPage() {
 
       <main className="relative w-full max-w-md animate-scale-in rounded-sheet border border-line bg-surface p-6 shadow-elevated sm:p-8">
         <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-control bg-brand text-white">
-            <Truck className="h-5 w-5" aria-hidden="true" />
-          </div>
+          <BrandMark />
           <span className="text-sm font-semibold tracking-tight text-ink">Fleet Management System</span>
         </div>
 

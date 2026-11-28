@@ -1,6 +1,7 @@
-import { LogOut, PanelLeftClose, PanelLeftOpen, Settings, Truck } from 'lucide-react'
+import { LogOut, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react'
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import { NavLink } from 'react-router-dom'
+import { BrandMark } from '@/components/BrandMark'
 import { Avatar, PhotoUploader } from '@/components/shared'
 import { cn, Dialog, IconButton, iconButtonClass } from '@/components/ui'
 import { useAuth } from '@/context/AuthContext'
@@ -56,9 +57,7 @@ const blockClass = (rail: boolean, collapsed: boolean) => (!rail ? '' : collapse
 export function Brand({ compact, onDark, rail = false, collapsed = false }: { compact?: boolean; onDark?: boolean; rail?: boolean; collapsed?: boolean }) {
   return (
     <div className={cn('flex items-center gap-3', rail ? cn('md:justify-center', !collapsed && 'lg:justify-start') : 'px-2')}>
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand text-white">
-        <Truck className="h-[18px] w-[18px]" aria-hidden="true" />
-      </div>
+      <BrandMark size="sm" />
       <div className={cn('min-w-0 leading-tight', blockClass(rail, collapsed))}>
         <p className={cn('text-sm font-semibold tracking-tight', onDark ? 'text-white' : 'text-ink')}>Fleet</p>
         {!compact && <p className={cn('text-xs', onDark ? 'text-side-ink' : 'text-ink-subtle')}>Management System</p>}
