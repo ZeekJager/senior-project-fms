@@ -14,6 +14,7 @@ const READING_SOURCE: Record<MeterReading['source'], string> = {
   telematics: 'Telematics',
   gps_derived: 'GPS',
   manual: 'Entered by hand',
+  trip: 'Trip (driver)',
 }
 
 /**

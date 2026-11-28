@@ -47,7 +47,7 @@ export interface MeterReading {
   id: string
   meter: 'odometer' | 'engine_hours'
   value: number
-  source: 'fuel_log' | 'maintenance' | 'telematics' | 'gps_derived' | 'manual'
+  source: 'fuel_log' | 'maintenance' | 'telematics' | 'gps_derived' | 'manual' | 'trip'
   recorded_at: string
   suspect: boolean
 }

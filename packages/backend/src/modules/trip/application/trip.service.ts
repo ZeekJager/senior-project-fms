@@ -27,6 +27,7 @@ import {
   stopNotFound,
   tripClosed,
   tripNotFound,
+  tripOdometerBelow,
   tripNotUnderWay,
   type TripLiveState,
   type TripStopView,
@@ -792,12 +793,17 @@ export class TripService {
    * trip of the driver or vehicle still under way is a warning, not a block
    * (FMS-31 overrun rule), and so is the driver's attendance.
    */
-  async start(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+  async start(caller: Caller, tripId: string, expectedVersion: number | null = null, input: OdometerInput = {}): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
     return this.move(caller, tripId, 'en_route', expectedVersion, async (client, row) => {
       const now = this.now();
       const fleet = this.deps.fleet();
       const vehicleId = row.vehicleId!;
       const driverId = row.driverId!;
+      // FMS-165: the odometer at the start, typed (never below the vehicle's reading) or the vehicle's own.
+      const current = await fleet.vehicles.odometer(client, vehicleId);
+      const typed = input.odometer_km ?? null;
+      if (typed !== null && current !== null && typed < current) throw tripOdometerBelow(current, 'below_vehicle_odometer');
+      const startOdometer = typed ?? current;
       const answer = await fleet.availability.check(client, {
         vehicleIds: [vehicleId],
         driverIds: [driverId],
@@ -815,9 +821,14 @@ export class TripService {
         ...(await this.overruns(client, 'vehicle_id', vehicleId, row.id, now)),
       ];
       return {
-        data: { status: 'en_route', actual_start: now },
+        data: { status: 'en_route', actual_start: now, start_odometer_km: startOdometer },
         event: TRIP_EVENTS.started,
-        payload: (view) => ({ ...lifecyclePayload(view), actual_start: now.toISOString() }),
+        payload: (view) => ({
+          ...lifecyclePayload(view),
+          actual_start: now.toISOString(),
+          start_odometer_km: startOdometer,
+          start_odometer_typed: typed !== null,
+        }),
         warnings,
       };
     });
@@ -829,8 +840,15 @@ export class TripService {
    * the actual distance measured from the positions stored during the trip
    * (FMS-145), all in the one audited change.
    */
-  async end(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+  async end(caller: Caller, tripId: string, expectedVersion: number | null = null, input: OdometerInput = {}): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
     return this.move(caller, tripId, 'completed', expectedVersion, async (client, row) => {
+      // FMS-165: a typed end reading is never below the start's, nor below the vehicle's (a fill-up on the way).
+      const typed = input.odometer_km ?? null;
+      if (typed !== null) {
+        if (row.startOdometerKm !== null && typed < row.startOdometerKm) throw tripOdometerBelow(row.startOdometerKm, 'below_start_odometer');
+        const current = row.vehicleId ? await this.deps.fleet().vehicles.odometer(client, row.vehicleId) : null;
+        if (current !== null && typed < current) throw tripOdometerBelow(current, 'below_vehicle_odometer');
+      }
       const startedAt = row.actualStart;
       const end = startedAt && this.now() < startedAt ? startedAt : this.now();
       const duration = startedAt ? Math.round((end.getTime() - startedAt.getTime()) / 1000) : undefined;
@@ -841,6 +859,7 @@ export class TripService {
           actual_end: end,
           ...(duration !== undefined ? { actual_duration_seconds: duration } : {}),
           ...(distance ? distanceWrite(distance, this.now()) : {}),
+          ...(typed !== null ? { end_odometer_km: typed } : {}),
         },
         event: TRIP_EVENTS.completed,
         payload: (view) => ({
@@ -850,6 +869,8 @@ export class TripService {
           duration_seconds: duration ?? null,
           actual_distance_km: view.actual_distance_km,
           actual_distance_source: view.actual_distance_source,
+          start_odometer_km: view.start_odometer_km,
+          end_odometer_km: view.end_odometer_km,
         }),
         warnings: [],
       };
@@ -1192,6 +1213,8 @@ export class TripService {
       actual_end: r.actualEnd,
       actual_distance_km: r.actualDistanceKm,
       actual_distance_source: r.actualDistanceSource,
+      start_odometer_km: r.startOdometerKm,
+      end_odometer_km: r.endOdometerKm,
       cargo_weight_kg: r.cargoWeightKg,
       cargo_kind: r.cargoKind,
       job_load: load.level,
@@ -1217,6 +1240,11 @@ export class TripService {
 }
 
 /** A trip event, ordered per trip in the outbox (FMS-73). */
+/** FMS-165: what the driver may type when starting or ending a trip. */
+export interface OdometerInput {
+  odometer_km?: number;
+}
+
 /** What TripStarted and TripCompleted say about the trip: who, with what, from where. */
 function lifecyclePayload(view: TripView): Record<string, unknown> {
   return { driver_id: view.driver_id, vehicle_id: view.vehicle_id, route_id: view.route_id, depot_id: view.depot_id, scheduled_start: view.scheduled_start?.toISOString() ?? null };

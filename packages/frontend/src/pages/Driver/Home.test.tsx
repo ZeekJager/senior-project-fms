@@ -142,7 +142,54 @@ describe('Driver Home (S-11)', () => {
     server.use(http.post(`/api/v1/trips/${trip().id}/start`, () => errorEnvelope(409, 'CONFLICT_DRIVER_NOT_ELIGIBLE', 'x', [{ field: 'driver_id', reason: 'license_expired' }])))
     await openHome()
     await userEvent.setup().click(within(await card()).getByRole('button', { name: 'Start trip' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('You cannot drive this trip: your licence has expired. Call dispatch.')
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('You cannot drive this trip: your licence has expired. Call dispatch.'))
+  })
+
+  describe('the odometer at the start and end (FMS-165)', () => {
+    it('shows the last known reading and sends the one typed; empty sends none', async () => {
+      serveDay({ underWay: [], assigned: [trip()] })
+      server.use(http.get(`/api/v1/vehicles/${VEHICLE}`, () => envelope({ registration_number: 'AA 3-10001', make: 'Isuzu', model: 'NPR', odometer_km: 53_212.8 })))
+      const bodies: unknown[] = []
+      server.use(
+        http.post(`/api/v1/trips/${trip().id}/start`, async ({ request }) => {
+          bodies.push(await request.json())
+          return envelope(trip({ status: 'en_route', actual_start: '2026-11-02T05:34:00Z', version: 4 }))
+        }),
+      )
+      await openHome()
+      const c = await card()
+      expect(await within(c).findByText('Last known: 53,212.8 km. Read the dashboard and type it.')).toBeInTheDocument()
+      const user = userEvent.setup()
+      await user.type(within(c).getByRole('textbox', { name: /Odometer now/ }), '53,290')
+      await user.click(within(c).getByRole('button', { name: 'Start trip' }))
+      await waitFor(() => expect(bodies).toEqual([{ odometer_km: 53290 }]))
+    })
+
+    it('a reading that is not a number is caught on the phone; one below the vehicle is explained', async () => {
+      serveDay({ underWay: [], assigned: [trip()] })
+      let calls = 0
+      server.use(
+        http.post(`/api/v1/trips/${trip().id}/start`, () => {
+          calls++
+          return errorEnvelope(409, 'CONFLICT_ODOMETER_REGRESSION', "The odometer reading is lower than the vehicle's current reading (53212.8 km).", [
+            { field: 'odometer_km', reason: 'below_vehicle_odometer' },
+          ])
+        }),
+      )
+      await openHome()
+      const c = await card()
+      const user = userEvent.setup()
+      const box = within(c).getByRole('textbox', { name: /Odometer now/ })
+      await user.type(box, '53k')
+      await user.click(within(c).getByRole('button', { name: 'Start trip' }))
+      expect(within(c).getByText('A reading in kilometres, e.g. 53290 or 53290.5.')).toBeInTheDocument()
+      expect(calls).toBe(0)
+
+      await user.clear(box)
+      await user.type(box, '50000')
+      await user.click(within(c).getByRole('button', { name: 'Start trip' }))
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Check the odometer: The odometer reading is lower than the vehicle's current reading (53212.8 km)."))
+    })
   })
 
   it('under way, the stops are listed in order with the next marked; Done marks one finished (FMS-95)', async () => {

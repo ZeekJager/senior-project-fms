@@ -316,6 +316,12 @@ export class VehicleRepository extends Repository {
   }
 
   /** The same by internal id, for another module's workflow that has already checked scope (maintenance). */
+  /** The vehicle's current odometer in km (FMS-165), by internal id; null for no such vehicle. */
+  async odometerOf(db: Queryable, id: string): Promise<number | null> {
+    const res = await db.query<{ km: number }>('SELECT odometer_km::float8 AS km FROM fleet.vehicles WHERE id = $1', [id]);
+    return res.rows[0]?.km ?? null;
+  }
+
   async lockById(client: PoolClient, id: string): Promise<LockedVehicle | null> {
     const res = await client.query<LockedVehicle>(`${LOCKED_COLUMNS} WHERE v.id = $1 FOR UPDATE`, [id]);
     return res.rows[0] ?? null;

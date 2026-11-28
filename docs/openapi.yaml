@@ -697,7 +697,9 @@ paths:
         The assignment rules are read again: a vehicle flagged, in the workshop, out of service, retired or
         in another depot since, or an expired licence, refuse with the assignment's 409s. Another trip of the
         driver or vehicle still under way (PREVIOUS_TRIP_OVERRUN) and the driver's attendance
-        (DRIVER_ATTENDANCE) are warnings. Publishes TripStarted.
+        (DRIVER_ATTENDANCE) are warnings. Publishes TripStarted. FMS-165: the odometer the driver reads at the
+        start, optional; below the vehicle's odometer it is 409 CONFLICT_ODOMETER_REGRESSION (reason
+        below_vehicle_odometer). Kept as start_odometer_km, the vehicle's own reading when none is typed.
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IfMatch'
@@ -706,7 +708,7 @@ paths:
         required: false
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+            schema: { $ref: '#/components/schemas/TripOdometerInput' }
       responses:
         '200': { $ref: '#/components/responses/TripMoved' }
         '400':
@@ -724,7 +726,10 @@ paths:
       summary: End a trip (FMS-32)
       description: >
         en_route → completed, actual_end now (never before actual_start); the duration is stored. Needs
-        trip:execute; a driver only on their own trips. Publishes TripCompleted.
+        trip:execute; a driver only on their own trips. Publishes TripCompleted. FMS-165: the odometer the
+        driver reads at the end, optional; below the start's (below_start_odometer) or the vehicle's
+        (below_vehicle_odometer) it is 409 CONFLICT_ODOMETER_REGRESSION. With none typed, the start reading plus
+        a GPS-measured distance becomes the vehicle's estimated reading (docs/meter-readings.md).
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IfMatch'
@@ -733,7 +738,7 @@ paths:
         required: false
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+            schema: { $ref: '#/components/schemas/TripOdometerInput' }
       responses:
         '200': { $ref: '#/components/responses/TripMoved' }
         '400':
@@ -9545,7 +9550,8 @@ components:
       description: >
         CONFLICT_INVALID_STATE_TRANSITION (details[].allowed_transitions lists where the trip can go; empty for
         completed and cancelled), CONFLICT_CONCURRENT_MODIFICATION, or on start the assignment's
-        CONFLICT_DEPOT_MISMATCH, CONFLICT_VEHICLE_FLAGGED and CONFLICT_DRIVER_NOT_ELIGIBLE.
+        CONFLICT_DEPOT_MISMATCH, CONFLICT_VEHICLE_FLAGGED and CONFLICT_DRIVER_NOT_ELIGIBLE; an odometer below the
+        vehicle's or the trip's start is CONFLICT_ODOMETER_REGRESSION (FMS-165).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     WebhookAccepted:
       description: Stored and announced, or a duplicate of a delivery already stored (the same id).
@@ -11147,6 +11153,12 @@ components:
           type: [string, 'null']
           enum: [odometer, gps, null]
           description: How the distance was measured, the vehicle's own odometer readings bracketing the trip or the length of its GPS track. Null with no distance, or with one entered before trips were measured (the seed, an import).
+        start_odometer_km:
+          type: [number, 'null']
+          description: The odometer when the trip started (FMS-165), typed by the driver or the vehicle's own reading then. Null before the start.
+        end_odometer_km:
+          type: [number, 'null']
+          description: The odometer the driver typed at the end (FMS-165); null before the end or with none typed.
         stops:
           type: array
           items: { $ref: '#/components/schemas/TripStop' }
@@ -13478,6 +13490,12 @@ components:
         current: { type: boolean, description: 'Active, started, and not yet at its end.' }
         notes: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
+    TripOdometerInput:
+      type: object
+      additionalProperties: false
+      description: What POST /trips/{id}/start and /end take (FMS-165); an empty object is fine.
+      properties:
+        odometer_km: { type: number, minimum: 0, maximum: 9999999, description: 'The odometer the driver reads now, in km.' }
     MeterReading:
       type: object
       description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).
@@ -13486,8 +13504,8 @@ components:
         id: { type: string, format: uuid }
         meter: { type: string, enum: [odometer, engine_hours] }
         value: { type: number, description: 'km for the odometer, hours for engine hours; one decimal.' }
-        source: { type: string, enum: [fuel_log, maintenance, telematics, gps_derived, manual] }
-        source_ref: { type: [string, 'null'], description: "The fuel log's or repair's id, the device's id, or the day (YYYY-MM-DD) of an engine-hours reading; null for manual." }
+        source: { type: string, enum: [fuel_log, maintenance, telematics, gps_derived, manual, trip], description: "trip: typed by the driver at a trip's start or end (FMS-165); gps_derived for the odometer: a trip's start reading plus its GPS distance." }
+        source_ref: { type: [string, 'null'], description: "The fuel log's or repair's id, the device's id, the day (YYYY-MM-DD) of an engine-hours reading, or `<trip id>:start` / `<trip id>:end` for a trip's reading; null for manual." }
         recorded_at: { type: string, format: date-time, description: When the reading was true. }
         suspect: { type: boolean, description: "Lower than a trusted reading recorded before it: kept, but the vehicle's odometer did not follow it." }
         created_at: { type: string, format: date-time }

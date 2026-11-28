@@ -124,6 +124,39 @@ export function useFlaggedVehicles() {
   })
 }
 
+/** Where a vehicle's current odometer reading came from (FMS-165): the newest reading's source, as the API names it. */
+export type OdometerSource = 'fuel_log' | 'maintenance' | 'telematics' | 'gps_derived' | 'manual' | 'trip'
+
+/** A vehicle's current odometer and, when it has one, its newest reading (FMS-165). */
+export interface VehicleOdometer {
+  km: number
+  latest: { value: number; source: OdometerSource; recorded_at: string } | null
+}
+
+/**
+ * GET /vehicles/{id} and its newest odometer reading (vehicle:read): what the repair form loads into its odometer
+ * (FMS-165). Without the readings (an older server, a failed call) the vehicle's own odometer still comes back.
+ */
+export function useVehicleOdometer(vehicleId: string | null) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['vehicles', 'odometer', vehicleId],
+    queryFn: async (): Promise<VehicleOdometer> => {
+      const [vehicle, readings] = await Promise.allSettled([
+        api.request<Vehicle>(`/vehicles/${vehicleId}`),
+        api.request<{ value: number; source: OdometerSource; recorded_at: string; suspect: boolean }[]>(
+          `/vehicles/${vehicleId}/meter-readings?meter=odometer&page_size=5`,
+        ),
+      ])
+      if (vehicle.status === 'rejected') throw vehicle.reason
+      const latest = readings.status === 'fulfilled' ? (readings.value.find((r) => !r.suspect) ?? null) : null
+      return { km: vehicle.value.odometer_km, latest: latest ? { value: latest.value, source: latest.source, recorded_at: latest.recorded_at } : null }
+    },
+    enabled: vehicleId !== null,
+    staleTime: 30_000,
+  })
+}
+
 /** Any vehicle by plate, make or model (for preventive work on a vehicle that is not flagged). */
 export function useVehicleSearch(query: string) {
   const { api } = useAuth()
