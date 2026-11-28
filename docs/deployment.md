@@ -170,8 +170,8 @@ Put `BACKUP_DB_USER=fms_backup` and its `BACKUP_DB_PASSWORD` in `api.env`, then 
 they read it: `docker compose --env-file prod.env up -d --wait --force-recreate api-1 api-2`.
 
 - **Back up now** on the Backups screen succeeds and shows its size ([backups.md](backups.md)).
-- **Off the server.** With `STORAGE_DRIVER=s3` the nightly backups (02:40) are in the bucket already. With local
-  storage, copy the `uploads` volume's `backups/` folder to the off-server remote every night with rclone.
+- **Off the server.** With `STORAGE_DRIVER=s3` the scheduled backups (every 4 hours from 02:40) are in the bucket already. With local
+  storage, copy the `uploads` volume's `backups/` folder to the off-server remote after each backup with rclone.
 - **Rehearse a restore** into a separate database. A restore creates a database, which the backup role may not
   do, so this one command runs as the schema owner:
 

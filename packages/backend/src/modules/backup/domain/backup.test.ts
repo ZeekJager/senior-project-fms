@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { MAX_ERROR_LENGTH, backupFilename, backupKey, dumpError } from './backup';
+import { parseAt } from '../../../shared/jobs/job';
+import { MAX_ERROR_LENGTH, SCHEDULED_BACKUP_TIMES, backupFilename, backupKey, dumpError, scheduledBackupJobName } from './backup';
 import { BackupLinkSigner } from './backup-link';
 
 const ID = '3f1c2a9e-7b4d-4e21-9a55-0c8d1e2f3a4b';
@@ -51,5 +52,23 @@ describe('BackupLinkSigner', () => {
     const a = new BackupLinkSigner(secret, () => 0).sign(ID, USER).url;
     const b = new BackupLinkSigner(`${secret}-other`, () => 0).sign(ID, USER).url;
     expect(a).not.toBe(b);
+  });
+});
+
+describe('scheduled backup times', () => {
+  test('six a day, every 4 hours from 02:40', () => {
+    expect(SCHEDULED_BACKUP_TIMES).toHaveLength(6);
+    const minutes = SCHEDULED_BACKUP_TIMES.map((at) => { const { hour, minute } = parseAt(at); return hour * 60 + minute; });
+    expect(minutes[0]).toBe(2 * 60 + 40);
+    for (let i = 1; i < minutes.length; i++) expect(minutes[i] - minutes[i - 1]).toBe(4 * 60);
+    // the last slot is 4 hours before the next day's first
+    expect(24 * 60 - minutes[5] + minutes[0]).toBe(4 * 60);
+  });
+
+  test('each slot is its own job name', () => {
+    const names = SCHEDULED_BACKUP_TIMES.map(scheduledBackupJobName);
+    expect(new Set(names).size).toBe(6);
+    expect(names[0]).toBe('database-backup-0240');
+    expect(names[5]).toBe('database-backup-2240');
   });
 });

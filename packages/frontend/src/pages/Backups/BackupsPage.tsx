@@ -8,7 +8,7 @@ import { Fact, ago, at, formatBytes } from './parts'
 import { PointInTime } from './PointInTime'
 import { BACKUPS_PAGE_SIZE, startDownload, useBackups, useDownloadLink, useStartBackup, type Backup, type BackupStatus, type RestoreDrill } from './api'
 
-// S-30 Backups (FMS-144, docs/backups.md): point-in-time recovery (FMS-108), then every nightly copy, Back up now,
+// S-30 Backups (FMS-144, docs/backups.md): point-in-time recovery (FMS-108), then every scheduled copy, Back up now,
 // and a download. Admin only.
 
 export { ago, formatBytes } from './parts'
@@ -83,7 +83,7 @@ export function BackupsPage() {
       cell: (b) => (
         <div className="min-w-0">
           <p className="tabular truncate text-sm font-medium text-ink">{at(b.started_at ?? b.requested_at)}</p>
-          <p className="truncate text-xs text-ink-muted">{b.kind === 'scheduled' ? 'Nightly' : 'Back up now'}</p>
+          <p className="truncate text-xs text-ink-muted">{b.kind === 'scheduled' ? 'Scheduled' : 'Back up now'}</p>
         </div>
       ),
     },
@@ -155,7 +155,7 @@ export function BackupsPage() {
         <div className="min-w-0 basis-72 flex-1">
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">Backups</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            The database can be restored to any second of the last 14 days or more, and a full copy is taken every night and whenever you need one. Take one before a risky
+            The database can be restored to any second of the last 14 days or more, and a full copy is taken every 4 hours and whenever you need one. Take one before a risky
             change. Times are Addis Ababa time.
           </p>
         </div>
@@ -170,7 +170,7 @@ export function BackupsPage() {
       <PointInTime pitr={meta?.pitr} />
 
       <div className="border-t border-line pt-6">
-        <h2 className="text-base font-semibold text-ink">Nightly copies</h2>
+        <h2 className="text-base font-semibold text-ink">Scheduled copies</h2>
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">
           A pg_dump of the whole database, restorable on any server, kept {meta?.retention_days ?? 30} days. Download one to keep a copy of your own.
         </p>
@@ -197,7 +197,7 @@ export function BackupsPage() {
           )}
         </Fact>
         <Fact icon={<CalendarClock />} label="Schedule">
-          <p className="font-medium">Every night at 02:40</p>
+          <p className="font-medium">Every 4 hours, from 02:40</p>
           <p className="mt-0.5 text-xs text-ink-muted">Each kept {meta?.retention_days ?? 30} days, then removed</p>
         </Fact>
         <DrillFact drill={meta?.last_restore_drill ?? null} />
@@ -216,7 +216,7 @@ export function BackupsPage() {
           <EmptyState
             icon={<HardDriveDownload />}
             heading="No backups yet"
-            description={canWrite ? 'The first one is taken tonight at 02:40, or now with Back up now.' : 'The first one is taken tonight at 02:40.'}
+            description={canWrite ? 'The first one is taken at the next 4-hourly time (02:40, 06:40, 10:40, 14:40, 18:40, 22:40), or now with Back up now.' : 'The first one is taken at the next 4-hourly time (02:40, 06:40, 10:40, 14:40, 18:40, 22:40).'}
             headingLevel="h2"
           />
         }

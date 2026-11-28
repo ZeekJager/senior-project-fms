@@ -1,12 +1,23 @@
 import { AppError } from '../../../shared/errors/app-error';
 
-/** backup.backups.kind: the nightly job's, or an admin's Back up now (FMS-144). */
+/** backup.backups.kind: the scheduled jobs', or an admin's Back up now (FMS-144). */
 export const BACKUP_KINDS = ['scheduled', 'manual'] as const;
 export type BackupKind = (typeof BACKUP_KINDS)[number];
 
 /** Queued and running are under way; succeeded has a file; expired had one, removed past retention. */
 export const BACKUP_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'expired'] as const;
 export type BackupStatus = (typeof BACKUP_STATUSES)[number];
+
+/**
+ * When the scheduled backups run each day, local time (Africa/Addis_Ababa): every 4 hours, so a crash loses at most
+ * 4 hours of data where point-in-time recovery is not set up. 02:40 stays the first, before the day's work.
+ */
+export const SCHEDULED_BACKUP_TIMES = ['02:40', '06:40', '10:40', '14:40', '18:40', '22:40'] as const;
+
+/** The scheduled job of one time slot: each slot is its own daily job, so each is locked, run and caught up once a day. */
+export function scheduledBackupJobName(at: string): string {
+  return `database-backup-${at.replace(':', '')}`;
+}
 
 /** A backup's file is kept this long, then removed (the row stays, as expired). */
 export const BACKUP_RETENTION_DAYS = 30;

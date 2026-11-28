@@ -2,6 +2,7 @@ import { config } from '../../config';
 import { pool } from '../../db';
 import { eventBus } from '../../shared/events/event-bus';
 import { logger } from '../../shared/logging/logger';
+import type { JobContext } from '../../shared/jobs/job';
 import type { AppModule } from '../../shared/module';
 import { createDocumentStorage } from '../../shared/storage/document-storage';
 import { userDirectory } from '../auth';
@@ -9,6 +10,7 @@ import { backupRouter } from './api/backup.routes';
 import { BackupService } from './application/backup.service';
 import { PitrService } from './application/pitr.service';
 import type { RestoreDeps } from './application/restore';
+import { SCHEDULED_BACKUP_TIMES, scheduledBackupJobName } from './domain/backup';
 import { BackupLinkSigner } from './domain/backup-link';
 import { BackupRepository } from './infrastructure/backup.repository';
 import { pgClientTools } from './infrastructure/pg-tools';
@@ -43,13 +45,14 @@ export const backupModule: AppModule = {
       every: 1,
       run: (context) => pitrService.monitor(context.correlationId),
     },
-    {
-      // Nightly, before the day's work. Point-in-time recovery (FMS-108) is the database container's: base backups, WAL.
-      name: 'database-backup',
-      at: '02:40',
+    // Every 4 hours from 02:40: one daily job per slot. Point-in-time recovery (FMS-108) is the database
+    // container's: base backups, WAL. A slot whose backup finds another running is skipped (one at a time).
+    ...SCHEDULED_BACKUP_TIMES.map((at) => ({
+      name: scheduledBackupJobName(at),
+      at,
       leaseMs: 2 * 60 * 60 * 1000,
-      run: (context) => backupService.scheduled(context.correlationId),
-    },
+      run: (context: JobContext) => backupService.scheduled(context.correlationId),
+    })),
     {
       // A Back up now whose instance stopped before it ran, and runs left running by a dead instance.
       name: 'backup-runner',

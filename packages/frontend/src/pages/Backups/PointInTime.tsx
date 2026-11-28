@@ -34,7 +34,7 @@ function Range({ pitr }: { pitr: PitrOverview }) {
   if (!pitr.enabled) {
     return (
       <p className="text-sm text-ink-muted">
-        This database does not archive its changes, so it can only be restored to a nightly copy below. Point-in-time recovery is set up in docs/backups.md.
+        This database does not archive its changes, so it can only be restored to a scheduled copy below (one every 4 hours). Point-in-time recovery is set up in docs/backups.md.
       </p>
     )
   }
