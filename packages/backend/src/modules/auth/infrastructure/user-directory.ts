@@ -136,6 +136,28 @@ export const userDirectory = {
   },
 
   /**
+   * Active accounts that hold `permission` through an active role and work in this depot (home depot) or see every
+   * depot (DEPOT_UNSCOPED_ROLES), by name. Who may book labour on a vehicle's work order (FMS-130).
+   */
+  async activeHoldersFor(db: Queryable, permission: string, depotId: string): Promise<{ publicId: string; fullName: string }[]> {
+    const res = await db.query<{ publicId: string; fullName: string }>(
+      `SELECT u.public_id::text AS "publicId", u.full_name AS "fullName"
+         FROM auth.users u
+         JOIN auth.user_roles ur ON ur.user_id = u.id
+         JOIN auth.roles r ON r.id = ur.role_id AND r.is_active
+        WHERE u.status = 'active'
+        GROUP BY u.id
+       HAVING bool_or(EXISTS (SELECT 1 FROM auth.role_permissions rp JOIN auth.permissions p ON p.id = rp.permission_id
+                               WHERE rp.role_id = r.id AND p.code = $1))
+          AND (bool_or(r.name = ANY($3::text[])) OR max(u.depot_id) = $2::bigint)
+        ORDER BY u.full_name, u.public_id
+        LIMIT 200`,
+      [permission, depotId, DEPOT_UNSCOPED_ROLES],
+    );
+    return res.rows;
+  },
+
+  /**
    * An active account that holds `permission` through an active role, by public id, with its home depot (internal
    * id) and whether its roles see every depot (DEPOT_UNSCOPED_ROLES). For choosing who handles an incident (FMS-89).
    */

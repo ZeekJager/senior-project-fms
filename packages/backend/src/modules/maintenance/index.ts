@@ -21,6 +21,7 @@ import { predictionFeedbackRouter } from './api/prediction-feedback.routes';
 import { predictionRouter } from './api/prediction.routes';
 import { serviceProgramRouter } from './api/service-program.routes';
 import { warrantyRouter } from './api/warranty.routes';
+import { workOrderRouter } from './api/work-order.routes';
 import { InventoryService } from './application/inventory.service';
 import { MaintenanceService } from './application/maintenance.service';
 import { MlModelService } from './application/ml-model.service';
@@ -30,6 +31,8 @@ import { ScoringService, type ScoringSources } from './application/scoring.servi
 import type { MaintenanceModelName } from './domain/ml-model';
 import { ServiceProgramService } from './application/service-program.service';
 import { WarrantyService } from './application/warranty.service';
+import { WorkOrderService } from './application/work-order.service';
+import { APPROVAL_THRESHOLD_KEY, DEFAULT_APPROVAL_THRESHOLD_ETB, DEFAULT_LABOUR_RATE_ETB, LABOUR_RATE_KEY } from './domain/work-order';
 import { FailureRepository } from './infrastructure/failure.repository';
 import { featureSpecLoader } from './infrastructure/feature-spec';
 import { InventoryRepository } from './infrastructure/inventory.repository';
@@ -40,6 +43,7 @@ import { HttpMlServiceClient, ML_SERVICE_TIMEOUT_MS, MlServiceError, type TripRi
 import { ScoringRepository } from './infrastructure/scoring.repository';
 import { ServiceProgramRepository } from './infrastructure/service-program.repository';
 import { WarrantyRepository } from './infrastructure/warranty.repository';
+import { WorkOrderRepository } from './infrastructure/work-order.repository';
 
 const maintenanceRepository = new MaintenanceRepository(pool);
 const failureRepository = new FailureRepository(pool);
@@ -84,6 +88,20 @@ for (const type of [VEHICLE_EVENTS.registered, VEHICLE_EVENTS.updated]) {
   });
 }
 
+// Work orders (FMS-130, docs/work-orders.md): tasks, labour, vendors and approval on repair records.
+const workOrderService = new WorkOrderService({
+  orders: new WorkOrderRepository(pool),
+  records: maintenanceRepository,
+  vehicles: vehicleMaintenance,
+  users: userDirectory,
+  depots: depotRefs,
+  settings: {
+    approvalThresholdEtb: async () => (await settings.get<number>(APPROVAL_THRESHOLD_KEY)) ?? DEFAULT_APPROVAL_THRESHOLD_ETB,
+    labourRateEtb: async () => (await settings.get<number>(LABOUR_RATE_KEY)) ?? DEFAULT_LABOUR_RATE_ETB,
+  },
+  events: eventBus,
+});
+
 const maintenanceService = new MaintenanceService({
   records: maintenanceRepository,
   vehicles: vehicleMaintenance,
@@ -93,6 +111,7 @@ const maintenanceService = new MaintenanceService({
   depots: depotRefs,
   services: serviceProgramService,
   warranties: warrantyService,
+  workOrders: workOrderService,
   events: eventBus,
 });
 
@@ -196,6 +215,7 @@ router.use(predictionRouter(predictionService));
 router.use(predictionFeedbackRouter(predictionFeedbackService));
 router.use(serviceProgramRouter(serviceProgramService));
 router.use(warrantyRouter(warrantyService));
+router.use(workOrderRouter(workOrderService, maintenanceService));
 
 export const maintenanceModule: AppModule = {
   name: 'maintenance',

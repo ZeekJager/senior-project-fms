@@ -40,6 +40,7 @@ import {
 import { INVENTORY_EVENTS } from '../domain/inventory';
 import { recordProgramNeedsPreventive } from '../domain/service-program';
 import type { WarrantyClaimView } from '../domain/warranty';
+import { approvalRequired, backToRequested, totalIsItemised, type WorkOrderView } from '../domain/work-order';
 import { inventoryEvent } from './inventory.service';
 import type { FailureRepository, FailureRow } from '../infrastructure/failure.repository';
 import type { LockedPart, MaintenanceRepository, RecordRow, RecordWrite } from '../infrastructure/maintenance.repository';
@@ -73,7 +74,8 @@ export interface MaintenanceCreate {
   total_cost_cents: number;
   parts?: PartUse[];
   maintenance_type?: MaintenanceType;
-  status?: 'scheduled' | 'open' | 'in_progress';
+  /** `requested` (FMS-130): asked for, not started; it flags nothing until it is approved or scheduled. */
+  status?: 'requested' | 'scheduled' | 'open' | 'in_progress';
   priority?: MaintenancePriority;
   scheduled_at?: string | null;
   odometer_km?: number | null;
@@ -171,9 +173,18 @@ export interface MaintenanceServiceDeps {
     claimViews(db: Queryable, recordIds: readonly string[]): Promise<Map<string, WarrantyClaimView>>;
     repairClosed(client: PoolClient, caller: Caller, recordId: string, vehiclePublicId: string, outcome: { completedAt: Date } | 'cancelled'): Promise<void>;
   };
+  /** Work orders (FMS-130): each record's tasks, labour, vendor and approval, and the rules on its total. */
+  workOrders: {
+    details(db: Queryable, caller: Caller, rows: readonly RecordRow[]): Promise<Map<string, WorkOrderView>>;
+    itemised(db: Queryable, row: RecordRow): Promise<boolean>;
+    approvalNeeded(row: RecordRow, totalCostCents: number): Promise<{ needed: boolean; thresholdEtb: number }>;
+  };
   events: EventBus;
   now?: () => Date;
 }
+
+/** Statuses a record can still change in: open work and requests (FMS-130). */
+const EDITABLE: readonly MaintenanceStatus[] = ['requested', ...OPEN_STATUSES];
 
 /** A completion a few minutes "in the future" is clock skew between devices, not a mistake. */
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -215,7 +226,7 @@ export class MaintenanceService {
         sortBy: query.sort_by,
         sortOrder: query.sort_order,
       });
-      return { items: await this.views(client, rows), total };
+      return { items: await this.views(client, rows, caller), total };
     });
   }
 
@@ -224,7 +235,7 @@ export class MaintenanceService {
     return records.inTransaction(async (client) => {
       const row = await records.findByPublicId(client, recordId);
       if (!row || !(await this.deps.vehicles.findInScope(client, { id: row.vehicleId }, depotScope(caller.user)))) throw maintenanceNotFound();
-      return (await this.views(client, [row]))[0];
+      return (await this.views(client, [row], caller))[0];
     });
   }
 
@@ -301,8 +312,9 @@ export class MaintenanceService {
       const failed = await this.writeFailures(client, caller, vehicle, inserted, input.failures ?? [], 'failures');
       // A failure a warranty covers makes the repair claimable (FMS-133).
       await this.deps.warranties.refreshClaims(client, ctx, vehicle.id, [inserted.id]);
-      if (!vehicle.maintenanceFlag) await vehicles.setMaintenanceFlag(client, ctx, vehicle.id, true);
-      const record = (await this.views(client, [await records.findById(client, inserted.id)]))[0];
+      // A request is not work yet (FMS-130): the vehicle is flagged once it is approved or scheduled.
+      if (!vehicle.maintenanceFlag && status !== 'requested') await vehicles.setMaintenanceFlag(client, ctx, vehicle.id, true);
+      const record = (await this.views(client, [await records.findById(client, inserted.id)], caller))[0];
       if (status === 'in_progress') await vehicles.followWorkshop(client, caller, vehicle.id, true, record.id);
       if (record.total_cost_cents < record.parts_cost_cents) {
         warnings.push({ warning: 'COST_BELOW_PARTS', total_cost_cents: record.total_cost_cents, parts_cost_cents: record.parts_cost_cents });
@@ -341,7 +353,17 @@ export class MaintenanceService {
       const vehicle = row && (await vehicles.findInScope(client, { id: row.vehicleId }, depotScope(caller.user), true));
       if (!row || !vehicle) throw maintenanceNotFound();
       if (expectedVersion !== null && expectedVersion !== row.version) throw staleVersion();
-      if (!OPEN_STATUSES.includes(row.status)) throw maintenanceClosed(row.status);
+      if (!EDITABLE.includes(row.status)) throw maintenanceClosed(row.status);
+      // An itemised order's total and hours are its parts, labour entries and vendor (FMS-130).
+      if ((patch.total_cost_cents !== undefined || patch.labour_hours !== undefined) && (await this.deps.workOrders.itemised(client, row))) {
+        throw totalIsItemised(patch.total_cost_cents !== undefined ? 'total_cost_cents' : 'labour_hours');
+      }
+      const leavesRequest = row.status === 'requested' && (patch.status !== undefined || patch.completed_at !== undefined) && patch.status !== 'requested' && patch.status !== 'cancelled';
+      if (patch.status === 'requested' && row.status !== 'requested') throw backToRequested();
+      if (leavesRequest) {
+        const approval = await this.deps.workOrders.approvalNeeded(row, patch.total_cost_cents ?? row.totalCostCents);
+        if (approval.needed) throw approvalRequired(approval.thresholdEtb);
+      }
 
       const data = toColumns(patch);
       if (patch.service_program_id !== undefined) {
@@ -379,12 +401,14 @@ export class MaintenanceService {
       }
 
       const isClosing = data.status === 'completed' || data.status === 'cancelled';
+      // A request that becomes work flags the vehicle, as work opened directly does (FMS-130).
+      if (leavesRequest && !isClosing && !vehicle.maintenanceFlag) await vehicles.setMaintenanceFlag(client, ctx, row.vehicleId, true);
       let cleared = false;
       if (isClosing && vehicle.maintenanceFlag && !(await records.hasOtherOpen(client, row.vehicleId, row.id))) {
         await vehicles.setMaintenanceFlag(client, ctx, row.vehicleId, false);
         cleared = true;
       }
-      const view = (await this.views(client, [await records.findById(client, row.id)]))[0];
+      const view = (await this.views(client, [await records.findById(client, row.id)], caller))[0];
       if (data.status !== undefined && data.status !== row.status && (data.status === 'in_progress' || row.status === 'in_progress')) {
         await vehicles.followWorkshop(client, caller, row.vehicleId, await records.hasInProgress(client, row.vehicleId), view.id);
       }
@@ -570,8 +594,9 @@ export class MaintenanceService {
     });
   }
 
-  private async views(db: Queryable, rows: RecordRow[]): Promise<MaintenanceRecordView[]> {
+  private async views(db: Queryable, rows: RecordRow[], caller: Caller): Promise<MaintenanceRecordView[]> {
     if (rows.length === 0) return [];
+    const orders = await this.deps.workOrders.details(db, caller, rows);
     const lines = await this.deps.records.partLines(db, rows.map((r) => r.id));
     const failureRows = await this.deps.failures.forRecords(db, rows.map((r) => r.id));
     const failureViews = await this.failureViews(db, failureRows);
@@ -614,6 +639,7 @@ export class MaintenanceService {
         warranty_claim: claims.get(r.id) ?? null,
         parts,
         failures: failureViews.filter((_, i) => failureRows[i].recordId === r.id),
+        work_order: orders.get(r.id)!,
         version: r.version,
         created_at: r.createdAt,
         updated_at: r.updatedAt,
