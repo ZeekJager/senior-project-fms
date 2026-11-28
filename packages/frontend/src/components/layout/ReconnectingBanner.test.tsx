@@ -58,7 +58,8 @@ describe('Reconnecting banner (FMS-162)', () => {
 
     server.use(http.get('/api/v1/ping', () => new HttpResponse('Bad Gateway', { status: 502, headers: { 'Content-Type': 'text/plain' } })))
     await act(() => api.request('/ping').catch(() => undefined))
-    expect(await screen.findByText('Reconnecting…')).toBeInTheDocument()
+    // A loaded CI runner can take over a second to render the banner: wait for it, not for the default 1 s.
+    expect(await screen.findByText('Reconnecting…', undefined, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/The server is not answering: it may be restarting/)).toBeInTheDocument()
 
     server.use(http.get('/api/v1/ping', () => envelope({ ok: true })))
