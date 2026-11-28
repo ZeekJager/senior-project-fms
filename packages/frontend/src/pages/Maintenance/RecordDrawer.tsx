@@ -8,8 +8,11 @@ import { TYPE_LABELS, useCompleteRecord, useOpenWorkFor, useRecordFailures, type
 import { FailureFields } from './FailureFields'
 import { COMPONENT_LABELS, DETECTION_LABELS, MODE_LABELS, checkFailures, emptyFailure, type FailureDraft, type FailureInput } from './failures'
 import { WarrantyClaimBlock } from './WarrantyClaimBlock'
+import { WorkOrderSection } from './WorkOrderSection'
 
 const OPEN = ['scheduled', 'open', 'in_progress']
+/** Completed and cancelled work cannot change; a request (FMS-130) is not work yet, but not closed either. */
+const CLOSED = ['completed', 'cancelled']
 
 function when(iso: string | null): string {
   if (!iso) return '—'
@@ -100,7 +103,7 @@ export function RecordDrawer({
           record &&
           canWrite && (
             <div className="flex w-full justify-end gap-2">
-              {isOpen ? (
+              {record.status === 'requested' ? null : isOpen ? (
                 <Button leadingIcon={<CheckCircle2 className="h-4 w-4" />} onClick={askToComplete}>
                   Mark as complete
                 </Button>
@@ -119,7 +122,7 @@ export function RecordDrawer({
               <StatusBadge status={record.status} />
               {record.completed_at && <span className="text-sm text-ink-muted">Completed {when(record.completed_at)}</span>}
             </div>
-            {!isOpen && (
+            {CLOSED.includes(record.status) && (
               <p className="flex items-start gap-2 rounded-control border border-line bg-surface-muted px-3.5 py-3 text-sm text-ink-muted">
                 <Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 Completed records cannot be changed. To correct one, log a new record with a note.
@@ -171,6 +174,8 @@ export function RecordDrawer({
               </Block>
             )}
 
+            <WorkOrderSection record={record} canWrite={canWrite} />
+
             <dl className="grid grid-cols-2 gap-3">
               <Fact label="Labour">{record.labour_hours === null ? '—' : `${record.labour_hours} h`}</Fact>
               <Fact label="Odometer">{record.odometer_km === null ? '—' : `${record.odometer_km.toLocaleString()} km`}</Fact>
@@ -179,6 +184,7 @@ export function RecordDrawer({
               </Fact>
               <Fact label="Total cost">
                 <MoneyDisplay amountMinorUnits={record.total_cost_cents} className="text-left font-semibold" />
+                {record.work_order?.itemised && <span className="block text-xs font-normal text-ink-subtle">Parts + labour + vendor</span>}
               </Fact>
             </dl>
 

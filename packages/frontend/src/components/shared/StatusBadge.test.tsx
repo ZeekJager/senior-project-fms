@@ -20,6 +20,7 @@ describe('StatusBadge colour vocabulary', () => {
         "inactive": "grey",
         "maintenance": "orange",
         "open": "blue",
+        "requested": "orange",
         "retired": "grey",
         "scheduled": "grey",
       }

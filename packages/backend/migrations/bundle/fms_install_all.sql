@@ -4946,6 +4946,149 @@ ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'motor_inverter
 ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'charging_system';
 ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'thermal_management';
 
+-- ===== 087_work_orders.sql =====
+ALTER TYPE maintenance.maintenance_status ADD VALUE IF NOT EXISTS 'requested' BEFORE 'scheduled';
+
+DO $$ BEGIN
+    CREATE TYPE maintenance.vendor_type AS ENUM ('workshop', 'dealer', 'tyres', 'parts');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TYPE maintenance.work_order_task_status AS ENUM ('pending', 'in_progress', 'done', 'skipped');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS maintenance.vendors (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    name          VARCHAR(255) NOT NULL,
+    vendor_type   maintenance.vendor_type NOT NULL,
+    contact_name  VARCHAR(255),
+    phone         VARCHAR(50),
+    email         VARCHAR(255),
+    -- NULL: every depot may use it.
+    depot_id      BIGINT REFERENCES fleet.depots(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    notes         VARCHAR(2000),
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by    BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    version       INTEGER NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_vendors_name CHECK (btrim(name) <> '')
+);
+
+-- One active vendor of a name per depot (and one fleet-wide), whatever its case.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vendors_depot_name
+    ON maintenance.vendors (COALESCE(depot_id, 0), lower(name)) WHERE is_active;
+
+CREATE OR REPLACE TRIGGER trg_vendors_updated_at
+    BEFORE UPDATE ON maintenance.vendors
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+CREATE OR REPLACE TRIGGER trg_vendors_version
+    BEFORE UPDATE ON maintenance.vendors
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+ALTER TABLE maintenance.maintenance_records
+    ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS vendor_id BIGINT REFERENCES maintenance.vendors(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    ADD COLUMN IF NOT EXISTS vendor_invoice_ref VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS vendor_cost_cents INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS labour_cost_cents INTEGER NOT NULL DEFAULT 0;
+
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_records
+        -- An approver always has the time; the time stays if the approver's account is later removed.
+        ADD CONSTRAINT chk_maintenance_approval CHECK (approved_by IS NULL OR approved_at IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_records
+        ADD CONSTRAINT chk_maintenance_vendor_cost CHECK (vendor_cost_cents >= 0 AND labour_cost_cents >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_maintenance_records_vendor
+    ON maintenance.maintenance_records (vendor_id) WHERE vendor_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS maintenance.work_order_tasks (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    maintenance_record_id  BIGINT NOT NULL REFERENCES maintenance.maintenance_records(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    description            VARCHAR(500) NOT NULL,
+    component              maintenance.failure_component,
+    status                 maintenance.work_order_task_status NOT NULL DEFAULT 'pending',
+    estimated_hours        NUMERIC(6,2),
+    position               INTEGER NOT NULL DEFAULT 0,
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by             BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    version                INTEGER NOT NULL DEFAULT 0,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_work_order_tasks_description CHECK (btrim(description) <> ''),
+    CONSTRAINT chk_work_order_tasks_hours CHECK (estimated_hours IS NULL OR estimated_hours >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_order_tasks_record
+    ON maintenance.work_order_tasks (maintenance_record_id, position) WHERE is_active;
+
+CREATE OR REPLACE TRIGGER trg_work_order_tasks_updated_at
+    BEFORE UPDATE ON maintenance.work_order_tasks
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+CREATE OR REPLACE TRIGGER trg_work_order_tasks_version
+    BEFORE UPDATE ON maintenance.work_order_tasks
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+CREATE TABLE IF NOT EXISTS maintenance.labour_entries (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    maintenance_record_id  BIGINT NOT NULL REFERENCES maintenance.maintenance_records(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    task_id                BIGINT REFERENCES maintenance.work_order_tasks(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    technician_id          BIGINT NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    -- The Addis Ababa day the work was done.
+    work_date              DATE NOT NULL,
+    hours                  NUMERIC(5,2) NOT NULL,
+    rate_cents             INTEGER NOT NULL,
+    cost_cents             INTEGER GENERATED ALWAYS AS (round(hours * rate_cents)::integer) STORED,
+    notes                  VARCHAR(1000),
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by             BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_labour_entries_hours CHECK (hours > 0 AND hours <= 24),
+    CONSTRAINT chk_labour_entries_rate CHECK (rate_cents >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_labour_entries_record
+    ON maintenance.labour_entries (maintenance_record_id) WHERE is_active;
+-- Hours per technician per week (the workload report).
+CREATE INDEX IF NOT EXISTS idx_labour_entries_technician_day
+    ON maintenance.labour_entries (technician_id, work_date) WHERE is_active;
+
+CREATE OR REPLACE TRIGGER trg_labour_entries_updated_at
+    BEFORE UPDATE ON maintenance.labour_entries
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('maintenance:approve', 'Approve a requested work order above the approval threshold'),
+    ('vendor:write', 'Add, change and retire maintenance vendors'),
+    ('labour-rate:read', 'See labour rates and labour costs on work orders')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE (p.code IN ('maintenance:approve', 'vendor:write') AND r.name IN ('admin', 'fleet_manager', 'depot_admin'))
+    OR (p.code = 'labour-rate:read' AND r.name IN ('admin', 'finance_clerk', 'fleet_owner'))
+    OR (p.code = 'maintenance:read' AND r.name = 'finance_clerk')
+ON CONFLICT DO NOTHING;
+
+-- The approval threshold and the default labour rate (settings registry, FMS-157; declared in settings.ts).
+INSERT INTO settings.definitions (key, label, category, description, type, default_value, rules, is_system, storage) VALUES
+    ('work_order_approval_threshold_etb', 'Work order approval above', 'Maintenance',
+     'A requested work order costing more than this must be approved by a fleet manager or depot admin before it starts.',
+     'integer', '20000', '{"min": 0, "max": 10000000, "unit": "ETB"}', TRUE, 'settings'),
+    ('labour_rate_etb_per_hour', 'Labour rate', 'Maintenance',
+     'The workshop''s hourly labour rate, used for labour entries booked without a rate of their own.',
+     'integer', '300', '{"min": 0, "max": 100000, "unit": "ETB/hour"}', TRUE, 'settings')
+ON CONFLICT DO NOTHING;
+
 -- ===== 089_meter_source_trip.sql =====
 ALTER TYPE fleet.meter_source ADD VALUE IF NOT EXISTS 'trip';
 

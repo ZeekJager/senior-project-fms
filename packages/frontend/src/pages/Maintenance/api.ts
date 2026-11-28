@@ -9,7 +9,8 @@ import type { FailureEvent, FailureInput } from './failures'
 
 export const MAINTENANCE_TYPES = ['corrective', 'preventive', 'inspection', 'predictive', 'other'] as const
 export type MaintenanceType = (typeof MAINTENANCE_TYPES)[number]
-export type MaintenanceStatus = 'scheduled' | 'open' | 'in_progress' | 'completed' | 'cancelled'
+/** `requested` (FMS-130): asked for, not started; above the approval threshold it waits for an approver. */
+export type MaintenanceStatus = 'requested' | 'scheduled' | 'open' | 'in_progress' | 'completed' | 'cancelled'
 
 export const TYPE_LABELS: Record<MaintenanceType, string> = {
   corrective: 'Repair',
@@ -53,9 +54,54 @@ export interface MaintenanceRecord {
   parts: PartLine[]
   /** What failed (FMS-125), oldest first. */
   failures: FailureEvent[]
+  /** The work order (FMS-130): tasks, labour, vendor and approval. Missing on records from before it. */
+  work_order?: WorkOrder
   version: number
   created_at: string
   updated_at: string
+}
+
+export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'skipped'
+export type VendorType = 'workshop' | 'dealer' | 'tyres' | 'parts'
+
+export interface WorkOrderTask {
+  id: string
+  description: string
+  component: string | null
+  status: TaskStatus
+  estimated_hours: number | null
+  /** The labour booked to it. */
+  actual_hours: number
+  position: number
+  version: number
+}
+
+export interface LabourEntry {
+  id: string
+  task_id: string | null
+  technician_id: string
+  technician_name: string
+  /** The Addis Ababa day, YYYY-MM-DD. */
+  work_date: string
+  hours: number
+  /** Null unless the viewer holds labour-rate:read. */
+  rate_cents: number | null
+  cost_cents: number | null
+  notes: string | null
+}
+
+export interface WorkOrder {
+  /** Labour entries or a vendor: the total is parts + labour + vendor and cannot be typed. */
+  itemised: boolean
+  approval_required: boolean
+  approved_by: string | null
+  approved_at: string | null
+  vendor: { id: string; name: string; vendor_type: VendorType } | null
+  vendor_invoice_ref: string | null
+  vendor_cost_cents: number
+  labour_cost_cents: number | null
+  tasks: WorkOrderTask[]
+  labour: LabourEntry[]
 }
 
 export interface InventoryPart {
@@ -75,7 +121,8 @@ export type MaintenanceWarning =
   | { warning: 'COST_BELOW_PARTS'; total_cost_cents: number; parts_cost_cents: number }
 
 export interface RecordFilters {
-  view: 'open' | 'completed' | 'all'
+  /** requested (FMS-130): work orders asked for and not started. */
+  view: 'open' | 'requested' | 'completed' | 'all'
   vehicleId: string
   page: number
   /** By when the work happened instead of when it was entered: a vehicle's history (FMS-136). */
@@ -91,6 +138,7 @@ export function useRecords(filters: RecordFilters, enabled = true) {
       const q = new URLSearchParams({ page: String(filters.page), page_size: '25' })
       if (filters.view === 'open') q.set('open', 'true')
       if (filters.view === 'completed') q.set('status', 'completed')
+      if (filters.view === 'requested') q.set('status', 'requested')
       if (filters.vehicleId) q.set('vehicle_id', filters.vehicleId)
       if (filters.byWorkDate) q.set('sort_by', 'work_date')
       const { data, meta } = await api.requestEnvelope<MaintenanceRecord[]>(`/maintenance?${q}`)
@@ -107,12 +155,13 @@ export function useWorkshopCounts(canSeeInventory: boolean) {
     queries: [
       { queryKey: ['maintenance', 'count', 'open'], queryFn: () => total('/maintenance?open=true&page_size=1') },
       { queryKey: ['maintenance', 'count', 'completed'], queryFn: () => total('/maintenance?status=completed&page_size=1') },
+      { queryKey: ['maintenance', 'count', 'requested'], queryFn: () => total('/maintenance?status=requested&page_size=1') },
       { queryKey: ['vehicles', 'counts', 'flagged-workshop'], queryFn: () => total('/vehicles?maintenance_flag=true&page_size=1') },
       { queryKey: ['inventory', 'count', 'reorder'], queryFn: () => total('/inventory?below_reorder=true&page_size=1'), enabled: canSeeInventory },
     ],
   })
-  const [open, completed, flagged, reorder] = results.map((r) => r.data)
-  return { counts: { open, completed, flagged, reorder }, isLoading: results.slice(0, 3).some((r) => r.isPending) }
+  const [open, completed, requested, flagged, reorder] = results.map((r) => r.data)
+  return { counts: { open, completed, requested, flagged, reorder }, isLoading: results.slice(0, 4).some((r) => r.isPending) }
 }
 
 /** Vehicles waiting for the workshop: maintenance_flag = TRUE. */
@@ -256,5 +305,80 @@ export function useCompleteRecord() {
         headers: { 'If-Match': `"${version}"` },
       }),
     onSuccess: invalidate,
+  })
+}
+
+// ---- work orders (FMS-130, docs/work-orders.md): every write answers with the updated record
+
+/** Runs one work order write and refreshes the lists the record appears in. */
+function useOrderWrite<T>(request: (api: ReturnType<typeof useAuth>['api'], input: T) => Promise<MaintenanceRecord>) {
+  const { api } = useAuth()
+  const invalidate = useInvalidate()
+  return useMutation({ mutationFn: (input: T) => request(api, input), onSuccess: invalidate })
+}
+
+export function useApproveOrder() {
+  return useOrderWrite<{ id: string }>((api, { id }) => api.request<MaintenanceRecord>(`/maintenance-records/${id}/approve`, { method: 'POST' }))
+}
+
+/** Starts approved (or small enough) requested work: it becomes open work and flags the vehicle. */
+export function useStartRequest() {
+  return useOrderWrite<{ id: string; version: number }>((api, { id, version }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}`, { method: 'PATCH', json: { status: 'open' }, headers: { 'If-Match': `"${version}"` } }),
+  )
+}
+
+export function useAddTask() {
+  return useOrderWrite<{ id: string; description: string; estimated_hours: number | null }>((api, { id, ...task }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}/tasks`, { method: 'POST', json: task }),
+  )
+}
+
+export function useUpdateTask() {
+  return useOrderWrite<{ id: string; task: WorkOrderTask; status: TaskStatus }>((api, { id, task, status }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}/tasks/${task.id}`, { method: 'PATCH', json: { status }, headers: { 'If-Match': `"${task.version}"` } }),
+  )
+}
+
+export function useRemoveTask() {
+  return useOrderWrite<{ id: string; taskId: string }>((api, { id, taskId }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}/tasks/${taskId}`, { method: 'DELETE' }),
+  )
+}
+
+export interface LabourInput {
+  technician_id: string
+  task_id: string | null
+  work_date: string
+  hours: number
+  rate_cents?: number
+}
+
+export function useAddLabour() {
+  return useOrderWrite<{ id: string; entry: LabourInput }>((api, { id, entry }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}/labour`, { method: 'POST', json: entry }),
+  )
+}
+
+export function useRemoveLabour() {
+  return useOrderWrite<{ id: string; entryId: string }>((api, { id, entryId }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}/labour/${entryId}`, { method: 'DELETE' }),
+  )
+}
+
+export function useSetOrderVendor() {
+  return useOrderWrite<{ id: string; vendor_id: string | null; vendor_invoice_ref: string | null; vendor_cost_cents: number }>((api, { id, ...vendor }) =>
+    api.request<MaintenanceRecord>(`/maintenance-records/${id}/vendor`, { method: 'PUT', json: vendor }),
+  )
+}
+
+/** Who may book labour on this order: technicians of the vehicle's depot and fleet-wide staff. */
+export function useOrderTechnicians(recordId: string | null) {
+  const { api } = useAuth()
+  return useQuery({
+    queryKey: ['maintenance', 'technicians', recordId],
+    queryFn: () => api.request<{ id: string; full_name: string }[]>(`/maintenance-records/${recordId}/technicians`),
+    enabled: Boolean(recordId),
+    staleTime: 60_000,
   })
 }
