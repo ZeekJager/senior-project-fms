@@ -11,6 +11,7 @@ The engine subscribes to every event type that has a rule (consumer `alert.engin
 | Event | Alert type | Severity | Subject (depot from) | Same source (window) | Told first |
 |---|---|---|---|---|---|
 | `VehicleFaultDetected` (DVIR, FMS-36) | `vehicle_fault` | `severity` if given, else high | vehicle | the vehicle (60 min) | technician, depot admin |
+| `VehicleFaultDetected` (telematics, FMS-132, [diagnostic-codes.md](diagnostic-codes.md)): a diagnostic trouble code newly active; `VehicleFaultCleared` closes it by itself | `vehicle_fault` | the code's (dictionary, else its class) | vehicle | the vehicle and code: one alert per code until it clears | technician, depot admin |
 | `DocumentExpiring` (FMS-26) | `document_expiring` | red: high, amber: medium | the vehicle or driver owning it | the document and expiry date (31 days) | depot admin |
 | `LicenceExpiring` (FMS-26) | `licence_expiring` | red: high, amber: medium | driver (`depot_id`) | the driver and expiry date (31 days) | depot admin; the driver, their own (FMS-149) |
 | `WarrantyExpiring` (FMS-133, [warranties-recalls.md](warranties-recalls.md)) | `warranty_expiring` | red: high, amber: medium | vehicle | the warranty and end date (31 days) | technician, depot admin |
