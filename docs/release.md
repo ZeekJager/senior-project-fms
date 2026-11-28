@@ -1,6 +1,8 @@
 # UAT, release checklist and go-live
 
-Card: FMS-112 (SE-156). Script: `scripts/deploy/release-check.sh`. Builds on the deployment runbook ([deployment.md](deployment.md), FMS-164), backups ([backups.md](backups.md), FMS-108) and monitoring ([observability.md](observability.md), FMS-109).
+Card: FMS-112 (SE-156). Script: `scripts/deploy/release-check.sh`. Builds on the deployment runbook
+([deployment.md](deployment.md), FMS-164), backups ([backups.md](backups.md), FMS-108) and monitoring
+([observability.md](observability.md), FMS-109).
 
 A release happens on purpose and with sign-off. These are the steps:
 
@@ -13,15 +15,19 @@ A release happens on purpose and with sign-off. These are the steps:
 
 ### Where and with what
 
-UAT runs on the UAT environment (today <https://fms.zekarias.tech>), on the release candidate's images and the budget demo seed with EV ([seed-data.md](seed-data.md)):
+UAT runs on the UAT environment (today <https://fms.zekarias.tech>), on the release candidate's images and the budget
+demo seed with EV ([seed-data.md](seed-data.md)):
 
 ```sh
 docker compose --env-file prod.env run --rm --no-deps api-1 node dist/scripts/seed.js --size=budget --with-ev
 ```
 
-The seed prints one account per role, and they all share `FMS_SEED_PASSWORD`. Give each tester the account for their role, and never production credentials. Test on the devices people will use: drivers on an Android phone in Chrome, office roles on a laptop.
+The seed prints one account per role, and they all share `FMS_SEED_PASSWORD`. Give each tester the account for their
+role, and never production credentials. Test on the devices people will use: drivers on an Android phone in Chrome,
+office roles on a laptop.
 
-Each tester runs their role's script below, in order. Every step has an expected result. A step that does not give it is a **defect**. Record it with the step number, what happened, a screenshot and its severity:
+Each tester runs their role's script below, in order. Every step has an expected result. A step that does not give it is
+a **defect**. Record it with the step number, what happened, a screenshot and its severity:
 
 | Severity | Meaning | Release |
 |---|---|---|
@@ -42,6 +48,8 @@ Each tester runs their role's script below, in order. Every step has an expected
 | D7 | Turn on airplane mode, log fuel, turn it off | The badge counts it as waiting; it is sent on its own when the signal returns |
 | D8 | **END TRIP**, then the post-trip inspection | The trip is completed and the card shows the next one |
 | D9 | **My appeals**: appeal one speeding alert, with what happened and a photo, then **Send** | Listed under **My appeals**, waiting for a decision |
+| D10 | On D4's trip, type the dashboard odometer before **START TRIP** and again before **END TRIP**. Then try a reading below the vehicle's | Both accepted; the vehicle's odometer is the end reading. The low one is refused, saying it is below the vehicle's |
+| D11 | During D4's trip, **Navigate** | The next turn on top, the road to the destination on the map, time and distance left. Away from the road by more than 150 m, a new road within seconds |
 
 ### Dispatcher
 
@@ -65,6 +73,7 @@ Each tester runs their role's script below, in order. Every step has an expected
 | T4 | **Vehicle health**: open a vehicle with a high risk score | The score, its factors and the model version |
 | T5 | **Service programs** and **Recalls**: open a vehicle that is due | Its next service by km or date; open recalls listed |
 | T6 | Open a fault code alert, if the simulator ran with `--faults` | The code, what it means and the vehicle |
+| T7 | **Vehicle health**: open a vehicle, then **Schedule inspection** | The form opens with the vehicle's odometer filled in and says where it came from (D10's trip, a fuel log, a device) |
 
 ### Depot admin
 
@@ -129,9 +138,9 @@ One row per role. Sign once every step has passed, or every defect left is Minor
 
 | Role | Tester | Date | Steps passed | Open defects | Signature |
 |---|---|---|---|---|---|
-| Driver | | | /9 | | |
+| Driver | | | /11 | | |
 | Dispatcher | | | /7 | | |
-| Maintenance technician | | | /6 | | |
+| Maintenance technician | | | /7 | | |
 | Depot admin | | | /5 | | |
 | Fleet manager | | | /6 | | |
 | Finance clerk | | | /4 | | |
@@ -197,13 +206,16 @@ Record the decision:
 
 ## 4. Go-live
 
-1. **Tag** the release on `master` once CI is green, and push the tag: `git tag -a v1.0.0 -m "FMS 1.0.0" && git push origin v1.0.0`.
+1. **Tag** the release on `master` once CI is green, and push the tag:
+   `git tag -a v1.0.0 -m "FMS 1.0.0" && git push origin v1.0.0`.
 2. **Back up** the current database: Back up now, then note the running tag.
 3. **Build** the tag's images and set `FMS_IMAGE_TAG` ([deployment.md](deployment.md) phases 5 and 12).
 4. **Production data.**
    - A first release starts from an empty database, with no demo seed.
-   - The administrator creates the depots, then invites each person with their role and depot. Vehicles and drivers follow.
-   - If the server ran UAT on demo data, reset it first: stop the stack, remove the `postgres_data` volume, and start again.
+   - The administrator creates the depots, then invites each person with their role and depot. Vehicles and drivers
+     follow.
+   - If the server ran UAT on demo data, reset it first: stop the stack, remove the `postgres_data` volume, and start
+     again.
 5. **Start:** `docker compose --env-file prod.env up -d --wait`.
 6. **Verify:** `sh scripts/deploy/release-check.sh` shows no FAIL, then the golden path by hand (deployment phase 10).
 7. **Watch** the first hour: System health, the error rate and alerts. A Blocker means a rollback (phase 12).
@@ -211,7 +223,9 @@ Record the decision:
 
 ## Tested
 
-- `scripts/deploy/release-check.sh` was run against the UAT stack on fms.zekarias.tech with `--allow-demo` (27 November 2026). It passed the secrets, containers, migrations, backup and health checks. It failed, correctly, on:
+- `scripts/deploy/release-check.sh` was run against the UAT stack on fms.zekarias.tech with `--allow-demo`
+  (27 November 2026). It passed the secrets, containers, migrations, backup and health checks. It failed, correctly,
+  on:
   - no release tag, and an image tag that is not the checkout's;
   - 337 demo accounts and no named administrator;
   - no restore drill yet;
@@ -219,4 +233,5 @@ Record the decision:
   - TLS 1.1 still accepted.
 
   All of these must be fixed before go-live.
-- `packages/backend/scripts/release-check.test.ts` checks that placeholder, short and missing secrets fail, and that no secret is printed.
+- `packages/backend/scripts/release-check.test.ts` checks that placeholder, short and missing secrets fail, and that
+  no secret is printed.
