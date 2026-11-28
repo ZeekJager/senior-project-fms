@@ -13,7 +13,7 @@ import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { EvFleetPage } from '@/pages/EvFleet'
 import { AppealsPage } from '@/pages/Appeals'
-import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFeedbackItem, DriverFeedbackList, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNewAppeal, DriverScore } from '@/pages/Driver'
+import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFeedbackItem, DriverFeedbackList, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNavigate, DriverNewAppeal, DriverScore } from '@/pages/Driver'
 import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
@@ -299,6 +299,9 @@ export const portals: Portal[] = [
       { path: '/driver/fuel', element: <DriverFuel />, permission: 'fuel:write', nav: { label: 'Fuel', icon: Fuel } },
       // S-13 (FMS-38): an incident, reported from wherever the driver is, through the offline queue.
       { path: '/driver/incident', element: <DriverIncident />, permission: 'incident:write', nav: { label: 'Incident', icon: Siren } },
+      // FMS-166: live navigation to the trip's stops and destination on a full-screen map. Opened from the trip on My
+      // day, not a tab.
+      { path: '/driver/navigate', element: <DriverNavigate />, permission: 'trip:execute' },
       // FMS-146: the driver's own monthly score and its parts; never another driver's, never a ranking. Opened from My
       // day, not a tab: the bottom bar keeps to the day's work.
       { path: '/driver/score', element: <DriverScore />, permission: 'trip:execute' },

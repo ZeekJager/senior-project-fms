@@ -155,6 +155,7 @@ function harness(options: Options = {}) {
     routeId: async () => null,
     insert: async () => ({ id: '1' }),
     insertStop: async () => ({ id: '1' }),
+    etaTrip: async () => null,
   };
 
   const service = new TripService({
