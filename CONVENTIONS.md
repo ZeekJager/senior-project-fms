@@ -103,14 +103,14 @@ One PostgreSQL schema per module. Tables are created only by that module's migra
 | `trip` | trip | routes, trips, trip_stops |
 | `privacy` | platform (any module may call it) | functions only (`encrypt_text`, `decrypt_text`, `blind_index`; FMS-104, migration 063); no tables. The `privacy` module (a person's data export) owns no schema |
 | `fuel` | fuel | fuel_logs, fuel_anomalies |
-| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions (scored nightly, FMS-55), inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039) |
+| `maintenance` | maintenance | maintenance_records, maintenance_parts, maintenance_predictions (scored nightly, FMS-55), inventory_parts, inventory_movements, failure_events, ml_models (the model registry, migration 039), vendors, work_order_tasks, labour_entries (work orders, migration 087) |
 | `alert` | alert | alerts, alert_acknowledgements, incident_reports, notifications |
 | `ev` | ev | charging_stations, charging_sessions, ev_battery_logs |
 | `integration` | integration | external_providers, gps_devices, fuel_card_transactions, sync_logs |
 | `analytics` | analytics | analytics_cache and read-only views |
 | `audit` | audit | audit_logs |
 | `backup` | backup | backups, restore_drills (FMS-144, migration 056) |
-| `tracking` | integration | gps_pings (default partition included), telemetry_flags, vehicle_current_location, rule_thresholds, geofences (FMS-90, migration 060). `trip` reads positions through the integration module's `index.ts` |
+| `tracking` | integration | gps_pings (default partition included), telemetry_flags, vehicle_current_location, rule_thresholds, geofences (FMS-90, migration 060), diagnostic_codes and diagnostic_code_dictionary (FMS-132, migration 088). `trip` reads positions through the integration module's `index.ts` |
 | `document` | fleet | documents |
 | `settings` | settings | settings (values an administrator changed from their defaults, migration 052, FMS-80). Other modules read them through its `index.ts` |
 | `system` | system | health_samples, request_rollups (system health, FMS-143, migration 059). Failed job runs are read through `src/shared/jobs/job-runs.ts`, never from `jobs` directly |
@@ -198,7 +198,8 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `RouteCreated`, `RouteUpdated` | trip (FMS-83) | route | `route_id`, `depot_id`; `name`, `distance_km` on create; `changed_fields`, `is_active` on update (retiring is an update) | |
 | `TripCreated`, `TripUpdated`, `TripCancelled` | trip (FMS-30) | trip | `trip_id`; `route_id`, `depot_id` and the schedule on create; `changed_fields` on a reschedule; `previous_status`, `driver_id`, `vehicle_id` on cancel | `fleet.vehicle-cache` (`TripCancelled`) |
 | `FuelLogged` | fuel (FMS-39) | vehicle | `fuel_log_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_type`, `quantity_ml`, `total_cost_cents`, `odometer_km`, `previous_odometer_km` (the reading before this one in time), `recorded_at` (when the fill-up happened: `fueled_at`, FMS-115), `created_at` (when it was received) | |
-| `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration later (telematics) | vehicle | `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set`; optional `severity` | `fleet.vehicle-cache`, `alert.engine` |
+| `VehicleFaultDetected` | fleet (FMS-36, DVIR); integration (FMS-132, a diagnostic trouble code from telematics, [diagnostic-codes.md](docs/diagnostic-codes.md)) | vehicle | DVIR: `source` (`dvir`), `dvir_report_id`, `vehicle_id`, `driver_id`, `trip_id`, `inspection_type`, `defect_count`, `defects` (names), `maintenance_flag_set`; optional `severity`. Telematics: `source` (`telematics`), `diagnostic_code_id`, `vehicle_id`, `depot_id`, `provider`, `protocol` (`obd2`, `j1939`), `code`, `spn`, `fmi`, `description`, `severity`, `observed_at`; once per code until it clears | `fleet.vehicle-cache`, `alert.engine` |
+| `VehicleFaultCleared` | integration (FMS-132): the provider cleared a code | vehicle | `source` (`telematics`), `diagnostic_code_id`, `vehicle_id`, `depot_id`, `protocol`, `code`, `cleared_at` | `alert.resolver` (closes the code's alert) |
 | `TripStarted`, `TripCompleted` | trip (FMS-32) | trip | `trip_id`, `driver_id`, `vehicle_id`, `route_id`, `depot_id`, `scheduled_start`, `actual_start`; `actual_end`, `duration_seconds` on complete | `fleet.vehicle-cache` |
 | `TripAssigned` | trip (FMS-31) | trip | `trip_id`, `driver_id`, `vehicle_id`, `previous_driver_id`, `previous_vehicle_id`, `route_id`, `depot_id`, the schedule | `fleet.vehicle-cache` |
 | `UserCreated`, `UserRoleChanged`, `UserDeactivated`, `UserAccountChanged` | auth (FMS-78) | user | `user_id`; `roles`, `added`, `removed`, `status`, `sessions_revoked` | `fleet.driver-accounts` (`UserAccountChanged`) |
@@ -221,7 +222,7 @@ eventBus.subscribe('MaintenanceRecordOpened', 'fleet.vehicle-cache', async (even
 | `FuelAnomalyDetected` | fuel (FMS-41, the monthly reconciliation): a vehicle's month of fuel more than the `fuel_variance_threshold_pct` setting (FMS-80) above or below what its trips needed | vehicle | `anomaly_id`, `vehicle_id`, `driver_id`, `trip_id`, `fuel_log_id` (all three null for a month), `anomaly_type` (`consumption_above_expected`, `consumption_below_expected`), `severity` (`medium`, `high`), `period_from`, `period_to`, `distance_km`, `expected_ml`, `actual_ml`, `deviation_pct`. One per vehicle and month (a fixed id). The per-fill-up rules (FMS-82) will publish it for one fill-up, with its ids | `alert.engine` |
 | `IncidentReported` | alert (FMS-38, incident reports) | incident | `incident_id`, `depot_id`, `vehicle_id`, `driver_id`, `trip_id`, `severity`, `incident_type`, `status`, `latitude`, `longitude`, `occurred_at`, `maintenance_flag_set`, `reported_by_driver_id` (the reporter's driver profile when a driver reported it); never the description | real-time gateway (`incident.created`), `alert.engine` (critical only), `fleet.vehicle-cache` |
 | `IncidentUpdated` | alert (FMS-89, handling an incident) | incident | `incident_id`, `depot_id`, `vehicle_id`, `trip_id`, `severity`, `incident_type`, `status`, `previous_status`, `assigned_to` (a user's public id), `resolved_at`, `updated_at`, `changes` (which of `status`, `assigned_to`, `notes`), `reported_by_driver_id`; never the notes | real-time gateway (`incident.updated`), `command-center.overview-cache` |
-| `IntegrationWebhookReceived` | integration (FMS-85) | provider | `sync_log_id`, `provider_id`, `provider_code`, `provider_type`, `event_id`, `kind`, `occurred_at`. The data is not in the event: read it with `webhookDeliveries.find(tx, sync_log_id)`. One event per provider event id (a fixed id) | `integration.telematics-pings` (telematics `positions`, FMS-88); fuel card and EV later |
+| `IntegrationWebhookReceived` | integration (FMS-85) | provider | `sync_log_id`, `provider_id`, `provider_code`, `provider_type`, `event_id`, `kind`, `occurred_at`. The data is not in the event: read it with `webhookDeliveries.find(tx, sync_log_id)`. One event per provider event id (a fixed id) | `integration.telematics-pings` (telematics `positions`, FMS-88), `integration.telematics-diagnostics` (telematics `diagnostics`, FMS-132); fuel card and EV later |
 
 Status, failure and repair events and fleet's downtime: the `fleet.downtime` projection (FMS-131, docs/downtime.md) takes `VehicleStatusChanged`, `FailureRecorded`, `MaintenanceRecordOpened`, `MaintenanceRecordUpdated` and `MaintenanceRecordCompleted`, needs only `vehicle_id` (a public id), and re-derives that vehicle's downtime periods from its status history and its repairs and failures. Every write to `fleet.vehicle_status_history`, a failure or a repair's type, status or completion must publish one of them in its transaction; a write that skips them is repaired by the daily `downtime-sync`, which logs it as drift.
 
@@ -229,7 +230,6 @@ Trip events and fleet's availability: the `fleet.trip-assignments` projection (F
 
 Planned, named here so modules agree on them. The alert engine (FMS-92, docs/alerts.md) already has a rule for each, reading these payload fields (public ids), so an alert follows as soon as the event is published:
 
-- `VehicleFaultDetected` (integration, from telematics; the DVIR one is above).
 - `BatteryThresholdExceeded` (ev, FMS-96, published since FMS-98): `vehicle_id`, `trip_id`, `metric` (`state_of_charge`, `battery_health`, `range`), `value`, `threshold`, `severity`, `battery_log_id`, `recorded_at`.
 - `BatterySpecSet` (ev, FMS-98): `vehicle_id`, `usable_capacity_kwh`, `previous_kwh`.
 

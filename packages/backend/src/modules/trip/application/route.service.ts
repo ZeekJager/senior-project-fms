@@ -90,6 +90,8 @@ export interface FleetRefs {
     ): Promise<{ id: string; publicId: string; status: string; maintenanceFlag: boolean; payloadCapacityKg: number | null } | null>;
     /** Payload capacities in kg by internal id, for the job load (FMS-153); null where none is recorded. */
     payloadCapacities(db: Queryable, ids: readonly string[]): Promise<Map<string, number | null>>;
+    /** The vehicle's current odometer in km (FMS-165), by internal id; null for no such vehicle. */
+    odometer(db: Queryable, id: string): Promise<number | null>;
   };
   drivers: {
     idOf(db: Queryable, publicId: string): Promise<string | null>;

@@ -228,6 +228,32 @@ describe('Vehicle health (S-19)', () => {
     )
   })
 
+  it("loads the vehicle's odometer into the inspection, saying where it came from; a number typed by hand stays (FMS-165)", async () => {
+    const risky = vehicle(60)
+    serveHealth([risky])
+    server.use(
+      http.get(`/api/v1/vehicles/${risky.id}`, () => envelope({ ...risky, odometer_km: 53_290 })),
+      http.get(`/api/v1/vehicles/${risky.id}/meter-readings`, () =>
+        envelope([{ id: 'm1', meter: 'odometer', value: 53_290, source: 'trip', source_ref: 't1:end', recorded_at: '2026-11-27T14:00:00Z', suspect: false, created_at: '2026-11-27T14:00:00Z' }]),
+      ),
+    )
+    const user = userEvent.setup()
+    signedInAs(technician)
+    renderApp('/predictive-maintenance')
+
+    await user.click(await screen.findByText(risky.registration_number))
+    await user.click(await within(await screen.findByRole('dialog')).findByRole('button', { name: 'Schedule inspection' }))
+    const form = await screen.findByRole('dialog', { name: 'Schedule an inspection' })
+    const odometer = within(form).getByRole('textbox', { name: /Odometer/ })
+    await waitFor(() => expect(odometer).toHaveValue('53290'))
+    expect(within(form).getByText(/Loaded from the vehicle: 53,290 km, from the driver at a trip on 27 Nov 2026/)).toBeInTheDocument()
+
+    await user.clear(odometer)
+    await user.type(odometer, '53400')
+    expect(odometer).toHaveValue('53400')
+    expect(within(form).getByText(/The vehicle’s last reading is 53,290 km/)).toBeInTheDocument()
+  })
+
   describe('what the inspection found (FMS-128)', () => {
     const reader = currentUser(['fleet_owner'], ['vehicle:read', 'depot:read', 'prediction:read', 'maintenance:read'])
     const FAILURES = [

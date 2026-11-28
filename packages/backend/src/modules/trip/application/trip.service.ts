@@ -27,6 +27,7 @@ import {
   stopNotFound,
   tripClosed,
   tripNotFound,
+  tripOdometerBelow,
   tripNotUnderWay,
   type TripLiveState,
   type TripStopView,
@@ -60,6 +61,9 @@ import { assignRequired, canMove, dispatchOnly, invalidTripTransition, scheduleR
 import type { Caller, FleetRefs, MaintenanceRefs } from './route.service';
 import type { Coordinates, RouteStop } from '../domain/route';
 import type { RouteRepository } from '../infrastructure/route.repository';
+import { RoutingError, type RoadPlanner } from '../infrastructure/osrm.planner';
+import { metresBetween } from '../domain/eta';
+import { bearingDegrees, instruction, remainingWaypoints, type NoRoadReason, type NavigationWaypoint } from '../domain/navigation';
 import {
   MAX_SHIFTED,
   RESCHEDULABLE_STATUSES,
@@ -206,7 +210,10 @@ export interface TripServiceDeps {
     | 'clashing'
     | 'lockStop'
     | 'completeStop'
+    | 'etaTrip'
   >;
+  /** The routing engine (FMS-84), for driver navigation (FMS-166). Absent or null: navigation shows the straight line. */
+  roads?: () => RoadPlanner | null;
   /**
    * The vehicles' newest positions (internal vehicle ids), for GET /trips/{id}/live (FMS-95): the integration module's,
    * connected by src/modules/index.ts (it imports trip). Null when not connected: the live state has no position.
@@ -792,12 +799,17 @@ export class TripService {
    * trip of the driver or vehicle still under way is a warning, not a block
    * (FMS-31 overrun rule), and so is the driver's attendance.
    */
-  async start(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+  async start(caller: Caller, tripId: string, expectedVersion: number | null = null, input: OdometerInput = {}): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
     return this.move(caller, tripId, 'en_route', expectedVersion, async (client, row) => {
       const now = this.now();
       const fleet = this.deps.fleet();
       const vehicleId = row.vehicleId!;
       const driverId = row.driverId!;
+      // FMS-165: the odometer at the start, typed (never below the vehicle's reading) or the vehicle's own.
+      const current = await fleet.vehicles.odometer(client, vehicleId);
+      const typed = input.odometer_km ?? null;
+      if (typed !== null && current !== null && typed < current) throw tripOdometerBelow(current, 'below_vehicle_odometer');
+      const startOdometer = typed ?? current;
       const answer = await fleet.availability.check(client, {
         vehicleIds: [vehicleId],
         driverIds: [driverId],
@@ -815,9 +827,14 @@ export class TripService {
         ...(await this.overruns(client, 'vehicle_id', vehicleId, row.id, now)),
       ];
       return {
-        data: { status: 'en_route', actual_start: now },
+        data: { status: 'en_route', actual_start: now, start_odometer_km: startOdometer },
         event: TRIP_EVENTS.started,
-        payload: (view) => ({ ...lifecyclePayload(view), actual_start: now.toISOString() }),
+        payload: (view) => ({
+          ...lifecyclePayload(view),
+          actual_start: now.toISOString(),
+          start_odometer_km: startOdometer,
+          start_odometer_typed: typed !== null,
+        }),
         warnings,
       };
     });
@@ -829,8 +846,15 @@ export class TripService {
    * the actual distance measured from the positions stored during the trip
    * (FMS-145), all in the one audited change.
    */
-  async end(caller: Caller, tripId: string, expectedVersion: number | null = null): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
+  async end(caller: Caller, tripId: string, expectedVersion: number | null = null, input: OdometerInput = {}): Promise<{ trip: TripView; warnings: AssignmentWarning[] }> {
     return this.move(caller, tripId, 'completed', expectedVersion, async (client, row) => {
+      // FMS-165: a typed end reading is never below the start's, nor below the vehicle's (a fill-up on the way).
+      const typed = input.odometer_km ?? null;
+      if (typed !== null) {
+        if (row.startOdometerKm !== null && typed < row.startOdometerKm) throw tripOdometerBelow(row.startOdometerKm, 'below_start_odometer');
+        const current = row.vehicleId ? await this.deps.fleet().vehicles.odometer(client, row.vehicleId) : null;
+        if (current !== null && typed < current) throw tripOdometerBelow(current, 'below_vehicle_odometer');
+      }
       const startedAt = row.actualStart;
       const end = startedAt && this.now() < startedAt ? startedAt : this.now();
       const duration = startedAt ? Math.round((end.getTime() - startedAt.getTime()) / 1000) : undefined;
@@ -841,6 +865,7 @@ export class TripService {
           actual_end: end,
           ...(duration !== undefined ? { actual_duration_seconds: duration } : {}),
           ...(distance ? distanceWrite(distance, this.now()) : {}),
+          ...(typed !== null ? { end_odometer_km: typed } : {}),
         },
         event: TRIP_EVENTS.completed,
         payload: (view) => ({
@@ -850,6 +875,8 @@ export class TripService {
           duration_seconds: duration ?? null,
           actual_distance_km: view.actual_distance_km,
           actual_distance_source: view.actual_distance_source,
+          start_odometer_km: view.start_odometer_km,
+          end_odometer_km: view.end_odometer_km,
         }),
         warnings: [],
       };
@@ -938,6 +965,91 @@ export class TripService {
         as_of: now,
       };
     });
+  }
+
+  /**
+   * GET /trips/{id}/navigation (FMS-166, docs/driver-navigation.md): for the driver of a trip under way, the waypoints
+   * left (stops not completed, then the destination), and the road from `from` (the phone's position; else the
+   * vehicle's newest) through them with every turn. With no road (the engine not set up or down, no road found, no
+   * position), the straight line to the next waypoint instead. Visibility as GET /trips/{id}: a driver's own trips.
+   */
+  async navigation(caller: Caller, tripId: string, from: Coordinates | null): Promise<TripNavigation> {
+    const { trips } = this.deps;
+    const { view, target, position } = await trips.inTransaction(async (client) => {
+      const row = await trips.findVisible(client, tripId, await this.visibility(client, caller));
+      if (!row) throw tripNotFound();
+      const [found] = await this.views(client, [row]);
+      const lookup = !from && row.vehicleId ? (this.deps.positions?.() ?? null) : null;
+      return {
+        view: found,
+        target: await trips.etaTrip(client, row.publicId),
+        position: lookup ? await lookup(client, row.vehicleId!) : null,
+      };
+    });
+    const destination = target?.destination ? { ...target.destination, name: target.destinationName ?? view.destination ?? 'Destination' } : null;
+    const waypoints = remainingWaypoints(view.stops, destination);
+    const origin = from
+      ? { lat: from.latitude, lng: from.longitude, source: 'phone' as const }
+      : position
+        ? { lat: position.lat, lng: position.lng, source: 'vehicle' as const }
+        : null;
+
+    const now = this.now();
+    let road: TripNavigation['road'] = null;
+    let noRoad: NoRoadReason | null = null;
+    const planner = this.deps.roads?.() ?? null;
+    if (!origin) noRoad = 'no_origin';
+    else if (waypoints.length === 0) noRoad = 'no_waypoints';
+    else if (!planner) noRoad = 'routing_not_configured';
+    else {
+      try {
+        const points = [{ latitude: origin.lat, longitude: origin.lng }, ...waypoints.map((w) => ({ latitude: w.lat, longitude: w.lng }))];
+        const found = await planner.directions(points, caller.correlationId);
+        if (!found) noRoad = 'no_road';
+        else {
+          // Each arrive step reaches the next waypoint, in order.
+          let arrivals = 0;
+          road = {
+            distance_km: found.distanceKm,
+            duration_seconds: found.durationSeconds,
+            arrival_at: new Date(now.getTime() + found.durationSeconds * 1000),
+            geometry: found.geometry,
+            steps: found.steps.map((s) => ({
+              instruction: instruction(s, s.type === 'arrive' ? waypoints.at(arrivals++)?.name : undefined),
+              type: s.type,
+              modifier: s.modifier,
+              road: s.road || null,
+              distance_m: s.distanceM,
+              duration_s: s.durationS,
+              lat: s.latitude,
+              lng: s.longitude,
+            })),
+          };
+        }
+      } catch (err) {
+        if (!(err instanceof RoutingError)) throw err;
+        noRoad = 'routing_unavailable';
+      }
+    }
+    const next = waypoints.at(0);
+    const here = origin ? { latitude: origin.lat, longitude: origin.lng } : null;
+    return {
+      trip_id: view.id,
+      status: view.status,
+      origin,
+      waypoints,
+      destination: waypoints.find((w) => w.kind === 'destination') ?? null,
+      road,
+      no_road: noRoad,
+      straight_line:
+        here && next
+          ? {
+              distance_km: Math.round(metresBetween(here, { latitude: next.lat, longitude: next.lng })) / 1000,
+              bearing_deg: bearingDegrees(here, { latitude: next.lat, longitude: next.lng }),
+            }
+          : null,
+      as_of: now,
+    };
   }
 
   /**
@@ -1192,6 +1304,8 @@ export class TripService {
       actual_end: r.actualEnd,
       actual_distance_km: r.actualDistanceKm,
       actual_distance_source: r.actualDistanceSource,
+      start_odometer_km: r.startOdometerKm,
+      end_odometer_km: r.endOdometerKm,
       cargo_weight_kg: r.cargoWeightKg,
       cargo_kind: r.cargoKind,
       job_load: load.level,
@@ -1217,6 +1331,32 @@ export class TripService {
 }
 
 /** A trip event, ordered per trip in the outbox (FMS-73). */
+/** FMS-165: what the driver may type when starting or ending a trip. */
+export interface OdometerInput {
+  odometer_km?: number;
+}
+
+/** GET /trips/{id}/navigation (FMS-166). */
+export interface TripNavigation {
+  trip_id: string;
+  status: TripView['status'];
+  /** Where the road starts: the phone's position sent in `from`, else the vehicle's newest; null with neither. */
+  origin: { lat: number; lng: number; source: 'phone' | 'vehicle' } | null;
+  waypoints: NavigationWaypoint[];
+  destination: NavigationWaypoint | null;
+  road: {
+    distance_km: number;
+    duration_seconds: number;
+    arrival_at: Date;
+    geometry: { type: 'LineString'; coordinates: [number, number][] };
+    steps: { instruction: string; type: string; modifier: string | null; road: string | null; distance_m: number; duration_s: number; lat: number; lng: number }[];
+  } | null;
+  no_road: NoRoadReason | null;
+  /** To the next waypoint, as the crow flies: what the screen points at without a road. */
+  straight_line: { distance_km: number; bearing_deg: number } | null;
+  as_of: Date;
+}
+
 /** What TripStarted and TripCompleted say about the trip: who, with what, from where. */
 function lifecyclePayload(view: TripView): Record<string, unknown> {
   return { driver_id: view.driver_id, vehicle_id: view.vehicle_id, route_id: view.route_id, depot_id: view.depot_id, scheduled_start: view.scheduled_start?.toISOString() ?? null };

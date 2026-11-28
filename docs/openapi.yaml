@@ -697,7 +697,9 @@ paths:
         The assignment rules are read again: a vehicle flagged, in the workshop, out of service, retired or
         in another depot since, or an expired licence, refuse with the assignment's 409s. Another trip of the
         driver or vehicle still under way (PREVIOUS_TRIP_OVERRUN) and the driver's attendance
-        (DRIVER_ATTENDANCE) are warnings. Publishes TripStarted.
+        (DRIVER_ATTENDANCE) are warnings. Publishes TripStarted. FMS-165: the odometer the driver reads at the
+        start, optional; below the vehicle's odometer it is 409 CONFLICT_ODOMETER_REGRESSION (reason
+        below_vehicle_odometer). Kept as start_odometer_km, the vehicle's own reading when none is typed.
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IfMatch'
@@ -706,7 +708,7 @@ paths:
         required: false
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+            schema: { $ref: '#/components/schemas/TripOdometerInput' }
       responses:
         '200': { $ref: '#/components/responses/TripMoved' }
         '400':
@@ -724,7 +726,10 @@ paths:
       summary: End a trip (FMS-32)
       description: >
         en_route → completed, actual_end now (never before actual_start); the duration is stored. Needs
-        trip:execute; a driver only on their own trips. Publishes TripCompleted.
+        trip:execute; a driver only on their own trips. Publishes TripCompleted. FMS-165: the odometer the
+        driver reads at the end, optional; below the start's (below_start_odometer) or the vehicle's
+        (below_vehicle_odometer) it is 409 CONFLICT_ODOMETER_REGRESSION. With none typed, the start reading plus
+        a GPS-measured distance becomes the vehicle's estimated reading (docs/meter-readings.md).
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IfMatch'
@@ -733,7 +738,7 @@ paths:
         required: false
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+            schema: { $ref: '#/components/schemas/TripOdometerInput' }
       responses:
         '200': { $ref: '#/components/responses/TripMoved' }
         '400':
@@ -743,6 +748,42 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TripMoveRefused' }
+
+  /trips/{trip_id}/navigation:
+    get:
+      tags: [Trips]
+      operationId: getTripNavigation
+      summary: Live navigation to the next stops and the destination (FMS-166)
+      description: >
+        Needs trip:execute; a driver only their own trips, dispatch in their depot scope (another's trip, or an id that
+        is not a UUID, is a 404). The waypoints left (stops not completed or skipped, in order, then the route's
+        destination) and the road from `from` (the phone's position; without it the vehicle's newest stored
+        position) through them, from the routing engine with every turn in plain words. With no road, `no_road` says
+        why and `straight_line` gives the distance and compass bearing to the next waypoint. Not cached: the driver
+        asks again as they move. docs/driver-navigation.md.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - name: from
+          in: query
+          description: 'Where the driver is, `lat,lng` in decimal degrees (e.g. 8.9806,38.7578).'
+          schema: { type: string, pattern: '^-?\d{1,2}(\.\d+)?,-?\d{1,3}(\.\d+)?$' }
+      responses:
+        '200':
+          description: The waypoints left and the road there.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/TripNavigation' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a `from` that is not lat,lng).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /trips/{trip_id}/live:
     get:
@@ -2013,7 +2054,9 @@ paths:
         "<X-FMS-Timestamp>.<raw body>" with the provider's secret (INTEGRATION_<CODE>_WEBHOOK_SECRET), sent as
         "sha256=<hex>". A timestamp more than 5 minutes from the server clock is refused (a replay). A redelivery
         of the same event id is answered 202 with duplicate true, and nothing is stored twice. The delivery is
-        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer.
+        stored as an inbound sync log and announced as IntegrationWebhookReceived for its consumer. A provider
+        without an adapter of its own speaks the FMS telematics format (TelematicsDelivery): positions, diagnostic
+        trouble codes (FMS-132, docs/diagnostic-codes.md), or both.
       security:
         - webhookSignature: []
       parameters:
@@ -2023,11 +2066,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, description: "The provider's own format, read by its adapter." }
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/TelematicsDelivery'
+                - { type: object, description: "A provider's own format, read by the adapter registered for its code." }
       responses:
         '202': { $ref: '#/components/responses/WebhookAccepted' }
         '400':
-          description: VALIDATION_FAILED (the adapter cannot read the body; details name the field). Recorded as a failed sync log.
+          description: >
+            VALIDATION_FAILED (the adapter cannot read the body; details name the field: `positions` required when
+            neither list is given, `diagnostics.0.code` for a code that is not OBD-II). Recorded as a failed sync log.
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/WebhookRefused' }
         '404':
@@ -2291,6 +2339,40 @@ paths:
                   meta: { $ref: '#/components/schemas/Meta' }
         '400':
           description: VALIDATION_FAILED (an unknown flag type, a time without offset, limit out of range, to before from, or an unknown query parameter).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vehicles/{vehicle_id}/diagnostic-codes:
+    get:
+      tags: [Tracking]
+      operationId: listVehicleDiagnosticCodes
+      summary: A vehicle's diagnostic trouble codes (FMS-132)
+      description: >
+        The engine fault codes the vehicle's telematics reported (docs/diagnostic-codes.md): active ones first,
+        then by when they were last seen. A code is one row while it is active (its repeats counted in
+        occurrences) and closes when the provider clears it; reported again later, it is a new row. Needs
+        tracking:read, in the caller's depot scope; a vehicle outside it, or an id that is not a UUID, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/VehicleId'
+        - { name: status, in: query, schema: { type: string, enum: [active, cleared, all], default: all } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: The codes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiagnosticCode' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown status, limit out of range, or an unknown query parameter).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -4913,6 +4995,401 @@ paths:
         '409':
           description: CONFLICT_INVALID_STATE_TRANSITION (the repair was cancelled).
           content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /vendors:
+    get:
+      tags: [Maintenance]
+      operationId: listVendors
+      summary: Outside garages, dealers, tyre and parts suppliers (FMS-130)
+      description: >
+        Vendors the caller's depots may use: their depot's and the fleet-wide ones (depot_id null), by name.
+        Needs maintenance:read.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { name: vendor_type, in: query, schema: { $ref: '#/components/schemas/VendorType' } }
+        - { name: search, in: query, description: Part of the name or contact name., schema: { type: string, maxLength: 100 } }
+        - { name: status, in: query, schema: { type: string, enum: [active, retired, all], default: active } }
+      responses:
+        '200':
+          description: A page of vendors.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Vendor' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400':
+          description: VALIDATION_FAILED (an unknown parameter or value).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Maintenance]
+      operationId: createVendor
+      summary: Add a vendor (FMS-130)
+      description: >
+        Needs vendor:write (admin, fleet manager, depot admin). A depot admin adds vendors for their depot; one for the
+        whole fleet (depot_id null) needs fleet-wide access. A name is unique among a depot's active vendors, any case.
+        Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VendorInput' }
+      responses:
+        '201':
+          description: Added.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorEnvelope' }
+        '400':
+          description: VALIDATION_FAILED (an unknown field or vendor type; depot_id references_missing_record; depot_id required for a depot-scoped user).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: CONFLICT_DUPLICATE (an active vendor of that name serves the depot).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /vendors/{vendor_id}:
+    parameters:
+      - { name: vendor_id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Maintenance]
+      operationId: getVendor
+      summary: One vendor (FMS-130)
+      description: Needs maintenance:read; a vendor of another depot is 404.
+      responses:
+        '200':
+          description: The vendor.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    patch:
+      tags: [Maintenance]
+      operationId: updateVendor
+      summary: Change or retire a vendor (FMS-130)
+      description: >
+        The fields sent; `is_active: false` retires it (orders that named it keep it), `true` brings it back. If-Match
+        with the vendor's version is optional. Needs vendor:write. Audited.
+      parameters:
+        - { name: If-Match, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VendorPatch' }
+      responses:
+        '200':
+          description: Changed.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorEnvelope' }
+        '400':
+          description: VALIDATION_FAILED (an unknown field, an empty update).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_DUPLICATE, or CONFLICT_CONCURRENT_MODIFICATION (a stale If-Match).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/vendor:
+    put:
+      tags: [Maintenance]
+      operationId: setWorkOrderVendor
+      summary: The outside vendor on a work order (FMS-130)
+      description: >
+        The vendor that did (some of) the work, its invoice reference and its cost; `vendor_id: null` takes it off. A
+        vendor of another depot than the vehicle's is refused. The order is then itemised: its total is parts + labour +
+        vendor. On requested or open work. Needs maintenance:write. Publishes MaintenanceRecordUpdated. Audited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkOrderVendorInput' }
+      responses:
+        '200':
+          description: The updated record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '400':
+          description: VALIDATION_FAILED (vendor_id references_missing_record or vendor_in_other_depot) or VALIDATION_FLOAT_IN_MONEY_PATH.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such record, or outside your depots).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (the work is completed or cancelled).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/tasks:
+    post:
+      tags: [Maintenance]
+      operationId: addWorkOrderTask
+      summary: Add a task to a work order (FMS-130)
+      description: >
+        A job the order is split into, last in the list. At most 50. On requested or open work. Needs maintenance:write.
+        Publishes MaintenanceRecordUpdated. Audited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkOrderTaskInput' }
+      responses:
+        '201':
+          description: The updated record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '400':
+          description: VALIDATION_FAILED (an unknown field, component or status).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (closed work, or 50 tasks already).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/MaintenanceRecordId'
+      - { name: task_id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Maintenance]
+      operationId: updateWorkOrderTask
+      summary: Change a task (FMS-130)
+      description: The fields sent. If-Match with the task's version is optional. Needs maintenance:write. Audited.
+      parameters:
+        - { name: If-Match, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkOrderTaskPatch' }
+      responses:
+        '200':
+          description: The updated record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '400':
+          description: VALIDATION_FAILED.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND (no such record or task).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (closed work) or CONFLICT_CONCURRENT_MODIFICATION.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    delete:
+      tags: [Maintenance]
+      operationId: removeWorkOrderTask
+      summary: Take a task off a work order (FMS-130)
+      description: Labour booked to it stays on the order, without a task. Needs maintenance:write. Audited (soft delete).
+      responses:
+        '200':
+          description: The updated record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (closed work).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/labour:
+    post:
+      tags: [Maintenance]
+      operationId: addLabourEntry
+      summary: Book a technician's hours on a work order (FMS-130)
+      description: >
+        Hours a technician (an active holder of maintenance:execute in the vehicle's depot, or fleet-wide) worked on the
+        order, on an Addis Ababa day (default today, never a day to come), optionally on one of its tasks. The rate is
+        labour_rate_etb_per_hour unless a finance role (labour-rate:read) sets rate_cents; anyone else sending it gets
+        403. The order becomes itemised: its labour hours are the entries' sum and its total parts + labour + vendor.
+        On scheduled, open or in-progress work only. Needs maintenance:write. Publishes MaintenanceRecordUpdated. Audited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LabourEntryInput' }
+      responses:
+        '201':
+          description: The updated record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '400':
+          description: >
+            VALIDATION_FAILED (technician_id or task_id references_missing_record, work_date in_future, hours out of
+            range or too_many_decimals) or VALIDATION_FLOAT_IN_MONEY_PATH.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403':
+          description: FORBIDDEN_INSUFFICIENT_ROLE (no maintenance:write, or rate_cents without labour-rate:read).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (a request not yet started, or closed work).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/labour/{entry_id}:
+    delete:
+      tags: [Maintenance]
+      operationId: removeLabourEntry
+      summary: Take a mistaken labour entry off (FMS-130)
+      description: Soft delete; the order's hours and totals follow. On open work only. Needs maintenance:write. Audited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+        - { name: entry_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The updated record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (closed work).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/approve:
+    post:
+      tags: [Maintenance]
+      operationId: approveWorkOrder
+      summary: Approve a requested work order (FMS-130)
+      description: >
+        A request becomes open work, with who approved it and when, and flags the vehicle for maintenance. A request
+        whose total is above work_order_approval_threshold_etb cannot be scheduled, started or completed until
+        approved (409 approval_required); one at or below it can be started directly. Needs maintenance:approve (admin,
+        fleet manager, depot admin). Publishes MaintenanceRecordUpdated. Audited.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      responses:
+        '200':
+          description: The approved record.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '409':
+          description: CONFLICT_INVALID_STATE_TRANSITION (not_requested).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /maintenance-records/{record_id}/technicians:
+    get:
+      tags: [Maintenance]
+      operationId: listWorkOrderTechnicians
+      summary: Who may book labour on a work order (FMS-130)
+      description: Active holders of maintenance:execute in the vehicle's depot, or with fleet-wide access, by name. Needs maintenance:write.
+      parameters:
+        - $ref: '#/components/parameters/MaintenanceRecordId'
+      responses:
+        '200':
+          description: The technicians.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, full_name]
+                      properties:
+                        id: { type: string, format: uuid }
+                        full_name: { type: string }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: NOT_FOUND.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+
+  /labour-hours:
+    get:
+      tags: [Maintenance]
+      operationId: listLabourHours
+      summary: Hours per technician per week (FMS-130)
+      description: >
+        Labour entries on work orders of vehicles in the caller's depots, added up per technician and week (Monday,
+        Addis Ababa). Default: the twelve weeks up to today; at most 366 days. cost_cents only with labour-rate:read.
+        Needs maintenance:read.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: technician_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The weeks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/LabourWeek' } }
+                  meta:
+                    type: object
+                    required: [request_id, from, to]
+                    properties:
+                      request_id: { type: string, format: uuid }
+                      from: { type: string, format: date }
+                      to: { type: string, format: date }
+        '400':
+          description: VALIDATION_FAILED (a bad date, after_to, range_too_long).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /failure-events:
     get:
@@ -9545,7 +10022,8 @@ components:
       description: >
         CONFLICT_INVALID_STATE_TRANSITION (details[].allowed_transitions lists where the trip can go; empty for
         completed and cancelled), CONFLICT_CONCURRENT_MODIFICATION, or on start the assignment's
-        CONFLICT_DEPOT_MISMATCH, CONFLICT_VEHICLE_FLAGGED and CONFLICT_DRIVER_NOT_ELIGIBLE.
+        CONFLICT_DEPOT_MISMATCH, CONFLICT_VEHICLE_FLAGGED and CONFLICT_DRIVER_NOT_ELIGIBLE; an odometer below the
+        vehicle's or the trip's start is CONFLICT_ODOMETER_REGRESSION (FMS-165).
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     WebhookAccepted:
       description: Stored and announced, or a duplicate of a delivery already stored (the same id).
@@ -10866,7 +11344,184 @@ components:
 
     MaintenanceStatus:
       type: string
-      enum: [scheduled, open, in_progress, completed, cancelled]
+      description: 'requested (FMS-130): asked for, not started; above the approval threshold it waits for maintenance:approve.'
+      enum: [requested, scheduled, open, in_progress, completed, cancelled]
+
+    VendorType:
+      type: string
+      enum: [workshop, dealer, tyres, parts]
+
+    Vendor:
+      type: object
+      description: An outside garage, dealer, tyre or parts supplier (FMS-130).
+      required: [id, name, vendor_type, contact_name, phone, email, depot_id, notes, is_active, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        vendor_type: { $ref: '#/components/schemas/VendorType' }
+        contact_name: { type: [string, 'null'] }
+        phone: { type: [string, 'null'] }
+        email: { type: [string, 'null'] }
+        depot_id: { type: [string, 'null'], format: uuid, description: 'Null: every depot may use it.' }
+        notes: { type: [string, 'null'] }
+        is_active: { type: boolean }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    VendorInput:
+      type: object
+      additionalProperties: false
+      required: [name, vendor_type]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        vendor_type: { $ref: '#/components/schemas/VendorType' }
+        contact_name: { type: [string, 'null'], maxLength: 255 }
+        phone: { type: [string, 'null'], maxLength: 50 }
+        email: { type: [string, 'null'], format: email, maxLength: 255 }
+        depot_id: { type: [string, 'null'], format: uuid }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    VendorPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        vendor_type: { $ref: '#/components/schemas/VendorType' }
+        contact_name: { type: [string, 'null'], maxLength: 255 }
+        phone: { type: [string, 'null'], maxLength: 50 }
+        email: { type: [string, 'null'], format: email, maxLength: 255 }
+        depot_id: { type: [string, 'null'], format: uuid }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        is_active: { type: boolean }
+
+    VendorEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: '#/components/schemas/Vendor' }
+        meta: { $ref: '#/components/schemas/Meta' }
+
+    WorkOrderVendorInput:
+      type: object
+      additionalProperties: false
+      required: [vendor_id]
+      properties:
+        vendor_id: { type: [string, 'null'], format: uuid, description: 'Null takes the vendor off.' }
+        vendor_invoice_ref: { type: [string, 'null'], maxLength: 100 }
+        vendor_cost_cents: { type: integer, minimum: 0, maximum: 2147483647, description: Whole cents. }
+
+    WorkOrderTaskStatus:
+      type: string
+      enum: [pending, in_progress, done, skipped]
+
+    WorkOrderTask:
+      type: object
+      required: [id, description, component, status, estimated_hours, actual_hours, position, version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        description: { type: string }
+        component:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/FailureComponent'
+        status: { $ref: '#/components/schemas/WorkOrderTaskStatus' }
+        estimated_hours: { type: [number, 'null'] }
+        actual_hours: { type: number, description: The hours of the labour entries booked to it. }
+        position: { type: integer }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WorkOrderTaskInput:
+      type: object
+      additionalProperties: false
+      required: [description]
+      properties:
+        description: { type: string, minLength: 1, maxLength: 500 }
+        component:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/FailureComponent'
+        estimated_hours: { type: [number, 'null'], minimum: 0, maximum: 9999 }
+        status: { $ref: '#/components/schemas/WorkOrderTaskStatus' }
+
+    WorkOrderTaskPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        description: { type: string, minLength: 1, maxLength: 500 }
+        component:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/FailureComponent'
+        estimated_hours: { type: [number, 'null'], minimum: 0, maximum: 9999 }
+        status: { $ref: '#/components/schemas/WorkOrderTaskStatus' }
+
+    LabourEntry:
+      type: object
+      required: [id, task_id, technician_id, technician_name, work_date, hours, rate_cents, cost_cents, notes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        task_id: { type: [string, 'null'], format: uuid }
+        technician_id: { type: string, format: uuid }
+        technician_name: { type: string }
+        work_date: { type: string, format: date, description: The Addis Ababa day. }
+        hours: { type: number }
+        rate_cents: { type: [integer, 'null'], description: 'Cents per hour; null without labour-rate:read.' }
+        cost_cents: { type: [integer, 'null'], description: 'hours x rate, rounded; null without labour-rate:read.' }
+        notes: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+
+    LabourEntryInput:
+      type: object
+      additionalProperties: false
+      required: [technician_id, hours]
+      properties:
+        technician_id: { type: string, format: uuid }
+        task_id: { type: [string, 'null'], format: uuid }
+        work_date: { type: string, format: date, description: Default today (Addis Ababa). }
+        hours: { type: number, exclusiveMinimum: 0, maximum: 24 }
+        rate_cents: { type: integer, minimum: 0, maximum: 2147483647, description: Finance roles only (labour-rate:read). }
+        notes: { type: [string, 'null'], maxLength: 1000 }
+
+    WorkOrder:
+      type: object
+      description: What a work order adds to its repair record (FMS-130).
+      required: [itemised, approval_required, approved_by, approved_at, vendor, vendor_invoice_ref, vendor_cost_cents, labour_cost_cents, tasks, labour]
+      properties:
+        itemised: { type: boolean, description: 'Labour entries or a vendor: total_cost_cents is parts + labour + vendor and labour_hours the entries'' sum; neither can be typed.' }
+        approval_required: { type: boolean, description: A request above the approval threshold that has not been approved; it cannot start. }
+        approved_by: { type: [string, 'null'], format: uuid }
+        approved_at: { type: [string, 'null'], format: date-time }
+        vendor:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [id, name, vendor_type]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                vendor_type: { $ref: '#/components/schemas/VendorType' }
+        vendor_invoice_ref: { type: [string, 'null'] }
+        vendor_cost_cents: { type: integer }
+        labour_cost_cents: { type: [integer, 'null'], description: 'The labour entries'' costs; null without labour-rate:read.' }
+        tasks: { type: array, items: { $ref: '#/components/schemas/WorkOrderTask' } }
+        labour: { type: array, items: { $ref: '#/components/schemas/LabourEntry' } }
+
+    LabourWeek:
+      type: object
+      required: [technician_id, technician_name, week_start, hours, cost_cents, work_orders]
+      properties:
+        technician_id: { type: string, format: uuid }
+        technician_name: { type: string }
+        week_start: { type: string, format: date, description: The Monday (Addis Ababa). }
+        hours: { type: number }
+        cost_cents: { type: [integer, 'null'], description: Null without labour-rate:read. }
+        work_orders: { type: integer }
+
 
     MaintenanceType:
       type: string
@@ -10886,7 +11541,7 @@ components:
     MaintenanceRecord:
       type: object
       description: One piece of repair or service work on a vehicle (FMS-22, api-contract §10.1).
-      required: [id, vehicle_id, registration_number, maintenance_type, description, status, priority, scheduled_at, started_at, completed_at, odometer_km, labour_hours, total_cost_cents, parts_cost_cents, workshop, notes, completed_by, service_program, warranty_claim, parts, failures, version, created_at, updated_at]
+      required: [id, vehicle_id, registration_number, maintenance_type, description, status, priority, scheduled_at, started_at, completed_at, odometer_km, labour_hours, total_cost_cents, parts_cost_cents, workshop, notes, completed_by, service_program, warranty_claim, parts, failures, work_order, version, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         vehicle_id: { type: string, format: uuid }
@@ -10921,6 +11576,7 @@ components:
             - $ref: '#/components/schemas/WarrantyClaim'
         parts: { type: array, items: { $ref: '#/components/schemas/MaintenancePartLine' } }
         failures: { type: array, items: { $ref: '#/components/schemas/FailureEvent' }, description: What failed (FMS-125), oldest first. }
+        work_order: { $ref: '#/components/schemas/WorkOrder' }
         version: { type: integer, description: Bumped on every change; also the ETag. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -10981,7 +11637,7 @@ components:
               quantity: { type: integer, minimum: 1, maximum: 10000 }
               unit_cost_cents: { type: integer, minimum: 0, maximum: 2147483647 }
         maintenance_type: { $ref: '#/components/schemas/MaintenanceType' }
-        status: { type: string, enum: [scheduled, open, in_progress] }
+        status: { type: string, enum: [requested, scheduled, open, in_progress], description: 'requested: asked for, not started (FMS-130).' }
         priority: { type: string, enum: [low, normal, high, critical] }
         scheduled_at: { type: [string, 'null'], format: date-time }
         odometer_km: { type: [number, 'null'], minimum: 0, description: At most one decimal. }
@@ -11147,6 +11803,12 @@ components:
           type: [string, 'null']
           enum: [odometer, gps, null]
           description: How the distance was measured, the vehicle's own odometer readings bracketing the trip or the length of its GPS track. Null with no distance, or with one entered before trips were measured (the seed, an import).
+        start_odometer_km:
+          type: [number, 'null']
+          description: The odometer when the trip started (FMS-165), typed by the driver or the vehicle's own reading then. Null before the start.
+        end_odometer_km:
+          type: [number, 'null']
+          description: The odometer the driver typed at the end (FMS-165); null before the end or with none typed.
         stops:
           type: array
           items: { $ref: '#/components/schemas/TripStop' }
@@ -11208,6 +11870,85 @@ components:
             without coordinates or behind the vehicle, or when the trip is not under way.
         completed_at: { type: [string, 'null'], format: date-time, description: When the stop was marked done (FMS-95). }
 
+    TripNavigation:
+      type: object
+      description: A trip's navigation (FMS-166, docs/driver-navigation.md).
+      required: [trip_id, status, origin, waypoints, destination, road, no_road, straight_line, as_of]
+      properties:
+        trip_id: { type: string, format: uuid }
+        status: { type: string, enum: [draft, scheduled, assigned, en_route, completed, cancelled] }
+        origin:
+          description: Where the road starts, the phone's position sent in `from` or the vehicle's newest; null with neither.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [lat, lng, source]
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+                source: { type: string, enum: [phone, vehicle] }
+        waypoints:
+          type: array
+          items: { $ref: '#/components/schemas/NavigationWaypoint' }
+        destination:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/NavigationWaypoint'
+        road:
+          description: The road from the origin through the waypoints; null when there is none (see no_road).
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [distance_km, duration_seconds, arrival_at, geometry, steps]
+              properties:
+                distance_km: { type: number }
+                duration_seconds: { type: integer }
+                arrival_at: { type: string, format: date-time, description: 'Now plus the road time.' }
+                geometry:
+                  type: object
+                  required: [type, coordinates]
+                  properties:
+                    type: { type: string, enum: [LineString] }
+                    coordinates:
+                      type: array
+                      items: { type: array, items: { type: number }, minItems: 2, maxItems: 2 }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [instruction, type, modifier, road, distance_m, duration_s, lat, lng]
+                    properties:
+                      instruction: { type: string, description: "What to do, in words: 'Turn left onto Ring Road', 'Arrive at Adama depot'." }
+                      type: { type: string, description: "OSRM's maneuver type (depart, turn, roundabout, arrive...)." }
+                      modifier: { type: [string, 'null'] }
+                      road: { type: [string, 'null'] }
+                      distance_m: { type: integer }
+                      duration_s: { type: integer }
+                      lat: { type: number }
+                      lng: { type: number }
+        no_road:
+          type: [string, 'null']
+          enum: [no_origin, no_waypoints, routing_not_configured, routing_unavailable, no_road, null]
+        straight_line:
+          description: To the next waypoint as the crow flies; null without an origin or a waypoint.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [distance_km, bearing_deg]
+              properties:
+                distance_km: { type: number }
+                bearing_deg: { type: integer, minimum: 0, maximum: 359 }
+        as_of: { type: string, format: date-time }
+    NavigationWaypoint:
+      type: object
+      required: [kind, stop_id, sequence_number, name, lat, lng]
+      properties:
+        kind: { type: string, enum: [stop, destination] }
+        stop_id: { type: [string, 'null'], format: uuid }
+        sequence_number: { type: [integer, 'null'] }
+        name: { type: string }
+        lat: { type: number }
+        lng: { type: number }
     TripLiveState:
       type: object
       description: Where a trip stands now (FMS-95). docs/trip-stops.md.
@@ -11744,6 +12485,78 @@ components:
         ignition_on: { type: [boolean, 'null'] }
         odometer_km: { type: [number, 'null'], minimum: 0 }
 
+    TelematicsDelivery:
+      type: object
+      description: >
+        The FMS telematics webhook format (docs/telematics.md, docs/diagnostic-codes.md). Devices are named by the
+        provider's identifier, linked to vehicles in the device registry. At least one of the two lists.
+      additionalProperties: false
+      required: [event_id]
+      properties:
+        event_id: { type: string, minLength: 1, maxLength: 255, description: "The provider's id for the delivery: a redelivery is a duplicate." }
+        positions:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [device_id, recorded_at, lat, lng, speed_kmh]
+            properties:
+              device_id: { type: string, minLength: 1, maxLength: 255 }
+              recorded_at: { type: string, format: date-time }
+              lat: { type: number, minimum: -90, maximum: 90 }
+              lng: { type: number, minimum: -180, maximum: 180 }
+              speed_kmh: { type: number, minimum: 0 }
+              heading: { type: [number, 'null'], minimum: 0, maximum: 360 }
+              accuracy_m: { type: [number, 'null'], minimum: 0 }
+              altitude_m: { type: [number, 'null'] }
+              ignition_on: { type: [boolean, 'null'] }
+              odometer_km: { type: [number, 'null'], minimum: 0 }
+        diagnostics:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { $ref: '#/components/schemas/TelematicsDiagnostic' }
+    TelematicsDiagnostic:
+      description: One diagnostic trouble code (FMS-132), OBD-II by its code or J1939 by SPN and FMI.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [device_id, protocol, code, status, observed_at]
+          properties:
+            device_id: { type: string, minLength: 1, maxLength: 255 }
+            protocol: { type: string, enum: [obd2] }
+            code: { type: string, pattern: '^[PCBU][0-3][0-9A-F]{3}$', example: P0217 }
+            status: { type: string, enum: [active, cleared] }
+            observed_at: { type: string, format: date-time }
+        - type: object
+          additionalProperties: false
+          required: [device_id, protocol, spn, fmi, status, observed_at]
+          properties:
+            device_id: { type: string, minLength: 1, maxLength: 255 }
+            protocol: { type: string, enum: [j1939] }
+            spn: { type: integer, minimum: 0, maximum: 524287, example: 110 }
+            fmi: { type: integer, minimum: 0, maximum: 31, example: 0 }
+            status: { type: string, enum: [active, cleared] }
+            observed_at: { type: string, format: date-time }
+    DiagnosticCode:
+      type: object
+      required: [id, vehicle_id, protocol, code, spn, fmi, description, severity, status, first_seen_at, last_seen_at, occurrences, cleared_at, provider]
+      properties:
+        id: { type: string, format: uuid }
+        vehicle_id: { type: string, format: uuid }
+        protocol: { type: string, enum: [obd2, j1939] }
+        code: { type: string, description: 'The OBD-II code, or SPN-FMI for J1939 (110-0).', example: P0217 }
+        spn: { type: [integer, 'null'] }
+        fmi: { type: [integer, 'null'] }
+        description: { type: [string, 'null'], description: 'From the generic code dictionary; null for a code it does not name.' }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [active, cleared] }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        occurrences: { type: integer, minimum: 1 }
+        cleared_at: { type: [string, 'null'], format: date-time }
+        provider: { type: [string, 'null'], description: "The telematics provider's code." }
     TelemetryFlag:
       type: object
       description: A flag of the telemetry rules (FMS-46) or of the geofence and route deviation rules (FMS-90).
@@ -13478,6 +14291,12 @@ components:
         current: { type: boolean, description: 'Active, started, and not yet at its end.' }
         notes: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
+    TripOdometerInput:
+      type: object
+      additionalProperties: false
+      description: What POST /trips/{id}/start and /end take (FMS-165); an empty object is fine.
+      properties:
+        odometer_km: { type: number, minimum: 0, maximum: 9999999, description: 'The odometer the driver reads now, in km.' }
     MeterReading:
       type: object
       description: One reading of a vehicle's odometer or engine-hour meter (FMS-126).
@@ -13486,8 +14305,8 @@ components:
         id: { type: string, format: uuid }
         meter: { type: string, enum: [odometer, engine_hours] }
         value: { type: number, description: 'km for the odometer, hours for engine hours; one decimal.' }
-        source: { type: string, enum: [fuel_log, maintenance, telematics, gps_derived, manual] }
-        source_ref: { type: [string, 'null'], description: "The fuel log's or repair's id, the device's id, or the day (YYYY-MM-DD) of an engine-hours reading; null for manual." }
+        source: { type: string, enum: [fuel_log, maintenance, telematics, gps_derived, manual, trip], description: "trip: typed by the driver at a trip's start or end (FMS-165); gps_derived for the odometer: a trip's start reading plus its GPS distance." }
+        source_ref: { type: [string, 'null'], description: "The fuel log's or repair's id, the device's id, the day (YYYY-MM-DD) of an engine-hours reading, or `<trip id>:start` / `<trip id>:end` for a trip's reading; null for manual." }
         recorded_at: { type: string, format: date-time, description: When the reading was true. }
         suspect: { type: boolean, description: "Lower than a trusted reading recorded before it: kept, but the vehicle's odometer did not follow it." }
         created_at: { type: string, format: date-time }

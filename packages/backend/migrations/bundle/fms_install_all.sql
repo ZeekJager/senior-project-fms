@@ -4945,3 +4945,287 @@ ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'traction_batte
 ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'motor_inverter';
 ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'charging_system';
 ALTER TYPE maintenance.failure_component ADD VALUE IF NOT EXISTS 'thermal_management';
+
+-- ===== 087_work_orders.sql =====
+ALTER TYPE maintenance.maintenance_status ADD VALUE IF NOT EXISTS 'requested' BEFORE 'scheduled';
+
+DO $$ BEGIN
+    CREATE TYPE maintenance.vendor_type AS ENUM ('workshop', 'dealer', 'tyres', 'parts');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TYPE maintenance.work_order_task_status AS ENUM ('pending', 'in_progress', 'done', 'skipped');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS maintenance.vendors (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id     UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    name          VARCHAR(255) NOT NULL,
+    vendor_type   maintenance.vendor_type NOT NULL,
+    contact_name  VARCHAR(255),
+    phone         VARCHAR(50),
+    email         VARCHAR(255),
+    -- NULL: every depot may use it.
+    depot_id      BIGINT REFERENCES fleet.depots(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    notes         VARCHAR(2000),
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by    BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    version       INTEGER NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_vendors_name CHECK (btrim(name) <> '')
+);
+
+-- One active vendor of a name per depot (and one fleet-wide), whatever its case.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vendors_depot_name
+    ON maintenance.vendors (COALESCE(depot_id, 0), lower(name)) WHERE is_active;
+
+CREATE OR REPLACE TRIGGER trg_vendors_updated_at
+    BEFORE UPDATE ON maintenance.vendors
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+CREATE OR REPLACE TRIGGER trg_vendors_version
+    BEFORE UPDATE ON maintenance.vendors
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+ALTER TABLE maintenance.maintenance_records
+    ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS vendor_id BIGINT REFERENCES maintenance.vendors(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    ADD COLUMN IF NOT EXISTS vendor_invoice_ref VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS vendor_cost_cents INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS labour_cost_cents INTEGER NOT NULL DEFAULT 0;
+
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_records
+        -- An approver always has the time; the time stays if the approver's account is later removed.
+        ADD CONSTRAINT chk_maintenance_approval CHECK (approved_by IS NULL OR approved_at IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE maintenance.maintenance_records
+        ADD CONSTRAINT chk_maintenance_vendor_cost CHECK (vendor_cost_cents >= 0 AND labour_cost_cents >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_maintenance_records_vendor
+    ON maintenance.maintenance_records (vendor_id) WHERE vendor_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS maintenance.work_order_tasks (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    maintenance_record_id  BIGINT NOT NULL REFERENCES maintenance.maintenance_records(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    description            VARCHAR(500) NOT NULL,
+    component              maintenance.failure_component,
+    status                 maintenance.work_order_task_status NOT NULL DEFAULT 'pending',
+    estimated_hours        NUMERIC(6,2),
+    position               INTEGER NOT NULL DEFAULT 0,
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by             BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    version                INTEGER NOT NULL DEFAULT 0,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_work_order_tasks_description CHECK (btrim(description) <> ''),
+    CONSTRAINT chk_work_order_tasks_hours CHECK (estimated_hours IS NULL OR estimated_hours >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_order_tasks_record
+    ON maintenance.work_order_tasks (maintenance_record_id, position) WHERE is_active;
+
+CREATE OR REPLACE TRIGGER trg_work_order_tasks_updated_at
+    BEFORE UPDATE ON maintenance.work_order_tasks
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+CREATE OR REPLACE TRIGGER trg_work_order_tasks_version
+    BEFORE UPDATE ON maintenance.work_order_tasks
+    FOR EACH ROW EXECUTE FUNCTION shared.bump_version();
+
+CREATE TABLE IF NOT EXISTS maintenance.labour_entries (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    maintenance_record_id  BIGINT NOT NULL REFERENCES maintenance.maintenance_records(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    task_id                BIGINT REFERENCES maintenance.work_order_tasks(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    technician_id          BIGINT NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    -- The Addis Ababa day the work was done.
+    work_date              DATE NOT NULL,
+    hours                  NUMERIC(5,2) NOT NULL,
+    rate_cents             INTEGER NOT NULL,
+    cost_cents             INTEGER GENERATED ALWAYS AS (round(hours * rate_cents)::integer) STORED,
+    notes                  VARCHAR(1000),
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by             BIGINT REFERENCES auth.users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_labour_entries_hours CHECK (hours > 0 AND hours <= 24),
+    CONSTRAINT chk_labour_entries_rate CHECK (rate_cents >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_labour_entries_record
+    ON maintenance.labour_entries (maintenance_record_id) WHERE is_active;
+-- Hours per technician per week (the workload report).
+CREATE INDEX IF NOT EXISTS idx_labour_entries_technician_day
+    ON maintenance.labour_entries (technician_id, work_date) WHERE is_active;
+
+CREATE OR REPLACE TRIGGER trg_labour_entries_updated_at
+    BEFORE UPDATE ON maintenance.labour_entries
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+INSERT INTO auth.permissions (code, description) VALUES
+    ('maintenance:approve', 'Approve a requested work order above the approval threshold'),
+    ('vendor:write', 'Add, change and retire maintenance vendors'),
+    ('labour-rate:read', 'See labour rates and labour costs on work orders')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO auth.role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM auth.roles r, auth.permissions p
+ WHERE (p.code IN ('maintenance:approve', 'vendor:write') AND r.name IN ('admin', 'fleet_manager', 'depot_admin'))
+    OR (p.code = 'labour-rate:read' AND r.name IN ('admin', 'finance_clerk', 'fleet_owner'))
+    OR (p.code = 'maintenance:read' AND r.name = 'finance_clerk')
+ON CONFLICT DO NOTHING;
+
+-- The approval threshold and the default labour rate (settings registry, FMS-157; declared in settings.ts).
+INSERT INTO settings.definitions (key, label, category, description, type, default_value, rules, is_system, storage) VALUES
+    ('work_order_approval_threshold_etb', 'Work order approval above', 'Maintenance',
+     'A requested work order costing more than this must be approved by a fleet manager or depot admin before it starts.',
+     'integer', '20000', '{"min": 0, "max": 10000000, "unit": "ETB"}', TRUE, 'settings'),
+    ('labour_rate_etb_per_hour', 'Labour rate', 'Maintenance',
+     'The workshop''s hourly labour rate, used for labour entries booked without a rate of their own.',
+     'integer', '300', '{"min": 0, "max": 100000, "unit": "ETB/hour"}', TRUE, 'settings')
+ON CONFLICT DO NOTHING;
+
+-- ===== 088_diagnostic_codes.sql =====
+DO $$ BEGIN
+    CREATE TYPE tracking.diagnostic_protocol AS ENUM ('obd2', 'j1939');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS tracking.diagnostic_code_dictionary (
+    protocol     tracking.diagnostic_protocol NOT NULL,
+    -- OBD-II: the code (P0217). J1939: the SPN (110).
+    code         VARCHAR(10) NOT NULL,
+    description  VARCHAR(255) NOT NULL,
+    severity     VARCHAR(10) NOT NULL,
+    PRIMARY KEY (protocol, code),
+    CONSTRAINT chk_diagnostic_dictionary_severity CHECK (severity IN ('low', 'medium', 'high', 'critical'))
+);
+
+CREATE TABLE IF NOT EXISTS tracking.diagnostic_codes (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    public_id      UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    vehicle_id     BIGINT NOT NULL REFERENCES fleet.vehicles(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    provider_id    BIGINT REFERENCES integration.external_providers(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    gps_device_id  BIGINT REFERENCES integration.gps_devices(id) ON DELETE SET NULL ON UPDATE CASCADE,
+    protocol       tracking.diagnostic_protocol NOT NULL,
+    -- OBD-II: the code. J1939: SPN-FMI (110-0).
+    code           VARCHAR(20) NOT NULL,
+    spn            INTEGER,
+    fmi            SMALLINT,
+    -- From the dictionary when it names the code; null when it does not.
+    description    VARCHAR(255),
+    severity       VARCHAR(10) NOT NULL,
+    first_seen_at  TIMESTAMPTZ NOT NULL,
+    last_seen_at   TIMESTAMPTZ NOT NULL,
+    occurrences    INTEGER NOT NULL DEFAULT 1,
+    cleared_at     TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_diagnostic_codes_severity CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+    CONSTRAINT chk_diagnostic_codes_occurrences CHECK (occurrences >= 1),
+    CONSTRAINT chk_diagnostic_codes_seen CHECK (last_seen_at >= first_seen_at),
+    CONSTRAINT chk_diagnostic_codes_cleared CHECK (cleared_at IS NULL OR cleared_at >= first_seen_at),
+    CONSTRAINT chk_diagnostic_codes_j1939 CHECK ((protocol = 'j1939') = (spn IS NOT NULL AND fmi IS NOT NULL)),
+    CONSTRAINT chk_diagnostic_codes_spn CHECK (spn IS NULL OR spn BETWEEN 0 AND 524287),
+    CONSTRAINT chk_diagnostic_codes_fmi CHECK (fmi IS NULL OR fmi BETWEEN 0 AND 31)
+);
+
+-- One active row per vehicle and code: a repeat updates it.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_diagnostic_codes_active
+    ON tracking.diagnostic_codes (vehicle_id, protocol, code) WHERE cleared_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_diagnostic_codes_vehicle
+    ON tracking.diagnostic_codes (vehicle_id, last_seen_at DESC);
+
+CREATE OR REPLACE TRIGGER trg_tracking_diagnostic_codes_updated_at
+    BEFORE UPDATE ON tracking.diagnostic_codes
+    FOR EACH ROW EXECUTE FUNCTION shared.set_updated_at();
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fms_app') THEN
+        GRANT SELECT ON tracking.diagnostic_code_dictionary TO fms_app;
+        GRANT SELECT, INSERT, UPDATE ON tracking.diagnostic_codes TO fms_app;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA tracking TO fms_app;
+    END IF;
+END $$;
+
+-- The generic codes (SAE J2012 for OBD-II, J1939-71 for the SPNs), the ones a fleet sees most.
+INSERT INTO tracking.diagnostic_code_dictionary (protocol, code, description, severity) VALUES
+    ('obd2', 'P0011', 'Camshaft position timing over-advanced (bank 1)', 'medium'),
+    ('obd2', 'P0087', 'Fuel rail pressure too low', 'high'),
+    ('obd2', 'P0101', 'Mass air flow sensor range or performance', 'medium'),
+    ('obd2', 'P0113', 'Intake air temperature sensor high input', 'low'),
+    ('obd2', 'P0115', 'Engine coolant temperature sensor circuit', 'medium'),
+    ('obd2', 'P0117', 'Engine coolant temperature sensor low input', 'medium'),
+    ('obd2', 'P0118', 'Engine coolant temperature sensor high input', 'medium'),
+    ('obd2', 'P0128', 'Coolant thermostat below regulating temperature', 'low'),
+    ('obd2', 'P0171', 'System too lean (bank 1)', 'medium'),
+    ('obd2', 'P0172', 'System too rich (bank 1)', 'medium'),
+    ('obd2', 'P0217', 'Engine overheating', 'critical'),
+    ('obd2', 'P0219', 'Engine overspeed', 'high'),
+    ('obd2', 'P0234', 'Turbocharger overboost', 'high'),
+    ('obd2', 'P0299', 'Turbocharger underboost', 'medium'),
+    ('obd2', 'P0300', 'Random or multiple cylinder misfire', 'high'),
+    ('obd2', 'P0301', 'Cylinder 1 misfire', 'high'),
+    ('obd2', 'P0302', 'Cylinder 2 misfire', 'high'),
+    ('obd2', 'P0303', 'Cylinder 3 misfire', 'high'),
+    ('obd2', 'P0304', 'Cylinder 4 misfire', 'high'),
+    ('obd2', 'P0335', 'Crankshaft position sensor circuit', 'high'),
+    ('obd2', 'P0380', 'Glow plug circuit', 'medium'),
+    ('obd2', 'P0401', 'Exhaust gas recirculation flow insufficient', 'medium'),
+    ('obd2', 'P0420', 'Catalyst efficiency below threshold (bank 1)', 'low'),
+    ('obd2', 'P0442', 'Evaporative emission system small leak', 'low'),
+    ('obd2', 'P0500', 'Vehicle speed sensor', 'medium'),
+    ('obd2', 'P0520', 'Engine oil pressure sensor circuit', 'high'),
+    ('obd2', 'P0524', 'Engine oil pressure too low', 'critical'),
+    ('obd2', 'P0562', 'System voltage low', 'medium'),
+    ('obd2', 'P0563', 'System voltage high', 'medium'),
+    ('obd2', 'P0606', 'Engine control module processor', 'high'),
+    ('obd2', 'P0700', 'Transmission control system malfunction', 'high'),
+    ('obd2', 'P0715', 'Transmission input speed sensor circuit', 'medium'),
+    ('obd2', 'P0730', 'Incorrect gear ratio', 'high'),
+    ('obd2', 'P2002', 'Diesel particulate filter efficiency below threshold', 'medium'),
+    ('obd2', 'P2263', 'Turbocharger boost system performance', 'medium'),
+    ('obd2', 'C0035', 'Left front wheel speed sensor circuit', 'high'),
+    ('obd2', 'C0040', 'Right front wheel speed sensor circuit', 'high'),
+    ('obd2', 'C0265', 'ABS motor relay circuit', 'high'),
+    ('obd2', 'B0001', 'Driver frontal airbag deployment control', 'high'),
+    ('obd2', 'U0100', 'Lost communication with the engine control module', 'high'),
+    ('obd2', 'U0101', 'Lost communication with the transmission control module', 'high'),
+    ('obd2', 'U0121', 'Lost communication with the ABS control module', 'high'),
+    ('j1939', '84', 'Wheel-based vehicle speed', 'medium'),
+    ('j1939', '91', 'Accelerator pedal position', 'high'),
+    ('j1939', '94', 'Fuel delivery pressure', 'high'),
+    ('j1939', '96', 'Fuel level', 'low'),
+    ('j1939', '97', 'Water in fuel indicator', 'medium'),
+    ('j1939', '100', 'Engine oil pressure', 'critical'),
+    ('j1939', '102', 'Intake manifold boost pressure', 'medium'),
+    ('j1939', '105', 'Intake manifold temperature', 'medium'),
+    ('j1939', '110', 'Engine coolant temperature', 'critical'),
+    ('j1939', '111', 'Engine coolant level', 'high'),
+    ('j1939', '157', 'Fuel rail pressure', 'high'),
+    ('j1939', '168', 'Battery potential (voltage)', 'medium'),
+    ('j1939', '175', 'Engine oil temperature', 'high'),
+    ('j1939', '190', 'Engine speed', 'medium'),
+    ('j1939', '520', 'Retarder torque', 'medium'),
+    ('j1939', '597', 'Brake switch', 'high'),
+    ('j1939', '3216', 'Aftertreatment NOx (intake)', 'low'),
+    ('j1939', '3251', 'Diesel particulate filter differential pressure', 'medium'),
+    ('j1939', '3364', 'Diesel exhaust fluid quality', 'medium')
+ON CONFLICT (protocol, code) DO NOTHING;
+
+-- ===== 089_meter_source_trip.sql =====
+ALTER TYPE fleet.meter_source ADD VALUE IF NOT EXISTS 'trip';
+
+-- ===== 090_trip_odometer.sql =====
+ALTER TABLE trip.trips
+    ADD COLUMN IF NOT EXISTS start_odometer_km NUMERIC(12,1) CHECK (start_odometer_km >= 0),
+    ADD COLUMN IF NOT EXISTS end_odometer_km   NUMERIC(12,1) CHECK (end_odometer_km >= 0);
+
+DROP INDEX IF EXISTS fleet.ux_meter_readings_source_record;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_meter_readings_source_record
+    ON fleet.meter_readings(vehicle_id, meter, source, source_ref)
+    WHERE source IN ('fuel_log', 'maintenance', 'gps_derived', 'trip');

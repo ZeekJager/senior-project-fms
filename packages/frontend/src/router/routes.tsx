@@ -1,4 +1,4 @@
-import { Activity, BatteryCharging, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
+import { Activity, Store, BatteryCharging, Boxes, Building2, CalendarCheck, CalendarClock, ClipboardCheck, DatabaseBackup, Fence, FileChartColumn, Fuel, Gauge, HeartPulse, Home, LayoutDashboard, Megaphone, Radar, RadioTower, Route, Scale, ScanLine, ScrollText, Siren, SlidersHorizontal, Target, Truck, UserCog, Users, Waypoints, Wrench, type LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { PermissionRule } from '@/lib/permissions'
@@ -13,7 +13,7 @@ import { PredictiveMaintenancePage } from '@/pages/PredictiveMaintenance'
 import { DispatchPage } from '@/pages/Dispatch'
 import { EvFleetPage } from '@/pages/EvFleet'
 import { AppealsPage } from '@/pages/Appeals'
-import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFeedbackItem, DriverFeedbackList, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNewAppeal, DriverScore } from '@/pages/Driver'
+import { DriverAppeal, DriverAppeals, DriverCheckIn, DriverFeedbackItem, DriverFeedbackList, DriverFuel, DriverHome, DriverIncident, DriverInspection, DriverNavigate, DriverNewAppeal, DriverScore } from '@/pages/Driver'
 import { FleetAvailabilityPage } from '@/pages/FleetAvailability'
 import { CommandCenterPage } from '@/pages/FleetCommandCenter'
 import { FuelReconciliationPage } from '@/pages/FuelReconciliation'
@@ -24,6 +24,7 @@ import { ReportsPage } from '@/pages/Reports'
 import { KpisPage } from '@/pages/Kpis'
 import { RoutesPage } from '@/pages/Routes'
 import { ServiceProgramsPage } from '@/pages/ServicePrograms'
+import { VendorsPage } from '@/pages/Vendors'
 import { SettingsPage } from '@/pages/Settings'
 import { SystemHealthPage } from '@/pages/SystemHealth'
 import { TelematicsPage } from '@/pages/Telematics'
@@ -109,6 +110,13 @@ export const portals: Portal[] = [
         element: <MaintenancePage />,
         permission: 'maintenance:read',
         nav: { label: 'Repair log', icon: Wrench },
+      },
+      {
+        // Vendors (FMS-130, docs/work-orders.md). Read with maintenance:read; added, edited and retired with vendor:write.
+        path: '/maintenance/vendors',
+        element: <VendorsPage />,
+        permission: 'maintenance:read',
+        nav: { label: 'Vendors', icon: Store },
       },
       {
         // S-23 (FMS-129). Read with maintenance:read; defined with service-program:write (admin, fleet manager, depot admin).
@@ -291,6 +299,9 @@ export const portals: Portal[] = [
       { path: '/driver/fuel', element: <DriverFuel />, permission: 'fuel:write', nav: { label: 'Fuel', icon: Fuel } },
       // S-13 (FMS-38): an incident, reported from wherever the driver is, through the offline queue.
       { path: '/driver/incident', element: <DriverIncident />, permission: 'incident:write', nav: { label: 'Incident', icon: Siren } },
+      // FMS-166: live navigation to the trip's stops and destination on a full-screen map. Opened from the trip on My
+      // day, not a tab.
+      { path: '/driver/navigate', element: <DriverNavigate />, permission: 'trip:execute' },
       // FMS-146: the driver's own monthly score and its parts; never another driver's, never a ranking. Opened from My
       // day, not a tab: the bottom bar keeps to the day's work.
       { path: '/driver/score', element: <DriverScore />, permission: 'trip:execute' },

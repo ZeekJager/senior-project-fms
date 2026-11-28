@@ -25,6 +25,13 @@ export interface RecordRow {
   notes: string | null;
   completedBy: string | null;
   serviceProgramId: string | null;
+  /** The work order (FMS-130): who approved a request, its vendor and the vendor's and labour entries' costs. */
+  approvedBy: string | null;
+  approvedAt: Date | null;
+  vendorId: string | null;
+  vendorInvoiceRef: string | null;
+  vendorCostCents: number;
+  labourCostCents: number;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -86,6 +93,12 @@ export interface RecordWrite {
   notes?: string | null;
   completed_by?: string | null;
   service_program_id?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  vendor_id?: string | null;
+  vendor_invoice_ref?: string | null;
+  vendor_cost_cents?: number;
+  labour_cost_cents?: number;
 }
 
 const ROW_SQL = `
@@ -93,7 +106,9 @@ const ROW_SQL = `
          r.description, r.status, r.priority, r.scheduled_at AS "scheduledAt", r.started_at AS "startedAt",
          r.completed_at AS "completedAt", r.odometer_km::float8 AS "odometerKm", r.labor_hours::float8 AS "labourHours",
          r.total_cost_cents AS "totalCostCents", r.workshop, r.notes, r.completed_by AS "completedBy",
-         r.service_program_id AS "serviceProgramId", r.version,
+         r.service_program_id AS "serviceProgramId", r.approved_by AS "approvedBy", r.approved_at AS "approvedAt",
+         r.vendor_id AS "vendorId", r.vendor_invoice_ref AS "vendorInvoiceRef", r.vendor_cost_cents AS "vendorCostCents",
+         r.labour_cost_cents AS "labourCostCents", r.version,
          r.created_at AS "createdAt", r.updated_at AS "updatedAt"
     FROM maintenance.maintenance_records r`;
 

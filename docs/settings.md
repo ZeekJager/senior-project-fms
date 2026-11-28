@@ -134,6 +134,13 @@ Admin-to-driver feedback (FMS-158, [driver-feedback.md](driver-feedback.md)), in
 | `feedback_categories` | multi-select | all six | at least 1 of *Safety*, *Driving behaviour*, *Fuel efficiency*, *Punctuality*, *Vehicle care*, *General comment* | The categories a manager files feedback under; one taken out is refused for new feedback, and old items keep it |
 | `feedback_retention_months` | integer | 24 | 1-120 months | How long feedback is kept, retracted items too; the `feedback-retention` job deletes older items each night |
 
+Work orders (FMS-130, [work-orders.md](work-orders.md)), in the category *Maintenance*, read with `settings.get(key)` the same way:
+
+| Key | Type | Default | Rules | What it is |
+|---|---|---|---|---|
+| `work_order_approval_threshold_etb` | integer | 20,000 | 0-10,000,000 ETB | A requested work order costing more than this waits for `maintenance:approve` before it is scheduled, started or completed |
+| `labour_rate_etb_per_hour` | integer | 300 | 0-100,000 ETB/hour | The rate of a labour entry booked without one (only finance roles set their own) |
+
 ### KPI targets: `settings.settings`
 
 The KPI dashboard's targets (FMS-160, [reports.md](reports.md#kpis)), in the category *KPI targets*. A change shows in

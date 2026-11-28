@@ -1,0 +1,1 @@
+export { VendorsPage } from './VendorsPage'

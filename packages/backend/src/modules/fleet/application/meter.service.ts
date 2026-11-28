@@ -11,6 +11,7 @@ import {
   ONE_READING_PER_REF,
   TELEMATICS_SAMPLE_MINUTES,
   isSuspect,
+  tripEndReading,
   type MeterReadingView,
   type NewReading,
   type RecordOutcome,
@@ -124,7 +125,29 @@ export class MeterService {
     return this.fromEvent(tx, event, 'maintenance', p.maintenance_record_id, p.odometer_km, p.completed_at);
   }
 
-  private async fromEvent(tx: PoolClient, event: DomainEvent, source: 'fuel_log' | 'maintenance', ref: string, km: number, at: string): Promise<void> {
+  /** TripStarted (FMS-165): the odometer the driver typed at the start. The vehicle's own reading, copied, adds nothing. */
+  onTripStarted(tx: PoolClient, event: DomainEvent): Promise<void> {
+    const p = event.payload;
+    if (p.start_odometer_typed !== true || typeof p.trip_id !== 'string' || typeof p.start_odometer_km !== 'number' || typeof p.actual_start !== 'string') return Promise.resolve();
+    return this.fromEvent(tx, event, 'trip', `${p.trip_id}:start`, p.start_odometer_km, p.actual_start);
+  }
+
+  /** TripCompleted (FMS-165): the typed end reading, else the GPS estimate (domain/meter.ts tripEndReading). */
+  onTripCompleted(tx: PoolClient, event: DomainEvent): Promise<void> {
+    const p = event.payload;
+    if (typeof p.trip_id !== 'string' || typeof p.actual_end !== 'string') return Promise.resolve();
+    const num = (v: unknown) => (typeof v === 'number' ? v : null);
+    const reading = tripEndReading({
+      start_odometer_km: num(p.start_odometer_km),
+      end_odometer_km: num(p.end_odometer_km),
+      actual_distance_km: num(p.actual_distance_km),
+      actual_distance_source: p.actual_distance_source === 'gps' || p.actual_distance_source === 'odometer' ? p.actual_distance_source : null,
+    });
+    if (!reading) return Promise.resolve();
+    return this.fromEvent(tx, event, reading.source, `${p.trip_id}:end`, reading.km, p.actual_end);
+  }
+
+  private async fromEvent(tx: PoolClient, event: DomainEvent, source: 'fuel_log' | 'maintenance' | 'trip' | 'gps_derived', ref: string, km: number, at: string): Promise<void> {
     if (typeof event.payload.vehicle_id !== 'string') return;
     const vehicle = await this.deps.vehicles.findRef(tx, { publicId: event.payload.vehicle_id }, { kind: 'all' });
     if (!vehicle) return;

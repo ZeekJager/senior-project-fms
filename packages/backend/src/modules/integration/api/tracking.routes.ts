@@ -6,6 +6,7 @@ import { notFound } from '../../../shared/errors/app-error';
 import { asyncHandler } from '../../../shared/http/async-handler';
 import { parseInput } from '../../../shared/http/validate';
 import { authorize } from '../../auth';
+import type { DiagnosticsService } from '../application/diagnostics.service';
 import type { IngestionService, Reporter } from '../application/ingestion.service';
 import type { LiveMapService } from '../application/live-map.service';
 import type { TelemetryRulesService } from '../application/telemetry-rules.service';
@@ -73,6 +74,14 @@ const flagsQuery = z
     limit: q.limit,
   }));
 
+/** GET /vehicles/{vehicle_id}/diagnostic-codes (FMS-132): active, cleared or all (the default), how many. */
+const diagnosticsQuery = z
+  .strictObject({
+    status: z.enum(['active', 'cleared', 'all']).default('all'),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .transform((q) => ({ status: q.status === 'all' ? null : q.status, limit: q.limit }));
+
 /** GET /vehicles/{vehicle_id}/tracking: a period of recorded_at (both ends included), a page size, the next page's cursor. */
 const trackQuery = z
   .strictObject({
@@ -93,9 +102,16 @@ const trackQuery = z
  * GET /tracking/vehicles/current (FMS-45): the live map's snapshot.
  * GET /vehicles/{vehicle_id}/telemetry-flags (FMS-46): the vehicle's speeding and idling flags.
  * GET /vehicles/{vehicle_id}/tracking (FMS-136): the vehicle's GPS history, oldest first, a page at a time.
+ * GET /vehicles/{vehicle_id}/diagnostic-codes (FMS-132): the fault codes its telematics reported, active first.
  * Behavioural data (§24.3): tracking:read only, never drivers, in the caller's depot scope.
  */
-export function trackingRouter(service: IngestionService, liveMap: LiveMapService, rules: TelemetryRulesService, history: TrackHistoryService): Router {
+export function trackingRouter(
+  service: IngestionService,
+  liveMap: LiveMapService,
+  rules: TelemetryRulesService,
+  history: TrackHistoryService,
+  diagnostics: DiagnosticsService,
+): Router {
   const router = Router();
   router.get(
     '/tracking/vehicles/current',
@@ -137,6 +153,17 @@ export function trackingRouter(service: IngestionService, liveMap: LiveMapServic
       const query = parseInput(trackQuery, req.query);
       const { points, nextCursor } = await history.forVehicle(req.user!, vehicleId.data, query, req.correlationId);
       res.json({ data: points, meta: { page_size: query.limit, next_cursor: nextCursor, request_id: req.correlationId } });
+    }),
+  );
+  router.get(
+    '/vehicles/:vehicleId/diagnostic-codes',
+    authorize('tracking:read'),
+    asyncHandler(async (req, res) => {
+      const vehicleId = z.uuid().safeParse(req.params.vehicleId);
+      if (!vehicleId.success) throw notFound('Vehicle not found.');
+      const query = parseInput(diagnosticsQuery, req.query);
+      const data = await diagnostics.forVehicle(req.user!, vehicleId.data, query);
+      res.json({ data, meta: { request_id: req.correlationId } });
     }),
   );
   return router;

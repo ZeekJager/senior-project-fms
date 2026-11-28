@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, MessageSquareText, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, Map as MapIcon, MapPin, MapPinOff, MessageSquareText, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
@@ -37,6 +37,9 @@ const REFUSALS: Record<string, string> = {
   CONFLICT_CONCURRENT_MODIFICATION: 'Dispatch changed this trip. Your day has been refreshed.',
 }
 
+/** FMS-165: the odometer box on the trip card. Empty is fine; anything else must be a reading in km. */
+const ODOMETER = /^\d{1,7}(\.\d)?$/
+
 const REASONS: Record<string, string> = {
   license_expired: 'your licence has expired',
   account_not_active: 'your account is not active',
@@ -49,6 +52,7 @@ function refusalText(err: unknown): string {
   if (!(err instanceof ApiError)) return 'No connection. Try again when you have signal.'
   const reasons = err.code === 'CONFLICT_DRIVER_NOT_ELIGIBLE' ? err.details.map((d) => REASONS[d.reason ?? ''] ?? d.reason).filter(Boolean) : []
   if (reasons.length > 0) return `You cannot drive this trip: ${reasons.join(', ')}. Call dispatch.`
+  if (err.code === 'CONFLICT_ODOMETER_REGRESSION') return `Check the odometer: ${err.message}`
   return REFUSALS[err.code] ?? `The trip could not be updated (${err.code}).`
 }
 
@@ -70,6 +74,8 @@ export function DriverHome() {
   const start = useTripCommand('start')
   const end = useTripCommand('end')
   const [warnings, setWarnings] = useState<TripWarning[]>([])
+  const [odometer, setOdometer] = useState('')
+  const [odometerError, setOdometerError] = useState<string | null>(null)
   const [postTrip, setPostTrip] = usePostTrip(session?.user.id ?? '')
 
   const trips = today.data ?? []
@@ -84,11 +90,17 @@ export function DriverHome() {
     setWarnings([])
     start.reset()
     end.reset()
+    const typed = odometer.trim().replace(/,/g, '')
+    if (typed && !ODOMETER.test(typed)) return setOdometerError('A reading in kilometres, e.g. 53290 or 53290.5.')
+    setOdometerError(null)
+    const odometerKm = typed ? Number(typed) : undefined
     try {
       if (trip.status === 'assigned') {
-        setWarnings((await start.mutateAsync(trip)).warnings)
+        setWarnings((await start.mutateAsync({ trip, odometerKm })).warnings)
+        setOdometer('')
       } else {
-        await end.mutateAsync(trip)
+        await end.mutateAsync({ trip, odometerKm })
+        setOdometer('')
         setPostTrip({ userId: session?.user.id ?? '', tripId: trip.id, vehicleId: trip.vehicle_id, routeName: trip.route_name })
       }
     } catch {
@@ -136,6 +148,18 @@ export function DriverHome() {
               Pre-trip inspection
             </Link>
           )}
+          <OdometerBox trip={current} value={odometer} error={odometerError} onChange={setOdometer} />
+          {/* FMS-166: the road to the stops and the destination on a live map. */}
+          <Link
+            to={`/driver/navigate?trip=${current.id}`}
+            className={cn(
+              'focus-ring flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold shadow-soft',
+              current.status === 'en_route' ? 'bg-brand text-white hover:bg-brand-strong' : 'border border-line-strong bg-surface text-ink hover:bg-surface-muted',
+            )}
+          >
+            <MapIcon className={cn('h-5 w-5', current.status === 'en_route' ? 'text-white' : 'text-brand-ink')} aria-hidden="true" />
+            {current.status === 'en_route' ? 'Navigate' : 'Show the route'}
+          </Link>
           <ActionButton trip={current} busy={busy} online={online} onPress={() => void act(current)} />
           <div role="alert" className="empty:hidden">
             {error != null && (
@@ -383,6 +407,41 @@ function StopList({ trip }: { trip: DriverTrip }) {
         )}
       </div>
     </section>
+  )
+}
+
+/**
+ * FMS-165: the odometer the driver reads before START TRIP or END TRIP, optional. It keeps the vehicle's reading
+ * current; left empty, the server keeps the last reading at the start and estimates one from GPS at the end.
+ */
+function OdometerBox({ trip, value, error, onChange }: { trip: DriverTrip; value: string; error: string | null; onChange: (v: string) => void }) {
+  const vehicle = useTripVehicle(trip.vehicle_id)
+  if (!trip.vehicle_id) return null
+  const last = vehicle.data?.odometer_km
+  const id = `odometer-${trip.id}`
+  return (
+    <div>
+      <label htmlFor={id} className="block text-sm font-semibold text-ink">
+        Odometer now <span className="font-normal text-ink-subtle">(optional)</span>
+      </label>
+      <div className="mt-1.5 flex items-center rounded-2xl border border-line-strong bg-surface focus-within:ring-2 focus-within:ring-brand">
+        <input
+          id={id}
+          inputMode="decimal"
+          autoComplete="off"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={last !== undefined ? String(last) : 'km on the dashboard'}
+          aria-describedby={`${id}-hint`}
+          aria-invalid={error ? true : undefined}
+          className="h-12 min-w-0 flex-1 rounded-2xl bg-transparent px-4 text-lg tabular-nums text-ink outline-none placeholder:text-ink-subtle"
+        />
+        <span className="pr-4 text-sm text-ink-muted">km</span>
+      </div>
+      <p id={`${id}-hint`} className={cn('mt-1 text-sm', error ? 'text-danger' : 'text-ink-muted')}>
+        {error ?? (last !== undefined ? `Last known: ${last.toLocaleString('en-US', { maximumFractionDigits: 1 })} km. Read the dashboard and type it.` : 'Read the dashboard and type it.')}
+      </p>
+    </div>
   )
 }
 

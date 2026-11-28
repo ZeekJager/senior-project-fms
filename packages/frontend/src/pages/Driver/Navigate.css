@@ -1,0 +1,62 @@
+/*
+ * Driver navigation (FMS-166): the road in the brand colour on a white casing so it reads over any tile, the driver
+ * a pulsing dot, stops as rings and the destination as a filled ring in the success colour. Colours from the tokens.
+ */
+
+.nav-map .nav-road {
+  stroke: rgb(var(--c-brand));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.nav-map .nav-road-casing {
+  stroke: rgb(var(--c-surface));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.nav-map .nav-straight {
+  stroke: rgb(var(--c-brand));
+  stroke-dasharray: 4 8;
+  fill: none;
+}
+.nav-map .nav-stop {
+  stroke: rgb(var(--c-brand));
+  fill: rgb(var(--c-surface));
+  fill-opacity: 1;
+}
+.nav-map .nav-destination {
+  stroke: rgb(var(--c-surface));
+  fill: rgb(var(--c-success-solid, var(--c-brand)));
+  fill-opacity: 1;
+}
+.nav-map .nav-me {
+  stroke: rgb(var(--c-surface));
+  fill: rgb(var(--c-brand));
+  fill-opacity: 1;
+  animation: nav-pulse 1.8s ease-in-out infinite;
+}
+.nav-map .nav-accuracy {
+  fill: rgb(var(--c-brand));
+  fill-opacity: 0.12;
+}
+.nav-map .nav-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+@keyframes nav-pulse {
+  0%,
+  100% {
+    stroke-width: 4px;
+  }
+  50% {
+    stroke-width: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-map .nav-me {
+    animation: none;
+  }
+}
