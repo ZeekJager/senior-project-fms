@@ -23,6 +23,7 @@ import { integrationRouter, webhookRouter } from './api/integration.routes';
 import { ruleThresholdRouter } from './api/rule-threshold.routes';
 import { trackingRouter } from './api/tracking.routes';
 import { DeviceService } from './application/device.service';
+import { DiagnosticsService } from './application/diagnostics.service';
 import { GeofenceService } from './application/geofence.service';
 import { IngestionService } from './application/ingestion.service';
 import { IntegrationService } from './application/integration.service';
@@ -36,11 +37,13 @@ import { NotificationGateway } from './application/notification-gateway';
 import { TelemetryRulesService, THRESHOLDS_TTL_MS } from './application/telemetry-rules.service';
 import { TrackHistoryService } from './application/track-history.service';
 import { ProviderRegistry, type InternalService } from './application/provider-registry';
+import { diagnosticEntries } from './domain/diagnostics';
 import type { AdapterContext, NotificationChannel, OutboundMessage, ProviderAdapter, ProviderClient } from './domain/adapter';
 import { TRACKING_EVENTS, type PingInput } from './domain/gps';
 import type { LocationState } from './domain/location-rules';
 import { INTEGRATION_EVENTS, type CircuitState } from './domain/provider';
 import { DeviceRepository } from './infrastructure/device.repository';
+import { DiagnosticRepository } from './infrastructure/diagnostic.repository';
 import { fmsEvChargingAdapter } from './infrastructure/fms-ev-charging.adapter';
 import { fmsTelematicsAdapter, POSITIONS_KIND } from './infrastructure/fms-telematics.adapter';
 import { GeofenceRepository } from './infrastructure/geofence.repository';
@@ -101,6 +104,32 @@ eventBus.subscribe(INTEGRATION_EVENTS.webhookReceived, 'integration.telematics-p
   if (!delivery || !provider) return;
   const positions = (delivery.metadata.data?.positions ?? []) as PingInput[];
   await deviceService.ingestDelivery(tx, provider, positions, event.correlation_id);
+});
+
+// Diagnostic trouble codes (FMS-132, docs/diagnostic-codes.md): a telematics delivery's `diagnostics`, with or without
+// positions, after its receipt has committed. A redelivery is stopped at the receipt (its event id); a code reported
+// twice at the same time is counted once. A delivery whose codes are not in the FMS format (a mock provider's own
+// data) is skipped and logged: it was accepted, so it cannot be refused now.
+const diagnostics = new DiagnosticsService({
+  db: pool,
+  diagnostics: new DiagnosticRepository(),
+  devices,
+  refs: { vehicles: { byIds: trackingRefs.vehicles.byIds, byPublicIds: trackingRefs.vehicles.byPublicIds } },
+  events: eventBus,
+});
+eventBus.subscribe(INTEGRATION_EVENTS.webhookReceived, 'integration.telematics-diagnostics', async (event, tx) => {
+  if (event.payload.provider_type !== 'telematics') return;
+  const delivery = await repo.delivery(tx, event.payload.sync_log_id as string);
+  const raw = (delivery?.metadata.data as Record<string, unknown> | undefined)?.diagnostics;
+  if (!delivery || raw === undefined) return;
+  const provider = await repo.findProviderByCode(tx, delivery.providerCode);
+  if (!provider) return;
+  const parsed = diagnosticEntries.safeParse(raw);
+  if (!parsed.success) {
+    logger.warn({ provider: delivery.providerCode, field: parsed.error.issues[0]?.path.join('.') }, 'telematics diagnostics: not in the FMS format; skipped');
+    return;
+  }
+  await diagnostics.ingestDelivery(tx, provider, parsed.data, event.correlation_id);
 });
 
 // The live map's snapshot (FMS-45), cached for a few seconds. A trip starting, ending or changing, or a
@@ -222,7 +251,7 @@ const router = Router();
 router.use(integrationRouter(service));
 router.use(webhookRouter(service));
 router.use(deviceRouter(deviceService));
-router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory));
+router.use(trackingRouter(ingestion, liveMap, telemetryRules, trackHistory, diagnostics));
 router.use(ruleThresholdRouter(ruleThresholds));
 router.use(geofenceRouter(geofences));
 
@@ -377,6 +406,7 @@ export {
 export type { InternalService } from './application/provider-registry';
 export { INTEGRATION_EVENTS } from './domain/provider';
 export { MAX_PINGS_PER_BATCH, TRACKING_EVENTS, type PingInput } from './domain/gps';
+export { DIAGNOSTIC_EVENTS, MAX_DIAGNOSTICS_PER_BATCH, type DiagnosticEntry } from './domain/diagnostics';
 export { GEOFENCE_EVENTS } from './domain/geofence';
 export { LIVE_MAP_CACHE_TTL_SECONDS, type VehicleLocation } from './domain/live-map';
 export { fmsTelematicsAdapter } from './infrastructure/fms-telematics.adapter';

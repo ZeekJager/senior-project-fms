@@ -8,12 +8,17 @@
  *   npm run simulate:gps -- --speeding 0.2 --idling 0.1 --api http://localhost:3000/api/v1
  *   npm run simulate:gps -- --provider geotab-et          # as a real provider would, with its secret
  *   npm run simulate:gps -- --via device                  # each vehicle as its own device, with a token
+ *   npm run simulate:gps -- --faults 0.05                 # 5 % of vehicles report an engine fault code (FMS-132)
  *
  * By default it is a telematics provider (`--provider fms-simulator`): each vehicle's simulated device
  * (`sim-<provider>-<vehicle id>`) is linked to the vehicle in the device registry, and once a second the positions
  * due are posted as one signed webhook to /webhooks/telematics/<provider>, the path a real provider uses. It signs
  * with INTEGRATION_<PROVIDER>_WEBHOOK_SECRET from the same environment as the API. With `--via device` each vehicle
  * gets a token instead and posts to /tracking/gps-pings itself.
+ *
+ * With `--faults` (webhook only) a share of the vehicles also report a diagnostic trouble code with every position
+ * (docs/diagnostic-codes.md): the first report raises a vehicle fault alert, the rest count occurrences, and the
+ * codes are cleared when the run ends (closing the alerts) unless `--keep-faults`.
  *
  * Either way the simulated device takes the place of one installed in the vehicle: never run it against production
  * (it refuses NODE_ENV=production). It reads vehicles and routes from the database the API uses (the same .env),
@@ -25,7 +30,7 @@ import { config } from '../src/config';
 import { pool } from '../src/db';
 import { gpsDevices } from '../src/modules/integration';
 import { closeRedis } from '../src/shared/cache';
-import { signedDeliveries, type ProviderPosition } from './simulator/delivery';
+import { faultFor, signedDeliveries, type ProviderDiagnostic, type ProviderPosition } from './simulator/delivery';
 import { loopAround, pathLength, scenarioFor, step, type Point, type VehicleState } from './simulator/motion';
 
 interface SimVehicle {
@@ -36,6 +41,8 @@ interface SimVehicle {
   token: string | null;
   identifier: string;
   state: VehicleState;
+  /** The fault code it reports (`--faults`), or null. */
+  fault: ReturnType<typeof faultFor>;
 }
 
 /** How positions reach the API: as a telematics provider's signed webhooks, or each vehicle's own device. */
@@ -56,9 +63,12 @@ function options() {
       api: { type: 'string', default: `http://localhost:${config.port}/api/v1` },
       via: { type: 'string', default: 'webhook' },
       provider: { type: 'string', default: SIMULATOR_PROVIDER },
+      faults: { type: 'string', default: '0' },
+      'keep-faults': { type: 'boolean', default: false },
     },
   });
   if (values.via !== 'webhook' && values.via !== 'device') throw new Error('--via must be webhook or device');
+  if (Number(values.faults) > 0 && values.via !== 'webhook') throw new Error('--faults needs --via webhook: fault codes come from a telematics provider');
   const num = (name: keyof typeof values, min: number, max: number) => {
     const n = Number(values[name]);
     if (!Number.isFinite(n) || n < min || n > max) throw new Error(`--${name} must be between ${min} and ${max}`);
@@ -72,6 +82,8 @@ function options() {
     api: String(values.api).replace(/\/+$/, ''),
     via: values.via as 'webhook' | 'device',
     provider: String(values.provider),
+    faults: num('faults', 0, 1),
+    keepFaults: Boolean(values['keep-faults']),
   };
 }
 
@@ -156,6 +168,7 @@ async function setUp(opts: ReturnType<typeof options>, channel: Channel): Promis
       token,
       identifier,
       state: { path, at: Math.random() * pathLength(path), direction: 1, scenario: scenarioFor(i, res.rows.length, opts.shares) },
+      fault: channel.via === 'webhook' ? faultFor(i, res.rows.length, opts.faults) : null,
     });
   }
   return sims;
@@ -172,7 +185,8 @@ async function main(): Promise<void> {
   const counts = { normal: 0, speeding: 0, idling: 0 };
   for (const s of sims) counts[s.state.scenario]++;
   const target = channel.via === 'webhook' ? `${opts.api}/webhooks/telematics/${channel.code} as provider ${channel.code}` : `${opts.api}/tracking/gps-pings`;
-  console.log(`✔ ${sims.length} vehicles: ${counts.normal} normal, ${counts.speeding} speeding, ${counts.idling} idling. Posting to ${target} every ${opts.intervalS} s${opts.durationS ? ` for ${opts.durationS} s` : ' until Ctrl+C'}.`);
+  const faulty = sims.filter((s) => s.fault).length;
+  console.log(`✔ ${sims.length} vehicles: ${counts.normal} normal, ${counts.speeding} speeding, ${counts.idling} idling${faulty ? `, ${faulty} reporting a fault code` : ''}. Posting to ${target} every ${opts.intervalS} s${opts.durationS ? ` for ${opts.durationS} s` : ' until Ctrl+C'}.`);
 
   const started = new Date();
   const totals = { sent: 0, accepted: 0, duplicates: 0, rejected: 0, deliveries: 0, failed: new Map<string, number>() };
@@ -185,9 +199,10 @@ async function main(): Promise<void> {
 
   // As a provider: the positions due since the last delivery, posted together once a second, signed.
   let due: ProviderPosition[] = [];
+  let dueCodes: ProviderDiagnostic[] = [];
   const deliver = () => {
-    if (channel.via !== 'webhook' || due.length === 0) return;
-    for (const delivery of signedDeliveries(channel.hmacKey, due)) {
+    if (channel.via !== 'webhook' || (due.length === 0 && dueCodes.length === 0)) return;
+    for (const delivery of signedDeliveries(channel.hmacKey, due, Date.now(), dueCodes)) {
       const t0 = performance.now();
       totals.deliveries++;
       const work = fetch(`${opts.api}/webhooks/telematics/${channel.code}`, { method: 'POST', headers: delivery.headers, body: delivery.raw })
@@ -204,6 +219,7 @@ async function main(): Promise<void> {
       inFlight.add(work);
     }
     due = [];
+    dueCodes = [];
   };
 
   const send = (sim: SimVehicle) => {
@@ -213,6 +229,7 @@ async function main(): Promise<void> {
     totals.sent++;
     if (channel.via === 'webhook') {
       due.push({ device_id: sim.identifier, ...position });
+      if (sim.fault) dueCodes.push({ device_id: sim.identifier, ...sim.fault, status: 'active', observed_at: position.recorded_at });
       return;
     }
     const body = JSON.stringify({ pings: [position] });
@@ -264,6 +281,12 @@ async function main(): Promise<void> {
   clearInterval(report);
   clearInterval(flusher);
   deliver();
+  // The faults clear as the run ends (FMS-132), closing their alerts, unless they are to stay for the demo.
+  if (!opts.keepFaults) {
+    const at = new Date().toISOString();
+    dueCodes = sims.flatMap((s) => (s.fault ? [{ device_id: s.identifier, ...s.fault, status: 'cleared' as const, observed_at: at }] : []));
+    deliver();
+  }
   await Promise.allSettled([...inFlight]);
 
   // A provider's positions become pings after its delivery is stored (the outbox): give the consumer a moment.

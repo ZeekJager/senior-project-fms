@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { MAX_PINGS_PER_BATCH } from '../../src/modules/integration/domain/gps';
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, signWebhook } from '../../src/modules/integration/domain/webhook-signature';
-import { signedDeliveries, type ProviderPosition } from './delivery';
+import { faultFor, signedDeliveries, SIMULATED_FAULTS, type ProviderPosition } from './delivery';
 
 // FMS-138: the simulator's webhooks are what a real provider sends: the FMS telematics format, signed.
 
@@ -27,4 +27,22 @@ test('batches of at most MAX_PINGS_PER_BATCH, each under its own event id, signe
 
 test('nothing due, nothing sent', () => {
   assert.deepEqual(signedDeliveries(SECRET, []), []);
+});
+
+// FMS-132: fault codes ride with the positions, or go alone; the faulty share of the vehicles reports one each.
+test('diagnostic codes go with the first batch of positions, or alone when there are none', () => {
+  const code = { device_id: 'sim-0', protocol: 'obd2' as const, code: 'P0217', status: 'active' as const, observed_at: '2026-11-05T09:00:00Z' };
+  const [both] = signedDeliveries(SECRET, [position(0)], Date.now(), [code]);
+  assert.deepEqual(JSON.parse(both.raw).diagnostics, [code]);
+  assert.equal(both.diagnostics, 1);
+  const [alone] = signedDeliveries(SECRET, [], Date.now(), [code]);
+  assert.equal(JSON.parse(alone.raw).positions, undefined);
+  assert.deepEqual(JSON.parse(alone.raw).diagnostics, [code]);
+});
+
+test('the first share of the vehicles reports a fault, spread over the codes', () => {
+  const faults = Array.from({ length: 10 }, (_, i) => faultFor(i, 10, 0.3));
+  assert.equal(faults.filter(Boolean).length, 3);
+  assert.deepEqual(faults.slice(0, 3), SIMULATED_FAULTS.slice(0, 3));
+  assert.equal(faultFor(0, 10, 0), null);
 });

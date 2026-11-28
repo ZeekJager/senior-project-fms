@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { diagnosticEntries } from './diagnostics';
 import { MAX_PINGS_PER_BATCH, MAX_SPEED_KMH } from './gps';
 
 /**
@@ -29,11 +30,16 @@ export const apiPingBatch = z.strictObject({
 /**
  * The FMS telematics webhook format (docs/integrations.md): what a provider sends, or what a relay in
  * front of a provider translates its own format to. Devices are named by the provider's identifier.
+ * A delivery carries positions, diagnostic trouble codes (FMS-132), or both.
  */
-export const telematicsDelivery = z.strictObject({
-  event_id: z.string().min(1).max(255),
-  positions: z
-    .array(z.strictObject({ device_id: z.string().min(1).max(255), ...positionFields }))
-    .min(1)
-    .max(MAX_PINGS_PER_BATCH),
-});
+export const telematicsDelivery = z
+  .strictObject({
+    event_id: z.string().min(1).max(255),
+    positions: z
+      .array(z.strictObject({ device_id: z.string().min(1).max(255), ...positionFields }))
+      .min(1)
+      .max(MAX_PINGS_PER_BATCH)
+      .optional(),
+    diagnostics: diagnosticEntries.optional(),
+  })
+  .refine((d) => d.positions !== undefined || d.diagnostics !== undefined, { path: ['positions'], message: 'required' });
