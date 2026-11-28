@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, MapPin, MapPinOff, MessageSquareText, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, ClipboardCheck, Clock, LocateFixed, Map as MapIcon, MapPin, MapPinOff, MessageSquareText, Navigation, Scale, ScanLine, Trophy, Truck, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Skeleton, cn } from '@/components/ui'
@@ -149,6 +149,17 @@ export function DriverHome() {
             </Link>
           )}
           <OdometerBox trip={current} value={odometer} error={odometerError} onChange={setOdometer} />
+          {/* FMS-166: the road to the stops and the destination on a live map. */}
+          <Link
+            to={`/driver/navigate?trip=${current.id}`}
+            className={cn(
+              'focus-ring flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold shadow-soft',
+              current.status === 'en_route' ? 'bg-brand text-white hover:bg-brand-strong' : 'border border-line-strong bg-surface text-ink hover:bg-surface-muted',
+            )}
+          >
+            <MapIcon className={cn('h-5 w-5', current.status === 'en_route' ? 'text-white' : 'text-brand-ink')} aria-hidden="true" />
+            {current.status === 'en_route' ? 'Navigate' : 'Show the route'}
+          </Link>
           <ActionButton trip={current} busy={busy} online={online} onPress={() => void act(current)} />
           <div role="alert" className="empty:hidden">
             {error != null && (

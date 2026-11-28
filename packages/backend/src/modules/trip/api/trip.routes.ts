@@ -115,6 +115,19 @@ const refuseBody = z.strictObject({ reason: z.string().trim().min(1).max(500) })
 /** POST /trips/{id}/start and /end: optionally the odometer then (FMS-165); an empty JSON object is fine. */
 const odometerBody = z.strictObject({ odometer_km: z.number().nonnegative().max(9_999_999).optional() });
 
+/** GET /trips/{id}/navigation (FMS-166): `from=lat,lng`, the phone's position, optional. */
+const navigationQuery = z.object({
+  from: z
+    .string()
+    .regex(/^-?\d{1,2}(\.\d+)?,-?\d{1,3}(\.\d+)?$/, 'lat,lng in decimal degrees')
+    .transform((s) => {
+      const [latitude, longitude] = s.split(',').map(Number);
+      return { latitude, longitude };
+    })
+    .refine((c) => Math.abs(c.latitude) <= 90 && Math.abs(c.longitude) <= 180, 'lat,lng in decimal degrees')
+    .optional(),
+});
+
 /** POST /trips/{id}/status: the explicit transition (FMS-32). */
 const statusBody = z.strictObject({ status: z.enum(COMMAND_STATUSES) });
 
@@ -203,6 +216,16 @@ export function tripRouter(service: TripService): Router {
     authorize('trip:read'),
     asyncHandler(async (req, res) => {
       res.json({ data: await service.live(caller(req), tripId(req)), meta: { request_id: req.correlationId } });
+    }),
+  );
+
+  // FMS-166: the road to the next stops and the destination, from the driver's position, turn by turn.
+  router.get(
+    '/trips/:tripId/navigation',
+    authorize('trip:execute'),
+    asyncHandler(async (req, res) => {
+      const { from } = parseInput(navigationQuery, req.query);
+      res.json({ data: await service.navigation(caller(req), tripId(req), from ?? null), meta: { request_id: req.correlationId } });
     }),
   );
 

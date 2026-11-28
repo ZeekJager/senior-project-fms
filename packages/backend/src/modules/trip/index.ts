@@ -157,6 +157,7 @@ const tripService = new TripService({
   overrunGraceMinutes: config.trips.overrunGraceMinutes,
   positions: () => positionLookup,
   evRange: () => evRangeLookup,
+  roads: () => roadPlanner,
 });
 
 // Live arrival times (FMS-86, docs/eta.md): each announced position of a trip under way, at most every 30 seconds

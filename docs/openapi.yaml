@@ -749,6 +749,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TripMoveRefused' }
 
+  /trips/{trip_id}/navigation:
+    get:
+      tags: [Trips]
+      operationId: getTripNavigation
+      summary: Live navigation to the next stops and the destination (FMS-166)
+      description: >
+        Needs trip:execute; a driver only their own trips, dispatch in their depot scope (another's trip, or an id that
+        is not a UUID, is a 404). The waypoints left (stops not completed or skipped, in order, then the route's
+        destination) and the road from `from` (the phone's position; without it the vehicle's newest stored
+        position) through them, from the routing engine with every turn in plain words. With no road, `no_road` says
+        why and `straight_line` gives the distance and compass bearing to the next waypoint. Not cached: the driver
+        asks again as they move. docs/driver-navigation.md.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - name: from
+          in: query
+          description: 'Where the driver is, `lat,lng` in decimal degrees (e.g. 8.9806,38.7578).'
+          schema: { type: string, pattern: '^-?\d{1,2}(\.\d+)?,-?\d{1,3}(\.\d+)?$' }
+      responses:
+        '200':
+          description: The waypoints left and the road there.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/TripNavigation' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '400':
+          description: VALIDATION_FAILED (a `from` that is not lat,lng).
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /trips/{trip_id}/live:
     get:
       tags: [Trips]
@@ -11834,6 +11870,85 @@ components:
             without coordinates or behind the vehicle, or when the trip is not under way.
         completed_at: { type: [string, 'null'], format: date-time, description: When the stop was marked done (FMS-95). }
 
+    TripNavigation:
+      type: object
+      description: A trip's navigation (FMS-166, docs/driver-navigation.md).
+      required: [trip_id, status, origin, waypoints, destination, road, no_road, straight_line, as_of]
+      properties:
+        trip_id: { type: string, format: uuid }
+        status: { type: string, enum: [draft, scheduled, assigned, en_route, completed, cancelled] }
+        origin:
+          description: Where the road starts, the phone's position sent in `from` or the vehicle's newest; null with neither.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [lat, lng, source]
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+                source: { type: string, enum: [phone, vehicle] }
+        waypoints:
+          type: array
+          items: { $ref: '#/components/schemas/NavigationWaypoint' }
+        destination:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/NavigationWaypoint'
+        road:
+          description: The road from the origin through the waypoints; null when there is none (see no_road).
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [distance_km, duration_seconds, arrival_at, geometry, steps]
+              properties:
+                distance_km: { type: number }
+                duration_seconds: { type: integer }
+                arrival_at: { type: string, format: date-time, description: 'Now plus the road time.' }
+                geometry:
+                  type: object
+                  required: [type, coordinates]
+                  properties:
+                    type: { type: string, enum: [LineString] }
+                    coordinates:
+                      type: array
+                      items: { type: array, items: { type: number }, minItems: 2, maxItems: 2 }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [instruction, type, modifier, road, distance_m, duration_s, lat, lng]
+                    properties:
+                      instruction: { type: string, description: "What to do, in words: 'Turn left onto Ring Road', 'Arrive at Adama depot'." }
+                      type: { type: string, description: "OSRM's maneuver type (depart, turn, roundabout, arrive...)." }
+                      modifier: { type: [string, 'null'] }
+                      road: { type: [string, 'null'] }
+                      distance_m: { type: integer }
+                      duration_s: { type: integer }
+                      lat: { type: number }
+                      lng: { type: number }
+        no_road:
+          type: [string, 'null']
+          enum: [no_origin, no_waypoints, routing_not_configured, routing_unavailable, no_road, null]
+        straight_line:
+          description: To the next waypoint as the crow flies; null without an origin or a waypoint.
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [distance_km, bearing_deg]
+              properties:
+                distance_km: { type: number }
+                bearing_deg: { type: integer, minimum: 0, maximum: 359 }
+        as_of: { type: string, format: date-time }
+    NavigationWaypoint:
+      type: object
+      required: [kind, stop_id, sequence_number, name, lat, lng]
+      properties:
+        kind: { type: string, enum: [stop, destination] }
+        stop_id: { type: [string, 'null'], format: uuid }
+        sequence_number: { type: [integer, 'null'] }
+        name: { type: string }
+        lat: { type: number }
+        lng: { type: number }
     TripLiveState:
       type: object
       description: Where a trip stands now (FMS-95). docs/trip-stops.md.
