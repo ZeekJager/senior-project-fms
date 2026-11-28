@@ -294,9 +294,9 @@ you can **Withdraw** it. Tap **I have read the decision** when you have.
 
 ### Feedback from your managers
 
-**My feedback** on *My day* lists what your managers told you about a trip, a month or your driving, newest first; *My day*
-says how many are new. You are told in the app and by push when there is new feedback. It opens with no signal too, as last
-saved.
+**My feedback** on *My day* lists what your managers told you about a trip, a month or your driving, newest first; *My
+day* says how many are new. You are told in the app and by push when there is new feedback. It opens with no signal too,
+as last saved.
 
 - Tap **Got it** when you have read it: your manager sees when.
 - **Reply** once, in up to 1,000 characters.
@@ -798,7 +798,8 @@ instead of overwriting their change. A change reaches every server within second
   range above. You are alerted, in the app, by email, SMS and Teams, when a line in Settings, *Monitoring*, is passed.
   Before planned work, **Add a window** with the servers it touches: their alerts are held back until it ends.
   **Capacity report (PDF)** says how fast the disks fill and what will pass 80% within 90 days.
-- **Backups:** the database is backed up every night and kept 30 days. **Back up now** takes one at once;
+- **Backups:** the database is backed up every 4 hours (02:40, 06:40, 10:40, 14:40, 18:40, 22:40) and each copy
+  is kept 30 days. **Back up now** takes one at once;
   **Download** saves one (the link lasts 5 minutes). Restoring is done by the technical team, never from a button.
 
 ![System health](user-guide/images/admin-06-system-health.png)

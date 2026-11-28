@@ -7,13 +7,13 @@ Code: `packages/backend/src/modules/backup/` (migration `056_database_backups.sq
 ## What a backup is
 
 - `pg_dump` of the whole database in its **custom format, compressed** (`--format=custom --compress=6`): every schema, table, row, index, grant and the migration history. Restored with `pg_restore`.
-- Taken by the API's runner, **one at a time**: nightly at 02:40 (job `database-backup`) and whenever an admin presses Back up now (`POST /system/backups`, which starts it at once in the background). A Back up now whose server stopped before it ran is picked up by the `backup-runner` job within 5 minutes; a run still marked running after 120 minutes (its server died) is marked failed.
+- Taken by the API's runner, **one at a time**: every 4 hours, at 02:40, 06:40, 10:40, 14:40, 18:40 and 22:40 Addis Ababa time (six jobs, `database-backup-0240` to `database-backup-2240`, one per slot so each is locked and caught up on its own), and whenever an admin presses Back up now (`POST /system/backups`, which starts it at once in the background). A Back up now whose server stopped before it ran is picked up by the `backup-runner` job within 5 minutes; a run still marked running after 120 minutes (its server died) is marked failed.
 - Written to a temporary file, hashed (SHA-256), then stored in the **backup storage**, the same adapter as uploaded documents (local disk `STORAGE_LOCAL_DIR` in development, the S3 bucket elsewhere), under `backups/<year>/<month>/<backup id>`. Never in PostgreSQL, never in the repository.
 - Recorded in `backup.backups`: kind (scheduled or manual), status (`queued`, `running`, `succeeded`, `failed`, `expired`), who started it, when it started and finished, size, SHA-256, and for a failed one pg_dump's own error (any `password=` in it is masked).
 - Kept **30 days**. The `backup-retention` job (03:55) removes older files; the row stays as `expired`, so the history is complete.
 - Audited: `backup.requested`, `backup.succeeded`, `backup.failed` (result `failed`), `backup.downloaded` (by the admin who downloaded it), `backup.expired`.
 
-A nightly dump alone can lose up to a day of GPS points, trips and fuel logs. Since FMS-108 (SE-152) the database also archives every change continuously and can be restored to any second: [Continuous archiving and point-in-time recovery](#continuous-archiving-and-point-in-time-recovery). The dumps stay: one restores into any PostgreSQL, and it can be downloaded.
+A dump every 4 hours alone can lose up to 4 hours of GPS points, trips and fuel logs (a nightly one lost up to a day). Since FMS-108 (SE-152) the database also archives every change continuously and can be restored to any second: [Continuous archiving and point-in-time recovery](#continuous-archiving-and-point-in-time-recovery). The dumps stay: one restores into any PostgreSQL, and it can be downloaded.
 
 ## Who
 
@@ -81,7 +81,7 @@ FMS-108 (SE-152), decided in [ADR-07](adr/ADR-07-backup-pitr-pgbackrest.md). The
 | WAL (every change) | Continuously, compressed (zstd) and encrypted (AES-256). PostgreSQL closes a segment at least every 60 s (`archive_timeout`), so a quiet database still ships its last changes within a minute | With the base backups it belongs to |
 | Full base backup | On the first start of a database with none, then Sundays at 01:00 Addis Ababa time (`BACKUP_BASE_HOUR_UTC`, default 22) | The last 3 (`repo1-retention-full`): the oldest is 14 to 21 days old, so a restore always reaches at least 14 days back |
 | Differential base backup | Every other day at the same time: what changed since the last full one | Until their full one expires |
-| Nightly `pg_dump` (above) | 02:40 | 30 days |
+| `pg_dump` (above) | Every 4 hours from 02:40 | 30 days (180 files) |
 
 - **Where.** The repository is its own volume, `pgbackrest_repo`, so losing the database volume does not lose the backups. A second repository off site, in another region or provider, takes every segment and base backup too ([below](#off-site-repository)). In production `repo1` is an S3 bucket as well.
 - **Recorded.** Each base backup is a row in `backup.base_backups` (migrations 075, 076): full or differential, what started it, the repository it went to (pgBackRest backs up to one at a time, so `backup.sh` takes one per repository), its status, its size in the database and in the repository, the WAL range it needs, and pgBackRest's error when it failed. A backup pgBackRest expired is kept as `expired`. Once a minute the container's `status.sh` records each repository in `backup.pitr_repositories`: reachable or not and since when, the WAL range it holds and when its newest segment arrived, and its base backups. The container's scripts write these rows; the API only reads them.

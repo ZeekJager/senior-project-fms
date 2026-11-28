@@ -143,7 +143,7 @@ describe('S-30 Backups (FMS-144)', () => {
     expect(rows[0]).toHaveTextContent('3.3 MB')
     expect(rows[0]).toHaveTextContent('Sara Admin')
     expect(within(rows[0]).getByRole('button', { name: /Download the backup/ })).toBeInTheDocument()
-    expect(rows[1]).toHaveTextContent('Nightly')
+    expect(rows[1]).toHaveTextContent('Scheduled')
     expect(rows[1]).toHaveTextContent('Failed')
     expect(rows[1]).toHaveTextContent('pg_dump: error: connection failed')
     expect(rows[1]).toHaveTextContent('Schedule')
@@ -313,7 +313,7 @@ describe('S-30 Backups: point-in-time recovery (FMS-108)', () => {
     expect(await within(pitrSection).findByText('No base backups yet')).toBeInTheDocument()
   })
 
-  it('on a server that does not archive its WAL, says so and shows only the nightly copies', async () => {
+  it('on a server that does not archive its WAL, says so and shows only the scheduled copies', async () => {
     serve({ data: [backup()], meta: meta({ pitr: pitr({ enabled: false, recoverable_from: null, recoverable_to: null, repositories: [], last_drill: null }) }) })
     await open()
     const pitrSection = await section()

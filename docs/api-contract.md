@@ -265,7 +265,7 @@ Audit reader rules (FMS-28):
 | `POST /system/backups/{backup_id}/download-link` | A download link for the caller | `backup:read` | -> `{url, expires_at, filename}`: signed, naming the caller, alive 5 minutes. `409` unless `succeeded` (`reason: expired` past retention) |
 | `GET /system/backups/{backup_id}/content` | The file | Signed link (public route) | `?user&expires&signature` -> `application/octet-stream`, an attachment (pg_dump's custom format). `401 AUTH_TOKEN_EXPIRED` / `AUTH_TOKEN_INVALID` for a stale or altered link; audited as `backup.downloaded` by the admin the link names |
 
-Backups are pg_dump of the whole database in its custom format, compressed, taken by the app's runner one at a time (nightly at 02:40, and on Back up now), stored in the backup storage (never in PostgreSQL or the repository) with their size and SHA-256, and audited (`backup.requested`, `backup.succeeded`, `backup.failed`, `backup.downloaded`, `backup.expired`). Files are removed after 30 days; the record stays as `expired`. Restoring is a command, not an endpoint: it replaces the live data ([backups.md](backups.md)).
+Backups are pg_dump of the whole database in its custom format, compressed, taken by the app's runner one at a time (every 4 hours from 02:40, and on Back up now), stored in the backup storage (never in PostgreSQL or the repository) with their size and SHA-256, and audited (`backup.requested`, `backup.succeeded`, `backup.failed`, `backup.downloaded`, `backup.expired`). Files are removed after 30 days; the record stays as `expired`. Restoring is a command, not an endpoint: it replaces the live data ([backups.md](backups.md)).
 
 ## 6. Fleet Management API
 
