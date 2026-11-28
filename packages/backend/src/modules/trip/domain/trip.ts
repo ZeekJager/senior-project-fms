@@ -82,6 +82,12 @@ export interface TripView {
    * with one entered before trips were measured (the seed, an import).
    */
   actual_distance_source: 'odometer' | 'gps' | null;
+  /**
+   * The odometer when the trip started and ended (FMS-165, docs/meter-readings.md): typed by the driver, or at the
+   * start the vehicle's own reading when none was typed. Null before the trip starts or ends.
+   */
+  start_odometer_km: number | null;
+  end_odometer_km: number | null;
   /** What the trip carries (FMS-153): optional, never above the assigned vehicle's payload when both are known. */
   cargo_weight_kg: number | null;
   cargo_kind: CargoKind;
@@ -161,6 +167,12 @@ export const ASSIGNABLE_STATUSES: readonly TripStatus[] = ['scheduled', 'assigne
 
 /** States in which the plan (route, schedule) may still change, and from which a trip may be cancelled. */
 export const OPEN_STATUSES: readonly TripStatus[] = ['draft', 'scheduled', 'assigned'];
+
+/** FMS-165: an odometer typed at the start or end of a trip lower than the reading the vehicle (or the trip's start) already has. */
+export const tripOdometerBelow = (floorKm: number, reason: 'below_vehicle_odometer' | 'below_start_odometer') =>
+  new AppError(409, 'CONFLICT_ODOMETER_REGRESSION', `The odometer reading is lower than ${reason === 'below_start_odometer' ? 'the one at the start of the trip' : "the vehicle's current reading"} (${floorKm} km).`, [
+    { field: 'odometer_km', reason },
+  ]);
 
 export const tripNotFound = () => new AppError(404, 'NOT_FOUND', 'Trip not found.');
 

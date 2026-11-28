@@ -26,7 +26,7 @@ The simulator takes the same path: it is a provider (`fms-simulator`) and posts 
 |---|---|---|
 | The provider | a row of `integration.external_providers` | `code` (its webhook path and secret names), `provider_type = 'telematics'`, `is_active` |
 | Its secret | `INTEGRATION_<CODE>_WEBHOOK_SECRET` in the environment | The HMAC key it signs with, 32 characters or more. Never in the database or GitHub |
-| Its adapter | `fmsTelematicsAdapter` for every telematics provider, unless one is registered for its code | Reads the body into `{ event_id, positions: [{ device_id, recorded_at, lat, lng, speed_kmh, ... }] }` |
+| Its adapter | `fmsTelematicsAdapter` for every telematics provider, unless one is registered for its code | Reads the body into `{ event_id, positions: [{ device_id, recorded_at, lat, lng, speed_kmh, ... }], diagnostics: [...] }`, either list or both; the codes are [diagnostic-codes.md](diagnostic-codes.md)'s (FMS-132) |
 | The device registry | `integration.gps_devices`, `GET/POST/DELETE /integrations/devices`, S-34 | Which of the provider's device ids reports for which vehicle |
 | Unknown devices | `integration.unknown_devices`, `GET /integrations/devices/unknown` | Ids its signed deliveries named that no vehicle has, so they can be linked |
 | Today's counts | `integration.webhook_daily_counts`, on `GET /integrations/providers` | Deliveries stored and refused, positions stored and refused, per Addis Ababa day |

@@ -148,6 +148,9 @@ const meterService: MeterService = new MeterService({
 // the fuel and maintenance modules, which import fleet.
 eventBus.subscribe('FuelLogged', 'fleet.meter-readings', (event, tx) => meterService.onFuelLogged(tx, event));
 eventBus.subscribe('MaintenanceRecordCompleted', 'fleet.meter-readings', (event, tx) => meterService.onRepairCompleted(tx, event));
+// FMS-165: a trip's start and end readings, and the GPS estimate when none was typed at the end.
+eventBus.subscribe('TripStarted', 'fleet.meter-readings', (event, tx) => meterService.onTripStarted(tx, event));
+eventBus.subscribe('TripCompleted', 'fleet.meter-readings', (event, tx) => meterService.onTripCompleted(tx, event));
 
 const vehicleService: VehicleService = new VehicleService({
   vehicles: vehicleRepository,
@@ -404,6 +407,7 @@ export const tripRefs = {
     idOf: async (db: Queryable, publicId: string) => (await vehicleRepository.findRef(db, { publicId }, { kind: 'all' }))?.id ?? null,
     forAssignment: (db: Queryable, publicId: string, scope: Scope) => vehicleRepository.findForTrip(db, publicId, scope),
     payloadCapacities: (db: Queryable, ids: readonly string[]) => vehicleRepository.payloadCapacities(db, ids),
+    odometer: (db: Queryable, id: string) => vehicleRepository.odometerOf(db, id),
     publicIds: async (db: Queryable, ids: readonly string[]) =>
       new Map([...(await vehicleRepository.refsByIds(db, ids))].map(([id, ref]) => [id, ref.publicId])),
   },

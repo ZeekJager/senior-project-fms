@@ -3,7 +3,7 @@
 
 /** Enum values exactly as stored (fleet.meter_type, fleet.meter_source). */
 export const METERS = ['odometer', 'engine_hours'] as const;
-export const METER_SOURCES = ['fuel_log', 'maintenance', 'telematics', 'gps_derived', 'manual'] as const;
+export const METER_SOURCES = ['fuel_log', 'maintenance', 'telematics', 'gps_derived', 'manual', 'trip'] as const;
 
 export type Meter = (typeof METERS)[number];
 export type MeterSource = (typeof METER_SOURCES)[number];
@@ -45,8 +45,30 @@ export interface NewReading {
   recordedAt: Date;
 }
 
-/** The sources whose reading names one source record (a fuel log, a repair, a day): at most one reading each. */
-export const ONE_READING_PER_REF: readonly MeterSource[] = ['fuel_log', 'maintenance', 'gps_derived'];
+/**
+ * The sources whose reading names one source record (a fuel log, a repair, a day, a trip's start or end): at most one
+ * reading each.
+ */
+export const ONE_READING_PER_REF: readonly MeterSource[] = ['fuel_log', 'maintenance', 'gps_derived', 'trip'];
+
+/**
+ * FMS-165: the odometer a trip leaves, from TripCompleted. The end reading the driver typed; else, for a trip measured
+ * by its GPS track, the start reading plus that distance (an estimate: a track sampled between points cuts corners, so
+ * it stays at or below the real odometer and never blocks a later typed reading); else none, as for a trip the
+ * vehicle's own device measured, whose readings arrive from telematics.
+ */
+export function tripEndReading(p: {
+  start_odometer_km: number | null;
+  end_odometer_km: number | null;
+  actual_distance_km: number | null;
+  actual_distance_source: 'odometer' | 'gps' | null;
+}): { km: number; source: 'trip' | 'gps_derived' } | null {
+  if (p.end_odometer_km !== null) return { km: p.end_odometer_km, source: 'trip' };
+  if (p.actual_distance_source === 'gps' && p.actual_distance_km !== null && p.start_odometer_km !== null) {
+    return { km: Math.floor((p.start_odometer_km + p.actual_distance_km) * 10) / 10, source: 'gps_derived' };
+  }
+  return null;
+}
 
 /** What recording a reading did. */
 export type RecordOutcome = 'recorded' | 'suspect' | 'duplicate' | 'sampled_out';

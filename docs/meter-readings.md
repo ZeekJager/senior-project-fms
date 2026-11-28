@@ -18,6 +18,8 @@ Before this card, a vehicle had one odometer, typed in by hand, and no engine ho
 | `telematics` | odometer | A vehicle's own GPS device or telematics provider: the newest odometer of a batch, at most one an hour per vehicle | The device's id |
 | `manual` | odometer | A person registering a vehicle, or changing its `odometer_km` | `null` |
 | `gps_derived` | engine hours | The nightly engine-hours job, one per vehicle and day | The day, `YYYY-MM-DD` |
+| `trip` | odometer | The driver typed the odometer at START TRIP or END TRIP (FMS-165, `TripStarted`, `TripCompleted`) | `<trip id>:start` or `<trip id>:end` |
+| `gps_derived` | odometer | A trip ended with no odometer typed and measured by its GPS track (FMS-165): the start reading plus the distance | `<trip id>:end` |
 
 Fuel-log and repair readings are recorded by the `fleet.meter-readings` consumer when the event is delivered, on its transaction. Device readings are recorded in the GPS batch's own transaction. A fuel log, a repair or a day has at most one reading: a redelivered event or a re-run job finds it and adds nothing.
 
@@ -26,6 +28,17 @@ Fuel-log and repair readings are recorded by the `fleet.meter-readings` consumer
 **Sampling.** A device reports every few seconds, and the history needs the trend, not every ping. So a device reading is kept only when the vehicle's newest device reading is at least an hour older (`TELEMATICS_SAMPLE_MINUTES`).
 
 **Missed events.** Data written without events (the seed, a restore), or an event that failed, would leave a fuel log or repair without its reading. The `meter-reading-sync` job (03:10) re-adds those from the last 30 days, oldest first. `rebuildReadModels()` re-adds them all, and the seed calls it.
+
+## Readings from trips (FMS-165)
+
+Migrations 089 and 090. Without a telematics device, a vehicle used to get a reading only when it was fuelled or repaired. Every trip now keeps its odometer up to date:
+
+- **At the start.** `POST /trips/{id}/start` takes an optional `odometer_km`. The trip keeps it as `start_odometer_km`, or the vehicle's own reading when none is typed. A typed reading becomes a `trip` reading.
+- **At the end.** `POST /trips/{id}/end` takes an optional `odometer_km`, kept as `end_odometer_km` and recorded as a `trip` reading.
+- **No reading typed at the end.** If the trip was measured from its GPS track (trip-distance.md), the start reading plus that distance, rounded down to the tenth, is recorded as `gps_derived`. A track sampled between points cuts the road's corners, so this estimate stays at or below the real odometer. It moves the vehicle's odometer up without ever blocking the driver's next typed reading. A trip the vehicle's own device measured needs no estimate: the device's readings arrive from telematics.
+- **Refused readings.** A typed reading below the vehicle's odometer (`below_vehicle_odometer`), or at the end below the start's (`below_start_odometer`), is `409 CONFLICT_ODOMETER_REGRESSION` with the floor in the message, and the trip does not move.
+
+The driver's *My day* has an optional **Odometer now** box above START TRIP and END TRIP, showing the last known reading. The repair form (including *Schedule inspection* on Vehicle health) loads the chosen vehicle's current odometer and says where it came from and when. A number the technician types is never replaced.
 
 ## Suspect readings
 
@@ -63,6 +76,15 @@ Results are newest first. Each `MeterReading` has `id`, `meter`, `value` (km or 
 The model's inputs (`packages/ai-service/feature_spec.json`, spec version 2) still compute the last 30 days' distance and engine hours from completed trips. Moving `engine_hours`, and perhaps `mileage_km`, onto these readings changes the spec and its hash, and so needs a retrained model (ml-dataset.md). That is decided with the nightly scoring (FMS-55).
 
 ## Tests
+
+`test/integration/trip-odometer.test.ts` (FMS-165) covers:
+
+- typed readings at both ends: kept on the trip and in the events, recorded once as `trip` readings, with the odometer following;
+- none typed: the start keeps the vehicle's reading, and the end records the GPS estimate;
+- readings below the vehicle's or the start's: refused with the floor, the trip unchanged;
+- bodies that are not an optional non-negative number refused.
+
+`src/modules/fleet/domain/meter.test.ts` covers the end reading's rule. The frontend tests cover the repair form loading the odometer and keeping a typed one (PredictiveMaintenancePage.test.tsx), and the driver's odometer box (Home.test.tsx).
 
 `test/integration/meter-readings.test.ts` covers:
 

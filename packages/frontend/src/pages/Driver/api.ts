@@ -105,32 +105,38 @@ export function useTripVehicle(id: string | null) {
   const { api } = useAuth()
   return useQuery({
     queryKey: ['driver', 'vehicle', id],
-    queryFn: () => api.request<{ registration_number: string; make: string; model: string }>(`/vehicles/${id}`),
+    queryFn: () => api.request<{ registration_number: string; make: string; model: string; odometer_km?: number }>(`/vehicles/${id}`),
     enabled: id !== null,
     staleTime: 10 * 60_000,
     retry: false,
   })
 }
 
-/** POST /trips/{id}/start or /end, with the version on screen; a retry replays rather than repeats. */
+/**
+ * POST /trips/{id}/start or /end, with the version on screen; a retry replays rather than repeats. FMS-165: with the
+ * odometer the driver read, when they typed one.
+ */
 export function useTripCommand(command: 'start' | 'end') {
   const { api } = useAuth()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (trip: DriverTrip) => {
+    mutationFn: async ({ trip, odometerKm }: { trip: DriverTrip; odometerKm?: number }) => {
       const { data, meta } = await api.requestEnvelope<DriverTrip>(`/trips/${trip.id}/${command}`, {
         method: 'POST',
-        json: {},
+        json: odometerKm !== undefined ? { odometer_km: odometerKm } : {},
         headers: { 'If-Match': `"${trip.version}"` },
         idempotencyKey: true,
       })
       return { trip: data, warnings: (meta.warnings as TripWarning[] | undefined) ?? [] }
     },
-    onSuccess: (_, trip) => {
+    onSuccess: (_, { trip }) => {
       // An ended trip leaves the list at once, so the phone stops reporting its position now, not at the refetch (FMS-57).
       if (command === 'end') queryClient.setQueriesData<DriverTrip[]>({ queryKey: ['driver', 'today'] }, (trips) => trips?.filter((t) => t.id !== trip.id))
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['driver', 'today'] }),
+    onSettled: (_, __, { trip }) => {
+      void queryClient.invalidateQueries({ queryKey: ['driver', 'vehicle', trip.vehicle_id] })
+      return queryClient.invalidateQueries({ queryKey: ['driver', 'today'] })
+    },
   })
 }
 

@@ -112,8 +112,8 @@ const assignBody = z.strictObject({
 const approveBody = z.strictObject({ note: z.string().trim().min(1).max(500).optional() });
 const refuseBody = z.strictObject({ reason: z.string().trim().min(1).max(500) });
 
-/** POST /trips/{id}/start and /end take no body (an empty JSON object is fine). */
-const noBody = z.strictObject({});
+/** POST /trips/{id}/start and /end: optionally the odometer then (FMS-165); an empty JSON object is fine. */
+const odometerBody = z.strictObject({ odometer_km: z.number().nonnegative().max(9_999_999).optional() });
 
 /** GET /trips/{id}/navigation (FMS-166): `from=lat,lng`, the phone's position, optional. */
 const navigationQuery = z.object({
@@ -301,14 +301,8 @@ export function tripRouter(service: TripService): Router {
         res.set('ETag', etagFor(trip.version)).json({ data: trip, meta: { warnings, request_id: req.correlationId } });
       }),
     );
-  command('start', (req, id, version) => {
-    parseInput(noBody, req.body ?? {});
-    return service.start(caller(req), id, version);
-  });
-  command('end', (req, id, version) => {
-    parseInput(noBody, req.body ?? {});
-    return service.end(caller(req), id, version);
-  });
+  command('start', (req, id, version) => service.start(caller(req), id, version, parseInput(odometerBody, req.body ?? {})));
+  command('end', (req, id, version) => service.end(caller(req), id, version, parseInput(odometerBody, req.body ?? {})));
   command('status', (req, id, version) => service.changeStatus(caller(req), id, parseInput(statusBody, req.body).status, version));
 
   return router;

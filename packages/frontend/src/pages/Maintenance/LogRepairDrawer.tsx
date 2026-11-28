@@ -14,8 +14,10 @@ import {
   useFlaggedVehicles,
   useOpenWorkFor,
   usePartSearch,
+  useVehicleOdometer,
   useVehicleSearch,
   type InventoryPart,
+  type OdometerSource,
   type MaintenanceType,
   type RecordInput,
 } from './api'
@@ -57,6 +59,19 @@ const WHOLE = /^\d{1,5}$/
 
 let nextKey = 1
 
+/** Where the odometer the form loaded came from (FMS-165), in the hint under it. */
+const ODOMETER_FROM: Record<OdometerSource, string> = {
+  fuel_log: 'a fuel log',
+  maintenance: 'a repair',
+  telematics: 'the vehicle’s telematics device',
+  gps_derived: 'a trip’s GPS distance',
+  manual: 'an entry by hand',
+  trip: 'the driver at a trip',
+}
+
+const kmText = (km: number) => `${km.toLocaleString('en-US', { maximumFractionDigits: 1 })} km`
+const dayText = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+
 /**
  * S-08 Log a repair (FMS-24): the workshop job card. A vehicle (flagged ones
  * first), what was done, hours, parts used with running total, and the total
@@ -77,6 +92,8 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
   const [description, setDescription] = useState('')
   const [hours, setHours] = useState('')
   const [odometer, setOdometer] = useState('')
+  /** FMS-165: the odometer typed by hand is never replaced by the vehicle's; one loaded is, when the vehicle changes. */
+  const [odometerTyped, setOdometerTyped] = useState(false)
   const [notes, setNotes] = useState('')
   const [totalCost, setTotalCost] = useState<number | null>(null)
   const [parts, setParts] = useState<PartRowState[]>([])
@@ -98,6 +115,7 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
     setDescription(preset?.description ?? '')
     setHours('')
     setOdometer('')
+    setOdometerTyped(false)
     setNotes(correctionOf ? `Correction of record ${correctionOf.id}: ` : '')
     setTotalCost(null)
     setParts([])
@@ -106,6 +124,22 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
     setErrors({})
     setFormError(null)
   }, [open, correctionOf, preset])
+
+  // FMS-165: the chosen vehicle's current odometer loads into the form (Schedule inspection, a flagged vehicle, a search).
+  const vehicleOdometer = useVehicleOdometer(open && vehicle ? vehicle.value.id : null)
+  const loadedKm = vehicleOdometer.data?.km
+  useEffect(() => {
+    if (!odometerTyped && loadedKm !== undefined) setOdometer(String(loadedKm))
+  }, [loadedKm, odometerTyped])
+  const odometerHint = (() => {
+    const data = vehicleOdometer.data
+    if (!vehicle) return undefined
+    if (vehicleOdometer.isPending) return 'Loading the vehicle’s odometer…'
+    if (!data) return undefined
+    const latest = data.latest && data.latest.value === data.km ? data.latest : null
+    const where = latest ? `, from ${ODOMETER_FROM[latest.source]} on ${dayText(latest.recorded_at)}` : ''
+    return odometerTyped ? `The vehicle’s last reading is ${kmText(data.km)}${where}.` : `Loaded from the vehicle: ${kmText(data.km)}${where}. Change it if the dashboard reads more.`
+  })()
 
   // Vehicle choices: the flagged ones first, then whatever matches the search.
   const flagged = useFlaggedVehicles()
@@ -297,8 +331,12 @@ export function LogRepairDrawer({ open, onClose, canInventory, correctionOf, pre
               optional
               inputMode="decimal"
               value={odometer}
-              onChange={(e) => setOdometer(e.target.value)}
+              onChange={(e) => {
+                setOdometer(e.target.value)
+                setOdometerTyped(true)
+              }}
               error={errors.odometer}
+              hint={odometerHint}
               trailing={<span className="text-xs">km</span>}
             />
           </Section>

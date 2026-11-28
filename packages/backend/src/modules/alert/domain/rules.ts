@@ -182,7 +182,8 @@ function serviceRule(overdue: boolean): AlertRule {
 }
 
 export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
-  // A DVIR with defects (FMS-36), later a telematics fault code. FMS-118's technician alert.
+  // A DVIR with defects (FMS-36), or a diagnostic trouble code from telematics (FMS-132, source `telematics`). FMS-118's
+  // technician alert. A code is its own alert (its dedup key names it), which its clear closes (ALERT_RESOLVERS).
   VehicleFaultDetected: {
     type: () => 'vehicle_fault',
     module: 'fleet',
@@ -193,11 +194,15 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
       tripId: str(p, 'trip_id'),
       depotId: null,
       entity: str(p, 'dvir_report_id') ? { type: 'dvir_report', id: str(p, 'dvir_report_id')! } : str(p, 'vehicle_id') ? { type: 'vehicle', id: str(p, 'vehicle_id')! } : null,
-      dedupKey: `vehicle_fault:${str(p, 'vehicle_id')}`,
+      dedupKey: isTelematicsFault(p) ? faultCodeKey(p) : `vehicle_fault:${str(p, 'vehicle_id')}`,
     }),
     windowMinutes: HOUR,
-    title: (_p, n) => `Defects reported on ${vehicleName(n)}`,
-    message: (p) => {
+    title: (p, n) => (isTelematicsFault(p) ? `Fault code ${str(p, 'code') ?? ''} on ${vehicleName(n)}` : `Defects reported on ${vehicleName(n)}`),
+    message: (p, n) => {
+      if (isTelematicsFault(p)) {
+        const what = str(p, 'description');
+        return `${vehicleName(n)}'s telematics reports ${str(p, 'protocol') === 'j1939' ? 'J1939' : 'OBD-II'} code ${str(p, 'code') ?? ''}${what ? ` (${what})` : ''}. Check it in the workshop; the alert closes by itself when the code clears.`;
+      }
       const defects = Array.isArray(p.defects) ? (p.defects as unknown[]).filter((d) => typeof d === 'string') : [];
       const count = num(p, 'defect_count') ?? defects.length;
       const inspection = str(p, 'inspection_type');
@@ -699,4 +704,16 @@ export const ALERT_RULES: Readonly<Record<string, AlertRule>> = {
  */
 export const ALERT_RESOLVERS: Record<string, (payload: Payload) => string | null> = {
   MonitoringAlertResolved: (p) => (str(p, 'fingerprint') ? `monitoring:${str(p, 'fingerprint')}` : null),
+  // FMS-132: the provider cleared the code.
+  VehicleFaultCleared: (p) => (isTelematicsFault(p) ? faultCodeKey(p) : null),
 };
+
+/** A fault from a vehicle's telematics (FMS-132), not a DVIR. */
+function isTelematicsFault(p: Payload): boolean {
+  return str(p, 'source') === 'telematics' && Boolean(str(p, 'vehicle_id')) && Boolean(str(p, 'code'));
+}
+
+/** One alert per vehicle and code: what VehicleFaultDetected opens and VehicleFaultCleared closes. */
+function faultCodeKey(p: Payload): string {
+  return `vehicle_fault:${str(p, 'vehicle_id')}:${str(p, 'protocol') ?? 'obd2'}:${str(p, 'code')}`;
+}
