@@ -61,6 +61,8 @@ function tripRow(overrides: Partial<TripRow> = {}): TripRow {
     actualEnd: null,
     actualDistanceKm: null,
     actualDistanceSource: null,
+    startOdometerKm: null,
+    endOdometerKm: null,
     cargoWeightKg: null,
     cargoKind: 'general',
     version: 3,
@@ -104,6 +106,7 @@ function harness(options: Options = {}) {
         return options.vehicle === null ? null : { id: '7', publicId: VEHICLE, status: 'active', maintenanceFlag: false, payloadCapacityKg: null, ...options.vehicle };
       },
       payloadCapacities: async () => new Map(),
+      odometer: async () => null,
     },
     drivers: {
       idOf: async () => '9',

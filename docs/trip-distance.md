@@ -61,6 +61,8 @@ it did.
 
 The result is rounded to the metre, as the column keeps it (`NUMERIC(12,3)`).
 
+**The odometer (FMS-165).** A trip ended with no odometer typed and measured from its GPS track gives the vehicle an estimated reading: the odometer at the start plus this distance. See [meter-readings.md](meter-readings.md#readings-from-trips-fms-165).
+
 ## Data
 
 `trip.trips` (migration 066):

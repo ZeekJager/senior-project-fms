@@ -37,6 +37,9 @@ export interface TripRow {
   actualDistanceKm: number | null;
   /** How the distance was measured (FMS-145); null with a distance entered before, or with none. */
   actualDistanceSource: 'odometer' | 'gps' | null;
+  /** FMS-165. */
+  startOdometerKm: number | null;
+  endOdometerKm: number | null;
   /** FMS-153. */
   cargoWeightKg: number | null;
   cargoKind: CargoKind;
@@ -122,6 +125,9 @@ export interface TripWrite {
   actual_distance_source?: 'odometer' | 'gps' | null;
   actual_distance_points?: number;
   actual_distance_measured_at?: Date;
+  /** FMS-165: the odometer at the start and end. */
+  start_odometer_km?: number | null;
+  end_odometer_km?: number | null;
   /** FMS-153: set on create and by PATCH before the trip starts. */
   cargo_weight_kg?: number | null;
   cargo_kind?: CargoKind;
@@ -186,6 +192,7 @@ const ROW_SQL = `
          t.planned_duration_seconds AS "plannedDurationSeconds", t.scheduled_start AS "scheduledStart",
          t.scheduled_end AS "scheduledEnd", t.actual_start AS "actualStart", t.actual_end AS "actualEnd",
          t.actual_distance_km::float8 AS "actualDistanceKm", t.actual_distance_source AS "actualDistanceSource",
+         t.start_odometer_km::float8 AS "startOdometerKm", t.end_odometer_km::float8 AS "endOdometerKm",
          t.cargo_weight_kg::float8 AS "cargoWeightKg", t.cargo_kind AS "cargoKind",
          t.version, t.created_at AS "createdAt", t.updated_at AS "updatedAt",
          to_char(${AT} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at

@@ -5216,3 +5216,16 @@ INSERT INTO tracking.diagnostic_code_dictionary (protocol, code, description, se
     ('j1939', '3251', 'Diesel particulate filter differential pressure', 'medium'),
     ('j1939', '3364', 'Diesel exhaust fluid quality', 'medium')
 ON CONFLICT (protocol, code) DO NOTHING;
+
+-- ===== 089_meter_source_trip.sql =====
+ALTER TYPE fleet.meter_source ADD VALUE IF NOT EXISTS 'trip';
+
+-- ===== 090_trip_odometer.sql =====
+ALTER TABLE trip.trips
+    ADD COLUMN IF NOT EXISTS start_odometer_km NUMERIC(12,1) CHECK (start_odometer_km >= 0),
+    ADD COLUMN IF NOT EXISTS end_odometer_km   NUMERIC(12,1) CHECK (end_odometer_km >= 0);
+
+DROP INDEX IF EXISTS fleet.ux_meter_readings_source_record;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_meter_readings_source_record
+    ON fleet.meter_readings(vehicle_id, meter, source, source_ref)
+    WHERE source IN ('fuel_log', 'maintenance', 'gps_derived', 'trip');
