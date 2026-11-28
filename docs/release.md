@@ -65,7 +65,7 @@ a **defect**. Record it with the step number, what happened, a screenshot and it
 | P3 | **Assign** a driver and a vehicle | Assigned; the driver sees it on **My day** |
 | P4 | Try to assign a driver whose licence has expired. Then assign the driver A1 marked *On leave* to a trip today, and request the exception with a reason | The first is refused, saying why: a safety rule has no exception. The second is held, and the request waits for a fleet manager |
 | P5 | **Live map**: follow D4's trip | Its position moves; the speeding and idling flags show on the vehicle |
-| P6 | Open D6's incident and assign it to yourself | It shows *Assigned*; the driver's report is unchanged |
+| P6 | Open D6's incident and **Take it on** | It shows *Taken on by* you; the driver's report is unchanged |
 | P7 | Change the URL to another depot's trip | *Not found*: another depot's data is never shown |
 
 ### Maintenance technician
@@ -73,8 +73,8 @@ a **defect**. Record it with the step number, what happened, a screenshot and it
 | # | Step | Expected |
 |---|---|---|
 | T1 | **Repair log**: the vehicle D3 flagged is in *Flagged* | It shows the inspection's problem and the driver's note |
-| T2 | Open a repair for it: corrective, the component, the parts from stock | The record is *Open*; the stock goes down by the parts |
-| T3 | Complete it with the odometer and the labour hours | *Completed*; the vehicle's flag is cleared and it is available again |
+| T2 | **Log a repair** for it: corrective, the component and failure, the parts from stock, the labour hours and the cost, then **Save as open work** | The record is *Open*; the stock goes down by the parts |
+| T3 | Open it, book the technician's hours, then **Mark as complete** | *Completed*; the vehicle's flag is cleared and it is available again |
 | T4 | **Vehicle health**: open a vehicle with a high risk score | The score, its factors and the model version |
 | T5 | **Service programs** and **Recalls**: open a vehicle that is due | Its next service by km or date; open recalls listed |
 | T6 | Open a fault code alert, if the simulator ran with `--faults` | The code, what it means and the vehicle |
@@ -228,6 +228,15 @@ Record the decision:
 
 ## Tested
 
+- **UAT dry run** of every step on fms.zekarias.tech, 28 November 2026 (release `bf3c23d`, then `9f077c1`), by browser
+  sessions signed in as each role, the driver on a phone-sized screen with a scripted GPS track along the Addis
+  Ababa – Modjo road. 51 of 52 steps ran: 50 passed, T1 failed, T6 did not run (the server has no fault codes).
+  - **T1 (defect, Major or Minor at the go/no-go):** the technician is alerted to *1 defect on the pre-trip
+    inspection: Tyres* and the vehicle is under *Flagged*, but the driver's note is on no office screen (only
+    `GET /vehicles/{id}/dvir-reports` returns it).
+  - **Minor:** P7 opens nothing of another depot's trip (the API answers 404) but says nothing either; F4 and other
+    refused screens are blank instead of saying the role has no access.
+  - The dry run is not the sign-off: each role's tester still runs their script and signs their row.
 - `scripts/deploy/release-check.sh` was run against the UAT stack on fms.zekarias.tech with `--allow-demo`
   (27 November 2026). It passed the secrets, containers, migrations, backup and health checks. It failed, correctly,
   on:
