@@ -277,6 +277,28 @@ export const OTHER_PARAMETERS: readonly SystemParameter[] = [
     rules: { min: 1, max: 120, unit: 'months' },
     storage: 'settings',
   },
+  // Work orders (FMS-130, docs/work-orders.md): a request costing more than this waits for an approver
+  // (maintenance:approve) before it starts, and labour is booked at this rate unless a finance role sets one.
+  {
+    key: 'work_order_approval_threshold_etb',
+    label: 'Work order approval above',
+    category: 'Maintenance',
+    description: 'A requested work order costing more than this must be approved by a fleet manager or depot admin before it starts.',
+    type: 'integer',
+    default_value: 20000,
+    rules: { min: 0, max: 10000000, unit: 'ETB' },
+    storage: 'settings',
+  },
+  {
+    key: 'labour_rate_etb_per_hour',
+    label: 'Labour rate',
+    category: 'Maintenance',
+    description: "The workshop's hourly labour rate, used for labour entries booked without a rate of their own.",
+    type: 'integer',
+    default_value: 300,
+    rules: { min: 0, max: 100000, unit: 'ETB/hour' },
+    storage: 'settings',
+  },
 ];
 
 /** The settings as system parameters of the registry (FMS-157): whole numbers in settings.settings, and the others. */

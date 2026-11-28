@@ -18,7 +18,8 @@ export const STATUSES = [
   'inactive',
   'maintenance',
   'retired',
-  // Maintenance work (scheduled, completed and cancelled are shared with trips)
+  // Maintenance work (scheduled, completed and cancelled are shared with trips); requested: a work order not yet started (FMS-130)
+  'requested',
   'open',
   'in_progress',
 ] as const
@@ -59,6 +60,7 @@ export const STATUS_STYLES: Record<Status, StatusStyle> = {
   inactive: style('grey', 'Inactive'),
   maintenance: style('orange', 'Maintenance'),
   retired: style('grey', 'Retired'),
+  requested: style('orange', 'Requested'),
   open: style('blue', 'Open'),
   in_progress: style('yellow', 'In progress'),
 }

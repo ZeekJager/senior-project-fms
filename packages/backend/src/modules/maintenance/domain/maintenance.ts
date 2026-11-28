@@ -2,17 +2,19 @@ import { AppError } from '../../../shared/errors/app-error';
 import type { FailureEventView } from './failure';
 import type { ServiceItem } from './inventory';
 import type { WarrantyClaimView } from './warranty';
+import type { WorkOrderView } from './work-order';
 
 /** As in maintenance.maintenance_type / maintenance_status and chk_maintenance_priority. */
 export const MAINTENANCE_TYPES = ['preventive', 'corrective', 'predictive', 'inspection', 'other'] as const;
-export const MAINTENANCE_STATUSES = ['scheduled', 'open', 'in_progress', 'completed', 'cancelled'] as const;
+/** `requested` (FMS-130): asked for, not yet started; above the approval threshold it waits for an approver. */
+export const MAINTENANCE_STATUSES = ['requested', 'scheduled', 'open', 'in_progress', 'completed', 'cancelled'] as const;
 export const MAINTENANCE_PRIORITIES = ['low', 'normal', 'high', 'critical'] as const;
 
 export type MaintenanceType = (typeof MAINTENANCE_TYPES)[number];
 export type MaintenanceStatus = (typeof MAINTENANCE_STATUSES)[number];
 export type MaintenancePriority = (typeof MAINTENANCE_PRIORITIES)[number];
 
-/** Work still to do: these keep a vehicle's maintenance flag set. */
+/** Work still to do: these keep a vehicle's maintenance flag set. A request does not: it is not work yet. */
 export const OPEN_STATUSES: readonly MaintenanceStatus[] = ['scheduled', 'open', 'in_progress'];
 
 /** One part used in a repair, at the cost it was charged. */
@@ -53,6 +55,8 @@ export interface MaintenanceRecordView {
   parts: MaintenancePartLine[];
   /** What failed (FMS-125), oldest first. */
   failures: FailureEventView[];
+  /** The work order (FMS-130): tasks, labour, vendor and approval. */
+  work_order: WorkOrderView;
   version: number;
   created_at: Date;
   updated_at: Date;

@@ -450,8 +450,8 @@ describe('warranties: rules, permissions and scope', () => {
     const stale = await request(app).patch(`/api/v1/warranties/${mine.id}`).set('Cookie', tech).set('If-Match', '"99"').send({ provider: 'X' });
     expect(stale.status).toBe(409);
 
-    const clerk = await signIn(['finance_clerk'], depot);
-    expect((await call('get', '/warranties', '/warranties', clerk)).status).toBe(403);
-    expect((await call('get', '/recalls', '/recalls', clerk)).status).toBe(403);
+    const dispatcher = await signIn(['dispatcher'], depot);
+    expect((await call('get', '/warranties', '/warranties', dispatcher)).status).toBe(403);
+    expect((await call('get', '/recalls', '/recalls', dispatcher)).status).toBe(403);
   });
 });
