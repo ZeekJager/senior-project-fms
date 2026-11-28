@@ -1,5 +1,6 @@
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import { BarChart3, Clock3, ShieldCheck, Truck } from 'lucide-react'
+import { BarChart3, Clock3, ShieldCheck } from 'lucide-react'
+import { BrandMark } from '@/components/BrandMark'
 import { useRef, useState, type FormEvent } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { Button, TextField } from '@/components/ui'
@@ -88,9 +89,7 @@ export function LoginPage() {
           <circle cx="480" cy="128" r="3" fill="currentColor" />
         </svg>
         <div className="relative flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-control bg-brand">
-            <Truck className="h-5 w-5" aria-hidden="true" />
-          </div>
+          <BrandMark />
           <span className="text-sm font-semibold tracking-tight">Fleet Management System</span>
         </div>
         <div className="relative mt-auto">
@@ -115,9 +114,7 @@ export function LoginPage() {
         </div>
         <div className="w-full max-w-sm animate-scale-in">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <div className="flex h-10 w-10 items-center justify-center rounded-control bg-brand text-white">
-              <Truck className="h-5 w-5" aria-hidden="true" />
-            </div>
+            <BrandMark />
             <span className="text-sm font-semibold tracking-tight text-ink">Fleet Management System</span>
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink">Sign in</h1>
